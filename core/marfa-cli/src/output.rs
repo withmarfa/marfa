@@ -1343,12 +1343,24 @@ fn record_columns(record: &Value) -> Cols {
         && record.get("granted_at").is_some()
         && record.get("scopes").is_some()
     {
+        let vendors: Vec<&str> = record["vendors"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        let vendors = if vendors.is_empty() {
+            scalar_text(&Value::Null)
+        } else {
+            printable(&vendors.join(", "))
+        };
         return Cols::new(
-            &["id", "name", "approved"],
+            &["id", "name", "approved", "vendors"],
             vec![
                 owned("id"),
                 scalar_text(&record["client_name"]),
                 owned("granted_at"),
+                vendors,
             ],
         );
     }
@@ -2308,14 +2320,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_app_grant_shows_its_name_and_when_it_was_approved() {
+    fn an_app_grant_shows_its_name_when_it_was_approved_and_its_vendors() {
         let text = describe(&json!({
             "data": [
                 {"id": "g1", "kind": "app", "client_id": "c1", "client_name": "Reader",
-                 "origins": [], "scopes": ["core.note:read"], "status": "active",
+                 "origins": [], "scopes": ["core.note:read"], "vendors": ["app.reader", "app.sync"],
+                 "status": "active",
                  "granted_at": "2026-10-03T09:30:00.000Z", "last_used_at": null},
                 {"id": "g2", "kind": "app", "client_id": "c2", "client_name": null,
-                 "origins": [], "scopes": [], "status": "active",
+                 "origins": [], "scopes": [], "vendors": [], "status": "active",
                  "granted_at": "2026-10-04T09:30:00.000Z", "last_used_at": null},
             ],
             "next_cursor": null,
@@ -2323,9 +2336,9 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(
             text,
-            "id  name    approved\n\
-             g1  Reader  2026-10-03T09:30:00.000Z\n\
-             g2  -       2026-10-04T09:30:00.000Z"
+            "id  name    approved                  vendors\n\
+             g1  Reader  2026-10-03T09:30:00.000Z  app.reader, app.sync\n\
+             g2  -       2026-10-04T09:30:00.000Z  -"
         );
     }
 

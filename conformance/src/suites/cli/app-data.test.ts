@@ -145,7 +145,7 @@ it("lists an app's data and deletes it in pages until none is left, and refuses 
     `1000 items deleted so far, ${BIG - 1_000} left`,
   );
   expect(deleted.stdout).toContain(
-    `deleted ${BIG} items and 1 types of ${vendor}`,
+    `deleted ${BIG} items and 1 type of ${vendor}`,
   );
   const after = await local.json<Listed>([
     "apps",

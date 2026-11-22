@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 use super::PageArgs;
 use crate::error::CliError;
-use crate::output::Printer;
+use crate::output::{self, Printer, printable};
 use crate::remote::{Remote, request::Request};
 
 #[derive(Debug, Subcommand)]
@@ -133,6 +133,66 @@ pub fn data_delete_request(vendor: &str) -> Request {
     Request::delete(&["app-vendors", vendor, "data"])
 }
 
+/// The types with their counts, then the page of items with each one's state.
+fn data_text(answer: &Value) -> String {
+    let text = |value: &Value, name: &str| match &value[name] {
+        Value::String(held) => printable(held),
+        Value::Number(count) => count.to_string(),
+        _ => "-".to_string(),
+    };
+    let rows = |name: &str| answer[name].as_array().cloned().unwrap_or_default();
+    let head = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect::<Vec<_>>()
+    };
+    let mut lines = vec![format!(
+        "{} is held by {}",
+        text(answer, "vendor"),
+        match &answer["client_id"] {
+            Value::String(client) => format!("the app {}", printable(client)),
+            _ => "the owner".to_string(),
+        }
+    )];
+    let types: Vec<Vec<String>> = rows("types")
+        .iter()
+        .map(|row| {
+            ["type", "active", "archived", "trashed"]
+                .map(|name| text(row, name))
+                .to_vec()
+        })
+        .collect();
+    if types.is_empty() {
+        lines.push("it holds no types or items".to_string());
+        return lines.join("\n");
+    }
+    lines.push(String::new());
+    lines.extend(output::table_with_head(
+        &head(&["type", "active", "archived", "trashed"]),
+        &types,
+    ));
+    let items: Vec<Vec<String>> = rows("data")
+        .iter()
+        .map(|row| {
+            ["id", "type", "state", "name", "created_at"]
+                .map(|name| text(row, name))
+                .to_vec()
+        })
+        .collect();
+    if !items.is_empty() {
+        lines.push(String::new());
+        lines.extend(output::table_with_head(
+            &head(&["id", "type", "state", "name", "created"]),
+            &items,
+        ));
+    }
+    if let Some(cursor) = answer["next_cursor"].as_str() {
+        lines.push(format!("more: --cursor {}", printable(cursor)));
+    }
+    lines.join("\n")
+}
+
 /// Each request takes up to 1,000 items; the types go with the one that empties the namespace.
 fn delete_data(vendor: &str, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let (mut items, mut types) = (0_u64, 0_u64);
@@ -164,7 +224,20 @@ fn delete_data(vendor: &str, remote: &Remote, out: &Printer) -> Result<(), CliEr
     }
     out.report(
         &json!({ "vendor": vendor, "removed_items": items, "removed_types": types }),
-        |_| format!("deleted {items} items and {types} types of {vendor}"),
+        |_| {
+            let plural = |count: u64, one: &str| {
+                if count == 1 {
+                    format!("1 {one}")
+                } else {
+                    format!("{count} {one}s")
+                }
+            };
+            format!(
+                "deleted {} and {} of {vendor}",
+                plural(items, "item"),
+                plural(types, "type")
+            )
+        },
     )
 }
 
@@ -223,7 +296,10 @@ pub fn run(command: AppsCommand, remote: &Remote, out: &Printer) -> Result<(), C
                 VendorsCommand::Data {
                     command: DataCommand::List { vendor, page },
                 },
-        } => out.value(&remote.pages(&data_request(&vendor, &page), page.all)?),
+        } => out.report(
+            &remote.pages(&data_request(&vendor, &page), page.all)?,
+            data_text,
+        ),
         AppsCommand::Vendors {
             command:
                 VendorsCommand::Data {
