@@ -6194,19 +6194,19 @@ When a caller pages a view's sorted items with a limit and offset, a device MUST
 
 ### `device/view-group-value`
 
-When a caller reads a view's groups by a field, a device MUST return one group per distinct scalar value and a null group for missing, null, object, or array values, with each group's item count.
+When a caller reads a view's groups by a field with no bucket, a device MUST return one group per distinct scalar value and a null group for missing, null, object, or array values, with each group's item count.
 
 **Tests:** `device/views.test.ts › counts scalar and missing groups`.
 
 ### `device/view-group-tags`
 
-When a caller reads a view grouped by tags, a device MUST count each item once in every tag group it belongs to and each untagged item once in the null group.
+When a caller reads a view grouped by tags with no bucket, a device MUST count each item once in every tag group it belongs to and each untagged item once in the null group.
 
 **Tests:** `device/views.test.ts › counts an item in each tag group and honors ordered and hidden groups`.
 
 ### `device/view-group-order`
 
-When a caller reads a view's groups, a device MUST return the groups named by `group.order` first in that order, where `null` names the null group, followed by the remaining groups in ascending value order with `false` before `true`, and the null group last unless `group.order` names it.
+When a caller reads a view's groups, a device MUST return the groups named by `group.order` first in that order, where `null` names the null group, followed by the remaining groups in ascending value order with `false` before `true`, or for a view grouped by `status_group` in the order `device/view-group-status-order` states, and the null group last unless `group.order` names it.
 
 **Tests:** `device/views.test.ts › counts scalar and missing groups`, `› counts an item in each tag group and honors ordered and hidden groups`, `› orders the null group where order names it`.
 

@@ -173,6 +173,11 @@ impl Core {
             let group = scope.view.settings.get("group");
             let by = named_setting(group, "by")?;
             let bucket = named_setting(group, "bucket")?;
+            if let Some(field) = by
+                && !groups_by(field)
+            {
+                return Err(invalid(&format!("unsupported group.by {field:?}")));
+            }
             if let Some(bucket) = bucket {
                 match bucket {
                     "day" | "week" | "month" | "year" => {
@@ -198,11 +203,6 @@ impl Core {
                     }
                     other => return Err(invalid(&format!("unsupported group.bucket {other:?}"))),
                 }
-            }
-            if let Some(field) = by
-                && !groups_by(field)
-            {
-                return Err(invalid(&format!("unsupported group.by {field:?}")));
             }
             let mut key_values = Vec::new();
             let (key_sql, join) = match by {
@@ -398,7 +398,6 @@ fn groups_by(field: &str) -> bool {
             | "tier"
             | "source"
             | "status_group"
-            | "last_activity_at"
     ) || edge_ref(field).is_some()
         || (field.starts_with("properties.") && property_name(field).is_ok())
 }
@@ -410,9 +409,13 @@ fn require_whole(conn: &Connection, field: &str, edge_type: &str) -> Result<()> 
     {
         return Ok(());
     }
-    Err(invalid(&format!(
+    Err(not_held_whole(field, edge_type))
+}
+
+fn not_held_whole(field: &str, edge_type: &str) -> CoreError {
+    invalid(&format!(
         "this copy cannot group by {field}: edge type {edge_type:?} is not held whole"
-    )))
+    ))
 }
 
 /// `true` where `<field> exists` selects the item, compiled by the filter's own rules.
@@ -422,10 +425,12 @@ fn presence_sql(
     catalog: &Catalog,
     values: &mut Vec<Value>,
 ) -> Result<String> {
-    if let Some((_, edge_type)) = edge_ref(field) {
-        require_whole(conn, field, edge_type)?;
-    }
     let held = store::whole_edge_types(conn)?;
+    if let Some((_, edge_type)) = edge_ref(field)
+        && !held.iter().any(|whole| whole == edge_type)
+    {
+        return Err(not_held_whole(field, edge_type));
+    }
     let expression = parse(&format!("{field} exists"))?;
     let predicate = crate::filter::expression_clause(&expression, values, &held, catalog)?;
     Ok(format!(

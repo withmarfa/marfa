@@ -854,6 +854,9 @@ it("reads, lists and searches a view with a group this device does not define, a
       "fortnight",
     ],
     [{ by: "last_seen" }, "group.by", "last_seen"],
+    [{ by: "last_seen", bucket: "day" }, "group.by", "last_seen"],
+    [{ by: "last_seen", bucket: "presence" }, "group.by", "last_seen"],
+    [{ by: "last_activity_at" }, "group.by", "last_activity_at"],
     [{ by: "properties.rank", bucket: 7 }, "group.bucket", "7"],
   ] as const) {
     const device = await copy(items, { sort, group });
