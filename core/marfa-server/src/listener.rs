@@ -91,8 +91,7 @@ impl Tunnel {
         self.0.store(linked, Ordering::Release);
     }
 
-    /// The trust in force for `peer`: the one the owner configured, or, while linked, the tunnel's
-    /// for a loopback peer the configured trust does not already believe.
+    /// The configured trust, or while linked the tunnel's for a loopback peer it does not believe.
     pub fn trust<'a>(&self, configured: &'a Trust, peer: IpAddr) -> &'a Trust {
         let peer = peer.to_canonical();
         if peer.is_loopback() && !configured.believes(peer) && self.0.load(Ordering::Acquire) {
