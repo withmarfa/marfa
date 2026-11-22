@@ -325,16 +325,17 @@ async fn a_program_that_will_not_run_or_names_another_release_is_not_swapped_in(
     assert!(refused.contains("0.0.99"), "{refused}");
     case.untouched();
 
+    let files = vec![("marfa-server", program("marfa-server", "0.0.75", OPENS))];
+    let job = case.release(&files, None, None);
+    assert!(case.run(job).await.unwrap_err().contains("holds no marfa"));
+    case.untouched();
+
+    let case = Case::new("wrong-interpreter");
     let mut files = good(OPENS);
     files[0].1 = "#!/nonexistent/interpreter\n".to_string();
     let job = case.release(&files, None, None);
     let refused = case.run(job).await.unwrap_err();
     assert!(refused.contains("does not run"), "{refused}");
-    case.untouched();
-
-    let files = vec![("marfa-server", program("marfa-server", "0.0.75", OPENS))];
-    let job = case.release(&files, None, None);
-    assert!(case.run(job).await.unwrap_err().contains("holds no marfa"));
     case.untouched();
 }
 
@@ -593,14 +594,22 @@ async fn a_release_from_before_the_connector_installs_without_one_and_leaves_an_
 #[tokio::test(flavor = "multi_thread")]
 async fn a_connector_that_will_not_run_or_is_not_cloudflareds_stops_the_update_with_nothing_changed()
  {
-    let case = Case::new("connector-wrong");
-    for (text, said) in [
-        ("#!/nonexistent/interpreter\n".to_string(), "does not run"),
+    // Each connector gets a folder, and so a lock file, of its own: a program whose interpreter is
+    // missing fails to start while the child that tried it still holds the update's lock, so a
+    // second update in the same folder can be refused as already under way.
+    for (name, text, said) in [
         (
+            "connector-wrong-interpreter",
+            "#!/nonexistent/interpreter\n".to_string(),
+            "does not run",
+        ),
+        (
+            "connector-wrong-name",
             "#!/bin/sh\necho 'something else 1.0'\n".to_string(),
             "something else 1.0",
         ),
     ] {
+        let case = Case::new(name);
         let mut files = good(OPENS);
         files.push((CONNECTOR, text));
         let refused = case
