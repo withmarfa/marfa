@@ -128,6 +128,21 @@ beforeAll(async () => {
       properties: { title: "Another spelling of a time", body: "" },
     });
   }
+  for (const words of [
+    ["kitchen"],
+    ["a", "kit,"],
+    "kitchen",
+    ["Kitchen", "pantry"],
+    [3, "kitchen", null],
+    [{ word: "kitchen" }],
+    [],
+  ]) {
+    await made({
+      type: "core.note",
+      tags: [mark],
+      properties: { title: "A list of words", body: "", words },
+    });
+  }
   const archived = ids[1]!;
   expect((await client.transitionItem(archived, "archived")).ok).toBe(true);
 
@@ -244,6 +259,13 @@ beforeAll(async () => {
     4,
   );
   add("beneath a leaf", { query: { beneath: grandchild } }, 1);
+  const words = (condition: string) => ({
+    filter: `${filter} AND properties.words ${condition}`,
+  });
+  add("a member equal", { query: words('eq "kitchen"') }, 3);
+  add("no member equal", { query: words('neq "kitchen"') }, 4);
+  add("a member holding text", { query: words('contains "kit"') }, 5);
+  add("a member beginning with text", { query: words('starts_with "kit"') }, 5);
 
   for (const item of cases) {
     const saved = await client.createView({

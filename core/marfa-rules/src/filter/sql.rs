@@ -216,7 +216,7 @@ fn json_path<S: Sink>(out: &mut S, name: &str) {
     out.bind(Bind::Text(format!("$.{name}")));
 }
 
-/// A condition on member `name` of the item's `properties`.
+/// A condition on member `name` of the item's `properties`. Against a text literal, a list is judged by its scalar members, each as a whole value, and `neq` holds when none is equal; a number or a range never selects a list.
 fn property<S: Sink>(out: &mut S, items: &Items, name: &str, op: Op, value: &Literal) {
     let source = items.properties();
     items.guarded(out, |out| {
@@ -230,7 +230,40 @@ fn property<S: Sink>(out: &mut S, items: &Items, name: &str, op: Op, value: &Lit
             json_path(out, name);
             out.push(")");
         };
+        let compare = match (op, value) {
+            (
+                Op::Compare(
+                    compare
+                    @ (Compare::Eq | Compare::Neq | Compare::Contains | Compare::StartsWith),
+                ),
+                Literal::Text(_),
+            ) => compare,
+            _ => return held_property(out, held, kind, op, value, Texts::Instants),
+        };
+        out.push("CASE WHEN ");
+        kind(out);
+        out.push(" = 'array' THEN ");
+        let (negated, compare) = match compare {
+            Compare::Neq => (true, Compare::Eq),
+            other => (false, other),
+        };
+        if negated {
+            out.push("NOT ");
+        }
+        out.push(&format!("EXISTS (SELECT 1 FROM json_each({source}, "));
+        json_path(out, name);
+        out.push(") AS member WHERE member.type NOT IN ('array', 'object') AND (");
+        held_property(
+            out,
+            |out| out.push("member.value"),
+            |out| out.push("member.type"),
+            Op::Compare(compare),
+            value,
+            Texts::Instants,
+        );
+        out.push(")) ELSE ");
         held_property(out, held, kind, op, value, Texts::Instants);
+        out.push(" END");
     });
 }
 

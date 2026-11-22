@@ -2380,7 +2380,7 @@ When a filter compares a property with a number or a boolean, a device MUST matc
 
 ### `device/filter-nested-number`
 
-When a filter compares the text of an array or an object property, a device MUST read a number inside it as the server's stored text spells it, so `100000000000000000000` rather than `1e+20`.
+When a filter compares the text of an object property, a device MUST read a number inside it as the server's stored text spells it, so `100000000000000000000` rather than `1e+20`.
 
 **Tests:** `device/fidelity.test.ts › answers each filter expression with the ids the server answers`.
 
