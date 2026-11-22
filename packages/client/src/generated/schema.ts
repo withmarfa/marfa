@@ -872,6 +872,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/{name}/connector": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace a connector's host
+         * @description Assigns a plugin's connector to a connector host, or to none. Moving it revokes the key its former host minted for it.
+         */
+        put: operations["replacePluginConnectorHost"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/{name}/connector/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a connector's settings
+         * @description Returns each setting a plugin's connector declares, with the value set or its default. A secret's value is never returned: `set` says whether one is set.
+         */
+        get: operations["getPluginConnectorSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update a connector's settings
+         * @description Sets each setting the body names, or removes its value for `null`, so the setting reads its default. Marfa seals a secret with the settings key beside the database and never returns it.
+         */
+        patch: operations["updatePluginConnectorSettings"];
+        trace?: never;
+    };
     "/plugins/{name}/connector/mapping": {
         parameters: {
             query?: never;
@@ -934,50 +978,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/plugins/{name}/connector": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Replace a connector's host
-         * @description Assigns a plugin's connector to a connector host, or to none. Moving it revokes the key its former host minted for it.
-         */
-        put: operations["replacePluginConnectorHost"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/plugins/{name}/connector/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get a connector's settings
-         * @description Returns each setting a plugin's connector declares, with the value set or its default. A secret's value is never returned: `set` says whether one is set.
-         */
-        get: operations["getPluginConnectorSettings"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update a connector's settings
-         * @description Sets each setting the body names, or removes its value for `null`, so the setting reads its default. Marfa seals a secret with the settings key beside the database and never returns it.
-         */
-        patch: operations["updatePluginConnectorSettings"];
         trace?: never;
     };
     "/connector-hosts": {
@@ -9204,141 +9204,6 @@ export interface components {
             /** @description Always `null`: every binding comes in one page. */
             next_cursor: null;
         };
-        /** @description An error response. */
-        PluginConnectorNotFoundOrPluginNotFoundRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "plugin_not_found" | "plugin_connector_not_found";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        /** @description An error response. */
-        ConnectorMappingStaleOrInstanceChangedRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "connector_mapping_stale" | "instance_changed";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        /** @description Where a field of the target type gets its value: exactly one of `from`, `fixed` or `template`. */
-        ConnectorMappingField: {
-            /** @description A field of the kind's own type. */
-            from: string;
-        } | {
-            /** @description A value the target field takes. */
-            fixed: unknown;
-        } | {
-            /** @description Jinja text the connector renders. Fills only a field of type `string`. */
-            template: string;
-        };
-        /** @description What one kind of the connector brings. An answer holds every member; a member a save leaves out takes its default. */
-        ConnectorMappingKind: {
-            /** @description Whether the kind comes in. */
-            enabled?: boolean;
-            /** @description The type the kind lands as. */
-            target_type?: string;
-            /**
-             * @description The tier a new item of the kind takes.
-             * @enum {string}
-             */
-            tier?: "feed" | "library";
-            /** @description A status word of the kind's own type mapped to one of the target type. */
-            status_overrides?: {
-                [key: string]: string;
-            };
-            /** @description Each field of the target type, by name, and where its value comes from. */
-            fields?: {
-                [key: string]: components["schemas"]["ConnectorMappingField"];
-            };
-        };
-        /** @description A plugin connector's mapping. */
-        ConnectorMapping: {
-            /** @description The mapping's version. `0` until a mapping is saved. */
-            version: number;
-            /** @description Each kind the plugin's connector brings, by name. */
-            kinds: {
-                [key: string]: components["schemas"]["ConnectorMappingKind"];
-            };
-            /** @description Each rewrite the owner asked for that the connector has not cleared, oldest first. */
-            rewrites: components["schemas"]["ConnectorRewritePending"][];
-        };
-        /** @description The mapping to store, replacing the one stored. */
-        ConnectorMappingSave: {
-            /** @description The `version` you read. */
-            version: number;
-            /** @description Each kind's entry, by name. A kind you leave out takes its default. */
-            kinds: {
-                [key: string]: components["schemas"]["ConnectorMappingKind"];
-            };
-        };
-        /** @description A rewrite of the connector's existing items. */
-        ConnectorRewriteRequest: {
-            /** @description Count the items without asking for the rewrite. */
-            dry_run?: boolean;
-            /** @description The kinds to rewrite. Without it, every enabled kind. */
-            kinds?: string[];
-        };
-        /** @description How many items a rewrite touches. */
-        ConnectorRewrite: {
-            /** @description Whether the rewrite was only counted. */
-            dry_run: boolean;
-            /** @description The stored request's number. Absent on a dry run, which stores none. */
-            number?: number;
-            /** @description The mapping's version. */
-            version: number;
-            /** @description Each kind counted, by name. */
-            kinds: {
-                [key: string]: {
-                    /** @description The kind's target type. */
-                    target_type: string;
-                    /** @description The items outside the bin of the target type under the connector's source. */
-                    count: number;
-                };
-            };
-        };
-        /** @description The rewrite the connector carried out. */
-        ConnectorRewriteDone: {
-            /** @description The `number` of the rewrite carried out. */
-            number: number;
-        };
-        /** @description The rewrite request is cleared. */
-        ConnectorRewriteCleared: {
-            /** @description The rewrites still waiting, oldest first. */
-            rewrites: components["schemas"]["ConnectorRewritePending"][];
-        };
-        /** @description A rewrite of existing items the owner asked for, until the connector clears it. */
-        ConnectorRewritePending: {
-            /** @description The request's number. Numbers rise and are never given again. */
-            number: number;
-            /** @description The mapping's version when the rewrite was asked for. */
-            version: number;
-            /** @description The kinds to rewrite. */
-            kinds: string[];
-            /**
-             * Format: date-time
-             * @description When the rewrite was asked for.
-             * @example 2026-11-21T10:00:00.000Z
-             */
-            requested_at: string;
-        };
         /** @description A kind of record a connector brings, written as one of the plugin's own types. */
         PluginConnectorKind: {
             /**
@@ -9783,6 +9648,141 @@ export interface components {
             set: boolean;
             /** @description `true` if a secret holds a value Marfa can't read, because the instance was restored or moved to another machine, or its settings key was lost. Set it again. */
             unreadable: boolean;
+        };
+        /** @description An error response. */
+        PluginConnectorNotFoundOrPluginNotFoundRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "plugin_not_found" | "plugin_connector_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        ConnectorMappingStaleOrInstanceChangedRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "connector_mapping_stale" | "instance_changed";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description Where a field of the target type gets its value: exactly one of `from`, `fixed` or `template`. */
+        ConnectorMappingField: {
+            /** @description A field of the kind's own type. */
+            from: string;
+        } | {
+            /** @description A value the target field takes. */
+            fixed: unknown;
+        } | {
+            /** @description Jinja text the connector renders. Fills only a field of type `string`. */
+            template: string;
+        };
+        /** @description What one kind of the connector brings. An answer holds every member; a member a save leaves out takes its default. */
+        ConnectorMappingKind: {
+            /** @description Whether the kind comes in. */
+            enabled?: boolean;
+            /** @description The type the kind lands as. */
+            target_type?: string;
+            /**
+             * @description The tier a new item of the kind takes.
+             * @enum {string}
+             */
+            tier?: "feed" | "library";
+            /** @description A status word of the kind's own type mapped to one of the target type. */
+            status_overrides?: {
+                [key: string]: string;
+            };
+            /** @description Each field of the target type, by name, and where its value comes from. */
+            fields?: {
+                [key: string]: components["schemas"]["ConnectorMappingField"];
+            };
+        };
+        /** @description A plugin connector's mapping. */
+        ConnectorMapping: {
+            /** @description The mapping's version. `0` until a mapping is saved. */
+            version: number;
+            /** @description Each kind the plugin's connector brings, by name. */
+            kinds: {
+                [key: string]: components["schemas"]["ConnectorMappingKind"];
+            };
+            /** @description Each rewrite the owner asked for that the connector has not cleared, oldest first. */
+            rewrites: components["schemas"]["ConnectorRewritePending"][];
+        };
+        /** @description The mapping to store, replacing the one stored. */
+        ConnectorMappingSave: {
+            /** @description The `version` you read. */
+            version: number;
+            /** @description Each kind's entry, by name. A kind you leave out takes its default. */
+            kinds: {
+                [key: string]: components["schemas"]["ConnectorMappingKind"];
+            };
+        };
+        /** @description A rewrite of the connector's existing items. */
+        ConnectorRewriteRequest: {
+            /** @description Count the items without asking for the rewrite. */
+            dry_run?: boolean;
+            /** @description The kinds to rewrite. Without it, every enabled kind. */
+            kinds?: string[];
+        };
+        /** @description How many items a rewrite touches. */
+        ConnectorRewrite: {
+            /** @description Whether the rewrite was only counted. */
+            dry_run: boolean;
+            /** @description The stored request's number. Absent on a dry run, which stores none. */
+            number?: number;
+            /** @description The mapping's version. */
+            version: number;
+            /** @description Each kind counted, by name. */
+            kinds: {
+                [key: string]: {
+                    /** @description The kind's target type. */
+                    target_type: string;
+                    /** @description The items outside the bin of the target type under the connector's source. */
+                    count: number;
+                };
+            };
+        };
+        /** @description The rewrite the connector carried out. */
+        ConnectorRewriteDone: {
+            /** @description The `number` of the rewrite carried out. */
+            number: number;
+        };
+        /** @description The rewrite request is cleared. */
+        ConnectorRewriteCleared: {
+            /** @description The rewrites still waiting, oldest first. */
+            rewrites: components["schemas"]["ConnectorRewritePending"][];
+        };
+        /** @description A rewrite of existing items the owner asked for, until the connector clears it. */
+        ConnectorRewritePending: {
+            /** @description The request's number. Numbers rise and are never given again. */
+            number: number;
+            /** @description The mapping's version when the rewrite was asked for. */
+            version: number;
+            /** @description The kinds to rewrite. */
+            kinds: string[];
+            /**
+             * Format: date-time
+             * @description When the rewrite was asked for.
+             * @example 2026-11-21T10:00:00.000Z
+             */
+            requested_at: string;
         };
     };
     responses: never;
@@ -20166,7 +20166,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the bundle has a key it does not hold, a field of the wrong shape, an ID named twice, a connector section `PluginConnector` refuses, a `default_mapping` a save of the mapping would refuse, or an edge type the rules refuse. `details.errors` names each.
+             * @description - `validation_error`: the bundle has a key it does not hold, a field of the wrong shape, an ID named twice, a connector section `PluginConnector` or a mapping save refuses, or a refused edge type. `details.errors` names each.
              *     - `missing_required_field`, `invalid_schema`, `inheritance_violation`, `property_shadows_field`: a type is refused as `POST /types` refuses it. `details.type_id` names it.
              */
             400: {
@@ -20573,6 +20573,602 @@ export interface operations {
                 };
             };
             /** @description `instance_changed`: another instance answers at this address. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceChangedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    replacePluginConnectorHost: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path: {
+                /** @description The plugin's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The ID of the connector host to run the connector, or `null` for none. */
+                    host: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Returns the connector and its host. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "plugin": "rss",
+                     *       "source": "rss",
+                     *       "host": "01a1fa31-0d2e-7c4a-9b51-3f2c8e6d1a07",
+                     *       "key_minted": false
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PluginConnectorAssigned"];
+                };
+            };
+            /** @description - `validation_error`: the body has a key other than `host`, or `host` is neither text nor `null`. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `forbidden`: you lack `connectors.manage`. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /**
+             * @description - `plugin_not_found`: no plugin of this name is installed.
+             *     - `connector_not_found`: the plugin has no connector.
+             *     - `connector_host_not_found`: no connector host has the ID `host` names.
+             */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginConnectorNotFoundRefusal"];
+                };
+            };
+            /** @description `request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests. */
+            408: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTimeoutRefusal"];
+                };
+            };
+            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceChangedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    getPluginConnectorSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The plugin's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the connector's settings. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "plugin": "rss",
+                     *       "settings": [
+                     *         {
+                     *           "name": "feed_url",
+                     *           "label": "Feed",
+                     *           "kind": "text",
+                     *           "choices": null,
+                     *           "secret": false,
+                     *           "required": true,
+                     *           "default": null,
+                     *           "value": "https://example.com/feed.xml",
+                     *           "set": true,
+                     *           "unreadable": false
+                     *         },
+                     *         {
+                     *           "name": "token",
+                     *           "label": "Token",
+                     *           "kind": "text",
+                     *           "choices": null,
+                     *           "secret": true,
+                     *           "required": true,
+                     *           "default": null,
+                     *           "value": null,
+                     *           "set": true,
+                     *           "unreadable": false
+                     *         }
+                     *       ],
+                     *       "missing": []
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PluginConnectorSettings"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `forbidden`: you lack `connectors.manage`. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /**
+             * @description - `plugin_not_found`: no plugin of this name is installed.
+             *     - `connector_not_found`: the plugin has no connector.
+             */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginConnectorNotFoundRefusal"];
+                };
+            };
+            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceChangedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    updatePluginConnectorSettings: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path: {
+                /** @description The plugin's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "feed_url": "https://example.com/feed.xml",
+                 *       "token": "a secret value"
+                 *     }
+                 */
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Returns the connector's settings after the change. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "plugin": "rss",
+                     *       "settings": [
+                     *         {
+                     *           "name": "feed_url",
+                     *           "label": "Feed",
+                     *           "kind": "text",
+                     *           "choices": null,
+                     *           "secret": false,
+                     *           "required": true,
+                     *           "default": null,
+                     *           "value": "https://example.com/feed.xml",
+                     *           "set": true,
+                     *           "unreadable": false
+                     *         },
+                     *         {
+                     *           "name": "token",
+                     *           "label": "Token",
+                     *           "kind": "text",
+                     *           "choices": null,
+                     *           "secret": true,
+                     *           "required": true,
+                     *           "default": null,
+                     *           "value": null,
+                     *           "set": true,
+                     *           "unreadable": false
+                     *         }
+                     *       ],
+                     *       "missing": []
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PluginConnectorSettings"];
+                };
+            };
+            /** @description - `validation_error`: the body isn't an object, names a setting the connector doesn't declare, or gives a value that doesn't fit its setting: text of 1 to 4096 characters, a secret's with no white space at either end, a number, `true` or `false`, or one of its `choices`. `details.errors` names each setting, never a secret's value, and nothing is stored. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `forbidden`: you lack `connectors.manage`. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /**
+             * @description - `plugin_not_found`: no plugin of this name is installed.
+             *     - `connector_not_found`: the plugin has no connector.
+             */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginConnectorNotFoundRefusal"];
+                };
+            };
+            /** @description `request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests. */
+            408: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTimeoutRefusal"];
+                };
+            };
+            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21332,602 +21928,6 @@ export interface operations {
                 };
             };
             /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. */
-            409: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InstanceChangedRefusal"];
-                };
-            };
-            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
-            412: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContractMismatchRefusal"];
-                };
-            };
-            /** @description `request_too_large`: the request body is larger than this instance accepts. */
-            413: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    replacePluginConnectorHost: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
-                "X-Marfa-Instance-Id"?: string;
-            };
-            path: {
-                /** @description The plugin's name. */
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** @description The ID of the connector host to run the connector, or `null` for none. */
-                    host: string | null;
-                };
-            };
-        };
-        responses: {
-            /** @description Returns the connector and its host. */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "plugin": "rss",
-                     *       "source": "rss",
-                     *       "host": "01a1fa31-0d2e-7c4a-9b51-3f2c8e6d1a07",
-                     *       "key_minted": false
-                     *     }
-                     */
-                    "application/json": components["schemas"]["PluginConnectorAssigned"];
-                };
-            };
-            /** @description - `validation_error`: the body has a key other than `host`, or `host` is neither text nor `null`. */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description - `forbidden`: you lack `connectors.manage`. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
-                };
-            };
-            /**
-             * @description - `plugin_not_found`: no plugin of this name is installed.
-             *     - `connector_not_found`: the plugin has no connector.
-             *     - `connector_host_not_found`: no connector host has the ID `host` names.
-             */
-            404: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PluginConnectorNotFoundRefusal"];
-                };
-            };
-            /** @description `request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests. */
-            408: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTimeoutRefusal"];
-                };
-            };
-            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
-            409: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InstanceChangedRefusal"];
-                };
-            };
-            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
-            412: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContractMismatchRefusal"];
-                };
-            };
-            /** @description `request_too_large`: the request body is larger than this instance accepts. */
-            413: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    getPluginConnectorSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description The plugin's name. */
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Returns the connector's settings. */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "plugin": "rss",
-                     *       "settings": [
-                     *         {
-                     *           "name": "feed_url",
-                     *           "label": "Feed",
-                     *           "kind": "text",
-                     *           "choices": null,
-                     *           "secret": false,
-                     *           "required": true,
-                     *           "default": null,
-                     *           "value": "https://example.com/feed.xml",
-                     *           "set": true,
-                     *           "unreadable": false
-                     *         },
-                     *         {
-                     *           "name": "token",
-                     *           "label": "Token",
-                     *           "kind": "text",
-                     *           "choices": null,
-                     *           "secret": true,
-                     *           "required": true,
-                     *           "default": null,
-                     *           "value": null,
-                     *           "set": true,
-                     *           "unreadable": false
-                     *         }
-                     *       ],
-                     *       "missing": []
-                     *     }
-                     */
-                    "application/json": components["schemas"]["PluginConnectorSettings"];
-                };
-            };
-            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description - `forbidden`: you lack `connectors.manage`. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
-                };
-            };
-            /**
-             * @description - `plugin_not_found`: no plugin of this name is installed.
-             *     - `connector_not_found`: the plugin has no connector.
-             */
-            404: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PluginConnectorNotFoundRefusal"];
-                };
-            };
-            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
-            409: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InstanceChangedRefusal"];
-                };
-            };
-            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
-            412: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContractMismatchRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    updatePluginConnectorSettings: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
-                "X-Marfa-Instance-Id"?: string;
-            };
-            path: {
-                /** @description The plugin's name. */
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "feed_url": "https://example.com/feed.xml",
-                 *       "token": "a secret value"
-                 *     }
-                 */
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Returns the connector's settings after the change. */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "plugin": "rss",
-                     *       "settings": [
-                     *         {
-                     *           "name": "feed_url",
-                     *           "label": "Feed",
-                     *           "kind": "text",
-                     *           "choices": null,
-                     *           "secret": false,
-                     *           "required": true,
-                     *           "default": null,
-                     *           "value": "https://example.com/feed.xml",
-                     *           "set": true,
-                     *           "unreadable": false
-                     *         },
-                     *         {
-                     *           "name": "token",
-                     *           "label": "Token",
-                     *           "kind": "text",
-                     *           "choices": null,
-                     *           "secret": true,
-                     *           "required": true,
-                     *           "default": null,
-                     *           "value": null,
-                     *           "set": true,
-                     *           "unreadable": false
-                     *         }
-                     *       ],
-                     *       "missing": []
-                     *     }
-                     */
-                    "application/json": components["schemas"]["PluginConnectorSettings"];
-                };
-            };
-            /** @description - `validation_error`: the body isn't an object, names a setting the connector doesn't declare, or gives a value that doesn't fit its setting: text of 1 to 4096 characters, a secret's with no white space at either end, a number, `true` or `false`, or one of its `choices`. `details.errors` names each setting, never a secret's value, and nothing is stored. */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description - `forbidden`: you lack `connectors.manage`. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
-                };
-            };
-            /**
-             * @description - `plugin_not_found`: no plugin of this name is installed.
-             *     - `connector_not_found`: the plugin has no connector.
-             */
-            404: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PluginConnectorNotFoundRefusal"];
-                };
-            };
-            /** @description `request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests. */
-            408: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTimeoutRefusal"];
-                };
-            };
-            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -43220,8 +43220,6 @@ export interface operations {
                      *       },
                      *       "plugins_added": 0,
                      *       "plugins_skipped": 0,
-                     *       "connector_mappings_added": 0,
-                     *       "connector_mappings_skipped": 0,
                      *       "settings_added": 0,
                      *       "settings_skipped": 0,
                      *       "settings_dropped": [],
@@ -43259,7 +43257,9 @@ export interface operations {
                      *         "message": "Instance 01a10128-f3e1-7ab1-b58c-a89836a748a8 wrote this archive. If it took backups to this backup folder, its backups, their parts and its file copies are in backups/01a10128-f3e1-7ab1-b58c-a89836a748a8, backup-parts/01a10128-f3e1-7ab1-b58c-a89836a748a8 and files/01a10128-f3e1-7ab1-b58c-a89836a748a8. Delete them only once that instance no longer runs and nothing else restores from them."
                      *       },
                      *       "secrets_to_set": [],
-                     *       "connector_secrets_to_set": []
+                     *       "connector_secrets_to_set": [],
+                     *       "connector_mappings_added": 0,
+                     *       "connector_mappings_skipped": 0
                      *     }
                      */
                     "application/json": {
@@ -43311,10 +43311,6 @@ export interface operations {
                         plugins_added: number;
                         /** @description Plugin install records the restore left as this instance holds them. */
                         plugins_skipped: number;
-                        /** @description Connector mappings the archive held for a plugin the instance had none saved for, now stored. */
-                        connector_mappings_added: number;
-                        /** @description Connector mappings the archive held for a plugin that already had one saved, which were kept as they were. */
-                        connector_mappings_skipped: number;
                         /** @description How many settings Marfa stored, for settings the instance had not stored. */
                         settings_added: number;
                         /** @description How many settings Marfa skipped because the instance already stores them. */
@@ -43350,6 +43346,10 @@ export interface operations {
                         secrets_to_set: string[];
                         /** @description The secret settings of a restored plugin's connector that the archive's instance had set. An archive never holds a secret's value, so set each again with `PATCH /plugins/{name}/connector/settings`; the attention list names them until you do. */
                         connector_secrets_to_set: components["schemas"]["ConnectorSecretToSet"][];
+                        /** @description Connector mappings the archive held for a plugin the instance had none saved for, now stored. */
+                        connector_mappings_added: number;
+                        /** @description Connector mappings the archive held for a plugin that already had one saved, which were kept as they were. */
+                        connector_mappings_skipped: number;
                     };
                 };
             };
@@ -43386,7 +43386,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: `details.required_scope` names the missing permission. `details.settings` lists settings for `config.manage`, `details.plugins` and `details.connector_settings` for `connectors.manage`, and `details.changes` lists `guidance` for `schema.write`.
+             * @description - `forbidden`: `details.required_scope` names the missing permission. `details.settings` lists settings for `config.manage`, `details.plugins`, `details.connector_settings` and `details.connector_mappings` for `connectors.manage`, and `details.changes` lists `guidance` for `schema.write`.
              *     - `app_sign_in_required`: you are using an API key. Use an app you signed in to or the private local command.
              */
             403: {
@@ -44032,8 +44032,6 @@ export interface operations {
                      *       "sources_skipped_reasons": {},
                      *       "plugins_added": 0,
                      *       "plugins_skipped": 0,
-                     *       "connector_mappings_added": 0,
-                     *       "connector_mappings_skipped": 0,
                      *       "settings_added": 0,
                      *       "settings_skipped": 0,
                      *       "settings_dropped": [],
@@ -44065,7 +44063,9 @@ export interface operations {
                      *         "instance_id": "01a10128-f3e1-7ab1-b58c-a89836a748a8"
                      *       },
                      *       "secrets_to_set": [],
-                     *       "connector_secrets_to_set": []
+                     *       "connector_secrets_to_set": [],
+                     *       "connector_mappings_added": 0,
+                     *       "connector_mappings_skipped": 0
                      *     }
                      */
                     "application/json": {
@@ -44117,10 +44117,6 @@ export interface operations {
                         plugins_added: number;
                         /** @description Plugin install records the restore left as this instance holds them. */
                         plugins_skipped: number;
-                        /** @description Connector mappings the archive held for a plugin the instance had none saved for, now stored. */
-                        connector_mappings_added: number;
-                        /** @description Connector mappings the archive held for a plugin that already had one saved, which were kept as they were. */
-                        connector_mappings_skipped: number;
                         /** @description How many settings Marfa stored, for settings the instance had not stored. */
                         settings_added: number;
                         /** @description How many settings Marfa skipped because the instance already stores them. */
@@ -44167,6 +44163,10 @@ export interface operations {
                         secrets_to_set: string[];
                         /** @description The secret settings of a restored plugin's connector that the archive's instance had set. An archive never holds a secret's value, so set each again with `PATCH /plugins/{name}/connector/settings`; the attention list names them until you do. */
                         connector_secrets_to_set: components["schemas"]["ConnectorSecretToSet"][];
+                        /** @description Connector mappings the archive held for a plugin the instance had none saved for, now stored. */
+                        connector_mappings_added: number;
+                        /** @description Connector mappings the archive held for a plugin that already had one saved, which were kept as they were. */
+                        connector_mappings_skipped: number;
                     };
                 };
             };
@@ -44203,7 +44203,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: `details.required_scope` names the missing permission. `details.settings` lists settings for `config.manage`, `details.plugins` and `details.connector_settings` for `connectors.manage`, and `details.changes` lists `guidance` for `schema.write`.
+             * @description - `forbidden`: `details.required_scope` names the missing permission. `details.settings` lists settings for `config.manage`, `details.plugins`, `details.connector_settings` and `details.connector_mappings` for `connectors.manage`, and `details.changes` lists `guidance` for `schema.write`.
              *     - `app_sign_in_required`: you are using an API key. Use an app you signed in to or the private local command.
              */
             403: {

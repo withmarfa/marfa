@@ -159,7 +159,10 @@ pub struct Registrations {
 impl Registrations {
     /// Each plugin whose mapping the archive carries.
     pub fn mapped(&self) -> Vec<String> {
-        self.mappings.iter().map(|held| held.plugin.clone()).collect()
+        self.mappings
+            .iter()
+            .map(|held| held.plugin.clone())
+            .collect()
     }
 }
 

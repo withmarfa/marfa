@@ -53,7 +53,7 @@ const PINS: &[Pin] = &[
     Pin {
         version: 8,
         file: "c7865418c4d57e5d02dd9a3ad29c07bd172ed6e3dff367d822de47ed39a52ef0",
-        holds: "0000000000000000000000000000000000000000000000000000000000000000",
+        holds: "6b1dd0db0eefea033dc2f184d48bc3ecd55aa350e61d68468cbb1cc8f87aab86",
     },
 ];
 
