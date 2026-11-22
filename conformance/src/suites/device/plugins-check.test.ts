@@ -268,6 +268,42 @@ describe("a plugin's source folder from the terminal", () => {
     ]);
   });
 
+  it("refuses a connector edge type that is unknown, named twice or on a system type, as installing does", async () => {
+    const naming = (edgeTypes: string[]) =>
+      source(
+        { "common.issue.json": definition("common.issue") },
+        {
+          connector: {
+            source: "edgecheck",
+            source_name: "Edgecheck",
+            kinds: [{ name: "issue", type: "common.issue", direction: "in" }],
+            edge_types: edgeTypes,
+            runs: { on: "host" },
+          },
+        },
+      );
+    // The witness: the folder's own edge type and a shipped one pass.
+    const passed = await marfa(
+      ["--json", "plugins", "check", naming(["blocks", "attached-to"])],
+      NO_KEYCHAIN,
+    );
+    expect(passed.code, passed.stdout).toBe(0);
+    const refused = await marfa(
+      [
+        "--json",
+        "plugins",
+        "check",
+        naming(["blocks", "nowhere", "blocks", "in-folder"]),
+      ],
+      NO_KEYCHAIN,
+    );
+    expect(refused.code, refused.stdout).toBe(1);
+    const verdict = JSON.parse(refused.stdout) as Verdict;
+    expect(verdict.problems.map((problem) => problem.path)).toEqual(
+      [1, 2, 3].map((at) => `plugin.json: connector.edge_types.${at}`),
+    );
+  });
+
   it("builds a source folder into a bundle stamped with its version, and writes an index naming its SHA-256", async () => {
     const folder = source({
       "common.ticket.json": definition("common.ticket"),

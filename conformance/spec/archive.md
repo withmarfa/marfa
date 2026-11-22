@@ -1188,7 +1188,7 @@ When the credential requesting `GET /export?format=archive` holds `connectors.ma
 
 **Reason:** the owner's settings are work a move to a new machine keeps.
 
-**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`.
+**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`, `› takes a text value of 65536 characters, carries it through an export and a restore, and refuses one of 65537`.
 
 ### `archive/archive-connector-secret-named`
 
@@ -1210,7 +1210,7 @@ When `POST /restore` keeps the install record of a plugin with a connector that 
 
 **Reason:** a plugin the instance already held keeps the settings its owner set there, as a restore keeps each instance setting the instance holds (`archive/restore-settings`).
 
-**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`.
+**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`, `› takes a text value of 65536 characters, carries it through an export and a restore, and refuses one of 65537`.
 
 ### `archive/restore-connector-secrets-to-set`
 

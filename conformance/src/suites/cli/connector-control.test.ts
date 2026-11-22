@@ -119,7 +119,10 @@ describe("a connector's pause, run and preview from the terminal", () => {
     });
     expect(first.status, JSON.stringify(first.error)).toBe(200);
 
-    const rendered = { title: "Rendered in the connector" };
+    const rendered = {
+      type: plugin.issue,
+      properties: { title: "Rendered in the connector" },
+    };
     const waiting = cli.json<Preview>([
       "plugins",
       "mapping",

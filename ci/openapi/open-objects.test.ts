@@ -50,9 +50,9 @@ const OPEN_ON_PURPOSE: readonly { pattern: RegExp; reason: string }[] = [
     reason: "A connector's state document, whose shape is the connector's own.",
   },
   {
-    pattern: /^ConnectorPreview(Answer)?\.result$/,
+    pattern: /^ConnectorPreviewResult\.properties$/,
     reason:
-      "The fields a connector rendered for a mapping preview, kept as it sent them.",
+      "The fields of the item a connector rendered for a mapping preview, whose shape the kind's target type declares at runtime.",
   },
   {
     pattern: /^ConnectorAgreement\.record$/,

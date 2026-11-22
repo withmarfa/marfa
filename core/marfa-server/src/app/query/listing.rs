@@ -3,7 +3,7 @@ use rusqlite::Transaction;
 use rusqlite::types::Value;
 use serde_json::{Map, Value as Json, json};
 
-use super::compile::{Ask, Sql, judge, selection};
+use super::compile::{Ask, Sql, judge, judge_reach, selection};
 use super::cursor::Position;
 use super::order::{Order, Sort};
 use super::reach::Reach;
@@ -108,7 +108,7 @@ pub(super) fn answered(
 pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String> {
     let secret = app.cursor_secret.clone();
     let (page, add) = reading(app, caller, move |read| {
-        let reach = Reach::of(read)?;
+        let reach = Reach::of_own(read)?;
         let Listing {
             ask,
             sort,
@@ -116,7 +116,7 @@ pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String
             cursor,
             include,
         } = &listing;
-        judge(read, ask)?;
+        judge_reach(read, ask, &reach)?;
         let order = Order::listing(sort, ask);
         let scope = json!([
             "items",

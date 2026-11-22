@@ -18,7 +18,7 @@ mod sources;
 mod views;
 
 pub use compile::{Ask, Filter, States};
-pub(crate) use compile::{Sql, judge_type};
+pub(crate) use compile::{Sql, judge_type, judge_type_within};
 pub use counts::{Count, Counted, counts};
 pub use cursor::{Position, SECRET_KEY, Secret, refused as bad_cursor};
 pub(crate) use events::{Event, Recurrence, events, parents};

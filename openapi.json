@@ -14771,6 +14771,17 @@
             "minItems": 1,
             "description": "The kinds of record the connector brings."
           },
+          "edge_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true,
+            "description": "The IDs of the edge types the connector writes, each one of the bundle's own `edge_types` or one Marfa ships whose ends aren't `system` types. Its key may write each.",
+            "example": [
+              "attached-to"
+            ]
+          },
           "settings": {
             "type": "array",
             "items": {
@@ -16336,12 +16347,15 @@
             "description": "`pending` until the connector answers, then `ready` with `result` or `failed` with `error`."
           },
           "result": {
-            "type": [
-              "object",
-              "null"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConnectorPreviewResult"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "additionalProperties": {},
-            "description": "The fields the connector rendered, as it sent them, once `status` is `ready`."
+            "description": "The item the connector rendered, as it sent it, once `status` is `ready`."
           },
           "error": {
             "type": [
@@ -16440,9 +16454,12 @@
         "type": "object",
         "properties": {
           "result": {
-            "type": "object",
-            "additionalProperties": {},
-            "description": "The fields the connector rendered, at most 65,536 bytes written as JSON. Send this or `error`."
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConnectorPreviewResult"
+              }
+            ],
+            "description": "The item the connector rendered, at most 65,536 bytes written as JSON. Send this or `error`."
           },
           "error": {
             "type": "string",
@@ -16453,6 +16470,38 @@
         },
         "additionalProperties": false,
         "description": "The connector's answer to a mapping preview: `result` or `error`, not both."
+      },
+      "ConnectorPreviewResult": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "The type the item would land as: the `target_type` of the preview's `mapping`, or of its kind in the mapping in force.",
+            "example": "common.ticket.task"
+          },
+          "properties": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "The fields the item would land with, by the target type's field names."
+          },
+          "title": {
+            "type": "string",
+            "description": "The title the item would show. Present only if the connector sent one."
+          },
+          "source_item": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The ID of the item the connector rendered, or `null` if it rendered from its service. Present only if the connector sent it."
+          }
+        },
+        "required": [
+          "type",
+          "properties"
+        ],
+        "additionalProperties": false,
+        "description": "A mapping preview the connector rendered: the item as it would land under the mapping."
       }
     },
     "parameters": {},
@@ -36886,7 +36935,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body isn't an object, names a setting the connector doesn't declare, or gives a value that doesn't fit its setting: text of 1 to 4096 characters, a secret's with no white space at either end, a number, `true` or `false`, or one of its `choices`. `details.errors` names each setting, never a secret's value, and nothing is stored.",
+            "description": "- `validation_error`: the body isn't an object, names a setting the connector doesn't declare, or gives a value that doesn't fit its setting: text of 1 to 65,536 characters, a secret's with no white space at either end, a number, `true` or `false`, or one of its `choices`. `details.errors` names each setting, never a secret's value, and nothing is stored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -40566,8 +40615,13 @@
                   "mapping": null,
                   "status": "ready",
                   "result": {
+                    "type": "rss.entry",
                     "title": "A post",
-                    "url": "https://example.com/a-post"
+                    "properties": {
+                      "title": "A post",
+                      "url": "https://example.com/a-post"
+                    },
+                    "source_item": "01a1fa41-9d8e-7f10-b2c3-4d5e6f708192"
                   },
                   "error": null,
                   "created_at": "2026-10-03T09:30:00.000Z",
@@ -40810,7 +40864,7 @@
           "Plugins"
         ],
         "summary": "Answer a mapping preview",
-        "description": "Keeps the connector's answer to a pending preview as it sends it: the rendered fields as `result`, or `error`. Marfa never renders a field itself. Only the connector's own key, or local authority, can do this.",
+        "description": "Keeps the connector's answer to a pending preview as it sends it: the rendered item as `result`, or `error`. Marfa never renders a field itself. Only the connector's own key, or local authority, can do this.",
         "security": [
           {
             "bearerAuth": []
@@ -40865,8 +40919,13 @@
                   "mapping": null,
                   "status": "ready",
                   "result": {
+                    "type": "rss.entry",
                     "title": "A post",
-                    "url": "https://example.com/a-post"
+                    "properties": {
+                      "title": "A post",
+                      "url": "https://example.com/a-post"
+                    },
+                    "source_item": "01a1fa41-9d8e-7f10-b2c3-4d5e6f708192"
                   },
                   "error": null,
                   "created_at": "2026-10-03T09:30:00.000Z",
@@ -40885,7 +40944,7 @@
             }
           },
           "400": {
-            "description": "`validation_error`: the body holds neither or both of `result` and `error`, a `result` that is not an object or is over 65,536 bytes, an `error` that is not 1 to 500 characters, or another member. `details.errors` names each.",
+            "description": "`validation_error`: the body holds neither or both of `result` and `error`, a `result` that is over 65,536 bytes or isn't an item of the kind's target type with `properties`, an optional `title` and an optional `source_item`, an `error` that is not 1 to 500 characters, or another member. `details.errors` names each.",
             "content": {
               "application/json": {
                 "schema": {
@@ -41152,8 +41211,13 @@
               },
               "example": {
                 "result": {
+                  "type": "rss.entry",
                   "title": "A post",
-                  "url": "https://example.com/a-post"
+                  "properties": {
+                    "title": "A post",
+                    "url": "https://example.com/a-post"
+                  },
+                  "source_item": "01a1fa41-9d8e-7f10-b2c3-4d5e6f708192"
                 }
               }
             }

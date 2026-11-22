@@ -483,9 +483,14 @@ describe("mapping previews", () => {
     expect(badStatus.error?.error.code).toBe("validation_error");
 
     const result = {
+      type: plugin.issue,
       title: "Hello",
-      reporter: "tracker",
-      nested: [1, { a: null }],
+      properties: {
+        title: "Hello",
+        opened_by: "someone",
+        nested: [1, { a: null }],
+      },
+      source_item: item.id,
     };
     const ready = await own.answerMappingPreview(plugin.name, made.data.id, {
       result,
@@ -525,7 +530,7 @@ describe("mapping previews", () => {
     refusedForScope(await stranger.getMappingPreview(plugin.name, draft.id));
 
     const twice = await own.answerMappingPreview(plugin.name, made.data.id, {
-      result: { title: "Again" },
+      result: { type: plugin.issue, properties: { title: "Again" } },
     });
     expect(twice.status).toBe(409);
     expect(twice.error?.error.code).toBe("connector_preview_answered");
@@ -639,7 +644,7 @@ describe("mapping previews", () => {
       made.push((await previewed(plugin.name, { kind: "comment" })).id);
     }
     const ready = await own.answerMappingPreview(plugin.name, made[5]!, {
-      result: { title: "rendered" },
+      result: { type: plugin.comment, properties: { title: "rendered" } },
     });
     expect(ready.status, JSON.stringify(ready.error)).toBe(200);
     const failed = await own.answerMappingPreview(plugin.name, made[10]!, {
@@ -685,6 +690,10 @@ describe("mapping previews", () => {
     const { client: own } = await connectorKey(server, plugin);
     const { client: foreign } = await connectorKey(server, other);
     const preview = await previewed(plugin.name, { kind: "issue" });
+    const rendered = (properties: Record<string, unknown>) => ({
+      type: plugin.issue,
+      properties,
+    });
 
     for (const [body, named] of [
       [{}, null],
@@ -692,8 +701,8 @@ describe("mapping previews", () => {
       [{ result: [1] }, ["result"]],
       [{ error: "" }, ["error"]],
       [{ error: "x".repeat(501) }, ["error"]],
-      [{ result: {}, extra: 1 }, ["extra"]],
-      [{ result: { text: "a".repeat(70_000) } }, ["result"]],
+      [{ result: rendered({}), extra: 1 }, ["extra"]],
+      [{ result: rendered({ text: "a".repeat(70_000) }) }, ["result"]],
     ] as const) {
       const refused = await own.answerMappingPreview(
         plugin.name,
@@ -707,7 +716,7 @@ describe("mapping previews", () => {
 
     for (const by of [foreign, owner, stranger]) {
       const refused = await by.answerMappingPreview(plugin.name, preview.id, {
-        result: { title: "not yours" },
+        result: rendered({ title: "not yours" }),
       });
       expect(refused.status).toBe(403);
       expect(refused.error?.error.code).toBe("forbidden");
@@ -717,12 +726,91 @@ describe("mapping previews", () => {
     ).toBe("pending");
 
     // The witness: a result under the bound is kept as given.
-    const large = { text: "a".repeat(60_000) };
+    const large = rendered({ text: "a".repeat(60_000) });
     const kept = await own.answerMappingPreview(plugin.name, preview.id, {
       result: large,
     });
     expect(kept.status, JSON.stringify(kept.error)).toBe(200);
     expect(kept.data.result).toEqual(large);
+  });
+
+  it("refuses a result that is not an item of the kind's target type, naming each path, and keeps one that is", async () => {
+    const plugin = await installed(owner);
+    const { client: own } = await connectorKey(server, plugin);
+    const item = await issue(own, plugin);
+    const preview = await previewed(plugin.name, {
+      kind: "issue",
+      item_id: item.id,
+    });
+    const drafted = await previewed(plugin.name, {
+      kind: "issue",
+      mapping: {
+        target_type: plugin.ticket,
+        fields: { title: { from: "title" }, reporter: { fixed: "tracker" } },
+      },
+    });
+    const fields = { title: "Rendered" };
+
+    for (const [result, named] of [
+      [{ properties: fields }, ["result.type"]],
+      [{ type: plugin.ticket, properties: fields }, ["result.type"]],
+      [{ type: plugin.issue }, ["result.properties"]],
+      [{ type: plugin.issue, properties: [1] }, ["result.properties"]],
+      [{ type: plugin.issue, properties: fields, title: 3 }, ["result.title"]],
+      [
+        { type: plugin.issue, properties: fields, source_item: 7 },
+        ["result.source_item"],
+      ],
+      [{ type: plugin.issue, properties: fields, fields }, ["result.fields"]],
+      [{ title: "Rendered" }, ["result.type", "result.properties"]],
+    ] as const) {
+      const refused = await own.answerMappingPreview(plugin.name, preview.id, {
+        result,
+      });
+      expect(refused.status, JSON.stringify(result)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(paths(refused.error).sort()).toEqual([...named].sort());
+    }
+    // A draft's target type is the type its result names.
+    const wrongForDraft = await own.answerMappingPreview(
+      plugin.name,
+      drafted.id,
+      { result: { type: plugin.issue, properties: fields } },
+    );
+    expect(wrongForDraft.status).toBe(400);
+    expect(paths(wrongForDraft.error)).toEqual(["result.type"]);
+    expect(
+      (await owner.getMappingPreview(plugin.name, preview.id)).data.status,
+    ).toBe("pending");
+
+    // The witness: each preview takes a result of its own target type.
+    const whole = {
+      type: plugin.issue,
+      properties: fields,
+      title: "Rendered",
+      source_item: item.id,
+    };
+    const kept = await own.answerMappingPreview(plugin.name, preview.id, {
+      result: whole,
+    });
+    expect(kept.status, JSON.stringify(kept.error)).toBe(200);
+    expect(kept.data.result).toEqual(whole);
+    const fromService = {
+      type: plugin.ticket,
+      properties: { title: "Rendered", reporter: "tracker" },
+      source_item: null,
+    };
+    const keptDraft = await own.answerMappingPreview(plugin.name, drafted.id, {
+      result: fromService,
+    });
+    expect(keptDraft.status, JSON.stringify(keptDraft.error)).toBe(200);
+    await expectMatchesSchema(
+      "POST",
+      "/plugins/{name}/connector/previews/{id}",
+      200,
+      keptDraft.data,
+    );
+    expect(keptDraft.data.result).toEqual(fromService);
   });
 
   it(
@@ -753,7 +841,7 @@ describe("mapping previews", () => {
       expect(gone.status).toBe(404);
       expect(gone.error?.error.code).toBe("connector_preview_not_found");
       const late = await own.answerMappingPreview(plugin.name, preview.id, {
-        result: { title: "too late" },
+        result: { type: plugin.issue, properties: { title: "too late" } },
       });
       expect(late.status).toBe(404);
       expect(late.error?.error.code).toBe("connector_preview_not_found");

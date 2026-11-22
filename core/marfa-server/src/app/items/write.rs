@@ -2675,7 +2675,11 @@ impl<'t, 'c> Job<'_, 't, 'c> {
 
     fn settle(&self, type_id: &str, keys: &Keys, settled_at: &str) -> Result<Done> {
         check_keys(&self.catalog, type_id, Some(keys))?;
-        self.gate().type_gate(type_id)?;
+        let under = match keys {
+            Keys::Natural { source, .. } => Some(source.as_str()),
+            Keys::Links(_) => None,
+        };
+        self.gate().type_gate_under(type_id, under)?;
         let tx = self.unit.tx();
         match keys {
             Keys::Links(links) => {

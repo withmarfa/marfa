@@ -323,7 +323,7 @@ describe("the owner's settings doors", () => {
     const wrong: [string, unknown][] = [
       ["feed_url", 3],
       ["feed_url", ""],
-      ["feed_url", "x".repeat(4097)],
+      ["feed_url", "x".repeat(65_537)],
       ["feed_url", true],
       ["every", "15"],
       ["every", false],
@@ -373,6 +373,64 @@ describe("the owner's settings doors", () => {
     expect(taken.status, JSON.stringify(taken.error)).toBe(200);
     expect(entry(taken, "token").set).toBe(true);
   });
+
+  it(
+    "takes a text value of 65536 characters, carries it through an export and a restore, and refuses one of 65537",
+    { timeout: 2 * FRESH_SERVER_TIMEOUT_MS },
+    async () => {
+      const name = `long-${fresh()}`;
+      await installed(owner, name);
+      // A list of addresses, one to a line, as a connector keeps many feeds in one setting.
+      const line = "https://feeds.example.test/a-feed-address\n";
+      const long =
+        line.repeat(Math.floor(65_536 / line.length)) +
+        "x".repeat(65_536 % line.length);
+      expect(long.length).toBe(65_536);
+
+      const over = await owner.setConnectorSettings(name, {
+        feed_url: `${long}x`,
+      });
+      expect(over.status).toBe(400);
+      expect(over.error?.error.code).toBe("validation_error");
+      expect(errorPaths(over)).toEqual(["feed_url"]);
+      expect(
+        entry(await owner.getConnectorSettings(name), "feed_url").set,
+      ).toBe(false);
+
+      const set = await owner.setConnectorSettings(name, { feed_url: long });
+      expect(set.status, JSON.stringify(set.error)).toBe(200);
+      expect(entry(set, "feed_url")).toMatchObject({ value: long, set: true });
+      expect(
+        entry(await owner.getConnectorSettings(name), "feed_url").value,
+      ).toBe(long);
+
+      const archive = await owner.exportArchive({
+        state: "any",
+        files: "false",
+      });
+      expect(archive.status).toBe(200);
+      expect(
+        connectorSettingLines(archive.data).filter(
+          (held) => held.plugin === name,
+        ),
+      ).toEqual([{ plugin: name, name: "feed_url", value: long }]);
+
+      const elsewhere = await bootFreshServer("connector-settings-long");
+      try {
+        const restored = await ownerOf(elsewhere).restoreArchive(archive.data);
+        expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+        const there = (await ownerKey(elsewhere, OWNER_PERMISSIONS)).client;
+        const read = await there.getConnectorSettings(name);
+        expect(read.status, JSON.stringify(read.error)).toBe(200);
+        expect(entry(read, "feed_url")).toMatchObject({
+          value: long,
+          set: true,
+        });
+      } finally {
+        await elsewhere.stop();
+      }
+    },
+  );
 
   it("refuses 403 the settings doors to a key without connectors.manage, and 404 a plugin not installed or with no connector", async () => {
     const name = `guarded-${fresh()}`;

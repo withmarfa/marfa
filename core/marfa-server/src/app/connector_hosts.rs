@@ -611,12 +611,19 @@ pub async fn mint(app: &App, caller: &Caller, plugin: String) -> Result<Value> {
             .get("connector")
             .and_then(Value::as_object)
             .ok_or_else(|| Refusal::internal("a recorded connector's plugin has no connector"))?;
-        let writes: serde_json::Map<String, Value> = plugin_connector::kind_types(section)
-            .into_iter()
-            .map(|type_id| (type_id.to_string(), Value::from("write")))
-            .collect();
+        let writing = |names: Vec<&str>| -> Value {
+            Value::Object(
+                names
+                    .into_iter()
+                    .map(|name| (name.to_string(), Value::from("write")))
+                    .collect(),
+            )
+        };
         let mut grants = Grants::default();
-        grants.maps[Axis::Type as usize] = Axis::Type.from_body(&Value::Object(writes))?;
+        grants.maps[Axis::Type as usize] =
+            Axis::Type.from_body(&writing(plugin_connector::kind_types(section)))?;
+        grants.maps[Axis::Edge as usize] =
+            Axis::Edge.from_body(&writing(plugin_connector::edge_types(section)))?;
         end_connector_key(unit, &record)?;
         let key = keys::given(
             format!("{plugin} connector"),

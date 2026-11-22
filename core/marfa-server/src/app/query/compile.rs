@@ -135,21 +135,34 @@ impl Ask {
 }
 
 pub fn judge(read: &Reader<'_, '_>, ask: &Ask) -> Result<()> {
+    judge_within(read, ask, |_| false)
+}
+
+/// As `judge`, also taking each type `reach` reads for the key's own items alone.
+pub fn judge_reach(read: &Reader<'_, '_>, ask: &Ask, reach: &Reach) -> Result<()> {
+    judge_within(read, ask, |type_id| reach.reads_own(type_id))
+}
+
+fn judge_within(read: &Reader<'_, '_>, ask: &Ask, own: impl Fn(&str) -> bool) -> Result<()> {
     for entry in &ask.types {
-        judge_type(read, entry)?;
+        judge_type_within(read, entry, &own)?;
     }
     judge_terms(read, ask)
 }
 
 /// A type the caller reads neither itself nor below it is not permitted, registered or not; a readable one the catalog lacks is unknown.
 pub(crate) fn judge_type(read: &Reader<'_, '_>, entry: &str) -> Result<()> {
+    judge_type_within(read, entry, &|_| false)
+}
+
+pub(crate) fn judge_type_within(
+    read: &Reader<'_, '_>,
+    entry: &str,
+    own: &dyn Fn(&str) -> bool,
+) -> Result<()> {
     let rules = &read.catalog.rules;
-    if !(entry.ends_with(".*")
-        || read.caller.may_read_type(entry)
-        || rules
-            .descendants(entry)
-            .any(|below| read.caller.may_read_type(below)))
-    {
+    let reads = |type_id: &str| read.caller.may_read_type(type_id) || own(type_id);
+    if !(entry.ends_with(".*") || reads(entry) || rules.descendants(entry).any(reads)) {
         read.caller.require_type(entry, Level::Read)?;
     }
     marfa_rules::query::refuse_unknown_type(rules, Some(entry)).map_err(ruled)

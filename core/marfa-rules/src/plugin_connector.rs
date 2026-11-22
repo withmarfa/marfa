@@ -1,12 +1,13 @@
 //! The `connector` section of a plugin's bundle.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
 use crate::catalog::Catalog;
 use crate::connector;
-use crate::schema::{Obj, Problem, icon_issue};
+use crate::plugin::reserved_root;
+use crate::schema::{Obj, Problem, edge_id, icon_issue};
 
 /// The longest source, as a key's own source is held.
 pub const SOURCE_CAP: usize = 200;
@@ -16,11 +17,12 @@ pub const NAME_CAP: usize = 64;
 /// What a source may not start with, ignoring case: the server keeps these for itself.
 pub const RESERVED_SOURCE_PREFIXES: [&str; 3] = ["oauth:", "restored:", "connector-host:"];
 
-const SECTION_KEYS: [&str; 7] = [
+const SECTION_KEYS: [&str; 8] = [
     "source",
     "source_name",
     "source_mark",
     "kinds",
+    "edge_types",
     "settings",
     "sign_in",
     "runs",
@@ -380,6 +382,55 @@ impl Judge {
         }
     }
 
+    /// `own` holds the bundle's own edge types by id; `None` leaves an unknown id unjudged.
+    fn edge_types(&mut self, section: &Obj, own: Option<&BTreeMap<&str, &Obj>>) {
+        let at = "connector.edge_types";
+        let Some(held) = section.get("edge_types") else {
+            return;
+        };
+        let Some(entries) = held.as_array() else {
+            self.wrong(at.into(), "edge_types must be an array");
+            return;
+        };
+        let mut seen = BTreeSet::new();
+        for (index, entry) in entries.iter().enumerate() {
+            let path = format!("{at}.{index}");
+            let Some(id) = entry.as_str().filter(|id| edge_id(id)) else {
+                self.wrong(
+                    path,
+                    "Each entry of edge_types must be an edge type identifier",
+                );
+                continue;
+            };
+            if !seen.insert(id) {
+                self.wrong(
+                    path,
+                    format!("The connector names edge type {id} more than once"),
+                );
+                continue;
+            }
+            if let Some(root) = reserved_root(id) {
+                self.wrong(
+                    path,
+                    format!("{id} sits under {root}.*, which a connector does not write"),
+                );
+                continue;
+            }
+            match shipped_edge(id).or_else(|| own.and_then(|own| own.get(id).copied())) {
+                Some(definition) if ends_on_system(definition) => self.wrong(
+                    path,
+                    format!("{id} has an end on a system type, which only Marfa writes"),
+                ),
+                Some(_) => {}
+                None if own.is_some() => self.wrong(
+                    path,
+                    format!("{id} is neither one of the plugin's edge types nor one Marfa ships"),
+                ),
+                None => {}
+            }
+        }
+    }
+
     fn runs(&mut self, section: &Obj) {
         let at = "connector.runs".to_string();
         match section.get("runs") {
@@ -393,8 +444,30 @@ impl Judge {
     }
 }
 
-/// `types` holds the bundle's own type ids; `None` skips that check, as for a `plugin.json`.
-pub fn connector_faults(section: &Obj, types: Option<&BTreeSet<&str>>) -> Vec<Problem> {
+fn shipped_edge(id: &str) -> Option<&'static Obj> {
+    crate::builtin::shipped_edge_types()
+        .ok()?
+        .iter()
+        .filter_map(Value::as_object)
+        .find(|edge| edge.get("id").and_then(Value::as_str) == Some(id))
+}
+
+fn ends_on_system(definition: &Obj) -> bool {
+    ["from_type_constraints", "to_type_constraints"]
+        .iter()
+        .filter_map(|key| definition.get(*key).and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|type_id| type_id.split('.').next() == Some("system"))
+}
+
+/// `types` holds the bundle's own type ids and `edge_types` its own edge types by id; `None`
+/// skips that check, as for a `plugin.json` read alone.
+pub fn connector_faults(
+    section: &Obj,
+    types: Option<&BTreeSet<&str>>,
+    edge_types: Option<&BTreeMap<&str, &Obj>>,
+) -> Vec<Problem> {
     let mut judge = Judge { faults: Vec::new() };
     judge.unknown_keys(section, "connector", &SECTION_KEYS);
     match section.get("source") {
@@ -419,6 +492,7 @@ pub fn connector_faults(section: &Obj, types: Option<&BTreeSet<&str>>) -> Vec<Pr
         ));
     }
     judge.kinds(section, types);
+    judge.edge_types(section, edge_types);
     let declared = judge.settings(section);
     judge.sign_in(section, &declared);
     judge.runs(section);
@@ -461,7 +535,7 @@ pub fn source(section: &Obj) -> Option<&str> {
 }
 
 /// The longest text a setting's value holds.
-pub const VALUE_CAP: usize = 4096;
+pub const VALUE_CAP: usize = 65_536;
 
 /// What a setting holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -625,6 +699,17 @@ pub fn kind_types(section: &Obj) -> Vec<&str> {
     types
 }
 
+/// The edge types a checked connector section writes.
+pub fn edge_types(section: &Obj) -> Vec<&str> {
+    section
+        .get("edge_types")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -646,10 +731,51 @@ mod tests {
 
     fn paths(value: Value) -> Vec<String> {
         let types: BTreeSet<&str> = ["rss.entry"].into_iter().collect();
-        connector_faults(&section(value), Some(&types))
+        let own_edge = section(json!({ "id": "rss.cites", "to_type_constraints": ["rss.entry"] }));
+        let to_system =
+            section(json!({ "id": "rss.filed", "to_type_constraints": ["system.folder"] }));
+        let edges: BTreeMap<&str, &Obj> = [("rss.cites", &own_edge), ("rss.filed", &to_system)]
+            .into_iter()
+            .collect();
+        connector_faults(&section(value), Some(&types), Some(&edges))
             .into_iter()
             .map(|problem| problem.path)
             .collect()
+    }
+
+    #[test]
+    fn edge_types_name_own_or_shipped_edges_once_and_none_on_a_system_type() {
+        let mut held = base();
+        held["edge_types"] = json!(["attached-to", "rss.cites", "parent-of"]);
+        assert!(paths(held.clone()).is_empty());
+        held["edge_types"] = json!([
+            "rss.cites",
+            "nowhere",
+            "rss.cites",
+            "in-folder",
+            "rss.filed",
+            "core.link",
+            7,
+            "Bad Id"
+        ]);
+        assert_eq!(
+            paths(held.clone()),
+            [1, 2, 3, 4, 5, 6, 7].map(|index| format!("connector.edge_types.{index}"))
+        );
+        let unjudged = connector_faults(&section(held.clone()), None, None);
+        let unjudged: Vec<&str> = unjudged
+            .iter()
+            .map(|problem| problem.path.as_str())
+            .collect();
+        assert_eq!(
+            unjudged,
+            [2, 3, 5, 6, 7].map(|index| format!("connector.edge_types.{index}"))
+        );
+        held["edge_types"] = json!("attached-to");
+        assert_eq!(paths(held.clone()), ["connector.edge_types"]);
+        held["edge_types"] = json!(["attached-to", "rss.cites"]);
+        assert_eq!(edge_types(&section(held)), ["attached-to", "rss.cites"]);
+        assert!(edge_types(&section(base())).is_empty());
     }
 
     #[test]
@@ -791,7 +917,7 @@ mod tests {
     fn a_folder_manifest_leaves_kind_types_unjudged() {
         let mut odd = base();
         odd["kinds"][0]["type"] = json!("elsewhere.entry");
-        assert!(connector_faults(&section(odd), None).is_empty());
+        assert!(connector_faults(&section(odd), None, None).is_empty());
         assert_eq!(kind_types(&section(base())), ["rss.entry"]);
         assert_eq!(source(&section(base())), Some("rss"));
     }
