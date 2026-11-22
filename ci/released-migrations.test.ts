@@ -1,30 +1,44 @@
 /**
- * A migration a published release contains is never edited.
+ * What a published release wrote keeps opening.
  *
  * A release's databases must keep opening, and a migration's SQL is what makes
  * them. `core/marfa-server/src/db/pinned.rs` pins each migration's digest, but a
  * pin is rewritten in the same change as the edit it guards, so the pin alone
  * lets an edit through (v0.0.88 edited `0001` in place and could not open a
- * v0.0.87 database). This test compares the tree with the newest published tag:
- * every migration the tag holds must be present here with the same bytes. A
- * migration the tag lacks is new, and allowed.
+ * v0.0.87 database). This test compares the tree with the newest published tag
+ * and holds three things the tag has to what the tag has:
  *
- * The device store is held the same way: when `schema.sql` differs from the
- * tag's, `SCHEMA_VERSION` must have been raised, because a store at the old
- * version is opened as is.
+ * - every migration file, byte for byte;
+ * - every entry of `PINS` (version, file and holds), so a released version
+ *   cannot be pointed at another file, dropped or re-pinned;
+ * - every entry of the device store's `SHAPES`, which must be a prefix of the
+ *   tree's list.
  *
- * It needs the tags. A checkout without them fails here, loudly, since a skip
- * would be a silent pass. It reads git from the repository root, so it works in
- * a linked worktree.
+ * Something the tag lacks is new, and allowed. The Rust tests tie `PINS` and
+ * `SHAPES` to what the build makes, so together they cover a change the files
+ * alone would miss.
+ *
+ * In `Quick checks` the `Fetch the newest release tag` step fetches the tag
+ * and names it in `MARFA_RELEASE_TAG`. Elsewhere the test chooses from the
+ * local tags, and a checkout with none fails here, loudly, since a skip would
+ * be a silent pass. It reads git from the repository root, so it works in a
+ * linked worktree.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import {
+  abandoned,
+  abandonedVersions,
+  newestPublished,
+  tagsListed,
+} from "../scripts/release/newest-release.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const MIGRATIONS = "core/marfa-server/src/db/migrations/";
-const SCHEMA_SQL = "core/marfa-core/src/schema.sql";
+const PINNED_RS = "core/marfa-server/src/db/pinned.rs";
+const OPENING_RS = "core/marfa-core/src/store/tests/opening.rs";
 const OPEN_RS = "core/marfa-core/src/store/open.rs";
 
 const git = (...args: string[]): string =>
@@ -37,38 +51,22 @@ const git = (...args: string[]): string =>
 const FETCH_TAGS =
   "fetch the tags (`git fetch --tags`, or `git fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*'` in a shallow checkout)";
 
-const byVersion = (a: string, b: string): number => {
-  const [x, y] = [a, b].map((tag) => tag.slice(1).split(".").map(Number));
-  for (let at = 0; at < 3; at += 1) {
-    const diff = (x?.[at] ?? 0) - (y?.[at] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
+const releaseTag = (): string => {
+  const named = process.env["MARFA_RELEASE_TAG"];
+  if (named !== undefined && named !== "") return named;
+  const tags = git("tag", "--list", "v*").split("\n").filter(Boolean);
+  return newestPublished(tags, abandonedVersions());
 };
 
-/** Versions tagged and never released, from `scripts/release/abandoned-versions`. */
-export function abandoned(text: string): Set<string> {
-  return new Set(
-    text
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line !== "" && !line.startsWith("#")),
-  );
-}
-
-/** The newest tag that was published, or a failure naming how to get the tags. */
-export function newestPublished(tags: string[], skip: Set<string>): string {
-  const published = tags
-    .filter((tag) => /^v\d+\.\d+\.\d+$/.test(tag) && !skip.has(tag.slice(1)))
-    .sort(byVersion);
-  const newest = published.at(-1);
-  if (newest === undefined) {
-    throw new Error(
-      `No release tag is available, so no migration can be compared with a release: ${FETCH_TAGS}.`,
-    );
+const atTag = (tag: string, path: string): string => {
+  try {
+    return git("show", `${tag}:${path}`);
+  } catch {
+    throw new Error(`${tag} holds no ${path}: ${FETCH_TAGS}.`);
   }
-  return newest;
-}
+};
+
+const atHead = (path: string): string => readFileSync(`${ROOT}${path}`, "utf8");
 
 /** The files a tag holds under a folder, with the blob id of each. */
 export function treeBlobs(tag: string, folder: string): Map<string, string> {
@@ -82,21 +80,6 @@ export function treeBlobs(tag: string, folder: string): Map<string, string> {
   return blobs;
 }
 
-/** The files that changed, vanished or were renamed away from what the tag holds. */
-export function editedSince(
-  shipped: Map<string, string>,
-  here: (path: string) => string | undefined,
-): string[] {
-  return [...shipped]
-    .filter(([path, id]) => here(path) !== id)
-    .map(([path]) => path);
-}
-
-export function storeVersion(source: string): number | undefined {
-  const found = /pub const SCHEMA_VERSION: i64 = (\d+);/.exec(source);
-  return found?.[1] === undefined ? undefined : Number(found[1]);
-}
-
 const hashHere = (path: string): string | undefined => {
   try {
     return git("hash-object", "--", path);
@@ -105,29 +88,119 @@ const hashHere = (path: string): string | undefined => {
   }
 };
 
-const abandonedText = readFileSync(
-  new URL("../scripts/release/abandoned-versions", import.meta.url),
-  "utf8",
-);
+/** Each `PINS` entry of `pinned.rs`, by version, as `file holds`. */
+export function pins(source: string): Map<string, string> {
+  const table = source.slice(source.indexOf("const PINS"));
+  const found = new Map<string, string>();
+  const entry =
+    /Pin\s*\{\s*version:\s*(\d+),\s*file:\s*"([0-9a-f]+)",\s*holds:\s*"([0-9a-f]+)",?\s*\}/g;
+  for (const [, version, file, holds] of table.matchAll(entry)) {
+    if (version !== undefined) found.set(version, `${file} ${holds}`);
+  }
+  return found;
+}
+
+/** The `SHAPES` of the store's opening tests, by version, as the hash. */
+export function shapes(source: string): Map<string, string> {
+  const start = source.indexOf("const SHAPES");
+  const body = source.slice(start, source.indexOf("];", start));
+  const found = new Map<string, string>();
+  [...body.matchAll(/"([0-9a-f]+)"/g)].forEach((hash, at) => {
+    if (hash[1] !== undefined) found.set(String(at + 1), hash[1]);
+  });
+  return found;
+}
+
+export function storeVersion(source: string): number | undefined {
+  const found = /pub const SCHEMA_VERSION: i64 = (\d+);/.exec(source);
+  return found?.[1] === undefined ? undefined : Number(found[1]);
+}
+
+/**
+ * What a release holds that the tree lacks or has changed. `here` answers
+ * undefined for what is absent. The two cases need different words: a branch
+ * behind the tag lacks what the tag has, and must not add a duplicate.
+ */
+export function frozenProblems(
+  tag: string,
+  what: string,
+  shipped: Map<string, string>,
+  here: (key: string) => string | undefined,
+  remedy: string,
+): string[] {
+  const absent: string[] = [];
+  const changed: string[] = [];
+  for (const [key, value] of shipped) {
+    const now = here(key);
+    if (now === undefined) absent.push(key);
+    else if (now !== value) changed.push(key);
+  }
+  const problems: string[] = [];
+  if (absent.length > 0) {
+    problems.push(
+      `${what} ${absent.join(", ")} in ${tag} but not in this tree: if this branch is older than ${tag}, bring it up to date with main.`,
+    );
+  }
+  if (changed.length > 0) {
+    problems.push(
+      `${what} ${changed.join(", ")} changed since ${tag}, a release that shipped it. ${remedy}`,
+    );
+  }
+  return problems;
+}
+
+const MIGRATION_REMEDY =
+  "A migration a release has shipped is never edited: put it back as it was, and make the change a new numbered migration.";
+const PIN_REMEDY =
+  "A released version's pin is frozen: put it back as it was, and pin a new migration as a new version. A new pin is only for a version no release holds.";
+const SHAPE_REMEDY =
+  "A released shape is never edited: put the entry back as it was and append the new shape as a new version. Raising SCHEMA_VERSION while OLDEST_UPGRADED equals SCHEMA_VERSION (open.rs) makes the build refuse every store the release wrote, so to keep those stores opening, fix OLDEST_UPGRADED at the old version and add a step to UPGRADES.";
+
+const migrationProblems = (tag: string): string[] =>
+  frozenProblems(
+    tag,
+    "migration",
+    treeBlobs(tag, MIGRATIONS),
+    hashHere,
+    MIGRATION_REMEDY,
+  );
+
+const pinProblems = (tag: string, here: string): string[] =>
+  frozenProblems(
+    tag,
+    "pin for version",
+    pins(atTag(tag, PINNED_RS)),
+    (version) => pins(here).get(version),
+    PIN_REMEDY,
+  );
+
+const shapeProblems = (tag: string, here: string): string[] =>
+  frozenProblems(
+    tag,
+    "SHAPES entry for version",
+    shapes(atTag(tag, OPENING_RS)),
+    (version) => shapes(here).get(version),
+    SHAPE_REMEDY,
+  );
 
 describe("a migration a release has shipped", () => {
+  const tag = releaseTag();
+
   it("is never edited, deleted or renamed", () => {
-    const tags = git("tag", "--list", "v*").split("\n").filter(Boolean);
-    const tag = newestPublished(tags, abandoned(abandonedText));
     // A stale fetch shows here: the tag this run compared with.
     console.log(
       `Migrations compared with the newest published release, ${tag}`,
     );
-    const shipped = treeBlobs(tag, MIGRATIONS);
     expect(
-      shipped.size,
+      treeBlobs(tag, MIGRATIONS).size,
       `${tag} holds no migration under ${MIGRATIONS}: ${FETCH_TAGS}.`,
     ).toBeGreaterThan(0);
-    const edited = editedSince(shipped, hashHere);
-    expect(
-      edited,
-      `${edited.join(", ")} changed since ${tag}, a release that shipped it. A migration a release has shipped is never edited: put it back as it was, and make the change a new numbered migration.`,
-    ).toEqual([]);
+    expect(migrationProblems(tag)).toEqual([]);
+  });
+
+  it("keeps its pin: every pin the release holds is still there, unchanged", () => {
+    expect(pins(atTag(tag, PINNED_RS)).size).toBeGreaterThan(0);
+    expect(pinProblems(tag, atHead(PINNED_RS))).toEqual([]);
   });
 
   it("is caught when the bytes differ, the file is gone or it was renamed", () => {
@@ -141,13 +214,92 @@ describe("a migration a release has shipped", () => {
       "m/0003.sql": "ccc",
     };
     const at = (path: string): string | undefined => files[path];
-    expect(editedSince(shipped, at)).toEqual([]);
+    const check = (here: (path: string) => string | undefined): string[] =>
+      frozenProblems("v1", "migration", shipped, here, MIGRATION_REMEDY);
+    expect(check(at)).toEqual([]);
+    const edited = check((p) => (p === "m/0001.sql" ? "x" : at(p)));
+    expect(edited).toHaveLength(1);
+    expect(edited[0]).toContain(
+      "A migration a release has shipped is never edited",
+    );
+    expect(edited[0]).toContain("m/0001.sql changed since v1");
+    expect(edited[0]).not.toContain("not in this tree");
+    const gone = check((p) => (p === "m/0002.sql" ? undefined : at(p)));
+    expect(gone).toHaveLength(1);
+    expect(gone[0]).toContain(
+      "m/0002.sql in v1 but not in this tree: if this branch is older than v1, bring it up to date with main",
+    );
+    expect(gone[0]).not.toContain("never edited");
+  });
+});
+
+describe("the pins", () => {
+  const entry = (version: number, file: string, holds: string): string =>
+    `Pin { version: ${version}, file: "${file}", holds: "${holds}" },`;
+  const released = `const PINS: &[Pin] = &[\n${entry(11, "aa", "bb")}\n${entry(12, "cc", "dd")}\n];`;
+
+  it("reads each entry as the file writes it", () => {
+    const multiline = `const PINS: &[Pin] = &[\n    Pin {\n        version: 1,\n        file: "ab12",\n        holds: "cd34",\n    },\n];`;
+    expect([...pins(multiline)]).toEqual([["1", "ab12 cd34"]]);
+    expect([...pins(released)]).toEqual([
+      ["11", "aa bb"],
+      ["12", "cc dd"],
+    ]);
+  });
+
+  it("lets a new version be appended", () => {
+    const next = `${released}\n${entry(13, "ee", "ff")}`;
     expect(
-      editedSince(shipped, (p) => (p === "m/0001.sql" ? "x" : at(p))),
-    ).toEqual(["m/0001.sql"]);
+      frozenProblems(
+        "v1",
+        "pin",
+        pins(released),
+        (v) => pins(next).get(v),
+        PIN_REMEDY,
+      ),
+    ).toEqual([]);
+  });
+
+  it("fails a version pointed at a new file with a new pin (the remap trick)", () => {
+    const remapped = released.replace(
+      entry(12, "cc", "dd"),
+      entry(12, "ee", "dd"),
+    );
+    const found = frozenProblems(
+      "v1",
+      "pin",
+      pins(released),
+      (v) => pins(remapped).get(v),
+      PIN_REMEDY,
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain("pin 12 changed since v1");
+  });
+
+  it("fails a changed holds, and a removed entry", () => {
+    const drifted = released.replace(
+      entry(11, "aa", "bb"),
+      entry(11, "aa", "99"),
+    );
     expect(
-      editedSince(shipped, (p) => (p === "m/0002.sql" ? undefined : at(p))),
-    ).toEqual(["m/0002.sql"]);
+      frozenProblems(
+        "v1",
+        "pin",
+        pins(released),
+        (v) => pins(drifted).get(v),
+        PIN_REMEDY,
+      )[0],
+    ).toContain("pin 11 changed since v1");
+    const removed = released.replace(entry(12, "cc", "dd"), "");
+    expect(
+      frozenProblems(
+        "v1",
+        "pin",
+        pins(released),
+        (v) => pins(removed).get(v),
+        PIN_REMEDY,
+      )[0],
+    ).toContain("12 in v1 but not in this tree");
   });
 });
 
@@ -165,35 +317,86 @@ describe("the release finder", () => {
     );
   });
 
-  it("reads the abandoned versions past comments and blank lines", () => {
-    expect([...abandoned("# note\n\n0.0.85\n 0.0.91 \n")]).toEqual([
-      "0.0.85",
-      "0.0.91",
-    ]);
+  it("reads the abandoned versions as release.yml does, past comments, blanks and spaces", () => {
+    expect([
+      ...abandoned(
+        "# note\n\n0.0.85\n 0.0.91 \n0.0.99  # a comment\n0 . 0.100\n",
+      ),
+    ]).toEqual(["0.0.85", "0.0.91", "0.0.99", "0.0.100"]);
+  });
+
+  it("reads tag names from `git ls-remote --tags --refs`", () => {
+    const listed = "abc\trefs/tags/v0.0.97\ndef\trefs/tags/v0.0.98\n";
+    expect(tagsListed(listed)).toEqual(["v0.0.97", "v0.0.98"]);
+    expect(newestPublished(tagsListed(listed), new Set())).toBe("v0.0.98");
+    expect(tagsListed("")).toEqual([]);
   });
 });
 
 describe("the device store", () => {
-  it("raises SCHEMA_VERSION when schema.sql differs from the newest published release", () => {
-    const tags = git("tag", "--list", "v*").split("\n").filter(Boolean);
-    const tag = newestPublished(tags, abandoned(abandonedText));
-    const shippedSql = git("rev-parse", `${tag}:${SCHEMA_SQL}`);
-    if (shippedSql === hashHere(SCHEMA_SQL)) return;
-    const was = storeVersion(git("show", `${tag}:${OPEN_RS}`));
-    const now = storeVersion(readFileSync(`${ROOT}${OPEN_RS}`, "utf8"));
-    expect(
-      was,
-      `SCHEMA_VERSION not found in ${OPEN_RS} at ${tag}`,
-    ).toBeDefined();
-    expect(now, `SCHEMA_VERSION not found in ${OPEN_RS}`).toBeDefined();
-    expect(
-      now,
-      `${SCHEMA_SQL} changed since ${tag}, a release that shipped it, and SCHEMA_VERSION is still ${String(now)}. Raise the store version in ${OPEN_RS} and add an upgrade step, so a store the release wrote still opens.`,
-    ).toBeGreaterThan(was ?? Infinity);
+  const tag = releaseTag();
+
+  it("keeps every shape the newest published release holds", () => {
+    expect(shapes(atTag(tag, OPENING_RS)).size).toBeGreaterThan(0);
+    expect(shapeProblems(tag, atHead(OPENING_RS))).toEqual([]);
   });
 
-  it("reads the version from source", () => {
+  it("reads SHAPES and the version from source", () => {
+    const source = `const SHAPES: [&str; 2] = [\n    "ab12",\n    "cd34",\n];\nfn x() {}`;
+    expect([...shapes(source)]).toEqual([
+      ["1", "ab12"],
+      ["2", "cd34"],
+    ]);
     expect(storeVersion("pub const SCHEMA_VERSION: i64 = 11;")).toBe(11);
     expect(storeVersion("nothing")).toBeUndefined();
+    expect(storeVersion(atHead(OPEN_RS))).toBeDefined();
+  });
+
+  it("passes a comment-only edit, which leaves SHAPES alone, and an appended shape", () => {
+    const shipped = `const SHAPES: [&str; 2] = [\n    "ab12",\n    "cd34",\n];`;
+    const appended = `const SHAPES: [&str; 3] = [\n    "ab12",\n    "cd34",\n    "ef56",\n];`;
+    const held = shapes(shipped);
+    expect(
+      frozenProblems(
+        "v1",
+        "shape",
+        held,
+        (v) => shapes(shipped).get(v),
+        SHAPE_REMEDY,
+      ),
+    ).toEqual([]);
+    expect(
+      frozenProblems(
+        "v1",
+        "shape",
+        held,
+        (v) => shapes(appended).get(v),
+        SHAPE_REMEDY,
+      ),
+    ).toEqual([]);
+  });
+
+  it("fails an edited released entry, and says what raising the version does to stores", () => {
+    const shipped = `const SHAPES: [&str; 2] = [\n    "ab12",\n    "cd34",\n];`;
+    const edited = shipped.replace("cd34", "ff00");
+    const found = frozenProblems(
+      "v1",
+      "SHAPES entry for version",
+      shapes(shipped),
+      (v) => shapes(edited).get(v),
+      SHAPE_REMEDY,
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain("SHAPES entry for version 2 changed since v1");
+    expect(found[0]).toContain("refuse every store the release wrote");
+    expect(found[0]).toContain("fix OLDEST_UPGRADED at the old version");
+    const dropped = frozenProblems(
+      "v1",
+      "SHAPES entry for version",
+      shapes(shipped),
+      (v) => shapes(`const SHAPES: [&str; 1] = [ "ab12" ];`).get(v),
+      SHAPE_REMEDY,
+    );
+    expect(dropped[0]).toContain("2 in v1 but not in this tree");
   });
 });

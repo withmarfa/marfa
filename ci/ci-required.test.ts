@@ -1435,11 +1435,18 @@ describe("each job reads its own answer", () => {
     const format = steps.findIndex((step) => step.run === "pnpm format:check");
     expect(format).toBeGreaterThan(0);
     expect(steps[format]?.if).toBeUndefined();
-    // The release check reads the newest tag, so the tags are fetched first.
-    expect(steps[format + 1]).toEqual({
-      name: "Fetch the release tags",
-      run: "git fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*'",
-    });
+    // The release check reads the newest tag, so that tag alone is fetched
+    // first, and named for the test in MARFA_RELEASE_TAG.
+    const fetchTag = steps[format + 1];
+    expect(fetchTag?.name).toBe("Fetch the newest release tag");
+    expect(fetchTag?.run).toContain("node scripts/release/newest-release.ts");
+    expect(fetchTag?.run).toContain(
+      'git fetch --depth=1 origin "refs/tags/$tag:refs/tags/$tag"',
+    );
+    expect(fetchTag?.run).toContain("for attempt in 1 2");
+    expect(fetchTag?.run).toContain(
+      'echo "MARFA_RELEASE_TAG=$tag" >> "$GITHUB_ENV"',
+    );
     expect(steps[format + 2]).toEqual({
       run: "pnpm vitest run ci/ci-required.test.ts ci/no-vendor-in-product.test.ts ci/released-migrations.test.ts",
     });

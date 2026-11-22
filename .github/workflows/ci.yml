@@ -119,10 +119,23 @@ jobs:
       # breach it, and this job runs for every change, a draft's too.
       - run: pnpm format:check
       # A migration a release has shipped is never edited, so the check reads
-      # the newest tag's files. The checkout is one commit deep, and the tags
-      # are fetched the same way: the tag's files come with it.
-      - name: Fetch the release tags
-        run: git fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*'
+      # the newest published tag's files. Only that tag is fetched, one commit
+      # deep, because fetching every tag grows with each release. The remote
+      # is asked once more after a failure, since a network hiccup here would
+      # cancel the run of a ready pull request. The test reads the tag's name
+      # from MARFA_RELEASE_TAG.
+      - name: Fetch the newest release tag
+        run: |
+          for attempt in 1 2; do
+            if tag=$(node scripts/release/newest-release.ts) &&
+              git fetch --depth=1 origin "refs/tags/$tag:refs/tags/$tag"; then
+              echo "MARFA_RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Could not fetch the newest release tag."
+          exit 1
       - run: pnpm vitest run ci/ci-required.test.ts ci/no-vendor-in-product.test.ts ci/released-migrations.test.ts
       - working-directory: conformance
         run: pnpm exec vitest run --project generators src/utils/spec-citations.test.ts
