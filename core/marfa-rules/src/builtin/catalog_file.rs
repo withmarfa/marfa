@@ -1,6 +1,6 @@
 //! Writes `builtin_catalog.json` and `shipped-shapes.sha256` from the definition files.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -125,8 +125,26 @@ pub(super) fn shipped_sources(root: &Path) -> Result<(Vec<Source>, Vec<Source>),
             root.display()
         ));
     }
+    for folder in ["system", "edges"] {
+        let inner: Vec<String> = fs::read_dir(root.join(folder))
+            .map_err(|e| format!("{}: {e}", root.join(folder).display()))?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .map(|entry| format!("{folder}/{}", entry.file_name().to_string_lossy()))
+            .collect();
+        if !inner.is_empty() {
+            return Err(format!(
+                "{} holds folders {inner:?}; the writer reads only the files directly in {folder}",
+                root.display()
+            ));
+        }
+    }
     let mut types = read_folder(root)?;
-    types.extend(read_folder(&root.join("system"))?);
+    types.extend(
+        read_folder(&root.join("system"))?
+            .into_iter()
+            .map(|(name, row)| (format!("system/{name}"), row)),
+    );
     Ok((types, read_folder(&root.join("edges"))?))
 }
 
@@ -155,10 +173,14 @@ fn in_dependency_order(types: &[Source]) -> Result<Vec<&Source>, String> {
         .iter()
         .map(|(file, row)| id_of(file, row))
         .collect::<Result<_, _>>()?;
-    let known: BTreeSet<String> = ids.iter().cloned().collect();
-    if known.len() != ids.len() {
-        return Err("two definition files hold the same type id".into());
+    let mut holders: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for ((file, _), id) in types.iter().zip(&ids) {
+        holders.entry(id).or_default().push(file);
     }
+    if let Some((id, files)) = holders.iter().find(|(_, files)| files.len() > 1) {
+        return Err(format!("{} hold the same type id {id}", files.join(", ")));
+    }
+    let known: BTreeSet<String> = ids.iter().cloned().collect();
     let mut waiting: Vec<(&Source, &str, BTreeSet<String>)> = types
         .iter()
         .zip(&ids)
@@ -176,7 +198,11 @@ fn in_dependency_order(types: &[Source]) -> Result<Vec<&Source>, String> {
             .into_iter()
             .partition(|(_, _, needs)| needs.iter().all(|need| placed.contains(need.as_str())));
         if ready.is_empty() {
-            return Err("shipped types depend on one another in a loop".into());
+            let stuck: Vec<&str> = later.iter().map(|(_, id, _)| *id).collect();
+            return Err(format!(
+                "these shipped types depend on one another in a loop, or on one in the loop: {}",
+                stuck.join(", ")
+            ));
         }
         for (source, id, _) in ready {
             placed.insert(id);
@@ -902,6 +928,59 @@ mod tests {
         fs::remove_file(copy.0.join("note.md")).unwrap();
         fs::write(copy.0.join("system").join("README.md"), "Notes.").unwrap();
         assert!(write(&copy.0).is_ok());
+    }
+
+    #[test]
+    fn two_files_holding_one_type_id_are_both_named_with_the_id() {
+        let copy = Copy::new();
+        assert!(write(&copy.0).is_ok());
+        fs::copy(copy.0.join("note.json"), copy.0.join("note-copy.json")).unwrap();
+        let refused = write(&copy.0).err().unwrap().join("\n");
+        assert!(refused.contains("core.note"), "{refused}");
+        assert!(refused.contains("note.json"), "{refused}");
+        assert!(refused.contains("note-copy.json"), "{refused}");
+    }
+
+    #[test]
+    fn a_system_file_holding_a_core_type_id_is_named_with_its_folder() {
+        let copy = Copy::new();
+        fs::copy(
+            copy.0.join("note.json"),
+            copy.0.join("system").join("note.json"),
+        )
+        .unwrap();
+        let refused = write(&copy.0).err().unwrap().join("\n");
+        assert!(
+            refused.contains("note.json, system/note.json hold the same type id core.note"),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_folder_inside_system_or_edges_is_refused() {
+        for folder in ["system", "edges"] {
+            let copy = Copy::new();
+            assert!(write(&copy.0).is_ok());
+            fs::create_dir(copy.0.join(folder).join("extra")).unwrap();
+            let refused = write(&copy.0).err().unwrap().join("\n");
+            assert!(refused.contains(&format!("{folder}/extra")), "{refused}");
+        }
+    }
+
+    #[test]
+    fn types_that_depend_on_one_another_in_a_loop_are_named() {
+        let copy = Copy::new();
+        assert!(write(&copy.0).is_ok());
+        copy.edit("note.json", |row| {
+            row["parent"] = Value::String("core.bookmark".into());
+        });
+        copy.edit("bookmark.json", |row| {
+            row["parent"] = Value::String("core.note".into());
+        });
+        let refused = write(&copy.0).err().unwrap().join("\n");
+        assert!(refused.contains("loop"), "{refused}");
+        assert!(refused.contains("core.note"), "{refused}");
+        assert!(refused.contains("core.bookmark"), "{refused}");
     }
 
     #[test]

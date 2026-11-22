@@ -330,6 +330,27 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // fails for a file it finds there. This comes before the Markdown rule so a
   // note left in the folder reaches that job too.
   [/^core\/marfa-rules\/icons\//, ["types-freshness"]],
+  // The shapes' digest, which the rules crate's tests hold to the definitions.
+  [
+    /^core\/marfa-rules\/types\/shipped-shapes\.sha256$/,
+    ["types-freshness", "core", ...RUST_LINUX],
+  ],
+  // The rules crate's tests read each shipped definition and hold it to the
+  // rules for a registered type, the offline lane reads them too, and they are
+  // part of the crate the cached servers are keyed on. The writer lists every
+  // entry here and refuses a Markdown file beside a definition or a folder it
+  // does not read, so a path of any kind reaches it. This comes before the
+  // Markdown rule.
+  [
+    /^core\/marfa-rules\/types\/(?!README\.md$)/,
+    [
+      "workspace",
+      "types-freshness",
+      "clients-freshness",
+      "core",
+      ...RUST_LINUX,
+    ],
+  ],
   // Markdown anywhere else is read only by Prettier and the contract's
   // reference check, which `Quick checks` runs for every change, and a
   // package's README by the version check. A fixture is test input and a
@@ -351,24 +372,6 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^deploy\/Dockerfile$/, ["workspace", "image"]],
   [/^deploy\//, []],
 
-  // The rules crate's tests read each shipped definition and hold it to the
-  // rules for a registered type, the offline lane reads them too, and they are
-  // part of the crate the cached servers are keyed on.
-  [
-    /^core\/marfa-rules\/types\/.*\.json$/,
-    [
-      "workspace",
-      "types-freshness",
-      "clients-freshness",
-      "core",
-      ...RUST_LINUX,
-    ],
-  ],
-  // The shapes' digest, which the rules crate's tests hold to the definitions.
-  [
-    /^core\/marfa-rules\/types\/shipped-shapes\.sha256$/,
-    ["types-freshness", "core", ...RUST_LINUX],
-  ],
   [/^packages\/client\//, ["workspace", "clients-freshness"]],
 
   [/^conformance\/scripts\/restore-drill\.ts$/, ["workspace", "restore-drill"]],
