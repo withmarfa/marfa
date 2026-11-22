@@ -2804,9 +2804,9 @@ async fn a_database_at_schema_version_7_upgrades_to_hold_mappings_that_go_with_t
 }
 
 #[tokio::test]
-async fn a_database_at_schema_version_8_upgrades_through_9_and_a_sign_in_goes_with_its_connector() {
+async fn a_database_at_schema_version_9_upgrades_through_10_and_a_sign_in_goes_with_its_connector() {
     let place = folder();
-    db_open(&options(&place.file, &MIGRATIONS[..8]), Arc::default())
+    db_open(&options(&place.file, &MIGRATIONS[..9]), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -2833,7 +2833,7 @@ async fn a_database_at_schema_version_8_upgrades_through_9_and_a_sign_in_goes_wi
     let version: u32 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     conn.execute(
         "INSERT INTO connector_sign_ins (plugin, id, install, state_hash, verifier, redirect_uri, \
          started_at, expires_at) VALUES ('rss', 'one', 'install', 'hash', 'sealed', 'r', 'a', 'b')",
