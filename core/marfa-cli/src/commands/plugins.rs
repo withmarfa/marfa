@@ -54,7 +54,7 @@ pub enum PluginsCommand {
         /// The plugin's name.
         name: String,
     },
-    /// Ask a plugin's connector to run now. It reads the request and runs, and a run it reports as started since clears it. A paused connector is refused. Requires `connectors.manage`.
+    /// Ask a plugin's connector to run now. It reads the request and runs, and the run it reports naming that request clears it. A paused connector is refused. Requires `connectors.manage`.
     Run {
         /// The plugin's name.
         name: String,

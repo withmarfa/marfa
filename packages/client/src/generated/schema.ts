@@ -1035,7 +1035,7 @@ export interface paths {
         put?: never;
         /**
          * Run a connector now
-         * @description Stores the time you asked the plugin's connector to run, which it reads and follows. A run the connector reports as started at or after that time clears it.
+         * @description Stores the time you asked the plugin's connector to run, which it reads and follows. A run the connector reports naming that time as its `run_requested_at` clears it.
          */
         post: operations["runPluginConnector"];
         delete?: never;
@@ -1059,7 +1059,7 @@ export interface paths {
         put?: never;
         /**
          * Create a mapping preview
-         * @description Asks the plugin's connector to render how one kind would land, on one of its items, and returns the preview pending. Read it with `GET /plugins/{name}/connector/previews/{id}` until the connector answers.
+         * @description Asks the plugin's connector to render how one kind would land, on one of its items, and returns the preview pending. Read it with `GET /plugins/{name}/connector/previews/{id}` until the connector answers. A plugin holds at most 20 previews, so Marfa removes the oldest answered one to make room.
          */
         post: operations["createMappingPreview"];
         delete?: never;
@@ -10347,7 +10347,7 @@ export interface components {
             paused: boolean;
             /**
              * Format: date-time
-             * @description When the owner last asked the connector to run now, in UTC, until it reports a run that started at or after then. `null` if no run is waiting.
+             * @description When the owner last asked the connector to run now, in UTC, until the connector reports a run that names this time as its `run_requested_at`. `null` if no run is waiting.
              * @example 2026-10-03T09:30:00.000Z
              */
             run_requested_at: string | null;
@@ -10408,7 +10408,7 @@ export interface components {
         ConnectorPreviewPage: {
             /** @description The previews that have not expired, oldest first. */
             data: components["schemas"]["ConnectorPreview"][];
-            /** @description Always `null`: Marfa returns every preview in one page. */
+            /** @description Always `null`: a plugin holds at most 20 previews, all returned in one page. */
             next_cursor: null;
         };
         /** @description What a mapping preview renders. */
