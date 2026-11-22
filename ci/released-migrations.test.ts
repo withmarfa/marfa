@@ -188,7 +188,7 @@ describe("the device store", () => {
     expect(now, `SCHEMA_VERSION not found in ${OPEN_RS}`).toBeDefined();
     expect(
       now,
-      `${SCHEMA_SQL} changed since ${tag}, a release that shipped it, and SCHEMA_VERSION is still ${now}. Raise the store version in ${OPEN_RS} and add an upgrade step, so a store the release wrote still opens.`,
+      `${SCHEMA_SQL} changed since ${tag}, a release that shipped it, and SCHEMA_VERSION is still ${String(now)}. Raise the store version in ${OPEN_RS} and add an upgrade step, so a store the release wrote still opens.`,
     ).toBeGreaterThan(was ?? Infinity);
   });
 
