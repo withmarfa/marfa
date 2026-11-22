@@ -463,8 +463,7 @@ pub struct Setting {
     pub choices: Vec<String>,
 }
 
-/// The settings a checked connector section declares, in its order, or `None` when the section
-/// does not read as one installing checked.
+/// `None` when the section is not one the install check passed.
 pub fn settings(section: &Obj) -> Option<Vec<Setting>> {
     let Some(listed) = section.get("settings") else {
         return Some(Vec::new());
@@ -501,8 +500,7 @@ pub fn settings(section: &Obj) -> Option<Vec<Setting>> {
 }
 
 impl Setting {
-    /// Why `value` cannot be this setting's value, or `None` when it can. The reason never
-    /// repeats the value, which may be a secret.
+    /// The reason never repeats the value, which may be a secret.
     pub fn refuses(&self, value: &Value) -> Option<String> {
         let name = &self.name;
         let fits = match self.kind {

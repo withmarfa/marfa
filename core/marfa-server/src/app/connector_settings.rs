@@ -1,6 +1,4 @@
-//! The value set for each setting a plugin's connector declares. A secret's value is sealed to
-//! the setting and to the one install of the connector, and only the connector's own key reads
-//! it opened.
+//! Each plugin connector's settings. A secret is sealed to its setting and install.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -107,7 +105,6 @@ fn held(tx: &Transaction<'_>, plugin: &str) -> Result<Held> {
     held_of(tx, &record)
 }
 
-/// What one setting holds now.
 enum Now {
     Unset,
     Plain(Value),
@@ -316,8 +313,7 @@ pub async fn set(
     .await
 }
 
-/// The settings of the plugin connector whose host minted the key `registration` was made
-/// under, answered to that key alone.
+/// Answered only to the key a host minted for the plugin's connector.
 pub async fn own(app: &App, caller: &Caller, registration: String) -> Result<Value> {
     app.faults.hold(HOLD_CONNECTOR_SETTINGS, None).await;
     let sealer = app.settings.shared_sealer();
@@ -331,8 +327,7 @@ pub async fn own(app: &App, caller: &Caller, registration: String) -> Result<Val
     .await
 }
 
-/// Keeps, through a newer version of the plugin, each value whose setting keeps its kind,
-/// secrecy and choice, and removes the rest.
+/// Keeps a value only where its setting keeps its kind, secrecy and choice.
 pub(crate) fn follow_update(
     tx: &Transaction<'_>,
     plugin: &str,
@@ -389,7 +384,6 @@ pub(crate) fn archive_lines(tx: &Transaction<'_>) -> Result<Vec<Value>> {
     Ok(lines)
 }
 
-/// One `connector_setting` line of an archive.
 #[derive(Clone, Debug)]
 pub struct Archived {
     pub plugin: String,
@@ -398,7 +392,6 @@ pub struct Archived {
     pub value: Option<Value>,
 }
 
-/// Reads a line's body, or says what is wrong with it.
 pub fn archived(body: &Value) -> std::result::Result<Archived, &'static str> {
     let object = body.as_object().ok_or("is not an object")?;
     let plugin = object
@@ -423,8 +416,7 @@ pub fn archived(body: &Value) -> std::result::Result<Archived, &'static str> {
     })
 }
 
-/// Stores the archived settings of each plugin the restore recorded anew, and answers each
-/// secret it names, which this machine holds no value for, to be set again.
+/// Only for plugins this restore recorded anew; answers the secrets to set again.
 pub(crate) fn restore(
     tx: &Transaction<'_>,
     archived: &[Archived],

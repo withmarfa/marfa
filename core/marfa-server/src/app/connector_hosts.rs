@@ -146,7 +146,6 @@ pub(crate) fn record_of_key(tx: &Transaction<'_>, key_id: &str) -> Result<Option
         .optional()?)
 }
 
-/// Every plugin's connector, by plugin.
 pub(crate) fn records(tx: &Transaction<'_>) -> Result<Vec<Record>> {
     let mut statement = tx.prepare_cached(
         "SELECT plugin, source, host_id, key_id, id FROM plugin_connectors ORDER BY plugin",
