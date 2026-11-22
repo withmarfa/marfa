@@ -71,6 +71,8 @@ pub const OPERATIONS: &[Operation] = &[
     reached("getPlugin", "plugins get"),
     reached("removePlugin", "plugins remove"),
     reached("replacePluginConnectorHost", "plugins assign"),
+    reached("getPluginConnectorSettings", "plugins settings"),
+    reached("updatePluginConnectorSettings", "plugins secret"),
     reached("createConnectorHost", "hosts add"),
     reached("listConnectorHosts", "hosts list"),
     reached("getConnectorHost", "hosts get"),
@@ -205,6 +207,10 @@ pub const NO_COMMAND: &[(&str, &str)] = &[
     (
         "createConnectorKey",
         "only a connector host's own key mints a connector's key, which the host program holds",
+    ),
+    (
+        "getConnectorSettings",
+        "only a plugin connector's own key reads its settings opened, which the connector holds",
     ),
 ];
 

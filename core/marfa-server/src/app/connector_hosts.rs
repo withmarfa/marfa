@@ -33,6 +33,8 @@ const SEEN: &str = "connector_host.seen";
 #[derive(Clone, Debug)]
 pub struct Record {
     pub plugin: String,
+    /// This install of the connector; a reinstall gets another.
+    pub id: Option<String>,
     pub source: String,
     pub host_id: Option<String>,
     pub key_id: Option<String>,
@@ -121,16 +123,35 @@ fn record_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Record> {
         source: row.get(1)?,
         host_id: row.get(2)?,
         key_id: row.get(3)?,
+        id: row.get(4)?,
     })
 }
 
 pub(crate) fn record(tx: &Transaction<'_>, plugin: &str) -> Result<Option<Record>> {
     Ok(tx
         .prepare_cached(
-            "SELECT plugin, source, host_id, key_id FROM plugin_connectors WHERE plugin = ?1",
+            "SELECT plugin, source, host_id, key_id, id FROM plugin_connectors WHERE plugin = ?1",
         )?
         .query_row([plugin], record_of)
         .optional()?)
+}
+
+/// The plugin connector whose host minted the key `key_id`.
+pub(crate) fn record_of_key(tx: &Transaction<'_>, key_id: &str) -> Result<Option<Record>> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT plugin, source, host_id, key_id, id FROM plugin_connectors WHERE key_id = ?1",
+        )?
+        .query_row([key_id], record_of)
+        .optional()?)
+}
+
+pub(crate) fn records(tx: &Transaction<'_>) -> Result<Vec<Record>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT plugin, source, host_id, key_id, id FROM plugin_connectors ORDER BY plugin",
+    )?;
+    let rows = statement.query_map([], record_of)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 /// The plugin whose connector holds `source`.
@@ -158,9 +179,9 @@ pub(crate) fn require_source_free(tx: &Transaction<'_>, source: &str, at: &str) 
 /// Records a plugin's connector with no host and no key.
 pub(crate) fn add(tx: &Transaction<'_>, plugin: &str, source: &str, at: &str) -> Result<()> {
     tx.execute(
-        "INSERT INTO plugin_connectors (plugin, source, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?3)",
-        params![plugin, source, at],
+        "INSERT INTO plugin_connectors (plugin, source, id, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        params![plugin, source, uuid::Uuid::now_v7().to_string(), at],
     )?;
     Ok(())
 }
@@ -255,7 +276,7 @@ fn hosts(tx: &Transaction<'_>) -> Result<Vec<Host>> {
 
 fn assigned(tx: &Transaction<'_>, host_id: &str) -> Result<Vec<Record>> {
     let mut statement = tx.prepare_cached(
-        "SELECT plugin, source, host_id, key_id FROM plugin_connectors WHERE host_id = ?1 \
+        "SELECT plugin, source, host_id, key_id, id FROM plugin_connectors WHERE host_id = ?1 \
          ORDER BY plugin",
     )?;
     let rows = statement.query_map([host_id], record_of)?;

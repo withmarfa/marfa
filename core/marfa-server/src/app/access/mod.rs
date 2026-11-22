@@ -319,6 +319,25 @@ impl Caller {
         .with_detail("settings", settings.to_vec()))
     }
 
+    /// A restore records a plugin's connector or stores its settings only for a caller that
+    /// may install or set them.
+    pub fn require_connector_restore(&self, plugins: &[String], settings: &[String]) -> Result<()> {
+        if (plugins.is_empty() && settings.is_empty()) || self.holds(Permission::ConnectorsManage) {
+            return Ok(());
+        }
+        let named: Vec<&str> = plugins.iter().chain(settings).map(String::as_str).collect();
+        Err(Refusal::new(
+            Code::Forbidden,
+            format!(
+                "Restoring this archive would install a plugin's connector or store its settings, which requires the connectors.manage permission: {}.",
+                named.join(", ")
+            ),
+        )
+        .with_detail("required_scope", Permission::ConnectorsManage.word())
+        .with_detail("plugins", plugins.to_vec())
+        .with_detail("connector_settings", settings.to_vec()))
+    }
+
     /// A key has no sign-in to renew, so it is refused rather than challenged.
     pub fn require_step_up(&self, permission: Permission, at: &str) -> Result<()> {
         match self {

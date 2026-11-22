@@ -258,6 +258,9 @@ impl Judge {
             self.text(setting, &at, "label", LABEL_CAP);
             let kind = self.word(setting, &at, "kind", &SETTING_KINDS);
             let secret = self.flag(setting, &at, "secret", false);
+            if secret && kind.is_some_and(|kind| kind != "text") {
+                self.wrong(format!("{at}.secret"), "A secret setting is text");
+            }
             self.flag(setting, &at, "required", true);
             let choices = self.choices(setting, &at, kind);
             if let Some(default) = setting.get("default") {
@@ -416,6 +419,125 @@ pub fn connector_faults(section: &Obj, types: Option<&BTreeSet<&str>>) -> Vec<Pr
 /// The source a checked connector section writes under.
 pub fn source(section: &Obj) -> Option<&str> {
     section.get("source").and_then(Value::as_str)
+}
+
+/// The longest text a setting's value holds.
+pub const VALUE_CAP: usize = 4096;
+
+/// What a setting holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Text,
+    Number,
+    Boolean,
+    Choice,
+}
+
+impl Kind {
+    pub fn word(self) -> &'static str {
+        match self {
+            Kind::Text => "text",
+            Kind::Number => "number",
+            Kind::Boolean => "boolean",
+            Kind::Choice => "choice",
+        }
+    }
+
+    fn of(word: &str) -> Option<Kind> {
+        match word {
+            "text" => Some(Kind::Text),
+            "number" => Some(Kind::Number),
+            "boolean" => Some(Kind::Boolean),
+            "choice" => Some(Kind::Choice),
+            _ => None,
+        }
+    }
+}
+
+/// A setting a checked connector section declares.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Setting {
+    pub name: String,
+    pub label: String,
+    pub kind: Kind,
+    pub secret: bool,
+    pub required: bool,
+    pub default: Option<Value>,
+    pub choices: Vec<String>,
+}
+
+/// `None` when the section is not one the install check passed.
+pub fn settings(section: &Obj) -> Option<Vec<Setting>> {
+    let Some(listed) = section.get("settings") else {
+        return Some(Vec::new());
+    };
+    listed
+        .as_array()?
+        .iter()
+        .map(|setting| {
+            let setting = setting.as_object()?;
+            let text = |key: &str| setting.get(key).and_then(Value::as_str);
+            let flag = |key: &str| match setting.get(key) {
+                None => Some(false),
+                Some(value) => value.as_bool(),
+            };
+            let choices = match setting.get("choices") {
+                None => Vec::new(),
+                Some(listed) => listed
+                    .as_array()?
+                    .iter()
+                    .map(|word| word.as_str().map(str::to_string))
+                    .collect::<Option<_>>()?,
+            };
+            Some(Setting {
+                name: text("name")?.to_string(),
+                label: text("label")?.to_string(),
+                kind: Kind::of(text("kind")?)?,
+                secret: flag("secret")?,
+                required: setting.get("required")?.as_bool()?,
+                default: setting.get("default").cloned(),
+                choices,
+            })
+        })
+        .collect()
+}
+
+impl Setting {
+    /// The reason never repeats the value, which may be a secret.
+    pub fn refuses(&self, value: &Value) -> Option<String> {
+        let name = &self.name;
+        let fits = match self.kind {
+            Kind::Text => value.as_str().is_some_and(|text| {
+                let count = text.chars().count();
+                (1..=VALUE_CAP).contains(&count) && !(self.secret && text.trim() != text)
+            }),
+            Kind::Number => value.is_number(),
+            Kind::Boolean => value.is_boolean(),
+            Kind::Choice => value
+                .as_str()
+                .is_some_and(|word| self.choices.iter().any(|choice| choice == word)),
+        };
+        if fits {
+            return None;
+        }
+        Some(match self.kind {
+            Kind::Text if self.secret => format!(
+                "{name} takes text of 1 to {VALUE_CAP} characters with no white space at either end"
+            ),
+            Kind::Text => format!("{name} takes text of 1 to {VALUE_CAP} characters"),
+            Kind::Number => format!("{name} takes a number"),
+            Kind::Boolean => format!("{name} takes true or false"),
+            Kind::Choice => format!("{name} takes one of {}", self.choices.join(", ")),
+        })
+    }
+
+    /// Whether a value set under `earlier`, this setting in an earlier version, stays set.
+    pub fn keeps(&self, earlier: &Setting, value: Option<&Value>) -> bool {
+        self.kind == earlier.kind
+            && self.secret == earlier.secret
+            && (self.kind != Kind::Choice
+                || value.is_some_and(|value| self.refuses(value).is_none()))
+    }
 }
 
 /// The type of each kind a checked connector section brings, each once.
@@ -580,5 +702,78 @@ mod tests {
         assert!(connector_faults(&section(odd), None).is_empty());
         assert_eq!(kind_types(&section(base())), ["rss.entry"]);
         assert_eq!(source(&section(base())), Some("rss"));
+    }
+
+    #[test]
+    fn a_value_fits_its_settings_kind_and_a_secret_is_used_as_written() {
+        let mut held = base();
+        held["settings"] = json!([
+            { "name": "feed", "label": "Feed", "kind": "text", "required": true },
+            { "name": "every", "label": "Every", "kind": "number", "default": 3, "required": false },
+            { "name": "on", "label": "On", "kind": "boolean", "required": false },
+            { "name": "order", "label": "Order", "kind": "choice", "choices": ["a", "b"], "required": false },
+            { "name": "token", "label": "Token", "kind": "text", "secret": true, "required": true },
+        ]);
+        let declared = settings(&section(held)).unwrap();
+        let [feed, every, on, order, token] = &declared[..] else {
+            panic!("five settings");
+        };
+        assert_eq!(every.default, Some(json!(3)));
+        assert!(token.secret && token.required && !feed.secret);
+        for (setting, good, bad) in [
+            (feed, json!(" padded is fine "), json!("")),
+            (
+                feed,
+                json!("x".repeat(VALUE_CAP)),
+                json!("x".repeat(VALUE_CAP + 1)),
+            ),
+            (every, json!(-1.5), json!("1")),
+            (on, json!(false), json!(0)),
+            (order, json!("b"), json!("c")),
+            (token, json!("hush"), json!(" hush")),
+        ] {
+            assert_eq!(setting.refuses(&good), None, "{}", setting.name);
+            let said = setting.refuses(&bad).unwrap();
+            assert!(said.starts_with(&setting.name), "{said}");
+            assert!(!said.contains("hush"), "{said}");
+        }
+    }
+
+    #[test]
+    fn a_secret_setting_is_text() {
+        for kind in ["number", "boolean", "choice", "text"] {
+            let mut held = base();
+            let mut one = json!({ "name": "s", "label": "S", "kind": kind, "secret": true, "required": false });
+            if kind == "choice" {
+                one["choices"] = json!(["a"]);
+            }
+            held["settings"] = json!([one]);
+            let expected: &[&str] = if kind == "text" {
+                &[]
+            } else {
+                &["connector.settings.0.secret"]
+            };
+            assert_eq!(paths(held), expected, "{kind}");
+        }
+    }
+
+    #[test]
+    fn a_newer_version_keeps_a_value_whose_setting_keeps_its_kind_secrecy_and_choice() {
+        let setting = |kind: &str, secret: bool, choices: &[&str]| {
+            let mut held = base();
+            let mut one = json!({ "name": "s", "label": "S", "kind": kind, "secret": secret, "required": false });
+            if !choices.is_empty() {
+                one["choices"] = json!(choices);
+            }
+            held["settings"] = json!([one]);
+            settings(&section(held)).unwrap().remove(0)
+        };
+        let text = setting("text", false, &[]);
+        assert!(text.keeps(&text, Some(&json!("x"))));
+        assert!(!setting("number", false, &[]).keeps(&text, Some(&json!("x"))));
+        assert!(!setting("text", true, &[]).keeps(&text, None));
+        let wide = setting("choice", false, &["a", "b"]);
+        assert!(setting("choice", false, &["b", "c"]).keeps(&wide, Some(&json!("b"))));
+        assert!(!setting("choice", false, &["c"]).keeps(&wide, Some(&json!("b"))));
     }
 }

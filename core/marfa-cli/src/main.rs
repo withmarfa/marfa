@@ -213,7 +213,7 @@ enum Command {
         #[command(subcommand)]
         command: hosts::HostsCommand,
     },
-    /// Plugins: install one, by name or from a file or folder, assign its connector to a host, list and remove them, and check or build a plugin's source folder.
+    /// Plugins: install one, by name or from a file or folder, assign its connector to a host, set its connector's settings and secrets, list and remove them, and check or build a plugin's source folder.
     Plugins {
         #[command(subcommand)]
         command: plugins::PluginsCommand,

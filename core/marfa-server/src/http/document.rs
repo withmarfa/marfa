@@ -226,6 +226,10 @@ const REFUSES_LOCAL: &[(&str, &str)] = &[
         "the connector's own key alone",
     ),
     (
+        "GET /connectors/{id}/settings",
+        "the connector's own key alone",
+    ),
+    (
         "POST /connectors/{id}/agreements",
         "the connector's own key alone",
     ),

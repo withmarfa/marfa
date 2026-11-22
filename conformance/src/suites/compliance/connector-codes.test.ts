@@ -146,6 +146,7 @@ describe("a revoked key", () => {
       ["GET", "/connectors/{id}/runs", `${base}/runs`],
       ["POST", "/connectors/{id}/hold", `${base}/hold`, { process }],
       ["DELETE", "/connectors/{id}/hold", `${base}/hold?process=${process}`],
+      ["GET", "/connectors/{id}/settings", `${base}/settings`],
       ["GET", "/connectors/{id}/state", `${base}/state`],
       [
         "PUT",

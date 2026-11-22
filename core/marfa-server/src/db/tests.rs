@@ -2626,7 +2626,7 @@ async fn a_database_at_schema_version_5_upgrades_through_6_keeping_its_keys_and_
         ))
         .unwrap();
 
-    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+    db_open(&options(&place.file, &MIGRATIONS[..6]), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -2655,4 +2655,70 @@ async fn a_database_at_schema_version_5_upgrades_through_6_keeping_its_keys_and_
     assert_eq!(counted("plugin_connectors"), 0);
     assert_eq!(counted("connector_hosts"), 0);
     assert_eq!(counted("connector_host_links"), 0);
+}
+
+#[tokio::test]
+async fn a_database_at_schema_version_6_upgrades_through_7_giving_each_plugin_connector_an_install()
+{
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..6]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch(
+            "INSERT INTO plugins (name, version, title, description, mark, maker, marfa, manifest, \
+             edge_types, installed_at, updated_at, fingerprint) VALUES ('rss', '1.0.0', 'RSS', \
+             'Feeds.', 'lucide:rss', 'Marfa', '0.0.1', '{\"connector\":{\"source\":\"rss\"}}', \
+             '[]', 'a', 'a', '0000000000000000000000000000000000000000000000000000000000000000'), ('atom', '1.0.0', 'Atom', 'Feeds.', 'lucide:rss', 'Marfa', \
+             '0.0.1', '{\"connector\":{\"source\":\"atom\"}}', '[]', 'a', 'a', '0000000000000000000000000000000000000000000000000000000000000000'); \
+             INSERT INTO plugin_connectors (plugin, source, created_at, updated_at) VALUES \
+             ('rss', 'rss', 'a', 'a'), ('atom', 'atom', 'a', 'a');",
+        )
+        .unwrap();
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    let conn = Connection::open(&place.file).unwrap();
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 7);
+    let ids: Vec<Option<String>> = conn
+        .prepare("SELECT id FROM plugin_connectors ORDER BY plugin")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(ids.len(), 2);
+    assert!(
+        ids.iter()
+            .all(|id| id.as_ref().is_some_and(|id| id.len() == 32))
+    );
+    assert_ne!(ids[0], ids[1]);
+    conn.execute(
+        "INSERT INTO plugin_connector_settings (plugin, name, value, updated_at) \
+         VALUES ('rss', 'feed', '\"x\"', 'a')",
+        [],
+    )
+    .unwrap();
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON; DELETE FROM plugin_connectors WHERE plugin = 'rss';",
+    )
+    .unwrap();
+    let left: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM plugin_connector_settings",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(left, 0);
 }

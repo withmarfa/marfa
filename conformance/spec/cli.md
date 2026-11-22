@@ -1768,6 +1768,52 @@ When `marfa plugins remove` removes a plugin with a connector, the CLI MUST prin
 
 **Tests:** `cli/connector-hosts.test.ts › assigns a connector to a host and to none, and says what removing its plugin stops and keeps`.
 
+## A connector's settings
+
+### `cli/plugins-settings-list`
+
+When `marfa plugins settings` is given a plugin and no `--set`, the CLI MUST send `GET /plugins/{name}/connector/settings` and print each setting's name, whether it is set, and the value of each setting that is not secret.
+
+**Tests:** `cli/connector-settings.test.ts › lists and sets a connector's settings, each value sent as its kind, and refuses a secret named with --set`.
+
+### `cli/plugins-settings-set`
+
+When `marfa plugins settings` is given `--set <name>=<value>` once or more, the CLI MUST send one `PATCH /plugins/{name}/connector/settings` holding each value as the kind `GET /plugins/{name}/connector/settings` answers for its setting: a number for `number`, `true` or `false` for `boolean`, and text otherwise.
+
+**Tests:** `cli/connector-settings.test.ts › lists and sets a connector's settings, each value sent as its kind, and refuses a secret named with --set`.
+
+### `cli/plugins-settings-secret-refused`
+
+If `marfa plugins settings` is given `--set` naming a setting the server answers as secret, then the CLI MUST exit 2 with `usage`, name `marfa plugins secret`, print no part of the value and send no `PATCH /plugins/{name}/connector/settings`.
+
+**Reason:** a value on a command line is kept in the shell's history and shown to other processes on the machine.
+
+**Tests:** `cli/connector-settings.test.ts › lists and sets a connector's settings, each value sent as its kind, and refuses a secret named with --set`.
+
+### `cli/plugins-secret-stdin`
+
+When `marfa plugins secret` is given a plugin and a setting without `--clear`, the CLI MUST read the value from standard input, or from a prompt with no echo when standard input is a terminal, drop one line ending at its end, and send it as text in `PATCH /plugins/{name}/connector/settings`.
+
+**Tests:** `cli/connector-settings.test.ts › sets a secret from standard input without printing it, clears it with --clear, and refuses one given as an argument`.
+
+### `cli/plugins-secret-argument`
+
+If `marfa plugins secret` is given a value as an argument, then the CLI MUST exit 2 with `usage`, print no part of the value and send no `PATCH /plugins/{name}/connector/settings`.
+
+**Tests:** `cli/connector-settings.test.ts › sets a secret from standard input without printing it, clears it with --clear, and refuses one given as an argument`.
+
+### `cli/plugins-secret-clear`
+
+When `marfa plugins secret` is given `--clear`, the CLI MUST send `PATCH /plugins/{name}/connector/settings` giving the setting `null`, and read nothing from standard input.
+
+**Tests:** `cli/connector-settings.test.ts › sets a secret from standard input without printing it, clears it with --clear, and refuses one given as an argument`.
+
+### `cli/plugins-secret-not-printed`
+
+The CLI MUST NOT print the value of a connector's secret setting.
+
+**Tests:** `cli/connector-settings.test.ts › sets a secret from standard input without printing it, clears it with --clear, and refuses one given as an argument`.
+
 ## Type guidance
 
 To keep a type's guidance in a separate Markdown file, name it `PATH.md` and place it beside `PATH.json`.

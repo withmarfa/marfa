@@ -289,6 +289,46 @@ describe("the connector section", () => {
     expect(taken.status, JSON.stringify(taken.error)).toBe(201);
   });
 
+  it("refuses 400 validation_error a secret setting of a kind other than text, naming its secret, and installs the same setting as text", async () => {
+    const part = fresh();
+    const root = `secretkind${part}`;
+    const name = `secret-kind-${part}`;
+    const base = connectorSection(`${root}.entry`, name);
+    const secretOf = (kind: string, extra: Record<string, unknown> = {}) =>
+      connectorBundle(name, root, name, {
+        connector: {
+          ...base,
+          settings: [
+            { name: "every", label: "Every", kind: "number", required: false },
+            {
+              name: "token",
+              label: "Token",
+              kind,
+              secret: true,
+              required: false,
+              ...extra,
+            },
+          ],
+        },
+      });
+    for (const [kind, extra] of [
+      ["choice", { choices: ["one", "two"] }],
+      ["number", {}],
+      ["boolean", {}],
+    ] as const) {
+      const refused = await owner.installPlugin(secretOf(kind, extra));
+      expect(refused.status, kind).toBe(400);
+      expect(refused.error?.error.code, kind).toBe("validation_error");
+      expect(errorPaths(refused), kind).toEqual([
+        "connector.settings.1.secret",
+      ]);
+      expect((await owner.getPlugin(name)).status, kind).toBe(404);
+    }
+    // The witness: the same secret as text installs.
+    const taken = await owner.installPlugin(secretOf("text"));
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+  });
+
   it("refuses a source a key could not hold, two kinds or settings of one name, and a default that does not fit its kind", async () => {
     const part = fresh();
     const root = `limits${part}`;

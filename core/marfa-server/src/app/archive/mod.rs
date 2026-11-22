@@ -35,7 +35,7 @@ use crate::settings::registry;
 pub use spool::Sealed;
 use spool::{Lines, Spooled};
 
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 /// What a manifest names itself, so a reader knows the archive for one before reading its version.
 pub const FORMAT: &str = "marfa-archive";
 /// The most a manifest, or one line of a line file, may hold.
@@ -888,6 +888,13 @@ fn select<W: RowSink>(
         }
     }
     count("setting_count", &mut instance, settings)?;
+    let mut connector_settings = Vec::new();
+    if caller.holds(Permission::ConnectorsManage) {
+        for line in super::connector_settings::archive_lines(read.tx)? {
+            connector_settings.push((print(&line)?, needing(Some(Permission::ConnectorsManage))));
+        }
+    }
+    count("connector_setting_count", &mut instance, connector_settings)?;
     if !matches!(caller, Caller::Server) && super::config::levers_unreadable(read.tx)? {
         return Err(enforcement_unreadable());
     }

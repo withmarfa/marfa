@@ -80,6 +80,7 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | Remove a plugin with a connector | `marfa plugins remove` |
 | Make, link and remove the machines that run connectors | `marfa hosts add`, `marfa hosts list`, `marfa hosts get`, `marfa hosts link`, `marfa hosts remove` |
 | Choose which machine runs a plugin's connector | `marfa plugins assign` |
+| Set a plugin connector's settings and secrets | `marfa plugins settings`, `marfa plugins secret` |
 | See what a key can read | `marfa overview` |
 | Read the instance's name and enforcement | `marfa config get` |
 | Change one setting, or return it to its default | `marfa config set`, `marfa config unset` |
@@ -1416,7 +1417,7 @@ marfa hosts remove [OPTIONS] <HOST>
 
 ## plugins
 
-Plugins: install one, by name or from a file or folder, assign its connector to a host, list and remove them, and check or build a plugin's source folder.
+Plugins: install one, by name or from a file or folder, assign its connector to a host, set its connector's settings and secrets, list and remove them, and check or build a plugin's source folder.
 
 ### marfa plugins
 
@@ -1489,6 +1490,39 @@ marfa plugins assign [OPTIONS] <--host <HOST>|--none> <NAME>
 | --- | --- |
 | `--host <HOST>` | The connector host, by ID or name, to run the connector. |
 | `--none` | Assign the connector to no host. |
+
+### marfa plugins settings
+
+A plugin connector's settings, each with its value or default, or set some with `--set`. A secret is listed as set or not, never shown, and set with `marfa plugins secret`. Requires `connectors.manage`.
+
+```text
+marfa plugins settings [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+
+| Option | Description |
+| --- | --- |
+| `--set <NAME=VALUE>` | A setting to set, as `name=value`; repeat it for more. The value is sent as the setting's kind: a number, `true` or `false`, or text. |
+
+### marfa plugins secret
+
+Set a secret setting of a plugin's connector from standard input, or from a prompt that does not echo at a terminal, or remove it with `--clear`. The value is never an argument and never printed. Requires `connectors.manage`.
+
+```text
+marfa plugins secret [OPTIONS] <NAME> <SETTING>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+| `<SETTING>` | The secret setting's name. |
+
+| Option | Description |
+| --- | --- |
+| `--clear` | Remove the value set, reading nothing. |
 
 ### marfa plugins check
 

@@ -26,7 +26,8 @@ use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM, HOLD_RESTORE_SE
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{
-    connectors, edge_types, instance, plugins, sources, stored, tables, types, vendors,
+    connector_settings, connectors, edge_types, instance, plugins, sources, stored, tables, types,
+    vendors,
 };
 use crate::app::{provenance, restore_running};
 use crate::db::Write;
@@ -389,6 +390,7 @@ impl App {
                 registrations.types.clone(),
                 registrations.edge_types.clone(),
                 registrations.plugins.clone(),
+                registrations.connector_settings.clone(),
             );
             app.faults.hold(HOLD_RESTORE_SETTINGS, None).await;
             // On the writer, so every write admitted before the hold has landed.
@@ -403,6 +405,7 @@ impl App {
                         types,
                         edge_types,
                         archived_plugins,
+                        archived_settings,
                     ) = judged;
                     let caller = caller.current(tx, &app.clock.stamp())?;
                     caller.require_settings_restore(&stored::restoring(
@@ -412,6 +415,9 @@ impl App {
                         &secrets,
                         enforcement.as_ref(),
                     )?)?;
+                    let (connected, named) =
+                        connector_settings::restoring(tx, &archived_settings, &archived_plugins)?;
+                    caller.require_connector_restore(&connected, &named)?;
                     let before = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
                     judge_types(tx, &before, &types, &edge_types, &archived_plugins, &caller)
                         .map(drop)
@@ -448,6 +454,12 @@ impl App {
                             &registrations.secrets,
                             registrations.enforcement.as_ref(),
                         )?)?;
+                        let (connected, named) = connector_settings::restoring(
+                            tx,
+                            &registrations.connector_settings,
+                            &registrations.plugins,
+                        )?;
+                        unit.caller.require_connector_restore(&connected, &named)?;
                         let before = catalog::current(&cache, tx, Snapshot::Pending)?;
                         let (types_plan, edges_plan) = judge_types(
                             tx,
@@ -490,7 +502,14 @@ impl App {
                             icons.skip("already_set");
                         }
                         let named = sources::restore(tx, &unit.at, &registrations.sources)?;
-                        let (plugins_added, plugins_skipped) = plugins::restore(tx, &registrations.plugins, &unit.at)?;
+                        let (plugins_recorded, plugins_skipped) = plugins::restore(tx, &registrations.plugins, &unit.at)?;
+                        let plugins_added = plugins_recorded.len();
+                        let connector_secrets_to_set = connector_settings::restore(
+                            tx,
+                            &registrations.connector_settings,
+                            &plugins_recorded,
+                            &unit.at,
+                        )?;
                         let restored_settings =
                             stored::restore(
                                 tx,
@@ -621,6 +640,7 @@ impl App {
                             "settings_dropped": registrations.dropped_settings,
                             "settings_without_receiver": restored_settings.without_receiver,
                             "secrets_to_set": restored_settings.secrets_to_set,
+                            "connector_secrets_to_set": connector_secrets_to_set,
                             "enforcement_added": levers.added,
                             "enforcement_skipped": levers.skipped,
                             "connector_states_added": states.added,

@@ -402,6 +402,82 @@ If an app token lacking `connectors.manage` sends `GET /connectors/{id}` or `GET
 
 **Tests:** `compliance/connector-session-token.test.ts › lists nothing to an app's session token, and hides a registration from it`.
 
+## A plugin connector's settings
+
+A plugin's connector reads its settings, its secrets opened, from its own registration. The owner sets them through `PATCH /plugins/{name}/connector/settings` (`plugins/settings-set`). `GET /connectors/{id}/settings` judges the credential, the registration, the caller's key, then the plugin.
+
+### `connectors/settings-read`
+
+When the key a connector host minted for a plugin's connector, and under which the registration was made, sends `GET /connectors/{id}/settings`, the server MUST answer `200` with `plugin`, `settings` holding an entry for each setting the connector declares, in the order it declares them, with its `name`, `kind`, `secret`, `required`, `value`, `set` and `unreadable`, and `missing` as `plugins/settings-missing` says.
+
+**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key`.
+
+### `connectors/settings-secret-opened`
+
+When the server answers `GET /connectors/{id}/settings`, the server MUST answer a secret setting's `value` as the value set for it, or `null` while none is set.
+
+**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key`.
+
+### `connectors/settings-unreadable`
+
+If the server cannot open the value stored for a secret setting when it answers `GET /connectors/{id}/settings`, then the server MUST answer the setting with `value` `null`, `set` `false` and `unreadable` `true`.
+
+**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`.
+
+### `connectors/settings-other-refused`
+
+If a caller that is not the key the registration was made under, such as another connector's key, a key holding `connectors.manage`, an app token or the private socket, sends `GET /connectors/{id}/settings` naming a registered connector, then the server MUST answer `403 forbidden`.
+
+**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key`.
+
+### `connectors/settings-unknown-connector`
+
+If a caller sends `GET /connectors/{id}/settings` naming an ID no connector has, then the server MUST answer `404 connector_not_found`.
+
+**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key`.
+
+### `connectors/settings-no-plugin`
+
+If the key a registration was made under sends `GET /connectors/{id}/settings`, and that key is not the key a connector host minted for a plugin's connector that the plugin still holds, then the server MUST answer `404 connector_not_found`.
+
+**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key`.
+
+### `connectors/settings-standing-rechecked`
+
+If the key a registration was made under is revoked before its waiting `GET /connectors/{id}/settings` reads the settings, then the server MUST answer `401 unauthorized`.
+
+**Reason:** a key a fresh mint, a move to another host or the plugin's removal revoked while the request waited holds no secret any longer.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses the connector's settings 401 when its key is revoked while the read waits`.
+
+### `connectors/secret-not-answered`
+
+The server MUST NOT include the value of a secret setting of a plugin's connector in an answer to any request other than `GET /connectors/{id}/settings` from the key `connectors/settings-read` names, refusals included.
+
+**Reason:** the owner, an app holding `connectors.manage`, the private socket, a connector host's key and another connector's key are not trusted with a credential the owner gave one connector.
+
+**Tests:** `compliance/connector-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds a connector's secret, where a setting that is no secret is shown`, `› answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key`.
+
+### `connectors/secret-audit-no-value`
+
+The server MUST NOT include the value of a secret setting of a plugin's connector in an audit entry.
+
+**Tests:** `compliance/connector-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds a connector's secret, where a setting that is no secret is shown`.
+
+### `connectors/secret-not-logged`
+
+The server MUST NOT write the value of a secret setting of a plugin's connector to its log or its standard error.
+
+**Tests:** `compliance/connector-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds a connector's secret, where a setting that is no secret is shown`.
+
+### `connectors/secret-not-archived`
+
+The server MUST NOT put the value of a secret setting of a plugin's connector in an archive or a backup.
+
+**Reason:** an archive and a backup leave the machine, and the key that would open a sealed value never does, so each names the secrets that were set (`archive/archive-connector-secret-named`) and holds none.
+
+**Tests:** `compliance/connector-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds a connector's secret, where a setting that is no secret is shown`.
+
 ## Heartbeats
 
 A heartbeat says only that the process was alive at the time. What a stale one means is the reader's to decide.
