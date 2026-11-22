@@ -1094,7 +1094,7 @@ When a device removes a folder under `folder-setup/remove-instance-changed`, a d
 
 **Reason:** a deletion or a move is in no file, and the removal deletes the queue that held them, so this answer is the only record of what to do again; copying back only the files it names keeps another computer's edits to the others. The answer names only what the folder could not send: a change it sent after the backup the other instance was restored from was made is in no queue, so a file that differs from that instance's copy but is not named may be missing from the backup, and the person checks it.
 
-**Tests:** `device/folders.test.ts › removes a folder whose server answers as another instance while writes wait, and answers the folder's ID, how many writes were not sent and each file holding a change by kind`.
+**Tests:** `device/folders.test.ts › removes a folder whose server answers as another instance while writes wait, and answers the folder's ID, how many writes were not sent and each file holding a change by kind`, `› names no move its server took, removing a folder whose server answers as another instance, though a later edit to the moved file waits`, `› names a file moved again after its server took its first move, removing a folder whose server answers as another instance, as moved from where the server last held it`, `› names, removing a folder whose server answers as another instance, a file made while no write reached the server as new wherever it moved, and none made and deleted`.
 
 ### `folder-setup/remove-instance-changed-said`
 
