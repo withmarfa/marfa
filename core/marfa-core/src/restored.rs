@@ -347,6 +347,20 @@ pub(crate) struct Lost {
     taken_edges: Vec<Edge>,
 }
 
+#[cfg(test)]
+impl Lost {
+    /// Items the server lacks, each to be made again.
+    pub(crate) fn creating(items: Vec<Item>) -> Self {
+        Self {
+            items: items.into_iter().map(LostItem::Create).collect(),
+            edges: Vec::new(),
+            uploads: Vec::new(),
+            taken_items: Vec::new(),
+            taken_edges: Vec::new(),
+        }
+    }
+}
+
 /// The server's row the filled copy holds: the one beneath any writes
 /// waiting on it. `None` where only a waiting create holds it, where the
 /// copy holds no row, where a refill in place has not brought the row it
@@ -802,6 +816,7 @@ pub(crate) fn keep(tx: &Connection, catalog: &Catalog, lost: Option<Lost>) -> Re
         if row.kind == WriteKind::ReplaceTags {
             store::forget_read_tags(tx, &row.id)?;
         }
+        store::forget_read_revision(tx, &row.id)?;
         let over_create = match row.kind {
             WriteKind::UpdateItem | WriteKind::DeleteItem => row
                 .item_id

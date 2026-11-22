@@ -157,11 +157,11 @@ fn a_reading_handle_is_refused_at_every_write_door() {
         ),
         (
             "write_extension",
-            reader.write_extension("x", "ns", "{}").unwrap_err(),
+            reader.write_extension("x", "ns", "{}", None).unwrap_err(),
         ),
         (
             "delete_extension",
-            reader.delete_extension("x", "ns").unwrap_err(),
+            reader.delete_extension("x", "ns", None).unwrap_err(),
         ),
         ("release", reader.release("blocked").unwrap_err()),
         (

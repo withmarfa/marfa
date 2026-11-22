@@ -2313,6 +2313,9 @@ mod dispatch {
                     file: None,
                     body: Some(r#"{"at":3}"#.into()),
                 },
+                read: extensions::ReadRevisionArgs {
+                    read_revision: Some("absent".into()),
+                },
                 idempotency: key("write"),
             },
             &remote,
@@ -2323,6 +2326,9 @@ mod dispatch {
             extensions::ExtensionsCommand::Delete {
                 id: "i".into(),
                 namespace: "app.cursor".into(),
+                read: extensions::ReadRevisionArgs {
+                    read_revision: None,
+                },
                 idempotency: key("delete"),
             },
             &remote,
@@ -2344,7 +2350,11 @@ mod dispatch {
             ("POST", "/items/i/tags", "tag"),
             ("DELETE", "/items/i/tags/a", "untag"),
             ("PUT", "/items/i/tags", "replace"),
-            ("PUT", "/items/i/extensions/app.cursor", "write"),
+            (
+                "PUT",
+                "/items/i/extensions/app.cursor?read_revision=absent",
+                "write",
+            ),
             ("DELETE", "/items/i/extensions/app.cursor", "delete"),
         ]
         .map(|(method, path, key)| (method.to_string(), path.to_string(), Some(key.to_string())));

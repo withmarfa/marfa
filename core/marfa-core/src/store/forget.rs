@@ -11,7 +11,7 @@ use super::rows::remove_item;
 use super::stamps::{Owed, owe_read_back, settle_read_back};
 use super::verdicts::{RECEIPT_PENDING, held_for, take_out};
 use super::write_state::{
-    RESENT_AT_VERSION, SENT_AS, SENT_AT_VERSION, SENT_SOURCE, forget_write_state,
+    READ_REVISION, RESENT_AT_VERSION, SENT_AS, SENT_AT_VERSION, SENT_SOURCE, forget_write_state,
 };
 use crate::error::CoreError;
 use crate::model::{EdgeDraft, Subject, Verdict, WriteKind};
@@ -215,6 +215,7 @@ pub(super) fn forget_answered_inner(
                     SENT_SOURCE,
                     SENT_AT_VERSION,
                     RESENT_AT_VERSION,
+                    READ_REVISION,
                     "cleared_time/",
                     "bytes_sent_again/",
                 ] {

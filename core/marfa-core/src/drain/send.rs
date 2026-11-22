@@ -632,7 +632,7 @@ pub(super) fn send_queue(
             crate::catch_up::refuse_if_stopped(stop)?;
             #[cfg(debug_assertions)]
             crate::fault::hold(|| format!("drain-sending:{}", row.id));
-            let (resent, named_version) = {
+            let (resent, named_version, read_revision) = {
                 // Before the send: one whose answer never arrives has still
                 // reached the server, and treating it as unsent would write twice.
                 let mut conn = core.conn()?;
@@ -674,8 +674,9 @@ pub(super) fn send_queue(
                     store::record_resent_at_version(&tx, &row.id, version)?;
                 }
                 let named_version = store::resent_at_version(&tx, &row.id)?;
+                let read_revision = store::read_revision(&tx, &row.id)?;
                 tx.commit()?;
-                (resent, named_version)
+                (resent, named_version, read_revision)
             };
             let (answer, shape) = {
                 let write = telemetry::operation!("write", kind, status);
@@ -686,7 +687,9 @@ pub(super) fn send_queue(
                 // the next drain sends it again.
                 let sent = match sendable {
                     Sendable::Json(outgoing, shape) => {
-                        let owned = Owned::of(&outgoing).at_version(row.kind, named_version)?;
+                        let owned = Owned::of(&outgoing)
+                            .at_version(row.kind, named_version)?
+                            .reading(read_revision);
                         let answer = crate::catch_up::ask_unless_stopped(stop, http, move |http| {
                             http.send(&owned.outgoing())
                         });
@@ -764,7 +767,7 @@ pub(super) fn send_queue(
         let class = if taken_as_applied {
             Classified::Success
         } else {
-            refine(row, &payload, &answer, classify(&answer))
+            refine(row, &payload, &answer, classify(&answer), resent)
         };
         let environmental = class == Classified::Environmental;
         let landed = matches!(class, Classified::Landed { .. } | Classified::Delivered);

@@ -564,14 +564,43 @@ fn extension_documents_text(
     let entries: Vec<String> = rows::extensions(tx, item.seq)?
         .into_iter()
         .filter(|(namespace, _)| shown(namespace))
-        .map(|(namespace, data)| {
-            format!(
-                "{{\"namespace\":{},\"document\":{data}}}",
-                Value::from(namespace)
-            )
-        })
+        .map(|(namespace, data)| extension_text(&namespace, Some(&data)))
         .collect();
     Ok(format!("{{\"data\":[{}]}}", entries.join(",")))
+}
+
+/// `{ namespace, document, revision }`, with `document` as the stored text.
+fn extension_text(namespace: &str, data: Option<&str>) -> String {
+    format!(
+        "{{\"namespace\":{},\"document\":{},\"revision\":\"{}\"}}",
+        Value::from(namespace),
+        data.unwrap_or("null"),
+        extension_revision(data)
+    )
+}
+
+/// The revision a namespace that holds no document answers.
+const ABSENT_REVISION: &str = "absent";
+const REVISION_HEX: usize = 32;
+
+/// A digest of the served document, so it moves exactly when that document does.
+fn extension_revision(data: Option<&str>) -> String {
+    use sha2::Digest;
+    match data {
+        None => ABSENT_REVISION.to_string(),
+        Some(text) => {
+            hex::encode(sha2::Sha256::digest(text.as_bytes()))[..REVISION_HEX].to_string()
+        }
+    }
+}
+
+/// Whether `text` is in a form some namespace's revision takes.
+pub fn revision_form(text: &str) -> bool {
+    text == ABSENT_REVISION
+        || text.len() == REVISION_HEX
+            && text
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn metadata_for(tx: &Transaction<'_>, item: &Item, caller: &Caller) -> Result<String> {

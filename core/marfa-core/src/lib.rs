@@ -25,6 +25,8 @@ mod durable_tests;
 mod edge_rules;
 mod edge_writes;
 mod error;
+#[cfg(test)]
+mod extension_revision_tests;
 /// Public so the binary can name a fault of its own.
 pub mod fault;
 mod file_cache;

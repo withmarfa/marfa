@@ -163,11 +163,18 @@ function pageQuery(page: { limit?: number; cursor?: string }): string {
 export interface ItemExtension {
   namespace: string;
   document: Record<string, unknown> | null;
+  revision: string;
+}
+
+function readRevisionQuery(readRevision: string | undefined): string {
+  return readRevision === undefined
+    ? ""
+    : `?read_revision=${encodeURIComponent(readRevision)}`;
 }
 
 /** The documents of an extension list, by namespace. */
 export function extensionsOf(page: {
-  data: ItemExtension[];
+  data: Pick<ItemExtension, "namespace" | "document">[];
 }): Record<string, Record<string, unknown> | null> {
   return Object.fromEntries(
     page.data.map(({ namespace, document }) => [namespace, document]),
@@ -834,9 +841,10 @@ export class MarfaClient {
     id: string,
     namespace: string,
     data: Record<string, unknown>,
+    readRevision?: string,
   ): Promise<ApiResponse<{ data: ItemExtension[] }>> {
     return this.request<{ data: ItemExtension[] }>(
-      `/items/${id}/extensions/${namespace}`,
+      `/items/${id}/extensions/${namespace}${readRevisionQuery(readRevision)}`,
       {
         method: "PUT",
         body: data,
@@ -1642,9 +1650,10 @@ export class MarfaClient {
   async deleteItemExtension(
     id: string,
     namespace: string,
+    readRevision?: string,
   ): Promise<ApiResponse<{ data: ItemExtension[] }>> {
     return this.request<{ data: ItemExtension[] }>(
-      `/items/${id}/extensions/${namespace}`,
+      `/items/${id}/extensions/${namespace}${readRevisionQuery(readRevision)}`,
       { method: "DELETE" },
     );
   }

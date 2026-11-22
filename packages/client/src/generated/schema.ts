@@ -529,7 +529,7 @@ export interface paths {
         };
         /**
          * Get an extension namespace
-         * @description Returns the document in one extension namespace on the item, or `document: null` if the item has none there.
+         * @description Returns the document in one extension namespace on the item, or `document: null` if the item has none there, with the namespace's `revision`.
          */
         get: operations["getItemExtension"];
         /**
@@ -4532,11 +4532,21 @@ export interface components {
             document: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * @description The namespace's revision: the same for the same document, and another once the document changes. Send it as `read_revision` to write only over what you read.
+             * @example 3d6f27ea6701dd6693a9c302e57cb5e3
+             */
+            revision: string;
         };
         /** @description An item's extension namespaces that you can read. */
         ExtensionPage: {
             /** @description The extension namespaces on the item that you can read, by name. */
             data: components["schemas"]["Extension"][];
+        };
+        /** @description A guarded extension write's answer when the namespace changed since you read it: the refusal and the namespace now. */
+        ExtensionVersionConflict: {
+            error: components["schemas"]["VersionConflictError"] & unknown;
+            current: components["schemas"]["Extension"] & unknown;
         };
         /** @description An error response. */
         InvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal: {
@@ -15695,7 +15705,8 @@ export interface operations {
                      *       "namespace": "acme.crm",
                      *       "document": {
                      *         "pipeline": "enterprise"
-                     *       }
+                     *       },
+                     *       "revision": "3d6f27ea6701dd6693a9c302e57cb5e3"
                      *     }
                      */
                     "application/json": components["schemas"]["Extension"];
@@ -15821,7 +15832,13 @@ export interface operations {
     };
     replaceItemExtension: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description The namespace's `revision` as you read it, absent included. If the namespace changed since, Marfa doesn't replace it and returns `409 version_conflict`. Leave it out to replace it as it stands.
+                 * @example 3d6f27ea6701dd6693a9c302e57cb5e3
+                 */
+                read_revision?: string;
+            };
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
@@ -15860,7 +15877,8 @@ export interface operations {
                      *           "namespace": "acme.crm",
                      *           "document": {
                      *             "pipeline": "enterprise"
-                     *           }
+                     *           },
+                     *           "revision": "3d6f27ea6701dd6693a9c302e57cb5e3"
                      *         }
                      *       ]
                      *     }
@@ -15869,7 +15887,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body is not a JSON object, or its JSON is longer than 102,400 characters.
+             * @description - `validation_error`: the body is not a JSON object, its JSON is longer than 102,400 characters, or `read_revision` is named more than once or is not a revision Marfa returns.
              *     - `invalid_id`: the ID is not a valid item ID.
              *     - `invalid_properties`: the body holds a whole number a 64-bit float can't keep.
              */
@@ -15937,7 +15955,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTimeoutRefusal"];
                 };
             };
-            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            /**
+             * @description - `version_conflict`: the namespace's revision is not `read_revision`. `current` is the namespace now; nothing changed.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15947,7 +15968,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ExtensionVersionConflict"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -16049,7 +16070,13 @@ export interface operations {
     };
     deleteItemExtension: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description The namespace's `revision` as you read it, absent included. If the namespace changed since, Marfa doesn't delete it and returns `409 version_conflict`. Leave it out to delete it as it stands.
+                 * @example 3d6f27ea6701dd6693a9c302e57cb5e3
+                 */
+                read_revision?: string;
+            };
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
@@ -16082,7 +16109,8 @@ export interface operations {
                      *           "namespace": "acme.crm",
                      *           "document": {
                      *             "pipeline": "enterprise"
-                     *           }
+                     *           },
+                     *           "revision": "3d6f27ea6701dd6693a9c302e57cb5e3"
                      *         }
                      *       ]
                      *     }
@@ -16092,7 +16120,7 @@ export interface operations {
             };
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
-             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take, or `read_revision` is named more than once or is not a revision Marfa returns.
              */
             400: {
                 headers: {
@@ -16146,7 +16174,10 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            /**
+             * @description - `version_conflict`: the namespace's revision is not `read_revision`. `current` is the namespace now; nothing changed.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16156,7 +16187,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ExtensionVersionConflict"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -16283,7 +16314,8 @@ export interface operations {
                      *           "namespace": "acme.crm",
                      *           "document": {
                      *             "pipeline": "enterprise"
-                     *           }
+                     *           },
+                     *           "revision": "3d6f27ea6701dd6693a9c302e57cb5e3"
                      *         }
                      *       ]
                      *     }

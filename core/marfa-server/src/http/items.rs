@@ -830,6 +830,23 @@ pub(super) fn named_version(uri: &Uri) -> Result<Option<i64>> {
         .ok_or_else(|| invalid_field("version", "version is a whole number of 1 or more."))
 }
 
+fn named_read_revision(uri: &Uri) -> Result<Option<String>> {
+    query::only(uri, &["read_revision"])?;
+    let named: Vec<String> = query::pairs(uri)?
+        .into_iter()
+        .filter(|(name, _)| name == "read_revision")
+        .map(|(_, revision)| revision)
+        .collect();
+    match named.as_slice() {
+        [] => Ok(None),
+        [revision] if items::revision_form(revision) => Ok(Some(revision.clone())),
+        _ => Err(invalid_field(
+            "read_revision",
+            "Name read_revision once, as the revision a read of the namespace answered.",
+        )),
+    }
+}
+
 pub async fn add_tags(
     State(app): State<Arc<App>>,
     caller: Caller,
@@ -903,7 +920,7 @@ pub async fn set_extension(
 ) -> Answer {
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
-        query::only(&uri, &[])?;
+        let read_revision = named_read_revision(&uri)?;
         let data = body.object(Bag::Whole)?;
         check_item_id(&id)?;
         body.refuse_inexact_numbers(Bag::Whole)?;
@@ -911,6 +928,7 @@ pub async fn set_extension(
             id,
             namespace,
             data,
+            read_revision,
         };
         write::run(&door, &who, claim, change).await
     })
@@ -925,9 +943,14 @@ pub async fn clear_extension(
 ) -> Answer {
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, _| async move {
-        query::only(&uri, &[])?;
+        let read_revision = named_read_revision(&uri)?;
         check_item_id(&id)?;
-        write::run(&door, &who, claim, Change::ClearExtension { id, namespace }).await
+        let change = Change::ClearExtension {
+            id,
+            namespace,
+            read_revision,
+        };
+        write::run(&door, &who, claim, change).await
     })
     .await
 }

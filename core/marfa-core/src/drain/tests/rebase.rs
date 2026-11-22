@@ -205,7 +205,7 @@ fn a_first_answer_not_retained_settles_by_the_status_it_carried() {
         )
         .unwrap();
         assert_eq!(
-            refine(&create, &body, &succeeded, classify(&succeeded)),
+            refine(&create, &body, &succeeded, classify(&succeeded), false),
             expected,
             "{payload}"
         );

@@ -872,15 +872,18 @@ export interface DeviceUnderTest {
   removeTag(item: string, tag: string): Promise<Outcome<QueuedWrite>>;
   /** The item's tags, written whole. */
   replaceTags(item: string, tags: string[]): Promise<Outcome<QueuedWrite>>;
-  /** One extension namespace, as its own write. */
+  /** One extension namespace, as its own write, guarded by the namespace's
+   *  `revision` the caller read where it names one. */
   writeExtension(
     item: string,
     namespace: string,
     body: Record<string, unknown>,
+    readRevision?: string,
   ): Promise<Outcome<QueuedWrite>>;
   deleteExtension(
     item: string,
     namespace: string,
+    readRevision?: string,
   ): Promise<Outcome<QueuedWrite>>;
 
   /** Hold a file's bytes beside the store and queue their upload. */

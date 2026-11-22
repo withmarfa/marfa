@@ -212,6 +212,27 @@ pub(crate) fn forget_read_tags(conn: &Connection, id: &str) -> Result<(), CoreEr
     Ok(())
 }
 
+pub(super) const READ_REVISION: &str = "read_revision/";
+
+/// The revision of its namespace the caller read when it queued the
+/// extension write `id`, which every send under the write's key names.
+pub(crate) fn record_read_revision(
+    conn: &Connection,
+    id: &str,
+    revision: &str,
+) -> Result<(), CoreError> {
+    meta_set(conn, &format!("{READ_REVISION}{id}"), revision)
+}
+
+pub fn read_revision(conn: &Connection, id: &str) -> Result<Option<String>, CoreError> {
+    meta_get(conn, &format!("{READ_REVISION}{id}"))
+}
+
+/// An extension write released under a fresh key names no revision it read.
+pub(crate) fn forget_read_revision(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    super::meta::meta_delete(conn, &format!("{READ_REVISION}{id}"))
+}
+
 fn version_at(conn: &Connection, key: &str) -> Result<Option<i64>, CoreError> {
     meta_get(conn, key)?
         .map(|version| {
@@ -231,6 +252,7 @@ pub(super) fn forget_write_state(conn: &Connection, id: &str) -> Result<(), Core
         format!("{SENT_SOURCE}{id}"),
         format!("{SENT_AT_VERSION}{id}"),
         format!("{RESENT_AT_VERSION}{id}"),
+        format!("{READ_REVISION}{id}"),
     ] {
         super::meta::meta_delete(conn, &key)?;
     }

@@ -1,4 +1,4 @@
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 
 use super::BodySource;
 use super::items::IdempotencyArgs;
@@ -30,6 +30,8 @@ pub enum ExtensionsCommand {
         #[command(flatten)]
         body: BodySource,
         #[command(flatten)]
+        read: ReadRevisionArgs,
+        #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
     /// Remove one namespace.
@@ -39,8 +41,24 @@ pub enum ExtensionsCommand {
         /// The namespace, such as `app.cursor`.
         namespace: String,
         #[command(flatten)]
+        read: ReadRevisionArgs,
+        #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
+}
+
+#[derive(Debug, Args)]
+pub struct ReadRevisionArgs {
+    /// The namespace's `revision` as `extensions get` printed it. If the
+    /// namespace changed since, Marfa refuses the change.
+    #[arg(long, value_name = "REVISION")]
+    pub read_revision: Option<String>,
+}
+
+impl ReadRevisionArgs {
+    fn apply(&self, request: Request) -> Request {
+        request.query_opt("read_revision", self.read_revision.clone())
+    }
 }
 
 pub fn list_request(id: &str) -> Request {
@@ -76,13 +94,15 @@ pub fn run(command: ExtensionsCommand, remote: &Remote, out: &Printer) -> Result
             id,
             namespace,
             body,
+            read,
             idempotency,
-        } => idempotency.apply(write_request(id, namespace, body.read()?)?),
+        } => idempotency.apply(read.apply(write_request(id, namespace, body.read()?)?)),
         ExtensionsCommand::Delete {
             id,
             namespace,
+            read,
             idempotency,
-        } => idempotency.apply(delete_request(id, namespace)),
+        } => idempotency.apply(read.apply(delete_request(id, namespace))),
     };
     let answer = remote.json(&request)?;
     match &command {

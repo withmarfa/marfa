@@ -438,8 +438,8 @@ fn a_stopped_drain_leaves_a_tag_metadata_or_extension_write_in_flight_for_the_ne
     };
     let add = |core: &Core| core.add_tag("a", "x").unwrap();
     let remove = |core: &Core| core.remove_tag("a", "x").unwrap();
-    let write = |core: &Core| core.write_extension("a", "app.cursor", "{}").unwrap();
-    let delete = |core: &Core| core.delete_extension("a", "app.cursor").unwrap();
+    let write = |core: &Core| core.write_extension("a", "app.cursor", "{}", None).unwrap();
+    let delete = |core: &Core| core.delete_extension("a", "app.cursor", None).unwrap();
     let tags = r#"{"tags":["x"]}"#;
     let extensions = r#"{"data":[{"namespace":"app.cursor","document":{}}]}"#;
     let writes: [(&str, &Queues, &str); 5] = [

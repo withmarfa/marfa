@@ -914,6 +914,10 @@ pub enum ExtensionsCommand {
         /// The namespace's contents, as a JSON object.
         #[arg(long, value_name = "JSON", default_value = "{}")]
         body: String,
+        /// The namespace's `revision` as a read answered it, so the write is
+        /// refused if the namespace changed since.
+        #[arg(long, value_name = "REVISION")]
+        read_revision: Option<String>,
     },
     /// Remove one extension namespace.
     Delete {
@@ -922,6 +926,10 @@ pub enum ExtensionsCommand {
         item: String,
         /// The extension namespace.
         namespace: String,
+        /// The namespace's `revision` as a read answered it, so the delete is
+        /// refused if the namespace changed since.
+        #[arg(long, value_name = "REVISION")]
+        read_revision: Option<String>,
     },
 }
 
@@ -2162,13 +2170,16 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     item,
                     namespace,
                     body,
+                    read_revision,
                 } => {
                     properties(&body)?;
-                    core.write_extension(&item, &namespace, &body)?
+                    core.write_extension(&item, &namespace, &body, read_revision.as_deref())?
                 }
-                ExtensionsCommand::Delete { item, namespace } => {
-                    core.delete_extension(&item, &namespace)?
-                }
+                ExtensionsCommand::Delete {
+                    item,
+                    namespace,
+                    read_revision,
+                } => core.delete_extension(&item, &namespace, read_revision.as_deref())?,
             };
             output::queued_one(&queued, json)
         }

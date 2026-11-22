@@ -1050,8 +1050,14 @@ export class CliDevice implements DeviceUnderTest {
     item: string,
     namespace: string,
     body: Record<string, unknown>,
+    readRevision?: string,
   ): Promise<Outcome<QueuedWrite>> {
-    return this.writeExtensionText(item, namespace, JSON.stringify(body));
+    return this.writeExtensionText(
+      item,
+      namespace,
+      JSON.stringify(body),
+      readRevision,
+    );
   }
 
   /** The data as JSON text, where a number's digits are the point. */
@@ -1059,6 +1065,7 @@ export class CliDevice implements DeviceUnderTest {
     item: string,
     namespace: string,
     text: string,
+    readRevision?: string,
   ): Promise<Outcome<QueuedWrite>> {
     return this.json<QueuedWrite>([
       "extensions",
@@ -1067,14 +1074,22 @@ export class CliDevice implements DeviceUnderTest {
       namespace,
       "--body",
       text,
+      ...readRevisionArgs(readRevision),
     ]);
   }
 
   async deleteExtension(
     item: string,
     namespace: string,
+    readRevision?: string,
   ): Promise<Outcome<QueuedWrite>> {
-    return this.json<QueuedWrite>(["extensions", "delete", item, namespace]);
+    return this.json<QueuedWrite>([
+      "extensions",
+      "delete",
+      item,
+      namespace,
+      ...readRevisionArgs(readRevision),
+    ]);
   }
 
   async putBlob(
@@ -2077,4 +2092,8 @@ export interface DeviceCount {
   total: number;
   status_groups?: Record<string, number>;
   held: boolean;
+}
+
+function readRevisionArgs(readRevision: string | undefined): string[] {
+  return readRevision === undefined ? [] : ["--read-revision", readRevision];
 }

@@ -198,7 +198,7 @@ If the read of `queue-and-verdicts/resend-read-first` finds a create by natural 
 
 When a device sends again, after the read of `queue-and-verdicts/resend-read-first` found its subject, a tag write that adds or removes one tag, a lifecycle move, a restore, or a create by natural key on an item it held when it first sent the create, a device MUST name the version of the subject it held when it first sent the write, on that send and every later send under the same key.
 
-**Reason:** under the new credential the server runs the write afresh, so without a version it would act on an item changed in a way the copy had not read when it first sent the write; named, the server answers `409 version_conflict` and the write is blocked `conflict_unresolved` (`queue-and-verdicts/conflict-blocks`). The server's fingerprint of a key covers the query and body, so every send under the key names the same version. A version moves with an item's properties and type, never with its tags or state, so another device's tag or lifecycle change is not caught, and an extension write, whose operation takes no version, can land over newer work of its own kind. A tag write that replaces every tag names the tags it read instead (`queue-and-verdicts/replace-tags-names-read`).
+**Reason:** under the new credential the server runs the write afresh, so without a version it would act on an item changed in a way the copy had not read when it first sent the write; named, the server answers `409 version_conflict` and the write is blocked `conflict_unresolved` (`queue-and-verdicts/conflict-blocks`). The server's fingerprint of a key covers the query and body, so every send under the key names the same version. A version moves with an item's properties and type, never with its tags or state, so another device's tag or lifecycle change is not caught, and an extension write, whose operation takes no version, can land over newer work of its own kind unless it names the revision it read (`queue-and-verdicts/extension-names-read-revision`). A tag write that replaces every tag names the tags it read instead (`queue-and-verdicts/replace-tags-names-read`).
 
 **Tests:** `device/resend-credential-live.test.ts › sends a tag the server never received again naming the version it was sent at, and blocks it as a conflict once the item has moved`.
 
@@ -627,6 +627,30 @@ When a caller releases a tag replace blocked `key_spent`, `conflict_unresolved` 
 **Reason:** a released write is meant to land, and the tags the replace read may no longer be the item's, so it makes the tags what the copy holds, as it would with no `read_tags`; sent with them, the server would refuse it again for as long as the tags differ, and nothing could release the block.
 
 **Tests:** `device/tags-read-live.test.ts › sends a tag replace naming the tags it read, and blocks it as a conflict once another key has changed them`.
+
+### `queue-and-verdicts/extension-names-read-revision`
+
+When a caller queues an extension write or delete naming the namespace's revision it read, a device MUST name that revision as `read_revision` on every send of the write.
+
+**Reason:** the copy holds no extension namespaces, so only the caller knows what it read. The server refuses a write whose `read_revision` is not the namespace's revision now (`items/extension-read-revision-stale`), and the device blocks it `conflict_unresolved` with the person's value in the queue. The query is part of what the server fingerprints a key by, so every send under a key names the same revision.
+
+**Tests:** `device/extension-revision-live.test.ts › sends an extension write and delete naming the revision the caller read, and blocks each as a conflict once another key has changed the namespace, keeping the person's value`.
+
+### `queue-and-verdicts/extension-resend-taken`
+
+If a device sends again an extension write or delete whose earlier answer it never read, and the server answers `409 version_conflict` with `current` holding the document the write leaves, or no document for a delete, then a device MUST record the write `accepted`.
+
+**Reason:** a send whose answer was lost may have taken, and once the server no longer keeps the answer under the write's key, the write sent again meets the revision its own first send made.
+
+**Tests:** `device/extension-revision-live.test.ts › accepts a guarded extension write and delete sent again after a lost answer, once the server keeps no answer under the key, where the namespace holds what the write leaves`.
+
+### `queue-and-verdicts/extension-released-unconditional`
+
+When a caller releases an extension write or delete blocked `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST send it under a fresh key with no `read_revision`.
+
+**Reason:** a released write is meant to land over the namespace as it now stands; sent with the revision it read, the server would refuse it again for as long as the namespace differs.
+
+**Tests:** `device/extension-revision-live.test.ts › sends an extension write and delete naming the revision the caller read, and blocks each as a conflict once another key has changed the namespace, keeping the person's value`.
 
 ### `queue-and-verdicts/update-needs-version`
 
@@ -1804,7 +1828,7 @@ When a caller releases a write other than a `write_rows` or `undo_rows` write th
 
 When a caller releases a write other than a `write_rows` or `undo_rows` write that is `dead`, or `blocked` for a reason other than `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST keep the idempotency key it went under.
 
-**Reason:** the device never read an answer that says whether the write took effect, so the server may hold it applied under that key. Under a fresh key the server would apply it a second time, and a metadata, extension or tag write, which checks no version, would undo a change made since. A row write keeps its batch's key (`queue-and-verdicts/rows-release-key`) and an undo its own (`queue-and-verdicts/undo-release-key`) on the same rule.
+**Reason:** the device never read an answer that says whether the write took effect, so the server may hold it applied under that key. Under a fresh key the server would apply it a second time, and a tag or extension write, which checks what was read only when it names it, would undo a change made since. A row write keeps its batch's key (`queue-and-verdicts/rows-release-key`) and an undo its own (`queue-and-verdicts/undo-release-key`) on the same rule.
 
 **Tests:** `device/release-key-live.test.ts › sends a set-aside write again under its key once a caller releases it, so the server answers it from its record and keeps the change made since`, `› sends a dead write again under its key once a caller releases it`, `device/classification.test.ts › releases by reason the writes blocked for it, and never a dead one`, `device/stuck-write.test.ts › sets aside a create the server answers with a 500 it names its contract for`, `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`.
 
