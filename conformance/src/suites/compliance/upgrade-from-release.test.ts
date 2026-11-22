@@ -50,7 +50,7 @@ import {
  */
 
 const COPY = "marfa.db.before-upgrade";
-/** The disk reserve setting's maximum, 1 TiB: the fixture needs less than that free. */
+/** The disk reserve setting's maximum, 1 TiB. The refusal it makes needs a volume with less than this free. */
 const HUGE_RESERVE = String(2 ** 40);
 
 /** What v0.0.90 answered to each read, recorded when the dump was made. */
@@ -231,9 +231,8 @@ interface Snapshot {
 /**
  * The schema version and what every table holds. The rows are hashed whole and
  * sorted, because a copy made with VACUUM INTO is a different file that may
- * number its rows differently. The full-text tables are virtual and this
- * connection has no module to read them; the ordinary tables that hold their
- * index (the shadow tables) are included.
+ * number its rows differently. The full-text tables are skipped because they
+ * are virtual: what they hold is in their shadow tables, which are included.
  */
 function snapshot(db: Database): Snapshot {
   const tables: Record<string, string> = {};
