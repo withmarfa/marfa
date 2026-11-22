@@ -190,6 +190,9 @@ pub const OPERATIONS: &[Operation] = &[
     reached("renameSignIn", "sign-ins rename"),
     reached("endSignIn", "sign-ins end"),
     reached("createOwner", "setup claim"),
+    reached("startCloudLink", "cloud link"),
+    reached("getCloudLink", "cloud status"),
+    reached("unlinkCloud", "cloud unlink"),
 ];
 
 /// Published operations no command sends, each with why.
@@ -219,9 +222,6 @@ pub const NO_COMMAND: &[(&str, &str)] = &[
         "finishConnectorRewrite",
         "a plugin's connector sends it under its own key once it has rewritten its items; the owner asks for a rewrite with `plugins mapping rewrite`",
     ),
-    ("startCloudLink", "`marfa cloud link` is not built yet"),
-    ("getCloudLink", "`marfa cloud status` is not built yet"),
-    ("unlinkCloud", "`marfa cloud unlink` is not built yet"),
 ];
 
 pub fn run(out: &Printer) -> Result<(), CliError> {

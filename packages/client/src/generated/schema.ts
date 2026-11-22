@@ -8985,10 +8985,15 @@ export interface components {
             /** @description The connector that carries traffic through Marfa Cloud. Present while `state` is `linked`. */
             connector?: {
                 /**
-                 * @description `stopped`: the connector isn't running.
+                 * @description The connector's state: `stopped`, `starting`, `connected` (ready and carrying traffic), `reconnecting` (ended or no longer ready, being brought back) or `failed` (can't run; see `reason`).
                  * @enum {string}
                  */
-                state: "stopped";
+                state: "stopped" | "starting" | "connected" | "reconnecting" | "failed";
+                /**
+                 * @description Why a `failed` connector can't run: `missing` (no connector file the server can run), `refused` (Marfa Cloud refuses its tunnel token and has no newer one) or `token` (the server can't read or write the token file).
+                 * @enum {string}
+                 */
+                reason?: "missing" | "refused" | "token";
                 /**
                  * Format: date-time
                  * @description Since when the connector has been in this state, in UTC.
@@ -41863,7 +41868,7 @@ export interface operations {
                      *       "address": "https://river.marfa.so",
                      *       "linked_at": "2026-11-21T09:31:00.000Z",
                      *       "connector": {
-                     *         "state": "stopped",
+                     *         "state": "connected",
                      *         "since": "2026-11-21T09:00:00.000Z"
                      *       },
                      *       "sign_in_address": {

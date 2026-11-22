@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use super::answer::refusal_body;
 use super::listening::Peer;
 use crate::app::refusal::{Code, Refusal};
-use crate::listener::{Trust, network};
+use crate::listener::{Trust, Tunnel, network};
 
 /// What a refused caller is told to wait, in seconds.
 const RETRY_AFTER_SECONDS: u64 = 5;
@@ -18,6 +18,7 @@ pub struct Caps {
     pub per_address: usize,
     /// A believed proxy carries many callers, so it counts in the total alone.
     pub trust: Trust,
+    pub tunnel: Tunnel,
 }
 
 #[derive(Debug, Default)]
@@ -54,7 +55,13 @@ impl Gate {
     pub fn enter(self: &Arc<Gate>, peer: Peer) -> Result<Slot, Turned> {
         let counted = peer
             .0
-            .filter(|address| !self.caps.trust.believes(*address))
+            .filter(|address| {
+                !self
+                    .caps
+                    .tunnel
+                    .trust(&self.caps.trust, *address)
+                    .believes(*address)
+            })
             .map(network);
         let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
         if held.total >= self.caps.total {
@@ -120,11 +127,28 @@ mod tests {
             total,
             per_address,
             trust,
+            tunnel: Tunnel::default(),
         })
     }
 
     fn peer(text: &str) -> Peer {
         Peer(Some(text.parse().unwrap()))
+    }
+
+    #[test]
+    fn a_linked_instance_counts_loopback_in_the_total_alone_whichever_proxies_the_owner_trusts() {
+        for proxies in ["10.0.0.0/8", "127.0.0.0/8"] {
+            let trust = Trust::Proxies(crate::listener::proxy_ranges(proxies).unwrap());
+            let gate = gate(10, 1, trust);
+            gate.caps.tunnel.set(true);
+            // Past the share of one address, so none of these is counted against loopback.
+            let held: Vec<_> = (0..3).map(|_| gate.enter(peer("127.0.0.1"))).collect();
+            assert!(held.iter().all(Result::is_ok), "{proxies}");
+            let first = gate.enter(peer("192.0.2.1"));
+            let second = gate.enter(peer("192.0.2.1"));
+            assert!(first.is_ok(), "{proxies}");
+            assert_eq!(second.err(), Some(Turned::Address), "{proxies}");
+        }
     }
 
     #[test]

@@ -11,7 +11,7 @@ use super::status::{self, MOVE_WINDOW_MS};
 use super::store::{self, Link, Move, State, Unlink};
 use super::{
     LINK_CREDENTIAL, MAX_INTERVAL_MS, MIN_INTERVAL_MS, POLL_SECRET, TUNNEL_TOKEN, changing,
-    interval_at, put_back, refuse_moved, seal, secrets_open, sign_in_in, stamp_at, text_at,
+    interval_at, put_back, refuse_moved, resync, seal, secrets_open, sign_in_in, stamp_at, text_at,
 };
 use crate::app::App;
 use crate::app::access::Caller;
@@ -152,10 +152,14 @@ pub fn start(app: &Arc<App>) {
 /// Does what is due, and says how long until something else is. Each task fails on its own.
 async fn step(app: &Arc<App>, plan: &mut Plan) -> Option<Duration> {
     let now_ms = app.clock.now_ms();
-    let read = app
-        .db
-        .read(|tx| Ok((store::read(tx)?, store::unlinks(tx)?)))
-        .await;
+    let read = match resync(app).await {
+        Ok(()) => {
+            app.db
+                .read(|tx| Ok((store::read(tx)?, store::unlinks(tx)?)))
+                .await
+        }
+        Err(refusal) => Err(refusal),
+    };
     let (link, unlinks) = match read {
         Ok(read) => {
             plan.reading = Due::default();
@@ -327,7 +331,7 @@ fn transient(refusal: &Refusal) -> bool {
 }
 
 /// Marfa Cloud's own answer that it does not know a link credential.
-fn unauthorized(answer: &Answer) -> bool {
+pub(super) fn unauthorized(answer: &Answer) -> bool {
     answer.status == 401
         && answer.body.pointer("/error/code").and_then(Value::as_str) == Some("unauthorized")
 }
@@ -367,7 +371,7 @@ enum Ending {
 
 /// Ends a link Marfa Cloud ended, putting back the sign-in address its name replaced. With
 /// `stranding`, the put-back failed too often, so a put-back refused again ends the link without.
-async fn end_by_service(app: &Arc<App>, link: &Link, stranding: bool) -> Result<()> {
+pub(super) async fn end_by_service(app: &Arc<App>, link: &Link, stranding: bool) -> Result<()> {
     let reading = app.clone();
     let sign_in = app.db.read(move |tx| sign_in_in(&reading, tx)).await?;
     let link_id = link.link_id.clone();
@@ -596,7 +600,7 @@ fn approved_of(body: &Value) -> Option<Approved> {
 }
 
 /// Writes to the link as the server, if it is still `link_id`; says whether it was.
-async fn write_link(
+pub(super) async fn write_link(
     app: &Arc<App>,
     action: &'static str,
     link_id: &str,

@@ -13609,9 +13609,22 @@
               "state": {
                 "type": "string",
                 "enum": [
-                  "stopped"
+                  "stopped",
+                  "starting",
+                  "connected",
+                  "reconnecting",
+                  "failed"
                 ],
-                "description": "`stopped`: the connector isn't running."
+                "description": "The connector's state: `stopped`, `starting`, `connected` (ready and carrying traffic), `reconnecting` (ended or no longer ready, being brought back) or `failed` (can't run; see `reason`)."
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "missing",
+                  "refused",
+                  "token"
+                ],
+                "description": "Why a `failed` connector can't run: `missing` (no connector file the server can run), `refused` (Marfa Cloud refuses its tunnel token and has no newer one) or `token` (the server can't read or write the token file)."
               },
               "since": {
                 "type": "string",
@@ -71383,7 +71396,7 @@
                   "address": "https://river.marfa.so",
                   "linked_at": "2026-11-21T09:31:00.000Z",
                   "connector": {
-                    "state": "stopped",
+                    "state": "connected",
                     "since": "2026-11-21T09:00:00.000Z"
                   },
                   "sign_in_address": {

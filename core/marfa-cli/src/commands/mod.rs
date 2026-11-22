@@ -3,6 +3,7 @@ pub mod attention;
 pub mod audit;
 pub mod backups;
 pub mod blobs;
+pub mod cloud;
 pub mod config;
 pub mod connectors;
 pub mod docs;
@@ -290,6 +291,6 @@ pub fn insert_opt(body: &mut Map<String, Value>, key: &str, value: Option<impl I
 }
 
 #[cfg(test)]
-mod driven;
+pub(super) mod driven;
 #[cfg(test)]
 mod tests;

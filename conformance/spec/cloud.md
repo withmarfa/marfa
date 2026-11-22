@@ -430,6 +430,240 @@ While a link is linked, the server MUST ask Marfa Cloud whether it still stands 
 
 **Tests:** `compliance/cloud-link.test.ts › notices a link ended on Marfa Cloud, puts back the sign-in address the link moved, and says why`, `› checks a linked link as it starts again, and notices it was ended on Marfa Cloud while it was stopped`.
 
+## The connector
+
+While a link is linked, the server runs the tunnel connector `cloudflared`, which carries the instance's traffic from its name on Marfa Cloud to the public listener, and supervises it. The connector's state is in `GET /cloud/link` as `connector`.
+
+### `cloud/connector-path-absolute`
+
+If `MARFA_CLOUDFLARED` is set and is not an absolute path, then the server MUST refuse to start and name the setting.
+
+**Reason:** a path with no folder in it is looked for on `PATH`, where another program can stand in for the connector.
+
+**Tests:** `compliance/cloud-connector.test.ts › refuses to start with a MARFA_CLOUDFLARED that is not an absolute path`.
+
+### `cloud/connector-setting`
+
+While a link is linked, the server MUST run the connector from the file the start-only setting `MARFA_CLOUDFLARED` names.
+
+**Tests:** `compliance/cloud-connector.test.ts › runs the connector from the file MARFA_CLOUDFLARED names, with the arguments the contract gives`.
+
+### `cloud/connector-beside`
+
+While a link is linked and `MARFA_CLOUDFLARED` is not set, the server MUST run the connector from the file `cloudflared` in the folder that holds the server's own executable, once every link to that executable is followed.
+
+**Reason:** a package manager can link `bin/marfa-server` to a program in another folder, and the connector is installed beside that program.
+
+**Tests:** `compliance/cloud-connector.test.ts › runs the connector from beside the server's own executable, found through a link, and never from PATH`.
+
+### `cloud/connector-no-path`
+
+The server MUST NOT search `PATH` for the connector.
+
+**Reason:** the connector carries every request to the instance, so only a file the owner or the installation put in place is run.
+
+**Tests:** `compliance/cloud-connector.test.ts › runs the connector from beside the server's own executable, found through a link, and never from PATH`.
+
+### `cloud/connector-missing`
+
+If the file the connector is to run from is missing or cannot be run, then the server MUST report the connector as `failed` with `reason` `missing`.
+
+**Reason:** an instance without its connector is still an instance: it keeps serving and keeps its link, and the owner reads in the link what is wrong.
+
+**Tests:** `compliance/cloud-connector.test.ts › reports a connector that cannot be run as failed, keeps serving, and runs it once it can be`.
+
+### `cloud/connector-restart`
+
+While a link is linked, if the connector ends or cannot be run, then the server MUST run it again after one second, and after each further failure in a row wait twice as long as before, up to one minute.
+
+**Reason:** a connector that cannot stay up should not be started in a tight loop, and one that was missing starts once it is put in place.
+
+**Tests:** `compliance/cloud-connector.test.ts › runs the connector again after each failure, waiting twice as long each time`, `› reports a connector that cannot be run as failed, keeps serving, and runs it once it can be`.
+
+### `cloud/connector-args`
+
+When the server runs the connector, the server MUST give it the arguments `tunnel --no-autoupdate --metrics 127.0.0.1:<port> run --token-file <file>`, where `<port>` is a port that was free and `<file>` is the file of the tunnel token.
+
+**Reason:** the origin the connector sends to is set on Marfa Cloud, so the server gives it none, and the metrics address is the one the server reads its readiness from.
+
+**Tests:** `compliance/cloud-connector.test.ts › runs the connector from the file MARFA_CLOUDFLARED names, with the arguments the contract gives`.
+
+### `cloud/connector-token-file`
+
+When the server runs the connector, the server MUST give it the tunnel token in a file that only the server's account can read.
+
+**Tests:** `compliance/cloud-connector.test.ts › runs the connector from the file MARFA_CLOUDFLARED names, with the arguments the contract gives`.
+
+### `cloud/connector-token-hidden`
+
+The server MUST NOT put the tunnel token in an argument or in the environment of the connector.
+
+**Reason:** any account on the machine can read another process's arguments, and the token puts the instance on the internet under its name.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps the tunnel token and the server's secrets from the connector's arguments and environment, and out of the log`.
+
+### `cloud/connector-environment`
+
+When the server runs the connector, the server MUST give it no variable of its own environment other than `HOME`, `TMPDIR`, `TZ`, `SSL_CERT_FILE` and `SSL_CERT_DIR`.
+
+**Reason:** the server's environment holds its keys and secrets, which the connector has no use for.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps the tunnel token and the server's secrets from the connector's arguments and environment, and out of the log`.
+
+### `cloud/connector-token-removed`
+
+When the connector stops, the server MUST remove the file that held the tunnel token.
+
+**Tests:** `compliance/cloud-connector.test.ts › stops the connector when the link is unlinked, and removes the file of the token`.
+
+### `cloud/connector-stop-unlink`
+
+When a link that is linked is unlinked, the server MUST stop the connector and leave no process of it running.
+
+**Tests:** `compliance/cloud-connector.test.ts › stops the connector when the link is unlinked, and removes the file of the token`.
+
+### `cloud/connector-stop-ended`
+
+When the server ends a link that Marfa Cloud ended, the server MUST stop the connector and leave no process of it running.
+
+**Tests:** `compliance/cloud-connector.test.ts › stops the connector when Marfa Cloud ends the link`.
+
+### `cloud/connector-stop-shutdown`
+
+When the server stops, the server MUST stop the connector and leave no process of it running.
+
+**Tests:** `compliance/cloud-connector.test.ts › stops the connector when the server stops`.
+
+### `cloud/connector-connected`
+
+When the connector's `/ready` on its metrics address answers `200`, the server MUST report the connector as `connected`.
+
+**Reason:** `/ready` says whether the connector can carry traffic now, and unlike a line in its output it says so again when that changes.
+
+**Tests:** `compliance/cloud-connector.test.ts › reports the connector as starting, connected and reconnecting as it says it is ready, and tells the stream`.
+
+### `cloud/connector-reconnecting`
+
+When the connector is running and its `/ready` stops answering `200` after it did, the server MUST report the connector as `reconnecting`.
+
+**Tests:** `compliance/cloud-connector.test.ts › reports the connector as starting, connected and reconnecting as it says it is ready, and tells the stream`.
+
+### `cloud/connector-output`
+
+While the connector runs, the server MUST write each line it prints to the server's log.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps the tunnel token and the server's secrets from the connector's arguments and environment, and out of the log`.
+
+### `cloud/connector-log-token`
+
+The server MUST NOT write the tunnel token in its log.
+
+**Reason:** the connector's output is the server's to log, and a line that carries the token is not.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps the tunnel token and the server's secrets from the connector's arguments and environment, and out of the log`.
+
+### `cloud/connector-no-ingress`
+
+When the connector prints that no ingress rules were defined, the server MUST NOT treat it as a fault.
+
+**Reason:** the connector says so at every start, because the origin is set on Marfa Cloud.
+
+**Tests:** `compliance/cloud-connector.test.ts › reports the connector as starting, connected and reconnecting as it says it is ready, and tells the stream`.
+
+### `cloud/connector-refused`
+
+When the connector's output says that its tunnel token is refused (`Unauthorized: Invalid tunnel secret`) or that there is no tunnel to get for it (`Failed to get tunnel`), the server MUST ask Marfa Cloud for the link's current tunnel token with `POST /link/token` and its link credential.
+
+**Reason:** Marfa Cloud can give the link a new tunnel token, after which the connector is refused for the old one. The connector does not end on either refusal: it retries with the same token until it is stopped.
+
+**Tests:** `compliance/cloud-connector.test.ts › asks for the current tunnel token when the connector is refused, and runs it with the new one`, `compliance/cloud-connector.test.ts › asks for the current tunnel token when the edge has no tunnel for the connector's token`.
+
+### `cloud/connector-rotated`
+
+When Marfa Cloud gives a tunnel token other than the one the connector was refused for, the server MUST keep the new token sealed in place of the old and run the connector with it at once.
+
+**Tests:** `compliance/cloud-connector.test.ts › asks for the current tunnel token when the connector is refused, and runs it with the new one`.
+
+### `cloud/connector-refused-same`
+
+If Marfa Cloud gives the tunnel token the connector was refused for, then the server MUST report the connector as `failed` with `reason` `refused`.
+
+**Reason:** the server cannot mend a refusal Marfa Cloud does not, and it keeps trying at the pace of the restart rule.
+
+**Tests:** `compliance/cloud-connector.test.ts › reports a connector refused for the token Marfa Cloud still gives as failed, and asks again no faster than it restarts`.
+
+### `cloud/connector-token-wait`
+
+When Marfa Cloud answers the request for the link's tunnel token with `429` or `503`, the server MUST NOT run the connector or send another request for the token until the seconds in `Retry-After` have passed, or 60 seconds when it gives none.
+
+**Reason:** Marfa Cloud lets each link read its tunnel token once a minute and says how long to wait, so a refused connector that asked more often would only be refused again.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps a refused connector stopped until Retry-After is over, then asks once and runs the token it gets`, `compliance/cloud-connector.test.ts › keeps a refused connector stopped for the 60 seconds Marfa Cloud asks for when it cannot answer`.
+
+### `cloud/connector-token-wait-failed`
+
+While the server waits to ask for the link's tunnel token again, the server MUST report the connector as `failed` with `reason` `refused`.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps a refused connector stopped until Retry-After is over, then asks once and runs the token it gets`, `compliance/cloud-connector.test.ts › keeps a refused connector stopped for the 60 seconds Marfa Cloud asks for when it cannot answer`.
+
+### `cloud/connector-token-after-wait`
+
+When the wait that Marfa Cloud's `Retry-After` set is over, the server MUST send one request for the link's tunnel token before it runs the connector again, and run the connector with the token it gets.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps a refused connector stopped until Retry-After is over, then asks once and runs the token it gets`.
+
+### `cloud/connector-token-gone`
+
+When Marfa Cloud answers the request for the link's tunnel token with `401` and the error code `unauthorized`, the server MUST end the link as `cloud/ended-by-service` does.
+
+**Tests:** `compliance/cloud-connector.test.ts › ends the link when Marfa Cloud no longer accepts the credential that asks for a new tunnel token`.
+
+### `cloud/connector-token-kept`
+
+When the answer to the request for the link's tunnel token is a `401` with any other error code, or none, the server MUST keep the link `linked`.
+
+**Reason:** a proxy or a gateway on the way can answer `401` in its own words, and only Marfa Cloud's own answer says the link is gone.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps the link when the answer to the request for a new tunnel token is a 401 that is not Marfa Cloud's own`.
+
+### `cloud/caller-address-linked`
+
+While a link is linked and no trusted proxy setting includes the request's peer, the server MUST read a caller's address from the `CF-Connecting-IP` header only when the request's peer is a loopback address, and the peer's address stands for any other request.
+
+**Reason:** the connector runs on the instance's machine and writes the address of the caller it carries into that header.
+
+**Tests:** `compliance/cloud-connector.test.ts › believes CF-Connecting-IP from loopback only while a link is linked`, `compliance/cloud-connector.test.ts › counts tunnel callers by their own address while a trusted proxy setting names another route`.
+
+### `cloud/caller-address-unlinked`
+
+While no link is linked and no trusted proxy setting names the header, the server MUST use the peer's address as the caller's address, whatever `CF-Connecting-IP` holds.
+
+**Tests:** `compliance/cloud-connector.test.ts › believes CF-Connecting-IP from loopback only while a link is linked`.
+
+### `cloud/caller-address-configured`
+
+When `MARFA_TRUSTED_PROXY_CIDRS` includes a request's peer, the server MUST read the caller's address as `instance/proxy-header-trusted-peer` and `instance/proxy-forwarded-walk` say, whether or not a link is linked.
+
+**Reason:** an owner who told the server which proxy to believe is believed over what the link assumes, and a setting for a route that does not include loopback leaves the connector's requests to the link's rule.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps the trusted proxy settings an owner gave over the link's`.
+
+### `cloud/caller-address-until-stopped`
+
+When a link ends, the server MUST keep reading a caller's address from the `CF-Connecting-IP` header of a loopback request until the connector has stopped.
+
+**Reason:** the connector still carries requests while it stops, and read as loopback they would count against the owner's own address.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps reading the tunnel's header until the connector has stopped when the link ends`.
+
+### `cloud/caller-address-limits`
+
+While a link is linked, when requests reach the server through the connector, the server MUST count the sign-in attempts and the other limits of each caller against the address in `CF-Connecting-IP` and not against loopback.
+
+**Reason:** every caller then shares the loopback address, so one stranger's wrong passwords would lock the owner out.
+
+**Tests:** `compliance/cloud-connector.test.ts › counts a stranger's wrong passwords through the tunnel against the stranger's address, not loopback`.
+
 ## Reading a link
 
 ### `cloud/status-not-linked`
@@ -440,19 +674,19 @@ While no link has been started, when a caller sends `GET /cloud/link`, the serve
 
 ### `cloud/status-connector`
 
-While a link is linked, the server MUST answer, in `connector`, the `state` of the connector that carries the instance's traffic and `since` when it took that state.
+While a link is linked, the server MUST answer, in `connector`, the `state` of the connector that carries the instance's traffic, which is `stopped`, `starting`, `connected`, `reconnecting` or `failed`, with `since` when it took that state and, for `failed`, the `reason`.
 
-**Tests:** `compliance/cloud-link.test.ts › links once Marfa Cloud approves, with the name and address it gave, and keeps the sign-in address the start keeps`.
+**Tests:** `compliance/cloud-link.test.ts › links once Marfa Cloud approves, with the name and address it gave, and keeps the sign-in address the start keeps`, `compliance/cloud-connector.test.ts › reports the connector as starting, connected and reconnecting as it says it is ready, and tells the stream`.
 
 ## Events and the audit log
 
 ### `cloud/event`
 
-When a link's `state` or its `sign_in_address.state` changes, the server MUST announce one `cloud_link.changed` event carrying the link as `GET /cloud/link` answers it, in `cloud_link`.
+When a link's `state`, its `sign_in_address.state` or its `connector.state` changes, the server MUST announce one `cloud_link.changed` event carrying the link as `GET /cloud/link` answers it, in `cloud_link`.
 
 **Reason:** an app shows a link's progress from the stream rather than reading it again and again.
 
-**Tests:** `compliance/cloud-link.test.ts › announces each change of a link on the stream of a credential holding config.manage, and on no other`.
+**Tests:** `compliance/cloud-link.test.ts › announces each change of a link on the stream of a credential holding config.manage, and on no other`, `compliance/cloud-connector.test.ts › reports the connector as starting, connected and reconnecting as it says it is ready, and tells the stream`.
 
 ### `cloud/event-reader`
 

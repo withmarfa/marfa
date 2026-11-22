@@ -104,6 +104,7 @@ fn caps(app: &App) -> Caps {
         total,
         per_address,
         trust: start.public_listener.trust.clone(),
+        tunnel: app.cloud.tunnel().clone(),
     }
 }
 

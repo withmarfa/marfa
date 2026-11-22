@@ -24,6 +24,7 @@ use super::events::Event;
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use super::{App, instance, stored};
+use crate::listener::Tunnel;
 use crate::settings::sealed::{Sealer, Secret};
 use status::Seen;
 pub use status::Standing;
@@ -48,6 +49,9 @@ pub struct Cloud {
     stopping: AtomicBool,
     running: watch::Sender<bool>,
     connector: connector::Connector,
+    tunnel: Tunnel,
+    /// Orders the reads that tell the connector and the listeners what the link is.
+    sync: Mutex<()>,
 }
 
 impl Cloud {
@@ -58,6 +62,8 @@ impl Cloud {
             stopping: AtomicBool::new(false),
             running: watch::Sender::new(false),
             connector: connector::Connector::new(started),
+            tunnel: Tunnel::default(),
+            sync: Mutex::new(()),
         }
     }
 
@@ -65,9 +71,15 @@ impl Cloud {
         self.wake.notify_one();
     }
 
+    /// Whether the instance is linked, which decides whom its listeners believe.
+    pub fn tunnel(&self) -> &Tunnel {
+        &self.tunnel
+    }
+
     pub fn stop(&self) {
         self.stopping.store(true, Ordering::Release);
         self.wake.notify_one();
+        self.connector.stop();
     }
 
     fn stopping(&self) -> bool {
@@ -76,7 +88,10 @@ impl Cloud {
 
     pub async fn settle(&self, budget: Duration) {
         let mut running = self.running.subscribe();
-        let idle = tokio::time::timeout(budget, running.wait_for(|running| !*running));
+        let idle = tokio::time::timeout(budget, async {
+            let _ = running.wait_for(|running| !*running).await;
+            self.connector.idle().await;
+        });
         if idle.await.is_err() {
             tracing::warn!(
                 "The link to Marfa Cloud was still being followed when the stop's wait ended"
@@ -86,7 +101,34 @@ impl Cloud {
 }
 
 pub fn follow(app: &Arc<App>) {
+    connector::start(app);
     worker::start(app);
+}
+
+/// Tells the connector and the listeners what the link is now, which only a read of it says.
+async fn resync(app: &Arc<App>) -> Result<()> {
+    let _sync = app.cloud.sync.lock().await;
+    let reading = app.clone();
+    let linked = app
+        .db
+        .read(move |tx| {
+            Ok(store::read(tx)?
+                .filter(|link| {
+                    link.state == State::Linked && secrets_open(reading.settings.sealer(), link)
+                })
+                .map(|link| link.link_id))
+        })
+        .await?;
+    if linked.is_some() {
+        app.cloud.tunnel.set(true);
+        app.cloud.connector.want(linked);
+    } else {
+        // The connector's last requests are still its callers', so they are read as such until it ends.
+        app.cloud.connector.want(None);
+        app.cloud.connector.quiet().await;
+        app.cloud.tunnel.set(false);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -179,6 +221,15 @@ fn announce(unit: &Unit<'_, '_>, status: &Value) -> Result<()> {
         source: "",
         payload: json!({ "cloud_link": status }).to_string(),
     })
+}
+
+/// Announces the link, when it is linked, since only then does it show its connector.
+fn announce_if_linked(unit: &Unit<'_, '_>, app: &App) -> Result<()> {
+    let status = status_in(app, unit.tx())?;
+    if status.get("state").and_then(Value::as_str) == Some("linked") {
+        announce(unit, &status)?;
+    }
+    Ok(())
 }
 
 /// Announces the link if `write` changed how it reads.
@@ -514,7 +565,23 @@ pub async fn unlink(app: &Arc<App>, caller: &Caller, confirmed: bool) -> Result<
         }
     };
     let mut answer = json!({ "state": "not_linked" });
-    let Some((state, Some(unlink))) = ended else {
+    let Some((state, queued)) = ended else {
+        return Ok(answer);
+    };
+    let stopped = match resync(app).await {
+        Ok(()) => true,
+        Err(refusal) => {
+            tracing::warn!(
+                code = refusal.code.wire(),
+                "The tunnel was not stopped as the link ended"
+            );
+            false
+        }
+    };
+    let Some(unlink) = queued else {
+        if !stopped {
+            app.cloud.wake();
+        }
         return Ok(answer);
     };
     let told = if unlink.link_credential.is_some() {
@@ -522,7 +589,7 @@ pub async fn unlink(app: &Arc<App>, caller: &Caller, confirmed: bool) -> Result<
     } else {
         worker::cancel(app, &unlink).await
     };
-    if !told {
+    if !told || !stopped {
         app.cloud.wake();
     }
     if matches!(state, State::Linking | State::Linked) {
