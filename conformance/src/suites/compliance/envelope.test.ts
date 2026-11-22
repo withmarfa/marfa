@@ -19,6 +19,7 @@ import {
   servedDocument,
 } from "../../utils/openapi.js";
 import { uploadReferenced } from "../../utils/blobs.js";
+import { connectorBundle, fresh } from "../../utils/plugin-connector.js";
 
 /**
  * Every list and every search answers one envelope: the items under `data`
@@ -101,11 +102,34 @@ beforeAll(async () => {
   expect(holder.ok, JSON.stringify(holder.error)).toBe(true);
   tabled = holder.data.item.id;
   trackItem(ctx, tabled);
+  const part = fresh();
+  plugin = `envelope-${part}`;
+  const installed = await owned("/plugins", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(
+      connectorBundle(plugin, `envelope${part}`, `envelope-${part}`),
+    ),
+  });
+  expect(installed.status, await installed.clone().text()).toBe(201);
+  trackType(ctx, `envelope${part}.entry`, client);
 });
 
 afterAll(async () => {
+  if (plugin) await owned(`/plugins/${plugin}`, { method: "DELETE" });
   await cleanup(ctx);
 });
+
+let plugin: string | undefined;
+
+/** A request on the private local command, which holds every permission. */
+function owned(path: string, init: RequestInit = {}): Promise<Response> {
+  return localFetch(
+    process.env.MARFA_CONTROL_SOCKET!,
+    `${apiUrl}${path}`,
+    init,
+  );
+}
 
 /** Answers the owner's own doors, which no key opens: the private local command. */
 const LOCAL = "the private local command";
@@ -224,16 +248,21 @@ describe("one envelope for every list and search", () => {
       path: () => "/connector-hosts",
       owner: true,
     },
+    {
+      template: "/plugins/{name}/connector/previews",
+      path: () => `/plugins/${plugin}/connector/previews`,
+      owner: true,
+    },
   ];
   const credentialOf = (door: (typeof doors)[number]) =>
     door.owner ? LOCAL : door.operator ? managementKey : apiKey;
 
-  it("names thirty-eight doors, every one the document publishes as a page", async () => {
+  it("names thirty-nine doors, every one the document publishes as a page", async () => {
     // The derived set holds the items to the document, so a door that starts
     // answering a page without a row here turns this red. The count holds
     // both to the number the specification states, so a new page added with
     // an item beside it turns this red too.
-    expect(doors).toHaveLength(38);
+    expect(doors).toHaveLength(39);
     expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),
     );
@@ -252,7 +281,7 @@ describe("one envelope for every list and search", () => {
             parameter.in === "query" && parameter.name === "cursor",
         ),
     );
-    expect(whole).toHaveLength(21);
+    expect(whole).toHaveLength(22);
     for (const door of whole) {
       const body = (await read(door.path(), credentialOf(door))) as Record<
         string,

@@ -2823,7 +2823,7 @@ async fn a_schema_9_database_upgrades_through_10_and_a_sign_in_goes_with_its_con
         )
         .unwrap();
 
-    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+    db_open(&options(&place.file, &MIGRATIONS[..10]), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -2846,6 +2846,65 @@ async fn a_schema_9_database_upgrades_through_10_and_a_sign_in_goes_with_its_con
     .unwrap();
     let left: i64 = conn
         .query_row("SELECT count(*) FROM connector_sign_ins", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn a_schema_10_database_upgrades_through_11_and_a_preview_goes_with_its_connector() {
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..10]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch(
+            "INSERT INTO plugins (name, version, title, description, mark, maker, marfa, manifest, \
+             edge_types, installed_at, updated_at, fingerprint) VALUES ('rss', '1.0.0', 'RSS', \
+             'Feeds.', 'lucide:rss', 'Marfa', '0.0.1', '{\"connector\":{\"source\":\"rss\"}}', \
+             '[]', 'a', 'a', '0000000000000000000000000000000000000000000000000000000000000000'); \
+             INSERT INTO plugin_connectors (plugin, source, created_at, updated_at, id) VALUES \
+             ('rss', 'rss', 'a', 'a', 'install');",
+        )
+        .unwrap();
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    assert_eq!(version_of(&place.file), 11);
+    let conn = Connection::open(&place.file).unwrap();
+    let (paused, run_requested_at): (i64, Option<String>) = conn
+        .query_row(
+            "SELECT paused, run_requested_at FROM plugin_connectors WHERE plugin = 'rss'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((paused, run_requested_at), (0, None));
+    assert!(
+        conn.execute("UPDATE plugin_connectors SET paused = 2", [])
+            .is_err(),
+        "paused took a value other than 0 or 1"
+    );
+    conn.execute(
+        "INSERT INTO connector_previews (id, plugin, kind, status, created_at, expires_at) \
+         VALUES ('one', 'rss', 'post', 'pending', 'a', 'b')",
+        [],
+    )
+    .unwrap();
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON; DELETE FROM plugin_connectors WHERE plugin = 'rss';",
+    )
+    .unwrap();
+    let left: i64 = conn
+        .query_row("SELECT count(*) FROM connector_previews", [], |row| {
             row.get(0)
         })
         .unwrap();

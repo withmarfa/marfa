@@ -162,6 +162,18 @@ fn answered(
     }))
 }
 
+/// The saved mapping's version, 0 with none saved, and how many rewrites wait on the connector.
+pub(crate) fn standing(tx: &Transaction<'_>, plugin: &str) -> Result<(i64, i64)> {
+    let version: Option<i64> = tx
+        .prepare_cached("SELECT version FROM connector_mappings WHERE plugin = ?1")?
+        .query_row([plugin], |row| row.get(0))
+        .optional()?;
+    let rewrites: i64 = tx
+        .prepare_cached("SELECT count(*) FROM connector_rewrites WHERE plugin = ?1")?
+        .query_row([plugin], |row| row.get(0))?;
+    Ok((version.unwrap_or(0), rewrites))
+}
+
 static REPORTED: Mutex<BTreeSet<(String, &'static str)>> = Mutex::new(BTreeSet::new());
 
 /// Logs once per plugin that its connector or mapping does not read, so its key reaches nothing

@@ -83,6 +83,12 @@ pub const OPERATIONS: &[Operation] = &[
     reached("getConnectorMapping", "plugins mapping show"),
     reached("saveConnectorMapping", "plugins mapping set"),
     reached("rewriteConnectorItems", "plugins mapping rewrite"),
+    reached("getPluginConnector", "plugins status"),
+    reached("pausePluginConnector", "plugins pause"),
+    reached("resumePluginConnector", "plugins resume"),
+    reached("runPluginConnector", "plugins run"),
+    reached("createMappingPreview", "plugins mapping preview"),
+    reached("getMappingPreview", "plugins mapping preview"),
     reached("listTypes", "types list"),
     reached("registerType", "types register"),
     reached("normalizeType", "types normalize"),
@@ -223,6 +229,14 @@ pub const NO_COMMAND: &[(&str, &str)] = &[
     (
         "finishConnectorRewrite",
         "a plugin's connector sends it under its own key once it has rewritten its items; the owner asks for a rewrite with `plugins mapping rewrite`",
+    ),
+    (
+        "listMappingPreviews",
+        "a plugin's connector lists the previews it renders under its own key; the owner asks for one with `plugins mapping preview`",
+    ),
+    (
+        "answerMappingPreview",
+        "a plugin's connector answers a preview under its own key; `plugins mapping preview --wait` reads its answer",
     ),
 ];
 

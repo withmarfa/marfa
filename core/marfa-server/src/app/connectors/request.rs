@@ -22,7 +22,14 @@ const MAX_TEXT: usize = 2000;
 
 const REGISTER_FIELDS: [&str; 3] = ["name", "description", "read_only_types"];
 const PROCESS_FIELDS: [&str; 1] = ["process"];
-const RUN_FIELDS: [&str; 5] = ["outcome", "started_at", "finished_at", "summary", "error"];
+const RUN_FIELDS: [&str; 6] = [
+    "outcome",
+    "started_at",
+    "finished_at",
+    "summary",
+    "error",
+    "run_requested_at",
+];
 const STATE_FIELDS: [&str; 3] = ["process", "state", "problems"];
 const AGREEMENT_FIELDS: [&str; 3] = ["process", "set", "clear"];
 const LOOKUP_FIELDS: [&str; 1] = ["item_ids"];
@@ -186,13 +193,30 @@ enum Stamp {
     OutOfRange(String),
 }
 
+/// UTC range checks follow authorization; syntax checks precede it.
+fn stamp(held: &str, name: &str) -> Result<Stamp> {
+    match time::read(held) {
+        Ok(ms) => Ok(Stamp::Stored(time::written(ms))),
+        Err(time::Fault::Range) => Ok(Stamp::OutOfRange(name.to_string())),
+        Err(time::Fault::Form) => Err(invalid(name, format!("{name} must be a timestamp."))),
+    }
+}
+
 pub struct Run {
     pub succeeded: bool,
     started_at: Stamp,
     finished_at: Stamp,
     pub summary: Option<String>,
     pub error: Option<String>,
+    run_requested_at: Option<Stamp>,
     stray: Stray,
+}
+
+/// A run's times as stored: started, finished, and the run request it acted on.
+pub struct RunTimes {
+    pub started_at: String,
+    pub finished_at: String,
+    pub run_requested_at: Option<String>,
 }
 
 impl Run {
@@ -204,21 +228,24 @@ impl Run {
                 return Err(invalid("outcome", "outcome is succeeded or failed."));
             }
         };
-        // UTC range checks follow authorization; syntax checks precede it.
         let moment = |name: &str| -> Result<Stamp> {
             let held = required(fields, name, name)?
                 .as_str()
                 .ok_or_else(|| invalid(name, format!("{name} must be a timestamp.")))?;
-            match time::read(held) {
-                Ok(ms) => Ok(Stamp::Stored(time::written(ms))),
-                Err(time::Fault::Range) => Ok(Stamp::OutOfRange(name.to_string())),
-                Err(time::Fault::Form) => {
-                    Err(invalid(name, format!("{name} must be a timestamp.")))
-                }
-            }
+            stamp(held, name)
         };
         let started_at = moment("started_at")?;
         let finished_at = moment("finished_at")?;
+        let run_requested_at = match fields.get("run_requested_at") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(held)) => Some(stamp(held, "run_requested_at")?),
+            Some(_) => {
+                return Err(invalid(
+                    "run_requested_at",
+                    "run_requested_at must be a timestamp or null.",
+                ));
+            }
+        };
         let optional = |name: &str| -> Result<Option<String>> {
             fields
                 .get(name)
@@ -231,12 +258,13 @@ impl Run {
             finished_at,
             summary: optional("summary")?,
             error: optional("error")?,
+            run_requested_at,
             stray: Stray::of(fields, &RUN_FIELDS),
         })
     }
 
-    /// The two times as stored, and the check that the run did not finish before it started.
-    pub fn checked(&self) -> Result<(String, String)> {
+    /// The times as stored, and the check that the run did not finish before it started.
+    pub fn checked(&self) -> Result<RunTimes> {
         self.stray.refuse()?;
         let stored = |stamp: &Stamp| match stamp {
             Stamp::Stored(held) => Ok(held.clone()),
@@ -246,13 +274,18 @@ impl Run {
             )),
         };
         let (started, finished) = (stored(&self.started_at)?, stored(&self.finished_at)?);
+        let run_requested_at = self.run_requested_at.as_ref().map(stored).transpose()?;
         if finished < started {
             return Err(invalid(
                 "finished_at",
                 "finished_at can't be before started_at.",
             ));
         }
-        Ok((started, finished))
+        Ok(RunTimes {
+            started_at: started,
+            finished_at: finished,
+            run_requested_at,
+        })
     }
 }
 
@@ -535,5 +568,31 @@ mod tests {
             );
         }
         assert!(run("0000-01-01T00:00:00.000Z").is_ok_and(|run| run.checked().is_ok()));
+    }
+
+    #[test]
+    fn a_run_names_the_run_request_it_acted_on_as_a_stored_time_or_none() {
+        let run = |asked: Value| {
+            Run::parse(&fields(json!({
+                "outcome": "succeeded",
+                "started_at": "2026-01-01T00:00:00Z",
+                "finished_at": "2026-01-01T00:00:00Z",
+                "run_requested_at": asked,
+            })))
+        };
+        let acted_on = |asked: Value| {
+            run(asked)
+                .and_then(|run| run.checked())
+                .map(|times| times.run_requested_at)
+        };
+        assert_eq!(
+            acted_on(json!("2026-01-01T01:00:00+01:00")).ok(),
+            Some(Some("2026-01-01T00:00:00.000Z".to_string()))
+        );
+        assert_eq!(acted_on(Value::Null).ok(), Some(None));
+        for wrong in [json!("yesterday"), json!(17), json!({})] {
+            assert!(run(wrong.clone()).is_err(), "{wrong}");
+        }
+        assert!(run(json!("0000-01-01T00:00:00+00:01")).is_ok_and(|run| run.checked().is_err()));
     }
 }

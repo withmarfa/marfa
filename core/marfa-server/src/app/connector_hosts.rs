@@ -10,6 +10,7 @@ use super::App;
 use super::access::{Axis, Caller, Grants, Permission};
 use super::auth::limits::{connector_link_lanes, hold_to};
 use super::clock::Stamp;
+use super::connector_control;
 use super::connectors;
 use super::keys::{self, Maker};
 use super::plugins;
@@ -578,14 +579,18 @@ pub async fn own(app: &App, caller: &Caller) -> Result<Value> {
                 Some(key_id) => connectors::registration_of_key(unit.tx(), key_id)?,
                 None => None,
             };
-            connectors.push(json!({
+            let mut connector = json!({
                 "plugin": record.plugin,
                 "version": installed.version,
                 "fingerprint": installed.fingerprint,
                 "connector": installed.manifest.get("connector").cloned().unwrap_or(Value::Null),
                 "registration_id": registration,
                 "key_minted": live(unit.tx(), record.key_id.as_deref(), &unit.at)?,
-            }));
+            });
+            if let Value::Object(members) = &mut connector {
+                members.extend(connector_control::for_host(unit.tx(), &record.plugin)?);
+            }
+            connectors.push(connector);
         }
         Ok(json!({ "id": host.id, "name": host.name, "connectors": connectors }))
     })

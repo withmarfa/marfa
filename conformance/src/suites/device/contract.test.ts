@@ -1129,6 +1129,11 @@ const invocations: Record<string, () => string[]> = {
     fileOf("mapping.json", '{"version":0,"kinds":{}}'),
   ],
   "plugins mapping rewrite": () => ["fixture", "--dry-run"],
+  "plugins mapping preview": () => ["fixture", "--kind", "entry"],
+  "plugins pause": () => ["fixture"],
+  "plugins resume": () => ["fixture"],
+  "plugins run": () => ["fixture"],
+  "plugins status": () => ["fixture"],
   "plugins install": () => [
     fileOf(
       "fixture.plugin.json",

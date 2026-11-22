@@ -598,9 +598,11 @@ If a credential other than a host's key sends `GET /connector-hosts/self` or `PO
 
 ### `plugins/host-self`
 
-When a host's key sends `GET /connector-hosts/self`, the server MUST answer `200` with the host's `id` and `name`, and `connectors` listing, for each plugin whose connector is assigned to the host, its `plugin`, `version`, `fingerprint`, its connector section as `connector`, `registration_id` naming the registration the connector's current key made or `null`, and `key_minted`.
+When a host's key sends `GET /connector-hosts/self`, the server MUST answer `200` with the host's `id` and `name`, and `connectors` listing, for each plugin whose connector is assigned to the host, its `plugin`, `version`, `fingerprint`, its connector section as `connector`, `registration_id` naming the registration the connector's current key made or `null`, `key_minted`, and `paused` and `run_requested_at` as `plugins/control-read` gives them.
 
-**Tests:** `compliance/connector-hosts.test.ts › answers a host only the connectors assigned to it, and records when it was last seen`.
+**Reason:** a host skips starting a connector the owner paused, and starts one the owner asked to run now.
+
+**Tests:** `compliance/connector-hosts.test.ts › answers a host only the connectors assigned to it, and records when it was last seen`, `compliance/connector-control.test.ts › stores a pause, a resume and a run request, answering each on the connector's door and to its host`.
 
 ### `plugins/host-mint`
 
@@ -1477,3 +1479,243 @@ If `POST /plugins/{name}/connector/mapping/rewrite/done` sends a body that does 
 If a caller other than the plugin's connector key or local authority sends `POST /plugins/{name}/connector/mapping/rewrite/done`, then the server MUST answer `403 forbidden` and keep the request.
 
 **Tests:** `compliance/connector-mapping.test.ts › stores each rewrite request under its own number, which the connector clears one at a time, and refuses another key clearing one`.
+
+## Pausing and running a connector
+
+The owner pauses a plugin's connector, resumes it, or asks it to run now. The server stores each choice on the plugin's connector, and the connector reads it and follows it: the server never starts or stops a connector itself.
+
+### `plugins/control-read`
+
+When a caller holding `connectors.manage`, or the plugin's connector key, sends `GET /plugins/{name}/connector` for an installed plugin with a `connector`, the server MUST answer `200` with `plugin`, `source`, `host`, `registration` naming the registration the connector's current key made or `null`, `paused`, `run_requested_at`, `mapping_version` as `GET /plugins/{name}/connector/mapping` gives `version`, `rewrites` holding the number of rewrite requests waiting, and `previews` holding the number of mapping previews pending.
+
+**Reason:** a connector checks one door each run, and an app draws the connector's page from the same answer.
+
+**Tests:** `compliance/connector-control.test.ts › stores a pause, a resume and a run request, answering each on the connector's door and to its host`.
+
+### `plugins/control-read-permission`
+
+If a caller that neither holds `connectors.manage` nor is the plugin's connector key sends `GET /plugins/{name}/connector`, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage`.
+
+**Tests:** `compliance/connector-control.test.ts › answers the connector's door to its own key and not to another plugin's key or a key without connectors.manage`.
+
+### `plugins/control-not-found`
+
+If a caller holding `connectors.manage` sends `GET /plugins/{name}/connector` for a name no installed plugin has, then the server MUST answer `404 plugin_not_found`, and for an installed plugin with no `connector` as `plugins/mapping-not-found` reads it, `404 plugin_connector_not_found`.
+
+**Tests:** `compliance/connector-control.test.ts › answers 404 for the door of a plugin not installed and of one with no connector`.
+
+### `plugins/pause`
+
+When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/pause`, the server MUST store the connector as paused and answer `200` as `plugins/control-read` gives it.
+
+**Tests:** `compliance/connector-control.test.ts › stores a pause, a resume and a run request, answering each on the connector's door and to its host`.
+
+### `plugins/pause-clears-run`
+
+When the server pauses a connector, the server MUST set its `run_requested_at` to `null` in the same write.
+
+**Reason:** a paused connector does not run, and resuming it does not start a run the owner asked for before pausing it.
+
+**Tests:** `compliance/connector-control.test.ts › stores a pause, a resume and a run request, answering each on the connector's door and to its host`.
+
+### `plugins/resume`
+
+When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/resume`, the server MUST store the connector as not paused and answer `200` as `plugins/control-read` gives it.
+
+**Tests:** `compliance/connector-control.test.ts › stores a pause, a resume and a run request, answering each on the connector's door and to its host`.
+
+### `plugins/run-request`
+
+When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/run` for a connector that is not paused, the server MUST store the time of the request as `run_requested_at`, replacing any earlier one, and answer `200` as `plugins/control-read` gives it.
+
+**Reason:** the connector runs once for the request it reads, however many times the owner asked before it read it, and names that request when it reports the run (`plugins/run-cleared`).
+
+**Tests:** `compliance/connector-control.test.ts › stores a pause, a resume and a run request, answering each on the connector's door and to its host`.
+
+### `plugins/run-paused`
+
+If a caller sends `POST /plugins/{name}/connector/run` for a paused connector, then the server MUST answer `409 connector_paused` and store nothing.
+
+**Reason:** a paused connector would not follow the request, so the owner resumes it first.
+
+**Tests:** `compliance/connector-control.test.ts › stores a pause, a resume and a run request, answering each on the connector's door and to its host`.
+
+### `plugins/control-permission`
+
+If a caller without `connectors.manage` sends `POST /plugins/{name}/connector/pause`, `/resume` or `/run`, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage`, and store nothing.
+
+**Reason:** the connector follows the owner's choice and never sets it.
+
+**Tests:** `compliance/connector-control.test.ts › answers the connector's door to its own key and not to another plugin's key or a key without connectors.manage`.
+
+### `plugins/run-cleared`
+
+When the plugin's connector key reports a run with `POST /connectors/{id}/runs` whose `run_requested_at` names the same instant as the connector's stored `run_requested_at`, the server MUST set `run_requested_at` to `null` in the same write.
+
+**Reason:** the connector names the request it acted on, as `GET /plugins/{name}/connector` or `GET /connector-hosts/self` gave it, so only the server's own clock decides which request a run answers.
+
+**Tests:** `compliance/connector-control.test.ts › clears a run request only when the connector's run report names it`.
+
+### `plugins/run-kept`
+
+If the plugin's connector key reports a run with `POST /connectors/{id}/runs` that names no `run_requested_at`, names `null`, or names an instant other than the connector's stored `run_requested_at`, then the server MUST keep the stored `run_requested_at`.
+
+**Reason:** a run that names no request, or an earlier one, did not act on the request the owner made last, such as one made after the run started.
+
+**Tests:** `compliance/connector-control.test.ts › clears a run request only when the connector's run report names it`, `› keeps a run request made after the connector started the run it reports`.
+
+### `plugins/pause-writes-land`
+
+While a plugin's connector is paused, the server MUST take the writes of its connector key as it takes them while the connector is not paused.
+
+**Reason:** pausing is the owner's word to the connector, which stops itself, and a run under way when the owner paused finishes cleanly. `paused` holds back nothing on the server.
+
+**Tests:** `compliance/connector-control.test.ts › takes the connector key's writes while the connector is paused`.
+
+### `plugins/control-audited`
+
+When the server pauses a connector, resumes it or stores a run request for it, the server MUST record an audit entry with `action` `connector.pause`, `connector.resume` or `connector.run_request`, `resource_type` `plugin` and `resource_id` the plugin's name.
+
+**Tests:** `compliance/connector-control.test.ts › audits a pause, a resume and a run request`.
+
+### `plugins/control-removed`
+
+When the server removes a plugin, the server MUST remove its connector's pause, run request and mapping previews in the same write.
+
+**Reason:** they are the connector's working state, so installing the plugin again starts it afresh.
+
+**Tests:** `compliance/connector-control.test.ts › removes the pause, the run request and the previews with the plugin`.
+
+## Mapping previews
+
+An app asks how one kind would land, under the mapping in force or under a draft of the kind's entry, and the plugin's connector renders it on one of its items and answers. The server keeps the request and the connector's answer for 10 minutes and never renders a field itself.
+
+### `plugins/preview-create`
+
+When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/previews` with `kind` naming a kind of the plugin's `connector`, and optionally `item_id` and `mapping`, the server MUST store a pending preview and answer `201` with its `id`, `kind`, `item_id`, `mapping`, `status` `pending`, `result` `null`, `error` `null`, `created_at`, `expires_at` and `answered_at` `null`.
+
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
+
+### `plugins/preview-life`
+
+The server MUST set a preview's `expires_at` to 10 minutes after its `created_at`.
+
+**Reason:** a preview is for an app that waits on it; an answer nobody reads in that time is not kept.
+
+**Tests:** `compliance/connector-control.test.ts › answers 404 connector_preview_not_found for a preview once 10 minutes have passed, and lists it no longer`.
+
+### `plugins/preview-gone`
+
+If a request names a preview the plugin does not hold, or one whose `expires_at` has passed, then the server MUST answer `404 connector_preview_not_found`.
+
+**Tests:** `compliance/connector-control.test.ts › answers 404 connector_preview_not_found for a preview once 10 minutes have passed, and lists it no longer`.
+
+### `plugins/preview-shape`
+
+If `POST /plugins/{name}/connector/previews` sends a body with no `kind`, a `kind` the plugin's `connector` does not name, an `item_id` that is not text, a `mapping` that is not an object, or another member, then the server MUST answer `400 validation_error` with `details.errors` naming each `path`, and store nothing.
+
+**Tests:** `compliance/connector-control.test.ts › refuses a preview of an unknown kind, of an item outside the connector's source, and of a draft a save would refuse, naming each path`.
+
+### `plugins/preview-item`
+
+If `POST /plugins/{name}/connector/previews` names an `item_id` that no item whose `source` is the connector's source holds, then the server MUST answer `400 validation_error` with `details.errors` naming the path `item_id`, and store nothing.
+
+**Reason:** the connector renders a preview from one of its own items. The answer is the same for an item that does not exist and for one under another source, so it reveals neither.
+
+**Tests:** `compliance/connector-control.test.ts › refuses a preview of an unknown kind, of an item outside the connector's source, and of a draft a save would refuse, naming each path`.
+
+### `plugins/preview-draft`
+
+If `POST /plugins/{name}/connector/previews` holds a `mapping` that `PUT /plugins/{name}/connector/mapping` would refuse as the entry of `kind`, then the server MUST answer `400 validation_error` with `details.errors` naming each fault as a save names it, its `path` under `mapping` in place of `kinds.<kind>`, and store nothing.
+
+**Tests:** `compliance/connector-control.test.ts › refuses a preview of an unknown kind, of an item outside the connector's source, and of a draft a save would refuse, naming each path`.
+
+### `plugins/preview-draft-kept`
+
+When `POST /plugins/{name}/connector/previews` holds a `mapping` the server takes, the server MUST store and answer it as the entry of `kind` that a save would store, each member it leaves out taken from the kind's default (`plugins/mapping-default`).
+
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
+
+### `plugins/preview-cap`
+
+If `POST /plugins/{name}/connector/previews` finds 20 previews of the plugin whose `expires_at` has not passed, all of them `pending`, then the server MUST answer `409 connector_previews_full` with `details.limit` `20`, and store nothing.
+
+**Reason:** every preview whose `expires_at` has not passed counts, whatever its `status`, so a plugin holds at most 20. A preview waits on the connector, which may be stopped, so the queue of a stopped connector stays small.
+
+**Tests:** `compliance/connector-control.test.ts › refuses a new preview 409 connector_previews_full while twenty pending previews are live, and stores nothing`, `› removes the oldest answered preview to make a new one once twenty are live, and lists no more than twenty`.
+
+### `plugins/preview-make-room`
+
+When `POST /plugins/{name}/connector/previews` finds 20 previews of the plugin whose `expires_at` has not passed, one or more of them `ready` or `failed`, the server MUST remove the oldest of those `ready` or `failed` previews in the write that stores the new one.
+
+**Reason:** an answer the app has already had the chance to read gives way to a new request, and a request the connector has not answered does not.
+
+**Tests:** `compliance/connector-control.test.ts › removes the oldest answered preview to make a new one once twenty are live, and lists no more than twenty`.
+
+### `plugins/preview-permission`
+
+If a caller without `connectors.manage` sends `POST /plugins/{name}/connector/previews`, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage`, and store nothing.
+
+**Reason:** the owner asks for a preview; the connector only answers one.
+
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
+
+### `plugins/preview-list`
+
+When a caller holding `connectors.manage`, or the plugin's connector key, sends `GET /plugins/{name}/connector/previews`, the server MUST answer `200` with `data` listing, oldest first, each preview of the plugin whose `expires_at` has not passed and, where the query names a `status`, whose `status` it names, and `next_cursor` `null`.
+
+**Reason:** the connector lists the pending previews each time it looks for work. A plugin holds at most 20 previews (`plugins/preview-cap`), each `result` at most 65,536 bytes (`plugins/preview-result-size`), so the listing is never paged.
+
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`, `› removes the oldest answered preview to make a new one once twenty are live, and lists no more than twenty`.
+
+### `plugins/preview-list-status`
+
+If `GET /plugins/{name}/connector/previews` names a `status` other than `pending`, `ready` or `failed`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
+
+### `plugins/preview-read`
+
+When a caller holding `connectors.manage`, or the plugin's connector key, sends `GET /plugins/{name}/connector/previews/{id}` naming a preview the plugin holds, the server MUST answer `200` with the preview as `plugins/preview-create` gives it, with its `status`, `result`, `error` and `answered_at` as they stand.
+
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
+
+### `plugins/preview-read-permission`
+
+If a caller that neither holds `connectors.manage` nor is the plugin's connector key sends `GET /plugins/{name}/connector/previews` or `GET /plugins/{name}/connector/previews/{id}`, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage`.
+
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
+
+### `plugins/preview-answer`
+
+When the plugin's connector key, or local authority, sends `POST /plugins/{name}/connector/previews/{id}` with `result`, an object, or `error`, text of 1 to 500 characters, for a pending preview, the server MUST store it as given, set `status` to `ready` or `failed` and `answered_at` to the time of the answer, and answer `200` with the preview.
+
+**Reason:** the connector renders the preview with the mapping and its own items, and the server keeps its answer without reading it.
+
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
+
+### `plugins/preview-answered`
+
+If `POST /plugins/{name}/connector/previews/{id}` names a preview whose `status` is not `pending`, then the server MUST answer `409 connector_preview_answered` and change nothing.
+
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
+
+### `plugins/preview-answer-shape`
+
+If `POST /plugins/{name}/connector/previews/{id}` sends a body holding neither or both of `result` and `error`, a `result` that is not an object, an `error` that is not text of 1 to 500 characters, or another member, then the server MUST answer `400 validation_error` with `details.errors` naming each `path`, and change nothing.
+
+**Tests:** `compliance/connector-control.test.ts › refuses an answer of the wrong shape, an oversized result and an answer from another key, and changes nothing`.
+
+### `plugins/preview-result-size`
+
+If the `result` that `POST /plugins/{name}/connector/previews/{id}` sends is longer than 65,536 bytes when written as JSON, then the server MUST answer `400 validation_error` with `details.errors` naming the path `result`, and change nothing.
+
+**Reason:** a preview shows the fields of one item, and the bound keeps a connector's fault from filling the database.
+
+**Tests:** `compliance/connector-control.test.ts › refuses an answer of the wrong shape, an oversized result and an answer from another key, and changes nothing`.
+
+### `plugins/preview-answer-key`
+
+If a caller other than the plugin's connector key or local authority sends `POST /plugins/{name}/connector/previews/{id}`, then the server MUST answer `403 forbidden` and change nothing.
+
+**Tests:** `compliance/connector-control.test.ts › refuses an answer of the wrong shape, an oversized result and an answer from another key, and changes nothing`.

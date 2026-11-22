@@ -747,6 +747,9 @@ impl Document {
 const MISSED: &[&str] = &[
     // `plugins sign-in --wait` reads the sign-in only once the start answers.
     "getPluginConnectorSignIn",
+    // `plugins mapping preview --wait` reads the preview the answer names, and the walk's
+    // answers name none. Driven by cli/plugins.test.ts.
+    "getMappingPreview",
     // `keys create` reads the key it bears before it mints.
     "createKey",
     // `folders push`: needs a bound working copy, exercised by the

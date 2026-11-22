@@ -534,6 +534,8 @@ When the server records a heartbeat, the server MUST NOT record an audit entry f
 
 A run is what a connector reports of one pass of its work. The server keeps the last 100 of them for each registration.
 
+A plugin's connector also names, as `run_requested_at`, the run request it acted on, which `plugins/run-cleared` reads. The server answers it on no run.
+
 ### `connectors/run-created`
 
 When the working key a connector is registered under sends `POST /connectors/{id}/runs` with an `outcome`, a `started_at` and a `finished_at`, the server MUST answer `201` with the run's `id`, `connector_id`, `outcome`, `started_at`, `finished_at`, `summary`, `error` and `reported_at`.
@@ -581,6 +583,12 @@ If a run names a `started_at` or a `finished_at` that is not an RFC 3339 timesta
 If a run names a `started_at` or a `finished_at` whose UTC year is outside 0000 to 9999, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/connectors.test.ts › refuses a run time whose UTC year is outside 0000 to 9999, and takes the first and last instants`.
+
+### `connectors/run-requested-at-invalid`
+
+If a run names a `run_requested_at` that is neither `null` nor an RFC 3339 timestamp whose UTC year is between 0000 and 9999, then the server MUST answer `400 validation_error` with `details.field` `run_requested_at`.
+
+**Tests:** `compliance/connector-control.test.ts › refuses a run report whose run_requested_at is not a timestamp, and clears nothing`.
 
 ### `connectors/run-finish-before-start`
 

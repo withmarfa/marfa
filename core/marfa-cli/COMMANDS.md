@@ -48,7 +48,7 @@ With --json a refusal is the last line of stderr, one JSON object, after any pla
 {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...,"request_id":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
-where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `server_too_old`, `canceled`, `first_sync_waiting`, `sync_paused`, `renewal_refused`, `invalid`, `not_answerable`, `fault`, `watch`, `instance_changed`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `sign_in_ended`, `file_name_mismatch`, `cloud_link_failed`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `plugins_unreachable`, `conflict`, `too_large`.
+where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `server_too_old`, `canceled`, `first_sync_waiting`, `sync_paused`, `renewal_refused`, `invalid`, `not_answerable`, `fault`, `watch`, `instance_changed`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `sign_in_ended`, `preview_ended`, `file_name_mismatch`, `cloud_link_failed`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `plugins_unreachable`, `conflict`, `too_large`.
 
 ## Telemetry
 
@@ -81,7 +81,8 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | Make, link and remove the machines that run connectors | `marfa hosts add`, `marfa hosts list`, `marfa hosts get`, `marfa hosts link`, `marfa hosts remove` |
 | Choose which machine runs a plugin's connector | `marfa plugins assign` |
 | Set a plugin connector's settings and secrets | `marfa plugins settings`, `marfa plugins secret` |
-| Map what a connector brings, and rewrite its items | `marfa plugins mapping set`, `marfa plugins mapping rewrite` |
+| Map what a connector brings, preview it, and rewrite its items | `marfa plugins mapping set`, `marfa plugins mapping preview`, `marfa plugins mapping rewrite` |
+| Pause a connector, resume it, or run it now | `marfa plugins pause`, `marfa plugins resume`, `marfa plugins run` |
 | Sign a plugin's connector in to its service | `marfa plugins sign-in` |
 | See what a key can read | `marfa overview` |
 | Read the instance's name and enforcement | `marfa config get` |
@@ -1590,6 +1591,54 @@ marfa plugins secret [OPTIONS] <NAME> <SETTING>
 | --- | --- |
 | `--clear` | Remove the value set, reading nothing. |
 
+### marfa plugins pause
+
+Pause a plugin's connector: it stops itself and its host does not start it, and a run asked for is dropped. Marfa still takes its writes, so a run under way finishes. Requires `connectors.manage`.
+
+```text
+marfa plugins pause [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+
+### marfa plugins resume
+
+Resume a plugin's paused connector. Requires `connectors.manage`.
+
+```text
+marfa plugins resume [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+
+### marfa plugins run
+
+Ask a plugin's connector to run now. It reads the request and runs, and the run it reports naming that request clears it. A paused connector is refused. Requires `connectors.manage`.
+
+```text
+marfa plugins run [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+
+### marfa plugins status
+
+What the owner wants of a plugin's connector: its host and registration, whether it is paused, a run asked for, its mapping's version, and the rewrites and previews waiting on it. Works with `connectors.manage` or the connector's own key.
+
+```text
+marfa plugins status [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+
 ### marfa plugins mapping
 
 A plugin connector's mapping: for each kind it brings, whether it comes in, the type and tier it lands as, its status words and its fields.
@@ -1639,6 +1688,25 @@ marfa plugins mapping rewrite [OPTIONS] <NAME>
 | --- | --- |
 | `--dry-run` | Only count the items. |
 | `--kind <KIND>` | A kind to rewrite; repeat for more. Without it, every kind that comes in. |
+
+### marfa plugins mapping preview
+
+Ask the connector to render how one kind would land, on one of its items, and print the preview. The connector answers on its next look; a preview is kept for 10 minutes. With `--wait`, stay until the connector answers or the preview expires. Needs `connectors.manage`.
+
+```text
+marfa plugins mapping preview [OPTIONS] --kind <KIND> <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+
+| Option | Description |
+| --- | --- |
+| `--kind <KIND>` | The kind to preview. |
+| `--item <ID>` | The ID of an item the connector brought to render it from. Without it, the connector chooses a recent one. |
+| `--file <DRAFT>` | A JSON or YAML file holding a draft of the kind's mapping to render with, checked as a save checks it. Without it, the mapping in force. |
+| `--wait` | Stay until the connector answers, printing the fields it rendered, or until the preview fails or expires. |
 
 ### marfa plugins sign-in
 

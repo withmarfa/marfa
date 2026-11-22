@@ -16,7 +16,7 @@ The contract has two halves.
 - `items.md`: items, their lifecycle, bulk writes, metadata, tags and extensions, the folder operation that writes `system.folder`, and links and the tombstones a purge leaves.
 - `views.md`: views, the saved lists of items written as `system.view`, their query, sort and group, the operations that create, change and delete them, and the one that lists their items.
 - `types.md`: the type registry, its grammar, inheritance, enforcement levers and a type's link.
-- `plugins.md`: a plugin's bundle, installing it, a newer version that only adds, the provenance it records, removing it, its connector, its connector's settings and secrets, the connector hosts that run connectors, its connector's mapping, what the connector's key may write, and rewriting existing items.
+- `plugins.md`: a plugin's bundle, installing it, a newer version that only adds, the provenance it records, removing it, its connector, its connector's settings and secrets, the connector hosts that run connectors, its connector's mapping, what the connector's key may write, rewriting existing items, pausing its connector or asking it to run now, and the mapping previews it renders.
 - `tables.md`: the tables a type declares, their columns and how a column totals, down a chain of types, through evolution and into an archive.
 - `conversations.md`: the shipped type `core.conversation`, its `messages` table, appending and reading the latest messages, and listing conversations by their latest message.
 - `edges.md`: edges, edge types, hydration and traversal.

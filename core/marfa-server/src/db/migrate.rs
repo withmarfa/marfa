@@ -77,6 +77,14 @@ pub const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0010_connector_sign_ins.sql"),
         done: Some("SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE name = 'connector_sign_ins')"),
     },
+    Migration {
+        version: 11,
+        sql: include_str!("migrations/0011_connector_control.sql"),
+        done: Some(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('plugin_connectors') \
+             WHERE name = 'paused')",
+        ),
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \
