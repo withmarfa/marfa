@@ -57,8 +57,8 @@ const PINS: &[Pin] = &[
     },
     Pin {
         version: 9,
-        file: "78b7a6af4dd07db1e7a06fd711282a0cbd63e33a1d8ad64e4ee44dfbd0349932",
-        holds: "f4b071f0a4156758c4b7c747611a8a4d8334973e9906898e19379fd0cea0e70b",
+        file: "ac82d37e1258dcb2823a437611dfd7a33fdf218636871246e6325478d1d8fc74",
+        holds: "866fa9fd3357486572e208bcdb478c57fa01dc933dca6cff7ec81eb02db556d9",
     },
     Pin {
         version: 10,
@@ -69,6 +69,11 @@ const PINS: &[Pin] = &[
         version: 11,
         file: "ea0f1ed8f2960af84d2c7d9f87a2025d0966df324f44092415e63eb434385dde",
         holds: "9eda77607465c60f91df59e9fdb085b77969f1e953a0e5c1084cc59913174483",
+    },
+    Pin {
+        version: 12,
+        file: "5879bcd2b22952149df1001acd92966d69651e00d4b0f5ee6bfc6b69f810a5bf",
+        holds: "6c59f4ba3feb967f7f8b3eab96025d4dfa0f48a48da3c5826dbfb1d870237e3d",
     },
 ];
 

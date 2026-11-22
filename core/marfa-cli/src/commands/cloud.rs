@@ -397,6 +397,7 @@ const PORT_TAKEN: &str = "another program holds the port on 127.0.0.1 that Marfa
 fn connector_failure(reason: &str) -> String {
     match reason {
         "missing" => "no connector program can be run. It belongs beside the server's own program, or at the path the server's connector setting names; once it is in place, the server runs it on its next try".to_string(),
+        "origin_unknown" => "the link keeps no port on 127.0.0.1 for the connector to reach, so the server does not run it. Run `marfa cloud unlink` and link again".to_string(),
         "port_taken" => PORT_TAKEN.to_string(),
         "refused" => format!("{SERVICE} refuses the connector's tunnel token. The server asks it for a new one on its own; if this lasts, unlink and link again"),
         "token" => "the server cannot read the tunnel token or write the file it gives the connector".to_string(),
@@ -969,6 +970,10 @@ mod tests {
         assert!(!pending.contains("Another program holds"), "{pending}");
         for (reason, words) in [
             ("missing", "no connector program can be run"),
+            (
+                "origin_unknown",
+                "keeps no port on 127.0.0.1 for the connector to reach, so the server does not run it. Run `marfa cloud unlink` and link again",
+            ),
             (
                 "port_taken",
                 "Free that port, or run `marfa cloud unlink` and link again",

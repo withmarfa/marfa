@@ -123,7 +123,7 @@ async fn resync_with(app: &Arc<App>, fresh: Option<tokio::net::TcpListener>) -> 
                 }))
         })
         .await?;
-    let port = wanted.as_ref().map(|(port, _)| *port);
+    let port = wanted.as_ref().and_then(|(port, _)| *port);
     let linked = wanted.and_then(|(_, linked)| linked);
     let moved = app
         .cloud
@@ -447,7 +447,7 @@ pub async fn start(
                 approval_url: started.approval_url,
                 expires_at: started.expires_at,
                 interval_ms: started.interval_ms,
-                origin_port: port,
+                origin_port: Some(port),
                 started_at: now,
                 poll_secret: Some(poll_secret),
                 sign_in_move: decided,

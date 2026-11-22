@@ -15,6 +15,7 @@ import { rm } from "node:fs/promises";
 import { createServer, request } from "node:http";
 import { connect, type Socket } from "node:net";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { serverProgram } from "../../../scripts/marfa-server.js";
 import { MarfaClient } from "../../client/api.js";
@@ -54,7 +55,7 @@ import { waitFor } from "../../utils/wait.js";
  *
  * **Past the target interface.** The fixtures read the server's log and the
  * file the tunnel token is in, which no door shows; the contract is about
- * what is in them.
+ * what is in them. One clears the link's stored port, which no door does.
  */
 
 const clouds: FakeCloud[] = [];
@@ -1374,6 +1375,47 @@ describe("the tunnel listener", () => {
       } finally {
         await new Promise((resolve) => other.close(resolve));
       }
+      await fake.waitForStarts(2);
+      await linked.connector("connected");
+      expect(await healthAt(tunnelOf(linked))).toBe(200);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "reports the connector as failed with reason origin_unknown for a link stored without the tunnel listener's port, and runs it again once linked anew",
+    async () => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true }]);
+      const linked = await boot("connector-listener-origin-unknown", {
+        MARFA_CLOUDFLARED: fake.path,
+      });
+      await linked.link();
+      await linked.connector("connected");
+      const tunnel = tunnelOf(linked);
+      expect(await healthAt(tunnel)).toBe(200);
+      await linked.server.restart(() => {
+        const db = new DatabaseSync(linked.server.sqlitePath);
+        try {
+          db.prepare("UPDATE cloud_link SET origin_port = NULL").run();
+        } finally {
+          db.close();
+        }
+      });
+      const failed = await linked.until(
+        "the connector to be failed with origin_unknown",
+        (s) =>
+          s.state === "linked" &&
+          s.connector.state === "failed" &&
+          s.connector.reason === "origin_unknown",
+      );
+      expect(failed.connector.since).toEqual(expect.any(String));
+      expect(fake.starts()).toHaveLength(1);
+      expect(await refusesConnections(tunnel)).toBe(true);
+
+      const unlinked = await linked.call("DELETE", "/cloud/link");
+      expect(unlinked.status, JSON.stringify(unlinked.body)).toBe(200);
+      await linked.link();
       await fake.waitForStarts(2);
       await linked.connector("connected");
       expect(await healthAt(tunnelOf(linked))).toBe(200);

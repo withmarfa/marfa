@@ -9131,10 +9131,10 @@ export interface components {
                  */
                 state: "stopped" | "starting" | "connected" | "reconnecting" | "failed";
                 /**
-                 * @description Why a `failed` connector can't run: `missing` (no connector file to run), `port_taken` (another program holds its port on 127.0.0.1), `refused` (Marfa Cloud refuses its token and has no newer one) or `token` (the token file can't be written).
+                 * @description Why a `failed` connector can't run: `missing` (no connector file), `origin_unknown` (the link keeps no port for it; link again), `port_taken` (another program holds its port), `refused` (Marfa Cloud refuses its token) or `token` (no token file).
                  * @enum {string}
                  */
-                reason?: "missing" | "port_taken" | "refused" | "token";
+                reason?: "missing" | "origin_unknown" | "port_taken" | "refused" | "token";
                 /**
                  * Format: date-time
                  * @description Since when the connector has been in this state, in UTC.

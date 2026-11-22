@@ -126,6 +126,9 @@ stays because that thing is what it checks.
   tunnel token is in, because the contract is about what the connector's output
   and its arguments, environment and files hold, and copies the server's program
   into a folder of its own to show where the server looks for the connector.
+  "reports the connector as failed with reason origin_unknown for a link stored
+  without the tunnel listener's port" clears the stored link's port while the
+  server is stopped, because every start of a link stores one.
 - `compliance/secret-settings.test.ts` searches the database file and the log
   beside it for a secret setting's value, because the contract is about the
   bytes at rest, and removes or damages `marfa.settings.key` while the server is

@@ -148,7 +148,7 @@ impl Seen<'_> {
                     "approval_url": link.approval_url,
                     "expires_at": link.expires_at.text(),
                 });
-                if self.tunnel.taken(link.origin_port) {
+                if link.origin_port.is_some_and(|port| self.tunnel.taken(port)) {
                     linking["port_taken"] = true.into();
                 }
                 body.insert("linking".into(), linking);

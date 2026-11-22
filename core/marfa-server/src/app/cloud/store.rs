@@ -75,8 +75,9 @@ pub struct Link {
     pub approval_url: String,
     pub expires_at: Stamp,
     pub interval_ms: i64,
-    /// The port of the 127.0.0.1 listener the tunnel connector reaches.
-    pub origin_port: u16,
+    /// The port of the 127.0.0.1 listener the tunnel connector reaches; none on a link made
+    /// before the port was kept, which cannot be served.
+    pub origin_port: Option<u16>,
     pub started_at: Stamp,
     pub poll_secret: Option<String>,
     pub sign_in_move: Move,
@@ -126,7 +127,7 @@ type Columns = (
         Option<String>,
         Option<String>,
     ),
-    i64,
+    Option<i64>,
 );
 
 fn columns(row: &Row<'_>) -> rusqlite::Result<Columns> {
@@ -181,10 +182,14 @@ fn link_of(columns: Columns) -> Result<Link> {
         approval_url,
         expires_at: Stamp::parsed(&expires_at).ok_or_else(|| unread("expires_at"))?,
         interval_ms,
-        origin_port: u16::try_from(origin_port)
-            .ok()
-            .filter(|port| *port != 0)
-            .ok_or_else(|| unread("origin_port"))?,
+        origin_port: origin_port
+            .map(|port| {
+                u16::try_from(port)
+                    .ok()
+                    .filter(|port| *port != 0)
+                    .ok_or_else(|| unread("origin_port"))
+            })
+            .transpose()?,
         started_at: Stamp::parsed(&started_at).ok_or_else(|| unread("started_at"))?,
         poll_secret,
         sign_in_move: Move::read(&sign_in_move).ok_or_else(|| unread("sign_in_move"))?,
@@ -325,4 +330,30 @@ pub fn forget(tx: &Transaction<'_>, link_id: &str) -> Result<()> {
         params![link_id],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::read;
+
+    #[test]
+    fn a_link_stored_with_no_origin_port_reads_as_having_none() {
+        let mut db = Connection::open_in_memory().unwrap();
+        crate::db::migrate::make_all(&db).unwrap();
+        let tx = db.transaction().unwrap();
+        tx.execute(
+            "INSERT INTO cloud_link (id, link_id, state, user_code, approval_url, expires_at, \
+             interval_ms, started_at, sign_in_move) VALUES (1, 'link', 'linked', 'ABCD-1234', \
+             'https://cloud.example/link', '2026-01-01T00:00:00.000Z', 5000, \
+             '2026-01-01T00:00:00.000Z', 'keep')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(read(&tx).unwrap().unwrap().origin_port, None);
+        tx.execute("UPDATE cloud_link SET origin_port = 8080", [])
+            .unwrap();
+        assert_eq!(read(&tx).unwrap().unwrap().origin_port, Some(8080));
+    }
 }

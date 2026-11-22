@@ -13628,11 +13628,12 @@
                 "type": "string",
                 "enum": [
                   "missing",
+                  "origin_unknown",
                   "port_taken",
                   "refused",
                   "token"
                 ],
-                "description": "Why a `failed` connector can't run: `missing` (no connector file to run), `port_taken` (another program holds its port on 127.0.0.1), `refused` (Marfa Cloud refuses its token and has no newer one) or `token` (the token file can't be written)."
+                "description": "Why a `failed` connector can't run: `missing` (no connector file), `origin_unknown` (the link keeps no port for it; link again), `port_taken` (another program holds its port), `refused` (Marfa Cloud refuses its token) or `token` (no token file)."
               },
               "since": {
                 "type": "string",

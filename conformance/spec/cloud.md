@@ -466,6 +466,14 @@ While a link is linked and another program holds the link's `origin_port` on `12
 
 **Tests:** `compliance/cloud-connector.test.ts › reports the connector as failed with reason port_taken while another program holds the tunnel listener's port, and runs it once the port is free`.
 
+### `cloud/tunnel-listener-origin-unknown`
+
+While a link is linked and the server holds no `origin_port` for it, the server MUST report the connector as `failed` with `reason` `origin_unknown` and not run it.
+
+**Reason:** the server cannot tell where the connector would carry the instance's traffic. The owner can unlink and link again, which sends a port.
+
+**Tests:** `compliance/cloud-connector.test.ts › reports the connector as failed with reason origin_unknown for a link stored without the tunnel listener's port, and runs it again once linked anew`.
+
 ### `cloud/tunnel-listener-port-taken-linking`
 
 While a link is linking and another program holds the link's `origin_port` on `127.0.0.1`, when a caller sends `GET /cloud/link`, the server MUST answer `linking.port_taken` `true`.
