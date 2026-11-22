@@ -181,6 +181,18 @@ impl Reach {
             whole: false,
         }
     }
+
+    #[cfg(test)]
+    pub fn testing_own(own: &[&str], source: &str) -> Reach {
+        Reach {
+            open: Vec::new(),
+            held: Vec::new(),
+            sources: Vec::new(),
+            own: own.iter().map(ToString::to_string).collect(),
+            own_source: source.to_string(),
+            whole: false,
+        }
+    }
 }
 
 fn present(tx: &Transaction<'_>) -> Result<Vec<String>> {

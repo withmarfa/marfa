@@ -192,54 +192,26 @@ pub(super) struct Page<'a> {
 const EDGE_FROM: &str = "SELECT e.seq, e.id, e.from_id, e.to_id, e.edge_type, json(e.properties), \
      e.version, e.created_at, e.updated_at FROM edges e JOIN items f ON f.id = e.from_id";
 
-/// `from` holds the from item to a reach in the query itself; `keeps` judges each edge type,
-/// before the limit, so a page comes back short only at its end.
+/// The fewest edges a narrowed page walks in order before it asks the indexes instead.
+const WINDOW: i64 = 1_000;
+
+/// `from` holds the from item to a reach and `page.edge_types` the edge types, both in the
+/// query; `keeps` judges each edge type too, before the limit, so a page comes back short only
+/// at its end.
 pub(super) fn page(
     tx: &Transaction<'_>,
     page: &Page<'_>,
     from: Option<&Reach>,
     keeps: impl Fn(&str) -> bool,
 ) -> Result<Vec<Edge>> {
-    let mut sql = Sql::new(&format!("{EDGE_FROM} WHERE 1 = 1"));
-    if let Some(from) = page.from {
-        sql.push(" AND e.from_id = ");
-        sql.bind(from.to_string());
+    if let Some(window) = window_of(page, from) {
+        let (kept, walked) = walk_window(tx, page, from, window, &keeps)?;
+        if kept.len() as i64 >= page.limit || walked < window {
+            return Ok(kept);
+        }
     }
-    if let Some(to) = page.to {
-        sql.push(" AND e.to_id = ");
-        sql.bind(to.to_string());
-    }
-    if !page.edge_types.is_empty() {
-        sql.push(" AND e.edge_type IN (");
-        sql.list(page.edge_types);
-        sql.push(")");
-    }
-    if let Some(after) = page.updated_after {
-        sql.push(" AND e.updated_at >= ");
-        sql.bind(after.to_string());
-    }
-    if let Some(before) = page.updated_before {
-        sql.push(" AND e.updated_at < ");
-        sql.bind(before.to_string());
-    }
-    if let Some(reach) = from {
-        sql.push(" AND ");
-        reach.clause(&mut sql, "f", true);
-    }
-    let (column, sense, order) = if page.by_change {
-        ("updated_at", ">", "ASC")
-    } else {
-        ("created_at", "<", "DESC")
-    };
-    if let Some((at, id)) = page.after {
-        sql.push(&format!(" AND (e.{column}, e.id) {sense} ("));
-        sql.bind(at.clone());
-        sql.push(", ");
-        sql.bind(id.clone());
-        sql.push(")");
-    }
-    sql.push(&format!(" ORDER BY e.{column} {order}, e.id {order}"));
-    let mut statement = tx.prepare(&sql.text)?;
+    let sql = page_sql(page, from);
+    let mut statement = tx.prepare_cached(&sql.text)?;
     let mut found = statement.query(params_from_iter(&sql.values))?;
     let mut kept = Vec::new();
     while let Some(row) = found.next()? {
@@ -252,6 +224,151 @@ pub(super) fn page(
         }
     }
     Ok(kept)
+}
+
+/// A dense page fills from the newest edges in order, but the order index finds a sparse one
+/// only by walking the table, where an index on what the caller reads finds it at once. So a
+/// narrowed page walks a window first, and asks the indexes only when the window runs out.
+fn window_of(page: &Page<'_>, from: Option<&Reach>) -> Option<i64> {
+    let ordered_by_type = page.edge_types.len() == 1 && !page.by_change;
+    let narrowed = from.is_some() || !page.edge_types.is_empty();
+    (narrowed && !held_to_an_item(page) && !(from.is_none() && ordered_by_type))
+        .then(|| (page.limit * 10).max(WINDOW))
+}
+
+/// A page of one item's edges reads them through that item's index, whatever the caller reads.
+fn held_to_an_item(page: &Page<'_>) -> bool {
+    page.from.is_some() || page.to.is_some()
+}
+
+fn order_of(page: &Page<'_>) -> (&'static str, &'static str, &'static str) {
+    if page.by_change {
+        ("updated_at", ">", "ASC")
+    } else {
+        ("created_at", "<", "DESC")
+    }
+}
+
+/// What every edge of the page holds to, whatever reads it.
+fn bounds(sql: &mut Sql, page: &Page<'_>) {
+    if let Some(from) = page.from {
+        sql.push(" AND e.from_id = ");
+        sql.bind(from.to_string());
+    }
+    if let Some(to) = page.to {
+        sql.push(" AND e.to_id = ");
+        sql.bind(to.to_string());
+    }
+    if let Some(after) = page.updated_after {
+        sql.push(" AND e.updated_at >= ");
+        sql.bind(after.to_string());
+    }
+    if let Some(before) = page.updated_before {
+        sql.push(" AND e.updated_at < ");
+        sql.bind(before.to_string());
+    }
+    let (column, sense, _) = order_of(page);
+    if let Some((at, id)) = page.after {
+        sql.push(&format!(" AND (e.{column}, e.id) {sense} ("));
+        sql.bind(at.clone());
+        sql.push(", ");
+        sql.bind(id.clone());
+        sql.push(")");
+    }
+}
+
+/// What the caller reads of the page; each `unindexed` keeps the planner off that index.
+fn readable(
+    sql: &mut Sql,
+    page: &Page<'_>,
+    from: Option<&Reach>,
+    (types_unindexed, reach_unindexed): (bool, bool),
+) {
+    if !page.edge_types.is_empty() {
+        sql.push(if types_unindexed {
+            " AND +e.edge_type IN ("
+        } else {
+            " AND e.edge_type IN ("
+        });
+        sql.list(page.edge_types);
+        sql.push(")");
+    }
+    if let Some(reach) = from {
+        sql.push(" AND ");
+        reach.clause(sql, "f", reach_unindexed);
+    }
+}
+
+fn ordered(sql: &mut Sql, page: &Page<'_>) {
+    let (column, _, order) = order_of(page);
+    sql.push(&format!(" ORDER BY e.{column} {order}, e.id {order}"));
+}
+
+fn page_sql(page: &Page<'_>, from: Option<&Reach>) -> Sql {
+    let mut sql = Sql::new(&format!("{EDGE_FROM} WHERE 1 = 1"));
+    bounds(&mut sql, page);
+    readable(&mut sql, page, from, (false, held_to_an_item(page)));
+    ordered(&mut sql, page);
+    sql
+}
+
+/// Each walked edge comes back with whether the caller reads it; only a read one is decoded.
+fn window_sql(page: &Page<'_>, from: Option<&Reach>, window: i64) -> Sql {
+    let mut sql = Sql::new(
+        "SELECT e.seq, e.id, e.from_id, e.to_id, e.edge_type, \
+         CASE WHEN (1 = 1",
+    );
+    readable(&mut sql, page, from, (true, true));
+    sql.push(
+        ") THEN (SELECT json(held.properties) FROM edges held WHERE held.seq = e.seq) END, \
+         e.version, e.created_at, e.updated_at FROM (SELECT e.seq, e.id, e.from_id, e.to_id, \
+         e.edge_type, e.version, e.created_at, e.updated_at FROM edges e WHERE 1 = 1",
+    );
+    bounds(&mut sql, page);
+    ordered(&mut sql, page);
+    sql.push(" LIMIT ");
+    sql.bind(window);
+    sql.push(") e JOIN items f ON f.id = e.from_id");
+    ordered(&mut sql, page);
+    sql
+}
+
+fn walk_window(
+    tx: &Transaction<'_>,
+    page: &Page<'_>,
+    from: Option<&Reach>,
+    window: i64,
+    keeps: impl Fn(&str) -> bool,
+) -> Result<(Vec<Edge>, i64)> {
+    let sql = window_sql(page, from, window);
+    let mut statement = tx.prepare_cached(&sql.text)?;
+    let mut found = statement.query(params_from_iter(&sql.values))?;
+    let mut kept = Vec::new();
+    let mut walked = 0;
+    while let Some(row) = found.next()? {
+        walked += 1;
+        if row.get_ref(5)?.data_type() == rusqlite::types::Type::Null {
+            continue;
+        }
+        let edge = edge_of(row)?;
+        if keeps(&edge.edge_type) {
+            kept.push(edge);
+            if kept.len() as i64 >= page.limit {
+                break;
+            }
+        }
+    }
+    Ok((kept, walked))
+}
+
+/// Every statement `page` may run for this page, as a test reads their cost.
+#[cfg(test)]
+fn page_statements(page: &Page<'_>, from: Option<&Reach>) -> Vec<Sql> {
+    let mut statements = vec![page_sql(page, from)];
+    if let Some(window) = window_of(page, from) {
+        statements.push(window_sql(page, from, window));
+    }
+    statements
 }
 
 pub(super) fn hosts_out_of_bin(
@@ -380,4 +497,177 @@ pub(super) fn with_ends(
         ))
     })?;
     Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::{Connection, StatementStatus, params};
+
+    use super::*;
+
+    const BULK: i64 = 20_000;
+    const OWNER_ITEMS: i64 = 2_000;
+
+    fn item(db: &Connection, id: &str, type_id: &str, source: &str) {
+        db.execute(
+            "INSERT INTO items (id, type, state, tier, source, version, schema_version, \
+             occurred_at, created_at, updated_at, last_activity_at, properties) \
+             VALUES (?1, ?2, 'active', 'library', ?3, 1, 1, '2026-01-01T00:00:00.000Z', \
+             '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', \
+             '2026-01-01T00:00:00.000Z', jsonb('{}'))",
+            params![id, type_id, source],
+        )
+        .unwrap();
+    }
+
+    fn edge(db: &Connection, at: i64, from: &str, to: &str, edge_type: &str) -> String {
+        let id = format!("edge-{at:06}");
+        let stamp = format!(
+            "2026-02-01T{:02}:{:02}:{:02}.000Z",
+            at / 3600,
+            at / 60 % 60,
+            at % 60
+        );
+        db.execute(
+            "INSERT INTO edges (id, from_id, to_id, edge_type, properties, version, \
+             created_at, updated_at) VALUES (?1, ?2, ?3, ?4, jsonb('{}'), 1, ?5, ?5)",
+            params![id, from, to, edge_type, stamp],
+        )
+        .unwrap();
+        id
+    }
+
+    /// The edges a narrow caller reads are the oldest, under many it does not.
+    struct Held {
+        db: Connection,
+        own: Vec<String>,
+        notes: Vec<String>,
+        references: Vec<String>,
+    }
+
+    fn held() -> Held {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::migrate::make_all(&db).unwrap();
+        let tx = db.unchecked_transaction().unwrap();
+        for at in 0..OWNER_ITEMS {
+            item(&tx, &format!("owner-{at}"), "acme.ticket", "owner");
+        }
+        let mut at = 0;
+        let mut next = |from: &str, to: &str, edge_type: &str| {
+            at += 1;
+            edge(&tx, at, from, to, edge_type)
+        };
+        let mut own = Vec::new();
+        let mut notes = Vec::new();
+        let mut references = Vec::new();
+        for n in 0..20 {
+            item(&tx, &format!("own-{n}"), "acme.ticket", "connector");
+            own.push(next(&format!("own-{n}"), "owner-0", "mock.bench"));
+        }
+        for n in 0..5 {
+            item(&tx, &format!("note-{n}"), "core.note", "owner");
+            notes.push(next(&format!("note-{n}"), "owner-0", "mock.bench"));
+        }
+        for n in 1..=3 {
+            references.push(next("owner-0", &format!("owner-{n}"), "references"));
+        }
+        for n in 0..BULK {
+            let from = format!("owner-{}", n % OWNER_ITEMS);
+            let to = format!("owner-{}", 1 + n / OWNER_ITEMS);
+            next(&from, &to, "mock.bench");
+        }
+        tx.commit().unwrap();
+        Held {
+            db,
+            own,
+            notes,
+            references,
+        }
+    }
+
+    fn first_page(page_limit: i64, edge_types: &[String]) -> Page<'_> {
+        Page {
+            from: None,
+            to: None,
+            edge_types,
+            updated_after: None,
+            updated_before: None,
+            after: None,
+            by_change: false,
+            limit: page_limit,
+        }
+    }
+
+    /// The page and the steps every statement it may run took.
+    fn read(held: &Held, page: &Page<'_>, from: Option<&Reach>) -> (Vec<String>, i32) {
+        let tx = held.db.unchecked_transaction().unwrap();
+        let found = super::page(&tx, page, from, |_| true).unwrap();
+        let steps = page_statements(page, from)
+            .iter()
+            .map(|sql| {
+                tx.prepare_cached(&sql.text)
+                    .unwrap()
+                    .get_status(StatementStatus::VmStep)
+            })
+            .sum();
+        let mut ids: Vec<String> = found.into_iter().map(|edge| edge.id).collect();
+        ids.sort();
+        (ids, steps)
+    }
+
+    #[test]
+    fn a_narrow_page_reads_by_index_what_its_caller_reads_and_not_the_whole_table() {
+        let held = held();
+        let none: [String; 0] = [];
+        let page = first_page(101, &none);
+        // Witness: the owner's page stops at its limit near the newest edge.
+        let (whole, whole_steps) = read(&held, &page, None);
+        assert_eq!(whole.len(), 101);
+        // A walk of the window and the owner's page, far under a walk of the table's 20,000 edges.
+        let bound = 40 * WINDOW + i64::from(whole_steps);
+
+        let references = ["references".to_string()];
+        let both = ["mock.bench".to_string(), "references".to_string()];
+        let last = BULK + 28;
+        let newest: Vec<String> = (last - 100..=last)
+            .map(|at| format!("edge-{at:06}"))
+            .collect();
+        let readers: [(&str, Page<'_>, Option<Reach>, &[String]); 4] = [
+            (
+                "most of the table",
+                first_page(101, &both),
+                Some(Reach::testing(&["acme.ticket", "core.note"], &[], &[])),
+                &newest,
+            ),
+            (
+                "a connector's own items",
+                first_page(101, &none),
+                Some(Reach::testing_own(&["acme.ticket"], "connector")),
+                &held.own,
+            ),
+            (
+                "one edge type",
+                first_page(101, &references),
+                None,
+                &held.references,
+            ),
+            (
+                "one item type",
+                first_page(101, &none),
+                Some(Reach::testing(&["core.note"], &[], &[])),
+                &held.notes,
+            ),
+        ];
+        for (name, page, reach, expected) in readers {
+            let (ids, steps) = read(&held, &page, reach.as_ref());
+            let mut expected = expected.to_vec();
+            expected.sort();
+            assert_eq!(ids, expected, "{name}");
+            assert!(
+                i64::from(steps) < bound,
+                "{name}: {steps} steps for {} edges, against {whole_steps} for the owner's page of 101",
+                expected.len()
+            );
+        }
+    }
 }

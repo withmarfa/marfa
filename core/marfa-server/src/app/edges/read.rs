@@ -41,6 +41,31 @@ pub struct ItemListing {
     pub limit: i64,
 }
 
+/// The edge types a page asks its query for, so an edge the caller may not read is never decoded.
+#[derive(Debug, PartialEq, Eq)]
+enum Kinds {
+    Every,
+    Only(Vec<String>),
+}
+
+fn kinds_read(catalog: &Catalog, asked: &[String], reads: impl Fn(&str) -> bool) -> Kinds {
+    if !asked.is_empty() {
+        return Kinds::Only(asked.iter().filter(|kind| reads(kind)).cloned().collect());
+    }
+    let mut every = 0;
+    let mut read: Vec<String> = catalog
+        .edge_kinds()
+        .inspect(|_| every += 1)
+        .filter(|kind| reads(&kind.id))
+        .map(|kind| kind.id.clone())
+        .collect();
+    if read.len() == every {
+        return Kinds::Every;
+    }
+    read.sort();
+    Kinds::Only(read)
+}
+
 fn readable(tx: &Transaction<'_>, caller: &Caller, edge: &Edge) -> Result<bool> {
     Ok(
         items::type_and_source_of(tx, &edge.from_id)?.is_some_and(|(type_id, source)| {
@@ -65,7 +90,15 @@ fn page_of(
     scope: &str,
 ) -> Result<(Vec<String>, Option<String>)> {
     let (tx, caller) = (read.tx, &read.caller);
+    let kinds = match kinds_read(&read.catalog, asked.edge_types, |edge_type| {
+        caller.may_read_edge_type(edge_type)
+    }) {
+        Kinds::Every => Vec::new(),
+        Kinds::Only(kinds) if kinds.is_empty() => return Ok((Vec::new(), None)),
+        Kinds::Only(kinds) => kinds,
+    };
     let wider = Page {
+        edge_types: &kinds,
         limit: asked.limit + 1,
         ..*asked
     };
@@ -278,4 +311,38 @@ pub(crate) fn hydrate(
         text: format!("{{{}}}", blocks.join(",")),
         far_ends,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn a_page_asks_its_query_for_the_edge_types_its_caller_reads() {
+        let catalog = Catalog::shipped();
+        let shipped = catalog.edge_kinds().count();
+        assert!(shipped > 2, "{shipped} shipped edge types");
+        assert_eq!(kinds_read(&catalog, &[], |_| true), Kinds::Every);
+        assert_eq!(
+            kinds_read(&catalog, &[], |edge_type| edge_type == "references"),
+            Kinds::Only(names(&["references"]))
+        );
+        assert_eq!(
+            kinds_read(&catalog, &[], |_| false),
+            Kinds::Only(Vec::new())
+        );
+        let asked = names(&["references", "attached-to", "mock.unknown"]);
+        assert_eq!(
+            kinds_read(&catalog, &asked, |edge_type| edge_type != "attached-to"),
+            Kinds::Only(names(&["references", "mock.unknown"]))
+        );
+        assert_eq!(
+            kinds_read(&catalog, &asked, |_| false),
+            Kinds::Only(Vec::new())
+        );
+    }
 }
