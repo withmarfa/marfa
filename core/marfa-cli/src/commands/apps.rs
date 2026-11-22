@@ -24,8 +24,9 @@ pub enum AppsCommand {
         clear: bool,
     },
     /// End an app's grant. Its keys and its own data stay unless asked.
-    /// Requires `grants.manage`, and `items.purge` with --remove-data; a key
-    /// also needs write on the app's types, and `schema.write`.
+    /// Requires `grants.manage`. With --remove-data, also `items.purge`; a key
+    /// also needs write on every type under the app's namespaces, and
+    /// `schema.write` while a type is registered there.
     Revoke {
         /// The app grant's ID.
         id: String,
@@ -80,7 +81,8 @@ pub enum VendorsCommand {
 #[derive(Debug, Subcommand)]
 pub enum DataCommand {
     /// List the namespace's types, with how many items each holds by state,
-    /// and its items in every state, the bin included.
+    /// and its items in every state, the bin included. Requires
+    /// `grants.manage`; a key also needs read on the namespace's types.
     List {
         /// The namespace, such as `app.acme`.
         vendor: String,
@@ -92,8 +94,9 @@ pub enum DataCommand {
     /// gone as it does. Run `marfa backups run` first: only a backup taken
     /// before brings them back, and `marfa items restore` cannot. Items of
     /// other types that link to them stay and lose the link. The namespace
-    /// stays with the app that holds it. Requires `items.purge` as well; a
-    /// key also needs write on the namespace's types, and `schema.write`.
+    /// stays with the app that holds it. Requires `grants.manage` and
+    /// `items.purge`; a key also needs write on every type under the
+    /// namespace, and `schema.write` while a type is registered there.
     Delete {
         /// The namespace, such as `app.acme`.
         vendor: String,
@@ -211,19 +214,27 @@ fn removal_counts(vendor: &str, answer: &Value) -> Result<(u64, u64, u64), CliEr
     ))
 }
 
+/// A failure after some pages, which only a request that got no answer may carry on from.
+fn partly_deleted(vendor: &str, items: u64, error: CliError) -> CliError {
+    if items == 0 {
+        return error;
+    }
+    let answered = matches!(error, CliError::Refused { .. } | CliError::Invalid(_));
+    let again = if answered {
+        ""
+    } else {
+        " Run this again to carry on."
+    };
+    CliError::Invalid(format!(
+        "{items} items of {vendor} were deleted, then: {error}.{again}"
+    ))
+}
+
 /// Each request takes up to 1,000 items; the types go with the one that empties the namespace.
 fn delete_data(vendor: &str, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let (mut items, mut types) = (0_u64, 0_u64);
     loop {
-        let after = |error: CliError| {
-            if items == 0 {
-                error
-            } else {
-                CliError::Invalid(format!(
-                    "{items} items of {vendor} were deleted, then: {error}. Run this again to carry on."
-                ))
-            }
-        };
+        let after = |error: CliError| partly_deleted(vendor, items, error);
         let answer = remote.json(&data_delete_request(vendor)).map_err(after)?;
         let (removed, removed_types, remaining) = removal_counts(vendor, &answer).map_err(after)?;
         items += removed;
@@ -394,6 +405,37 @@ mod tests {
         ] {
             assert!(removal_counts("app.acme", &broken).is_err(), "{broken}");
         }
+    }
+
+    #[test]
+    fn a_partial_delete_says_to_carry_on_only_after_a_request_that_got_no_answer() {
+        let refused = |status: u16| CliError::Refused {
+            status,
+            code: "type_in_use".into(),
+            message: "named".into(),
+            retry_after_seconds: None,
+            details: None,
+            request_id: None,
+        };
+        for answered in [
+            refused(403),
+            refused(409),
+            CliError::Invalid("unreadable".into()),
+        ] {
+            let said = partly_deleted("app.acme", 1_000, answered).to_string();
+            assert!(said.starts_with("1000 items of app.acme were deleted, then: "));
+            assert!(said.ends_with('.') && !said.contains("carry on"), "{said}");
+        }
+        let lost = CliError::Io(std::io::Error::other("connection reset"));
+        assert!(
+            partly_deleted("app.acme", 1_000, lost)
+                .to_string()
+                .ends_with("Run this again to carry on.")
+        );
+        assert_eq!(
+            partly_deleted("app.acme", 0, refused(403)).to_string(),
+            refused(403).to_string()
+        );
     }
 
     #[test]

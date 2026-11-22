@@ -25,8 +25,9 @@ pub enum SignInsCommand {
     /// End a sign-in at once: its next request is refused, and an app can't
     /// refresh its tokens. What it wrote stays unless --remove-data is given,
     /// and so do the keys an app minted unless --revoke-keys is given.
-    /// Requires `sign_ins.manage`, and `items.purge` with --remove-data; a
-    /// key also needs write on the app's types, and `schema.write`.
+    /// Requires `sign_ins.manage`. With --remove-data, also `items.purge`; a
+    /// key also needs write on every type under the app's namespaces, and
+    /// `schema.write` while a type is registered there.
     End {
         /// The sign-in's id.
         id: String,

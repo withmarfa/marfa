@@ -419,7 +419,7 @@ marfa apps narrow [OPTIONS] <ID>
 
 ### marfa apps revoke
 
-End an app's grant. Its keys and its own data stay unless asked. Requires `grants.manage`, and `items.purge` with --remove-data; a key also needs write on the app's types, and `schema.write`.
+End an app's grant. Its keys and its own data stay unless asked. Requires `grants.manage`. With --remove-data, also `items.purge`; a key also needs write on every type under the app's namespaces, and `schema.write` while a type is registered there.
 
 ```text
 marfa apps revoke [OPTIONS] <ID>
@@ -474,7 +474,7 @@ marfa apps vendors data [OPTIONS] <COMMAND>
 
 ### marfa apps vendors data list
 
-List the namespace's types, with how many items each holds by state, and its items in every state, the bin included.
+List the namespace's types, with how many items each holds by state, and its items in every state, the bin included. Requires `grants.manage`; a key also needs read on the namespace's types.
 
 ```text
 marfa apps vendors data list [OPTIONS] <VENDOR>
@@ -492,7 +492,7 @@ marfa apps vendors data list [OPTIONS] <VENDOR>
 
 ### marfa apps vendors data delete
 
-Delete for good every item of the namespace in every state, the bin included, then its types, 1,000 items a request, saying how many have gone as it does. Run `marfa backups run` first: only a backup taken before brings them back, and `marfa items restore` cannot. Items of other types that link to them stay and lose the link. The namespace stays with the app that holds it. Requires `items.purge` as well; a key also needs write on the namespace's types, and `schema.write`.
+Delete for good every item of the namespace in every state, the bin included, then its types, 1,000 items a request, saying how many have gone as it does. Run `marfa backups run` first: only a backup taken before brings them back, and `marfa items restore` cannot. Items of other types that link to them stay and lose the link. The namespace stays with the app that holds it. Requires `grants.manage` and `items.purge`; a key also needs write on every type under the namespace, and `schema.write` while a type is registered there.
 
 ```text
 marfa apps vendors data delete [OPTIONS] --confirm <WORD> <VENDOR>
@@ -539,7 +539,7 @@ marfa sign-ins rename [OPTIONS] <ID> <NAME>
 
 ### marfa sign-ins end
 
-End a sign-in at once: its next request is refused, and an app can't refresh its tokens. What it wrote stays unless --remove-data is given, and so do the keys an app minted unless --revoke-keys is given. Requires `sign_ins.manage`, and `items.purge` with --remove-data; a key also needs write on the app's types, and `schema.write`.
+End a sign-in at once: its next request is refused, and an app can't refresh its tokens. What it wrote stays unless --remove-data is given, and so do the keys an app minted unless --revoke-keys is given. Requires `sign_ins.manage`. With --remove-data, also `items.purge`; a key also needs write on every type under the app's namespaces, and `schema.write` while a type is registered there.
 
 ```text
 marfa sign-ins end [OPTIONS] <ID>
