@@ -132,10 +132,10 @@ Going back is an upgrade to the earlier release, and the earlier release is aske
 
 The `marfa server upgrade` of releases up to 0.0.85 refuses to go back. To go back to one of them on a native install, install it the same way and run `marfa server restart` with its `marfa`. Its server refuses a database it can't read and changes nothing in it. This is also the way back when a message says the release that last ran can't be told: that release is one of them, so install the release you ran before the same way and run `marfa server restart` with its `marfa`.
 
-Once a release has upgraded the database, the earlier release refuses it, so put back the copy the upgrade kept first. Everything written since the upgrade is lost.
+Once a release has upgraded the database, the earlier release refuses it, so put back the copy the upgrade kept first. The copy is the database as it was before the last upgrade, so it fits the release that wrote it, and a release before that refuses it too. Everything written since the upgrade is lost. When the database held no rows, the upgrade kept no copy; move `marfa.db` away as in step 2 and the earlier release starts on a new database.
 
-1. Stop the server: `marfa server stop --dir <dir>`.
-2. In `<dir>/data`, move `marfa.db` away together with `marfa.db-wal` and `marfa.db-shm`, then copy `marfa.db.before-upgrade` to `marfa.db`. Keep the moved files until the instance works again. On a Docker install the files are in the volume `<name>-data`; swap them in a one-off container on that volume, because `docker cp` can't remove a file.
+1. Stop the server: `marfa server stop`, with `--dir <dir>` when the install isn't in the default folder.
+2. In the install's `data` folder, move `marfa.db` away together with `marfa.db-wal` and `marfa.db-shm`, then copy `marfa.db.before-upgrade` to `marfa.db`. Keep the moved files until the instance works again. On a Docker install the files are in the volume `<name>-data`; swap them in a one-off container on that volume, because `docker cp` can't remove a file.
 3. Move to the earlier release as described above.
 
 Keep the release pinned, so that it changes only when you upgrade: don't use `latest`, and don't let anything update the image.
