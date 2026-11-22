@@ -18,7 +18,11 @@ import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { serverProgram } from "../../../scripts/marfa-server.js";
 import { MarfaClient } from "../../client/api.js";
 import { controlRequest } from "../../utils/control-request.js";
-import { fakeCloud, type FakeCloud } from "../../utils/fake-cloud.js";
+import {
+  fakeCloud,
+  type FakeCloud,
+  type FakeCloudOptions,
+} from "../../utils/fake-cloud.js";
 import { fakeCloudflared } from "../../utils/fake-cloudflared.js";
 import {
   bootFreshServer,
@@ -117,8 +121,9 @@ function around(
 async function boot(
   label: string,
   extraEnv: Record<string, string> = {},
+  cloudOptions: FakeCloudOptions = {},
 ): Promise<Linked & { server: FreshServer }> {
-  const cloud = await fakeCloud();
+  const cloud = await fakeCloud(cloudOptions);
   clouds.push(cloud);
   const server = await bootFreshServer(label, {
     MARFA_CLOUD_URL: cloud.url,
@@ -648,9 +653,12 @@ describe("a refused tunnel token", () => {
     async () => {
       const fake = fakeCloudflared();
       fake.plan([{ ready: true }]);
-      const linked = await boot("connector-refused-same", {
-        MARFA_CLOUDFLARED: fake.path,
-      });
+      // One read of the token a second, so the restart rule is what sets the pace.
+      const linked = await boot(
+        "connector-refused-same",
+        { MARFA_CLOUDFLARED: fake.path },
+        { tokenIntervalMs: 1000 },
+      );
       await linked.link();
       await linked.connector("connected");
       fake.refuseNow([tokenOf(linked)]);
@@ -694,6 +702,116 @@ describe("a refused tunnel token", () => {
       expect(ended.ended).toMatchObject({ reason: "unlinked_by_service" });
       await gone(start!.pid);
       expect(fake.starts()).toHaveLength(1);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps the link when the answer to the request for a new tunnel token is a 401 that is not Marfa Cloud's own",
+    async () => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true }]);
+      const linked = await boot(
+        "connector-token-proxy",
+        { MARFA_CLOUDFLARED: fake.path },
+        { tokenIntervalMs: 1000 },
+      );
+      await linked.link();
+      await linked.connector("connected");
+      const old = tokenOf(linked);
+      const fresh = linked.cloud.rotateToken();
+      // A proxy on the way refuses the request, as it would any other.
+      linked.cloud.answerNextUse(401, "proxy_auth_required");
+      fake.refuseNow([old]);
+      await linked.cloud.waitFor("/link/token", 1);
+      const failed = await linked.connector("failed");
+      expect(failed.connector.reason).toBe("refused");
+      expect(failed.state).toBe("linked");
+      // The witness: the next answer is Marfa Cloud's own, and the link goes on with it.
+      await linked.connector("connected");
+      expect(fake.starts().at(-1)!.tokenFile!.text).toBe(fresh);
+      expect((await linked.status()).state).toBe("linked");
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("when Marfa Cloud limits the request for a tunnel token", () => {
+  it(
+    "keeps a refused connector stopped until Retry-After is over, then asks once and runs the token it gets",
+    async () => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true }]);
+      const linked = await boot(
+        "connector-token-wait",
+        { MARFA_CLOUDFLARED: fake.path },
+        { tokenIntervalMs: 4000 },
+      );
+      await linked.link();
+      await linked.connector("connected");
+      const old = tokenOf(linked);
+      const credential = linked.cloud.latest().credentials.at(-1)!;
+      // Another read of the link's token, just now, so the server's is limited.
+      const read = await fetch(`${linked.cloud.url}/link/token`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${credential}`,
+          "content-type": "application/json",
+        },
+        body: "{}",
+      });
+      expect(read.status).toBe(200);
+      const fresh = linked.cloud.rotateToken();
+      fake.refuseNow([old]);
+      await linked.cloud.waitFor("/link/token", 2);
+      const [, limited] = linked.cloud.requests.filter(
+        (each) => each.path === "/link/token",
+      );
+      const failed = await linked.connector("failed");
+      expect(failed.connector.reason).toBe("refused");
+      // Stopped: neither another start nor another request until the wait is over.
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      expect(fake.starts()).toHaveLength(1);
+      expect(
+        linked.cloud.requests.filter((each) => each.path === "/link/token"),
+      ).toHaveLength(2);
+      const starts = await fake.waitForStarts(2);
+      const asked = linked.cloud.requests.filter(
+        (each) => each.path === "/link/token",
+      );
+      expect(asked).toHaveLength(3);
+      expect(asked[2]!.at - limited!.at).toBeGreaterThanOrEqual(2900);
+      expect(starts[1]!.tokenFile!.text).toBe(fresh);
+      await linked.connector("connected");
+      expect(
+        linked.cloud.requests.filter((each) => each.path === "/link/token"),
+      ).toHaveLength(3);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps a refused connector stopped for the 60 seconds Marfa Cloud asks for when it cannot answer",
+    async () => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true }]);
+      const linked = await boot("connector-token-unavailable", {
+        MARFA_CLOUDFLARED: fake.path,
+      });
+      await linked.link();
+      await linked.connector("connected");
+      linked.cloud.failNextTokenRead();
+      fake.refuseNow([tokenOf(linked)]);
+      await linked.cloud.waitFor("/link/token", 1);
+      const failed = await linked.connector("failed");
+      expect(failed.connector.reason).toBe("refused");
+      // Past the restart rule's first waits, nothing has run or asked.
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      expect(fake.starts()).toHaveLength(1);
+      expect(
+        linked.cloud.requests.filter((each) => each.path === "/link/token"),
+      ).toHaveLength(1);
+      expect((await linked.status()).state).toBe("linked");
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -814,6 +932,73 @@ describe("the caller's address through the tunnel", () => {
       await linked.connector("connected");
       expect(await seenAs(linked.server, named)).toBe("203.0.113.5");
       expect(await seenAs(linked.server, TUNNEL)).toBe(PEER);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "counts tunnel callers by their own address while a trusted proxy setting names another route",
+    async () => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true }]);
+      const linked = await boot("connector-address-other-route", {
+        MARFA_CLOUDFLARED: fake.path,
+        MARFA_TRUSTED_PROXY_HEADER: "x-client",
+        MARFA_TRUSTED_PROXY_CIDRS: "192.0.2.0/24",
+      });
+      const named = { "x-client": "203.0.113.5" };
+      // Not linked: nothing believes a header from loopback.
+      expect(await seenAs(linked.server, TUNNEL)).toBe(PEER);
+      await linked.link();
+      // The witness: linked, the tunnel's header is believed from loopback.
+      await believed(linked.server);
+      // The configured header is still not believed from a peer outside its ranges.
+      expect(await seenAs(linked.server, named)).toBe(PEER);
+      expect(await seenAs(linked.server, {})).toBe(PEER);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps reading the tunnel's header until the connector has stopped when the link ends",
+    async () => {
+      const fake = fakeCloudflared();
+      const linked = await boot("connector-address-ending", {
+        MARFA_CLOUDFLARED: fake.path,
+      });
+      // The connector's last request, sent as it is asked to stop.
+      fake.plan([
+        {
+          ready: true,
+          onTerminate: {
+            url: `${linked.server.apiUrl}/items`,
+            headers: {
+              ...TUNNEL,
+              Authorization: `Bearer ${linked.server.workingKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              type: "core.note",
+              properties: { body: randomUUID() },
+            }),
+          },
+        },
+      ]);
+      await linked.link();
+      const [start] = await fake.waitForStarts(1);
+      await linked.connector("connected");
+      const unlinked = await linked.call("DELETE", "/cloud/link");
+      expect(unlinked.status, JSON.stringify(unlinked.body)).toBe(200);
+      await gone(start!.pid);
+      const audit = new MarfaClient({
+        baseUrl: linked.server.apiUrl,
+        apiKey: linked.server.managementKey,
+      });
+      const page = await audit.listAudit({ action: "item.create" });
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      expect(page.data.data.map((entry) => entry.client_ip)).toEqual([
+        "203.0.113.9",
+      ]);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );

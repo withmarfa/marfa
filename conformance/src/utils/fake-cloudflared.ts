@@ -28,7 +28,9 @@ import { waitFor } from "./wait.js";
  * edge refuses an old token (with the error text in `refusal`, which is the
  * edge's secret refusal unless given), whether it `echoToken`s the token it was given
  * into its output, which `lines` it prints, and whether it `exit`s with a
- * code after a time. `ready(true)` makes `/ready` answer `200` whatever the
+ * code after a time, and whether, asked to end, it first `onTerminate`s by
+ * sending one request, as the connector sends the requests it still carries.
+ * `ready(true)` makes `/ready` answer `200` whatever the
  * plan says, and `ready(false)` goes back to the plan. `refuseNow` refuses
  * tokens while the connector runs.
  *
@@ -65,6 +67,8 @@ export interface PlanEntry {
   echoToken?: boolean;
   lines?: string[];
   exit?: { code: number; afterMs: number };
+  /** The one request sent, and answered, before the connector ends when it is asked to. */
+  onTerminate?: { url: string; headers: Record<string, string>; body: string };
 }
 
 export interface Start {
@@ -162,6 +166,15 @@ if (metrics !== undefined) {
   }).listen(Number(metrics.slice(at + 1)), metrics.slice(0, at));
 } else {
   setInterval(() => {}, 1000);
+}
+
+if (entry.onTerminate !== undefined) {
+  process.on("SIGTERM", () => {
+    const { url, headers, body } = entry.onTerminate;
+    fetch(url, { method: "POST", headers, body })
+      .catch(() => {})
+      .finally(() => process.exit(0));
+  });
 }
 
 if (entry.exit !== undefined) {

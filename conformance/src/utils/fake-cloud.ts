@@ -30,7 +30,20 @@ import { waitFor } from "./wait.js";
  * - `fail_cancels` answers every cancel `500` until `up`.
  * - `rotate_token` gives the latest link a new tunnel token, which `POST
  *   /link/token` answers from then on, as Marfa Cloud does when it rotates it.
+ * - `fail_token_read` answers the next `POST /link/token` with `503
+ *   unavailable` and `Retry-After: 60`, as Marfa Cloud does when Cloudflare
+ *   does not answer. The read counts against the link's token limit.
  * - `down` and `up` stop and start answering the link API.
+ *
+ * It holds the limits Marfa Cloud documents: each route answers `429
+ * rate_limited` with `Retry-After: 60` past 60 requests a minute from one IP
+ * address, and each link reads its tunnel token once a minute (`POST
+ * /link/token`): the first read answers at once and another within the
+ * minute answers `429 rate_limited` with `Retry-After` set to the seconds
+ * left, `tokenIntervalMs` being the minute. Every answer carries
+ * `cache-control: no-store`, and a `401` carries `WWW-Authenticate: Bearer`.
+ * A `POST` without `content-type: application/json` answers `415
+ * unsupported_media_type`, and a body past 8 KB `413 too_large`.
  *
  * Each `approved` answer before the first use of a credential makes a new
  * credential that replaces the last, so only the latest works, and once it
@@ -58,6 +71,7 @@ export interface FakeCloud {
   forget(): void;
   answerNextUse(status: number, code: string): void;
   failCancels(): void;
+  failNextTokenRead(): void;
   /** Gives the latest link a new tunnel token and returns it. */
   rotateToken(): string;
   down(): void;
@@ -103,6 +117,8 @@ export interface FakeLink {
   unlinked: boolean;
   /** Ended by `POST /link/cancel`. */
   canceled: boolean;
+  /** When the link's tunnel token was last read, if it was. */
+  tokenReadAt: number | null;
   /** Polls that came sooner than the interval the last answer gave. */
   tooSoon: number;
   lastPoll: number | null;
@@ -118,24 +134,36 @@ export interface FakeCloudOptions {
   interval?: number;
   /** How long a link waits for approval, a whole number of seconds. */
   lifetimeMs?: number;
+  /** The time between two reads of a link's tunnel token; Marfa Cloud's is a minute. */
+  tokenIntervalMs?: number;
 }
 
 /** How long past its approval an approved link is answered, even past `expires_at`. */
 const APPROVED_FOR_MS = 600_000;
 
 /** A poll this much sooner than the interval is still in time. */
-const POLL_GRACE_MS = 250;
+const POLL_GRACE_MS = 1_000;
+
+/** Marfa Cloud's limit on each route from one IP address, and the minute it counts in. */
+const ROUTE_LIMIT = 60;
+const ROUTE_WINDOW_MS = 60_000;
+const MOST_BODY_BYTES = 8 * 1024;
+/** The user code's alphabet: no vowel, so a code never spells a word. */
+const CODE_LETTERS = "BCDFGHJKLMNPQRSTVWXZ";
 
 export async function fakeCloud(
   options: FakeCloudOptions = {},
 ): Promise<FakeCloud> {
   const interval = options.interval ?? 1;
   const lifetimeMs = options.lifetimeMs ?? 600_000;
+  const tokenIntervalMs = options.tokenIntervalMs ?? 60_000;
   const requests: Recorded[] = [];
   const links: FakeLink[] = [];
   let unreachable = false;
   let loseApproved = false;
   let cancelsFail = false;
+  let tokenReadFails = false;
+  const windows = new Map<string, { from: number; count: number }>();
   let nextUse: { status: number; code: string } | null = null;
 
   const latest = (): FakeLink => {
@@ -182,6 +210,9 @@ export async function fakeCloud(
     },
     fail_cancels: () => {
       cancelsFail = true;
+    },
+    fail_token_read: () => {
+      tokenReadFails = true;
     },
     rotate_token: () => {
       latest().tunnelToken = `tunnel-${secret()}`;
@@ -297,8 +328,11 @@ export async function fakeCloud(
   }
 
   function start(body: any, response: ServerResponse): void {
-    const userCode =
-      `${randomBytes(2).toString("hex")}-${randomBytes(2).toString("hex")}`.toUpperCase();
+    const letters = Array.from(
+      randomBytes(8),
+      (byte) => CODE_LETTERS[byte % CODE_LETTERS.length]!,
+    ).join("");
+    const userCode = `${letters.slice(0, 4)}-${letters.slice(4)}`;
     const link: FakeLink = {
       linkId: randomUUID(),
       pollSecret: secret(),
@@ -321,6 +355,7 @@ export async function fakeCloud(
       used: false,
       unlinked: false,
       canceled: false,
+      tokenReadAt: null,
       tooSoon: 0,
       lastPoll: null,
       slowDownTo: null,
@@ -332,6 +367,7 @@ export async function fakeCloud(
       poll_secret: link.pollSecret,
       user_code: link.userCode,
       approval_url: link.approvalUrl,
+      expires_at: new Date(link.expiresAt).toISOString(),
       expires_in: Math.round(lifetimeMs / 1000),
       interval: link.interval,
     });
@@ -355,7 +391,32 @@ export async function fakeCloud(
         401,
         "unauthorized",
         "The link credential is not known.",
+        { "www-authenticate": "Bearer" },
       );
+    }
+    if (request.path === "/link/token") {
+      const now = Date.now();
+      const waited = link.tokenReadAt === null ? null : now - link.tokenReadAt;
+      if (waited !== null && waited < tokenIntervalMs) {
+        return error(
+          response,
+          429,
+          "rate_limited",
+          "This link read its tunnel token a moment ago.",
+          {
+            "retry-after": String(Math.ceil((tokenIntervalMs - waited) / 1000)),
+          },
+        );
+      }
+      link.tokenReadAt = now;
+      if (tokenReadFails) {
+        tokenReadFails = false;
+        return error(response, 503, "unavailable", "Try again shortly.", {
+          "retry-after": "60",
+        });
+      }
+      link.used = true;
+      return json(response, 200, { tunnel_token: link.tunnelToken });
     }
     link.used = true;
     if (request.method === "GET" && request.path === "/link") {
@@ -365,24 +426,62 @@ export async function fakeCloud(
         linked_at: link.linkedAt,
       });
     }
-    if (request.path === "/link/token") {
-      return json(response, 200, { tunnel_token: link.tunnelToken });
-    }
     link.unlinked = true;
     json(response, 200, { unlinked: true });
+  }
+
+  /** Counts a request against its route's minute, and says whether it is past the limit. */
+  function overLimit(route: string): boolean {
+    const now = Date.now();
+    const held = windows.get(route);
+    if (held === undefined || now - held.from >= ROUTE_WINDOW_MS) {
+      windows.set(route, { from: now, count: 1 });
+      return false;
+    }
+    held.count += 1;
+    return held.count > ROUTE_LIMIT;
   }
 
   const server = createServer((incoming, response) => {
     void read(incoming).then((text) => {
       const path = new URL(incoming.url ?? "/", "http://fake").pathname;
+      const action = /^\/_fake\/([a-z_]+)$/.exec(path)?.[1];
       let body: any = null;
+      const driven = action !== undefined && incoming.method === "POST";
+      if (!driven && unreachable) {
+        response.socket?.destroy();
+        return;
+      }
+      if (!driven && overLimit(`${incoming.method ?? ""} ${path}`)) {
+        return error(
+          response,
+          429,
+          "rate_limited",
+          "Too many requests from this address.",
+          { "retry-after": "60" },
+        );
+      }
+      if (!driven && incoming.method === "POST") {
+        if (
+          !/^application\/json\b/i.test(incoming.headers["content-type"] ?? "")
+        ) {
+          return error(
+            response,
+            415,
+            "unsupported_media_type",
+            "Send content-type: application/json.",
+          );
+        }
+        if (Buffer.byteLength(text) > MOST_BODY_BYTES) {
+          return error(response, 413, "too_large", "The body is too large.");
+        }
+      }
       try {
         body = text === "" ? null : JSON.parse(text);
       } catch {
-        return error(response, 400, "invalid_json", "The body is not JSON.");
+        return error(response, 400, "invalid_request", "The body is not JSON.");
       }
-      const action = /^\/_fake\/([a-z_]+)$/.exec(path)?.[1];
-      if (action !== undefined && incoming.method === "POST") {
+      if (driven) {
         const act = control[action];
         if (act === undefined)
           return error(response, 404, "not_found", "No such action.");
@@ -396,10 +495,6 @@ export async function fakeCloud(
         authorization: incoming.headers.authorization ?? null,
         at: Date.now(),
       };
-      if (unreachable) {
-        response.socket?.destroy();
-        return;
-      }
       requests.push(recorded);
       const route = `${recorded.method} ${path}`;
       if (route === "POST /link/start") return start(body, response);
@@ -439,6 +534,7 @@ export async function fakeCloud(
     forget: () => control.forget!(null),
     answerNextUse: (status, code) => control.answer_next_use!({ status, code }),
     failCancels: () => control.fail_cancels!(null),
+    failNextTokenRead: () => control.fail_token_read!(null),
     rotateToken: () => {
       control.rotate_token!(null);
       return latest().tunnelToken;
@@ -478,9 +574,18 @@ function read(incoming: IncomingMessage): Promise<string> {
   });
 }
 
-function json(response: ServerResponse, status: number, body: unknown): void {
+function json(
+  response: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+): void {
   response
-    .writeHead(status, { "content-type": "application/json" })
+    .writeHead(status, {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+      ...headers,
+    })
     .end(JSON.stringify(body));
 }
 
@@ -489,8 +594,9 @@ function error(
   status: number,
   code: string,
   message: string,
+  headers: Record<string, string> = {},
 ): void {
-  json(response, status, { error: { code, message } });
+  json(response, status, { error: { code, message } }, headers);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

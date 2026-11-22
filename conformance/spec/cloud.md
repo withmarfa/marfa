@@ -592,19 +592,47 @@ If Marfa Cloud gives the tunnel token the connector was refused for, then the se
 
 **Tests:** `compliance/cloud-connector.test.ts › reports a connector refused for the token Marfa Cloud still gives as failed, and asks again no faster than it restarts`.
 
+### `cloud/connector-token-wait`
+
+When Marfa Cloud answers the request for the link's tunnel token with `429` or `503`, the server MUST NOT run the connector or send another request for the token until the seconds in `Retry-After` have passed, or 60 seconds when it gives none.
+
+**Reason:** Marfa Cloud lets each link read its tunnel token once a minute and says how long to wait, so a refused connector that asked more often would only be refused again.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps a refused connector stopped until Retry-After is over, then asks once and runs the token it gets`, `compliance/cloud-connector.test.ts › keeps a refused connector stopped for the 60 seconds Marfa Cloud asks for when it cannot answer`.
+
+### `cloud/connector-token-wait-failed`
+
+While the server waits to ask for the link's tunnel token again, the server MUST report the connector as `failed` with `reason` `refused`.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps a refused connector stopped until Retry-After is over, then asks once and runs the token it gets`, `compliance/cloud-connector.test.ts › keeps a refused connector stopped for the 60 seconds Marfa Cloud asks for when it cannot answer`.
+
+### `cloud/connector-token-after-wait`
+
+When the wait that Marfa Cloud's `Retry-After` set is over, the server MUST send one request for the link's tunnel token before it runs the connector again, and run the connector with the token it gets.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps a refused connector stopped until Retry-After is over, then asks once and runs the token it gets`.
+
 ### `cloud/connector-token-gone`
 
-When Marfa Cloud does not accept the link credential that asks for the link's tunnel token, the server MUST end the link as `cloud/ended-by-service` does.
+When Marfa Cloud answers the request for the link's tunnel token with `401` and the error code `unauthorized`, the server MUST end the link as `cloud/ended-by-service` does.
 
 **Tests:** `compliance/cloud-connector.test.ts › ends the link when Marfa Cloud no longer accepts the credential that asks for a new tunnel token`.
 
+### `cloud/connector-token-kept`
+
+When the answer to the request for the link's tunnel token is a `401` with any other error code, or none, the server MUST keep the link `linked`.
+
+**Reason:** a proxy or a gateway on the way can answer `401` in its own words, and only Marfa Cloud's own answer says the link is gone.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps the link when the answer to the request for a new tunnel token is a 401 that is not Marfa Cloud's own`.
+
 ### `cloud/caller-address-linked`
 
-While a link is linked, the server MUST read a caller's address from the `CF-Connecting-IP` header only when the request's peer is a loopback address, and the peer's address stands for any other request.
+While a link is linked and no trusted proxy setting includes the request's peer, the server MUST read a caller's address from the `CF-Connecting-IP` header only when the request's peer is a loopback address, and the peer's address stands for any other request.
 
 **Reason:** the connector runs on the instance's machine and writes the address of the caller it carries into that header.
 
-**Tests:** `compliance/cloud-connector.test.ts › believes CF-Connecting-IP from loopback only while a link is linked`.
+**Tests:** `compliance/cloud-connector.test.ts › believes CF-Connecting-IP from loopback only while a link is linked`, `compliance/cloud-connector.test.ts › counts tunnel callers by their own address while a trusted proxy setting names another route`.
 
 ### `cloud/caller-address-unlinked`
 
@@ -614,11 +642,19 @@ While no link is linked and no trusted proxy setting names the header, the serve
 
 ### `cloud/caller-address-configured`
 
-While `MARFA_TRUSTED_PROXY_CIDRS` is set, the server MUST read a caller's address as `instance/proxy-header-trusted-peer` and `instance/proxy-forwarded-walk` say, whether or not a link is linked.
+When `MARFA_TRUSTED_PROXY_CIDRS` includes a request's peer, the server MUST read the caller's address as `instance/proxy-header-trusted-peer` and `instance/proxy-forwarded-walk` say, whether or not a link is linked.
 
-**Reason:** an owner who told the server which proxy to believe is believed over what the link assumes.
+**Reason:** an owner who told the server which proxy to believe is believed over what the link assumes, and a setting for a route that does not include loopback leaves the connector's requests to the link's rule.
 
 **Tests:** `compliance/cloud-connector.test.ts › keeps the trusted proxy settings an owner gave over the link's`.
+
+### `cloud/caller-address-until-stopped`
+
+When a link ends, the server MUST keep reading a caller's address from the `CF-Connecting-IP` header of a loopback request until the connector has stopped.
+
+**Reason:** the connector still carries requests while it stops, and read as loopback they would count against the owner's own address.
+
+**Tests:** `compliance/cloud-connector.test.ts › keeps reading the tunnel's header until the connector has stopped when the link ends`.
 
 ### `cloud/caller-address-limits`
 
