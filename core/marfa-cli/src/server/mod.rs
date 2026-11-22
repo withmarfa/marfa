@@ -73,17 +73,19 @@ pub enum ServerCommand {
     /// and `restart` keep it there. A native install is on the release that last served its
     /// database, and a Docker install on the image `.env` names.
     ///
-    /// Before Marfa 0.1, a release may not read another release's database. This command first
-    /// asks the release it moves to, newer or older, whether it opens the install's database
-    /// and settings, and changes nothing when it does not. When the programs the service runs
+    /// A release opens the database of any earlier release from 0.0.86 on, except one that
+    /// 0.0.88 wrote, and upgrades it in place. When the database holds rows, the release first
+    /// keeps a copy beside it as `marfa.db.before-upgrade`. An earlier release does not open
+    /// a database a later release upgraded, so to go back, restore that copy. This command
+    /// first asks the release it moves to, newer or older, whether it opens the install's
+    /// database and settings, and changes nothing when it does not. When the programs the service runs
     /// were already replaced, the error says how to put back the release the install is on. When
     /// a release up to 0.0.85 last served the database, which names none, the error says the
     /// release cannot be told and gives the general way back. A release that could not be asked
     /// is started, and a Docker install whose new release then refuses the database starts its
     /// earlier release again. A Docker image before 0.0.76 cannot be asked, so it is refused.
     /// The way to move is then to export, make a new install of the other release and restore
-    /// the archive there. A release that changes how the database is laid out keeps a copy of
-    /// it first, as `marfa.db.before-upgrade` beside it.
+    /// the archive there.
     ///
     /// To go back to an earlier release, install it the way you installed marfa and run this
     /// command with its `marfa`, or with `--release` for Docker.
