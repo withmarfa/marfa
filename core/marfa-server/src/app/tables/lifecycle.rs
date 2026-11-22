@@ -455,13 +455,20 @@ pub fn unkept_columns(
     Ok(found)
 }
 
+/// A table column that admits a type, with the type whose table it is.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Constraining {
+    pub label: String,
+    pub owner: String,
+}
+
 /// Hidden holders are named by type, never by item ID.
 pub fn constraining_columns(
     tx: &Transaction<'_>,
     catalog: &Catalog,
     caller: &Caller,
     type_id: &str,
-) -> Result<Vec<String>> {
+) -> Result<Vec<Constraining>> {
     let mut found = Vec::new();
     for (owner, definition) in catalog.types.rows() {
         if owner == type_id {
@@ -482,7 +489,10 @@ pub fn constraining_columns(
                         admits.iter().any(|admit| admit.as_str() == Some(type_id))
                     });
                 if names {
-                    found.push(format!("{owner}.{table}.{column}"));
+                    found.push(Constraining {
+                        label: format!("{owner}.{table}.{column}"),
+                        owner: owner.to_string(),
+                    });
                 }
             }
         }
@@ -497,9 +507,12 @@ pub fn constraining_columns(
         let holder = if caller.may_read_type(&item_type) {
             id
         } else {
-            item_type
+            item_type.clone()
         };
-        found.push(format!("{holder}.{OWN_TABLE}.{column}"));
+        found.push(Constraining {
+            label: format!("{holder}.{OWN_TABLE}.{column}"),
+            owner: item_type,
+        });
     }
     found.sort();
     Ok(found)

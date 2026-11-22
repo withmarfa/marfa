@@ -215,7 +215,12 @@ fn plan(tx: &Transaction<'_>, caller: &Caller, from: &str, to: &str) -> Result<P
 }
 
 /// The settings that name `type_id` as a move would rewrite them, for a delete to refuse.
-pub(super) fn naming(tx: &Transaction<'_>, caller: &Caller, type_id: &str) -> Result<Value> {
+pub(super) fn naming(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    type_id: &str,
+    dropping: &[String],
+) -> Result<Value> {
     let mut named = Vec::new();
     for item in items::settings(tx)? {
         let (holder, kind) = holder_of(&item.type_id);
@@ -231,6 +236,9 @@ pub(super) fn naming(tx: &Transaction<'_>, caller: &Caller, type_id: &str) -> Re
         }
     }
     for hook in webhooks::naming_type(tx, type_id)? {
+        if dropping.contains(&hook.id) {
+            continue;
+        }
         named.push(Named {
             kind: "webhook",
             shown: caller.may_read_setting(Setting::Webhook(&hook.maker)),

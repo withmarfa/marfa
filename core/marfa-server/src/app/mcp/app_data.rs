@@ -1,5 +1,4 @@
-//! A confirmation binds removing a vendor's data to the types and item versions its preview
-//! showed, and the removal runs in the write that spends it.
+//! A confirmation binds removing a vendor's data to what its preview showed.
 
 use std::sync::Arc;
 
@@ -36,18 +35,13 @@ pub async fn remove_confirmed(
         caller,
         (TOOL, REMOVED, target(&vendor)),
         bound,
-        move |unit| {
-            let holder = match unit.caller.require_vendor_data(unit.tx(), &reading, true) {
-                Ok(holder) => holder,
-                Err(Refusal {
-                    code: Code::NotFound,
-                    ..
-                }) => return Ok(None),
-                Err(refused) => return Err(refused),
-            };
-            Ok(Some(
-                vendor_data::held(unit.tx(), &reading, &holder)?.digest,
-            ))
+        move |unit| match vendor_data::held(unit.tx(), &unit.caller, &reading) {
+            Ok(held) => Ok(Some(held.digest)),
+            Err(Refusal {
+                code: Code::NotFound,
+                ..
+            }) => Ok(None),
+            Err(refused) => Err(refused),
         },
         move |unit| {
             let removal = vendor_data::remove_in(unit, &cache, &vendor)?;

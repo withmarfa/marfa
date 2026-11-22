@@ -750,8 +750,7 @@ impl<'a, 'c> Reader<'a, 'c> {
 }
 
 impl Reader<'_, '_> {
-    /// A page of the items of `types` in every state, oldest first, each with its state. The
-    /// caller has judged its access to them as a whole.
+    /// A page of the items of `types` in every state, oldest first; the caller judged access.
     pub(crate) fn of_types_page(
         &self,
         types: &[String],
@@ -787,9 +786,14 @@ pub fn versions_of_types(
     types: &[String],
     limit: i64,
 ) -> Result<Vec<(String, i64)>> {
-    Ok(rows::of_types(tx, types, None, limit)?
+    rows::versions_of_types(tx, types, limit)
+}
+
+/// Each type an item holds under the `app.<vendor>` namespace `vendor`, registered or not.
+pub fn types_under_vendor(tx: &Transaction<'_>, vendor: &str) -> Result<Vec<String>> {
+    Ok(rows::types_under(tx, vendor)?
         .into_iter()
-        .map(|row| (row.id, row.version))
+        .filter(|type_id| crate::app::vendors::vendor_of(type_id) == Some(vendor))
         .collect())
 }
 

@@ -172,7 +172,17 @@ fn app_ending(
         bound
     });
     let data = if ending.remove_data {
-        Some(vendor_data::held_of_client(tx, &consent.client_id)?)
+        let held = vendor_data::held_of_client(tx, caller, &consent.client_id)?;
+        let total: usize = held.iter().map(|one| one.items).sum();
+        if total > vendor_data::MOST_REMOVED {
+            let names: Vec<&str> = held.iter().map(|one| one.vendor.as_str()).collect();
+            return Err(vendor_data::over_cap(
+                &names.join(", "),
+                total,
+                super::app_data::TOOL,
+            ));
+        }
+        Some(held)
     } else {
         None
     };

@@ -256,8 +256,7 @@ impl Caller {
         Ok(holder)
     }
 
-    /// An app reaches only the data of the vendors its own client holds, and a key of unknown
-    /// maker none an app holds.
+    /// An app reaches only its own vendors' data, and a key of unknown maker none an app holds.
     pub fn require_vendor_reach(&self, vendor: &str, holder: &Holder) -> Result<()> {
         if let Some(client) = self.app_client() {
             if *holder != Holder::App(client.to_string()) {
@@ -271,6 +270,38 @@ impl Caller {
             }
         } else if self.maker_unknown() && matches!(holder, Holder::App(_)) {
             return Err(unknown_maker("reach the data of a vendor an app holds"));
+        }
+        Ok(())
+    }
+
+    /// A credential reaches a vendor's data only as its type map reaches every type in it.
+    pub fn require_vendor_types(
+        &self,
+        vendor: &str,
+        types: &[String],
+        removing: bool,
+        deletes_types: bool,
+    ) -> Result<()> {
+        if self.key().is_none() {
+            return Ok(());
+        }
+        let level = if removing { Level::Write } else { Level::Read };
+        if types
+            .iter()
+            .any(|type_id| self.level_on(Axis::Type, type_id) < level)
+        {
+            let pattern = format!("{vendor}.*");
+            return Err(Refusal::new(
+                Code::TypeNotPermitted,
+                format!(
+                    "This credential's type map does not give {} on every type under {vendor}.",
+                    level.word()
+                ),
+            )
+            .with_detail("grant", super::schema::grant("type", &pattern, level)));
+        }
+        if removing && deletes_types {
+            self.require(Permission::SchemaWrite)?;
         }
         Ok(())
     }

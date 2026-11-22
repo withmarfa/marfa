@@ -2349,14 +2349,14 @@ export interface paths {
         };
         /**
          * List an app's data
-         * @description Returns the types registered under an `app.<vendor>` namespace, with their items counted by state, and a page of its items in every state, the trash included. Requires the owner's browser session or `grants.manage`.
+         * @description Returns each type under an `app.<vendor>` namespace that is registered or that an item holds, with its items counted by state, and a page of its items in every state, the trash included. Requires the owner's browser session or `grants.manage`, and, for a key or an app's sign-in, read on every type under the namespace.
          */
         get: operations["listAppVendorData"];
         put?: never;
         post?: never;
         /**
          * Delete an app's data
-         * @description Deletes for good up to 1,000 items of an `app.<vendor>` namespace in every state, and its types in the call that leaves none. Only a backup taken before brings them back. Requires `items.purge` and the owner's browser session or `grants.manage`.
+         * @description Deletes for good up to 1,000 items whose type is under an `app.<vendor>` namespace, in every state, and the types registered under it in the call that leaves none. Only a backup taken before brings them back. Requires `items.purge` and the owner's browser session or `grants.manage`. A key or an app's sign-in also needs write on every type under the namespace, and `schema.write` while types are registered under it.
          */
         delete: operations["deleteAppVendorData"];
         options?: never;
@@ -38970,7 +38970,7 @@ export interface operations {
             query?: {
                 /** @description Also revoke every key the app minted, and every key those keys minted, but an owner's key (`owner_key`). Omitting it, or `false`, leaves them working. */
                 revoke_keys?: boolean;
-                /** @description For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`. Omitting it, or `false`, keeps them. */
+                /** @description For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`, and, for a key or an app's sign-in, write on every type under those namespaces and `schema.write` while types are registered there. Omitting it, or `false`, keeps them. */
                 remove_data?: boolean;
             };
             header?: never;
@@ -39025,7 +39025,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the credential lacks `grants.manage`, or `items.purge` with `remove_data`, and `details.required_scope` names it, or with `remove_data` it is an app's sign-in or a key an app made and the grant is another app's. */
+            /**
+             * @description - `forbidden`: the credential lacks `grants.manage`, or with `remove_data` `items.purge`, or `schema.write` while types are registered under the app's namespaces, and `details.required_scope` names it, or with `remove_data` it is an app's sign-in or a key an app made and the grant is another app's.
+             *     - `type_not_permitted`: with `remove_data`, the credential is a key or an app's sign-in whose type map doesn't grant write on every type under one of the app's namespaces. `details.grant` names `<vendor>.*`.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -39034,7 +39037,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                    "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description - `grant_not_found`: the ID does not name an app grant. */
@@ -39737,7 +39740,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the credential lacks `grants.manage`, and `details.required_scope` names it, or it is an app's sign-in or a key an app made and another app or the owner holds the namespace. */
+            /**
+             * @description - `forbidden`: the credential lacks `grants.manage`, and `details.required_scope` names it, or it is an app's sign-in or a key an app made and another app or the owner holds the namespace.
+             *     - `type_not_permitted`: the credential is a key or an app's sign-in whose type map doesn't grant read on every type under the namespace. `details.grant` names `<vendor>.*`.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -39746,7 +39752,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                    "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description - `not_found`: no app or owner holds the namespace, and `details.vendor` names it. */
@@ -39871,7 +39877,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the credential lacks `grants.manage` or `items.purge`, and `details.required_scope` names it, or it is an app's sign-in or a key an app made and another app or the owner holds the namespace. */
+            /**
+             * @description - `forbidden`: the credential lacks `grants.manage` or `items.purge`, or `schema.write` while types are registered under the namespace, and `details.required_scope` names it, or it is an app's sign-in or a key an app made and another app or the owner holds the namespace.
+             *     - `type_not_permitted`: the credential is a key or an app's sign-in whose type map doesn't grant write on every type under the namespace. `details.grant` names `<vendor>.*`.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -39880,7 +39889,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                    "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description - `not_found`: no app or owner holds the namespace, and `details.vendor` names it. */
@@ -41598,7 +41607,7 @@ export interface operations {
             query?: {
                 /** @description For an app, also revoke every key it minted but an owner's key (`owner_key`), as its `minted_by` entries show. Only an app takes it. */
                 revoke_keys?: boolean;
-                /** @description For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`. Omitting it, or `false`, keeps them. */
+                /** @description For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`, and, for a key or an app's sign-in, write on every type under those namespaces and `schema.write` while types are registered there. Omitting it, or `false`, keeps them. */
                 remove_data?: boolean;
             };
             header?: {
@@ -41656,7 +41665,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the credential lacks `sign_ins.manage`, or `items.purge` with `remove_data`, and `details.required_scope` names it, or with `remove_data` it is an app's sign-in or a key an app made and the ID names another app. */
+            /**
+             * @description - `forbidden`: the credential lacks `sign_ins.manage`, or with `remove_data` `items.purge`, or `schema.write` while types are registered under the app's namespaces, and `details.required_scope` names it, or with `remove_data` it is an app's sign-in or a key an app made and the ID names another app.
+             *     - `type_not_permitted`: with `remove_data`, the credential is a key or an app's sign-in whose type map doesn't grant write on every type under one of the app's namespaces. `details.grant` names `<vendor>.*`.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -41665,7 +41677,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                    "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description - `sign_in_not_found`: no live sign-in of the owner has this ID. It may have ended or expired. */

@@ -445,9 +445,12 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
             .with_detail("subtype_ids", subtypes));
         }
         let held = items::count_of_type(unit.tx(), &id)?;
-        let settings = super::moving::naming(unit.tx(), caller, &id)?;
+        let settings = super::moving::naming(unit.tx(), caller, &id, &[])?;
         let named = settings.as_array().is_some_and(|named| !named.is_empty());
-        let columns = tables::constraining_columns(unit.tx(), &catalog, caller, &id)?;
+        let columns: Vec<String> = tables::constraining_columns(unit.tx(), &catalog, caller, &id)?
+            .into_iter()
+            .map(|column| column.label)
+            .collect();
         if (held > 0 || named || !columns.is_empty()) && !force {
             return Err(Refusal::new(
                 Code::TypeInUse,
@@ -491,8 +494,7 @@ pub(crate) fn ids_under_vendor(tx: &Transaction<'_>, vendor: &str) -> Result<Vec
     Ok(ids)
 }
 
-/// Refuses deleting `ids` together, as [`delete`] without `force` refuses one, for whatever
-/// outside them would still name one; `dropping` are webhooks the caller drops in the same write.
+/// Refuses deleting `ids` together while anything outside them, but the `dropping` webhooks, names one.
 pub(crate) fn require_set_free(
     tx: &Transaction<'_>,
     catalog: &Catalog,
@@ -520,26 +522,14 @@ pub(crate) fn require_set_free(
             )
             .with_detail("subtype_ids", outside));
         }
-        // The webhooks come last, in the order `naming_type` reads them; a hidden one shows no id.
-        let mut hooks = crate::app::webhooks::naming_type(tx, id)?.into_iter();
-        let settings: Vec<Value> = super::moving::naming(tx, caller, id)?
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|named| {
-                named["kind"] != "webhook"
-                    || hooks.next().is_none_or(|hook| !dropping.contains(&hook.id))
-            })
-            .cloned()
-            .collect();
+        let settings = super::moving::naming(tx, caller, id, dropping)?;
+        let named = settings.as_array().is_some_and(|named| !named.is_empty());
         let columns: Vec<String> = tables::constraining_columns(tx, catalog, caller, id)?
             .into_iter()
-            .filter(|column| {
-                !ids.iter()
-                    .any(|owner| column.starts_with(&format!("{owner}.")))
-            })
+            .filter(|column| !ids.contains(&column.owner))
+            .map(|column| column.label)
             .collect();
-        if !settings.is_empty() || !columns.is_empty() {
+        if named || !columns.is_empty() {
             return Err(Refusal::new(
                 Code::TypeInUse,
                 format!(
@@ -575,8 +565,7 @@ fn children_first<'a>(
     Ok(ordered)
 }
 
-/// Deletes `ids`, which hold no items, children first, in the caller's write; refuses as
-/// [`require_set_free`] does. Answers how many it deleted.
+/// Deletes `ids`, which hold no items, children first, in the caller's write.
 pub(crate) fn delete_set(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,

@@ -341,8 +341,7 @@ pub fn purge_chosen(
     })
 }
 
-/// Purges the oldest `limit` items of `types`, in every state, in the caller's write, taking no
-/// row of another type with them; answers how many it took.
+/// Purges the oldest `limit` items of `types` alone, in every state; answers how many it took.
 pub(crate) fn purge_of_types(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,

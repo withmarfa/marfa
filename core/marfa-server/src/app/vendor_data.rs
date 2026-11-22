@@ -50,14 +50,40 @@ fn makers_of(tx: &Transaction<'_>, holder: &Holder) -> Result<Vec<Maker>> {
     Ok(makers)
 }
 
-fn over_cap(vendors: &str, total: usize) -> Refusal {
+/// How the command line removes a vendor's data in pages.
+pub const PAGED_CLI: &str = "`marfa apps vendors data delete <vendor> --confirm PURGE`";
+
+pub(crate) fn over_cap(vendors: &str, total: usize, paged: &str) -> Refusal {
     Refusal::new(
         Code::BulkCapExceeded,
         format!(
-            "{vendors} holds {total} items, more than one write removes. Remove them first with `marfa apps vendors data delete <vendor>`, which takes them in pages."
+            "{vendors}: {total} items, more than one write removes. Remove them first with {paged} for each, which takes them in pages."
         ),
     )
     .with_detail("cap", MOST_REMOVED)
+}
+
+/// The types a vendor's items hold, registered or not, and the types registered under it.
+#[derive(Clone, Debug)]
+struct Set {
+    all: Vec<String>,
+    registered: Vec<String>,
+}
+
+fn set_of(tx: &Transaction<'_>, vendor: &str) -> Result<Set> {
+    let registered = types::write::ids_under_vendor(tx, vendor)?;
+    let mut all = items::types_under_vendor(tx, vendor)?;
+    all.extend(registered.iter().cloned());
+    all.sort();
+    all.dedup();
+    Ok(Set { all, registered })
+}
+
+/// The vendor's set, refused unless the caller's type map reaches it as the act needs.
+fn reached_set(tx: &Transaction<'_>, caller: &Caller, vendor: &str, removing: bool) -> Result<Set> {
+    let set = set_of(tx, vendor)?;
+    caller.require_vendor_types(vendor, &set.all, removing, !set.registered.is_empty())?;
+    Ok(set)
 }
 
 fn item_total(tx: &Transaction<'_>, types: &[String]) -> Result<usize> {
@@ -68,28 +94,21 @@ fn item_total(tx: &Transaction<'_>, types: &[String]) -> Result<usize> {
     Ok(usize::try_from(total).unwrap_or(usize::MAX))
 }
 
-/// Removes up to [`MOST_REMOVED`] items of the vendor in every state, and its types once none is
-/// left, refusing before it takes anything when something outside the vendor names one of its
-/// types. With `whole`, more than [`MOST_REMOVED`] items refuses instead.
+/// Removes up to [`MOST_REMOVED`] of the vendor's items, and its types once none is left.
 fn remove_vendor(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
     vendor: &str,
     holder: &Holder,
-    whole: bool,
+    set: &Set,
 ) -> Result<Removal> {
     let tx = unit.tx();
     let catalog = catalog::current(cache, tx, Snapshot::Pending)?;
-    let types = types::write::ids_under_vendor(tx, vendor)?;
-    let dropping = webhooks::held_naming(tx, &makers_of(tx, holder)?, &types)?;
+    let dropping = webhooks::held_naming(tx, &makers_of(tx, holder)?, &set.registered)?;
     let dropped: Vec<String> = dropping.iter().map(|hook| hook.id.clone()).collect();
-    types::write::require_set_free(tx, &catalog, &unit.caller, &types, &dropped)?;
-    let total = item_total(tx, &types)?;
-    if whole && total > MOST_REMOVED {
-        return Err(over_cap(vendor, total));
-    }
-    let taken = items::write::purge_of_types(unit, cache, &types, MOST_REMOVED)?;
-    let remaining = item_total(tx, &types)?;
+    types::write::require_set_free(tx, &catalog, &unit.caller, &set.registered, &dropped)?;
+    let taken = items::write::purge_of_types(unit, cache, &set.all, MOST_REMOVED)?;
+    let remaining = item_total(tx, &set.all)?;
     let mut removal = Removal {
         items: taken,
         types: 0,
@@ -97,7 +116,7 @@ fn remove_vendor(
     };
     if remaining == 0 {
         webhooks::forget(unit, &dropping)?;
-        removal.types = types::write::delete_set(unit, cache, &types, &dropped)?;
+        removal.types = types::write::delete_set(unit, cache, &set.registered, &dropped)?;
     }
     unit.audit_also(
         REMOVED,
@@ -119,33 +138,45 @@ pub(crate) fn remove_in(
     vendor: &str,
 ) -> Result<Removal> {
     let holder = unit.caller.require_vendor_data(unit.tx(), vendor, true)?;
-    remove_vendor(unit, cache, vendor, &holder, false)
+    let set = reached_set(unit.tx(), &unit.caller, vendor, true)?;
+    remove_vendor(unit, cache, vendor, &holder, &set)
 }
 
-/// Removes, in the caller's write, every vendor the app holds as of that write, all of it or
-/// nothing; for ending the app.
+/// Each vendor the app holds with its set, refused as removing them with the app would be.
+fn client_sets(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    client_id: &str,
+) -> Result<(Holder, Vec<(String, Set)>)> {
+    let holder = Holder::App(client_id.to_string());
+    let mut sets = Vec::new();
+    for vendor in vendors::of_client(tx, client_id)? {
+        caller.require_vendor_reach(&vendor, &holder)?;
+        let set = reached_set(tx, caller, &vendor, true)?;
+        sets.push((vendor, set));
+    }
+    Ok((holder, sets))
+}
+
+/// Removes every vendor the app holds in the caller's write, all of it or nothing.
 pub(crate) fn remove_of_client(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
     client_id: &str,
 ) -> Result<Removal> {
     unit.caller.require(Permission::ItemsPurge)?;
-    let holder = Holder::App(client_id.to_string());
-    let held = vendors::of_client(unit.tx(), client_id)?;
+    let (holder, sets) = client_sets(unit.tx(), &unit.caller, client_id)?;
     let mut total = 0;
-    for vendor in &held {
-        unit.caller.require_vendor_reach(vendor, &holder)?;
-        total += item_total(
-            unit.tx(),
-            &types::write::ids_under_vendor(unit.tx(), vendor)?,
-        )?;
+    for (_, set) in &sets {
+        total += item_total(unit.tx(), &set.all)?;
     }
     if total > MOST_REMOVED {
-        return Err(over_cap(&held.join(", "), total));
+        let names: Vec<&str> = sets.iter().map(|(vendor, _)| vendor.as_str()).collect();
+        return Err(over_cap(&names.join(", "), total, PAGED_CLI));
     }
     let mut removal = Removal::default();
-    for vendor in &held {
-        removal.add(remove_vendor(unit, cache, vendor, &holder, true)?);
+    for (vendor, set) in &sets {
+        removal.add(remove_vendor(unit, cache, vendor, &holder, set)?);
     }
     Ok(removal)
 }
@@ -176,11 +207,10 @@ fn counts_json(types: &[String], counts: &[(String, String, i64)]) -> Vec<Value>
 pub struct Held {
     pub vendor: String,
     pub client_id: Option<String>,
-    type_ids: Vec<String>,
     /// Each type with its items counted by state.
     pub types: Vec<Value>,
     pub items: usize,
-    /// Covers the types and every item's version, up to one past what a removal takes.
+    /// Covers the registered types, the counts and the versions of the items one removal takes.
     pub digest: String,
 }
 
@@ -195,44 +225,56 @@ impl Held {
     }
 }
 
-pub(crate) fn held(tx: &Transaction<'_>, vendor: &str, holder: &Holder) -> Result<Held> {
-    let type_ids = types::write::ids_under_vendor(tx, vendor)?;
-    let counts = items::counts_of_types(tx, &type_ids)?;
-    let bound = i64::try_from(MOST_REMOVED + 1).unwrap_or(i64::MAX);
-    let versions = items::versions_of_types(tx, &type_ids, bound)?;
+fn held_of_set(tx: &Transaction<'_>, vendor: &str, holder: &Holder, set: &Set) -> Result<Held> {
+    let counts = items::counts_of_types(tx, &set.all)?;
+    let bound = i64::try_from(MOST_REMOVED).unwrap_or(i64::MAX);
+    let versions = items::versions_of_types(tx, &set.all, bound)?;
     let digest = hex::encode(Sha256::digest(
-        json!([vendor, holder_id(holder), type_ids, versions])
+        json!([vendor, holder_id(holder), set.registered, counts, versions])
             .to_string()
             .as_bytes(),
     ));
+    let total: i64 = counts.iter().map(|(_, _, count)| count).sum();
     Ok(Held {
         vendor: vendor.to_string(),
         client_id: holder_id(holder),
-        types: counts_json(&type_ids, &counts),
-        items: item_total(tx, &type_ids)?,
-        type_ids,
+        types: counts_json(&set.all, &counts),
+        items: usize::try_from(total).unwrap_or(usize::MAX),
         digest,
     })
 }
 
-/// What every vendor the app holds keeps, for a preview of ending it with its data.
-pub(crate) fn held_of_client(tx: &Transaction<'_>, client_id: &str) -> Result<Vec<Held>> {
-    let holder = Holder::App(client_id.to_string());
-    vendors::of_client(tx, client_id)?
-        .iter()
-        .map(|vendor| held(tx, vendor, &holder))
+/// What the vendor holds now, as the caller may read it at the vendor's own door.
+pub(crate) fn held(tx: &Transaction<'_>, caller: &Caller, vendor: &str) -> Result<Held> {
+    let holder = caller.require_vendor_data(tx, vendor, false)?;
+    let set = reached_set(tx, caller, vendor, false)?;
+    held_of_set(tx, vendor, &holder, &set)
+}
+
+/// What every vendor the app holds keeps, refused as ending it with its data would be.
+pub(crate) fn held_of_client(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    client_id: &str,
+) -> Result<Vec<Held>> {
+    let (holder, sets) = client_sets(tx, caller, client_id)?;
+    sets.iter()
+        .map(|(vendor, set)| held_of_set(tx, vendor, &holder, set))
         .collect()
 }
 
-/// A vendor's preview as the caller may read it at the vendor's own door.
-pub async fn preview(app: &App, caller: &Caller, vendor: String, removing: bool) -> Result<Held> {
+/// A vendor's preview, with the refusal a removal by the caller would meet, if any.
+pub async fn preview(app: &App, caller: &Caller, vendor: String) -> Result<(Held, Result<()>)> {
     let caller = caller.clone();
     let at = app.clock.stamp();
     app.db
         .read(move |tx| {
             let caller = caller.current(tx, &at)?;
-            let holder = caller.require_vendor_data(tx, &vendor, removing)?;
-            held(tx, &vendor, &holder)
+            let held = held(tx, &caller, &vendor)?;
+            let removable = caller
+                .require_vendor_data(tx, &vendor, true)
+                .and_then(|_| reached_set(tx, &caller, &vendor, true).map(|_| ()));
+            Ok((held, removable))
         })
         .await
 }
@@ -254,12 +296,13 @@ pub async fn listed(
 ) -> Result<Value> {
     items::reading(app, caller, move |read| {
         let holder = read.caller.require_vendor_data(read.tx, &vendor, false)?;
-        let held = held(read.tx, &vendor, &holder)?;
-        let (data, next) = read.of_types_page(&held.type_ids, cursor.as_deref(), limit)?;
+        let set = reached_set(read.tx, &read.caller, &vendor, false)?;
+        let counts = items::counts_of_types(read.tx, &set.all)?;
+        let (data, next) = read.of_types_page(&set.all, cursor.as_deref(), limit)?;
         Ok(json!({
             "vendor": vendor,
-            "client_id": held.client_id,
-            "types": held.types,
+            "client_id": holder_id(&holder),
+            "types": counts_json(&set.all, &counts),
             "data": data,
             "next_cursor": next,
         }))

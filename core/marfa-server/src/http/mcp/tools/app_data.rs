@@ -1,5 +1,4 @@
-//! `marfa_app_data`: previews what an app keeps under one of its vendors, then deletes it on a
-//! single-use confirmation.
+//! `marfa_app_data`: previews an app's data under one vendor, then deletes it on confirmation.
 
 use std::sync::Arc;
 
@@ -18,8 +17,7 @@ use crate::http::mcp::results::Outcome;
 pub const NAME: &str = app_data::TOOL;
 
 const PREVIEW_NEXT: &str = "Nothing has been deleted. Deleting removes for good every item of these types in every state, the trash included, and then the types themselves; items of other types that point at them keep their item and lose the link. Only a backup taken before brings them back: run marfa_take_backup first if the person may want them. Show the person and ask; only if they agree, call marfa_app_data again with the same vendor and confirm.";
-const READ_ONLY: &str =
-    "Deleting this data needs items.purge, which this credential does not hold.";
+const REFUSED: &str = "This credential may not delete this data";
 const REMOVED_ALL: &str =
     "Deleted. The vendor's items and types are gone; the vendor stays with the app that holds it.";
 const REMOVED_PART: &str = "Deleted one page of the vendor's items. Preview again and confirm to delete the rest; the types go with the last page.";
@@ -31,7 +29,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "List or delete an app's own data",
-        description: "Use to see what an app keeps under one of its app.<vendor> namespaces, as marfa_apps lists them in vendors: its types, how many items each holds by state, and the items. With items.purge, the preview also gives a confirmation that deletes the data for good, up to 1,000 items a call. The first call only previews; show the person and ask. Only if they agree, call again with the same vendor and confirm.",
+        description: "Use to see what an app keeps under one of its app.<vendor> namespaces, as marfa_apps lists them in vendors: its types, how many items each holds by state, and the items. Listing needs read on every type under the vendor. With items.purge, write on those types and, while types are registered there, schema.write, the preview also gives a confirmation that deletes the data for good, up to 1,000 items a call. The first call only previews; show the person and ask. Only if they agree, call again with the same vendor and confirm.",
         input: json!({
             "type": "object",
             "properties": {
@@ -71,13 +69,16 @@ pub fn definition() -> Definition {
 }
 
 async fn preview(app: &App, caller: &Caller, vendor: &str) -> Outcome {
-    let held = vendor_data::preview(app, caller, vendor.to_string(), false).await?;
+    let (held, removable) = vendor_data::preview(app, caller, vendor.to_string()).await?;
     let mut body = match held.to_json() {
         Value::Object(body) => body,
         _ => Map::new(),
     };
-    if !caller.holds(Permission::ItemsPurge) {
-        body.insert("next".into(), READ_ONLY.into());
+    if let Err(refused) = removable {
+        body.insert(
+            "next".into(),
+            format!("{REFUSED}: {}", refused.message).into(),
+        );
         return Ok(Value::Object(body));
     }
     let token = app_data::token(app, caller, &held)?;
@@ -111,7 +112,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
         Confirmed::Changed => return Err(stale(CHANGED, None)),
         Confirmed::Stale => return Err(stale(STALE, None)),
     };
-    let left = vendor_data::preview(app, caller, vendor.clone(), false).await?;
+    let (left, _) = vendor_data::preview(app, caller, vendor.clone()).await?;
     let mut body = Map::new();
     body.insert("vendor".into(), vendor.into());
     body.insert("removed_items".into(), removed.into());

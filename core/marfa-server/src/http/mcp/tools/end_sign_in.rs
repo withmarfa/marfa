@@ -11,10 +11,11 @@ use super::{Definition, text};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::auth::Visit;
-use crate::app::mcp::confirm;
 use crate::app::mcp::connector::Confirmed;
 use crate::app::mcp::sign_in::{self, AppEnding, Closing, Kind, Named};
+use crate::app::mcp::{app_data, confirm};
 use crate::app::oauth::grants::Ending;
+use crate::app::refusal::{Code, Refusal};
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list, json_length};
 
 pub const NAME: &str = sign_in::TOOL;
@@ -61,7 +62,7 @@ pub fn definition() -> Definition {
                 "revoke_keys": { "type": "boolean",
                     "description": "For an app, also revoke every key it made. False when left out." },
                 "remove_data": { "type": "boolean",
-                    "description": "For an app, also delete for good the items and types of every vendor it holds. Needs items.purge. False when left out." },
+                    "description": "For an app, also delete for good the items and types of every vendor it holds. Needs items.purge, write on every type under those vendors and, while types are registered there, schema.write. Refused above 1,000 items: remove them first with marfa_app_data. False when left out." },
                 "confirm": { "type": "string", "minLength": 1,
                     "description": "The confirm token from the preview, sent with the same kind, id, revoke_keys and remove_data. Leave out to preview." },
             },
@@ -194,8 +195,19 @@ async fn preview(
 ) -> Result<Map<String, Value>, Stop> {
     let closing = sign_in::preview(app, caller, named, id.to_string(), asked)
         .await
-        .map_err(Stop::refused)?;
+        .map_err(refused)?;
     preview_body(app, caller, id, asked, closing)
+}
+
+/// An app holding more than one removal takes is pointed at the tool that removes in pages.
+fn refused(refusal: Refusal) -> Stop {
+    let capped = refusal.code == Code::BulkCapExceeded;
+    let stop = Stop::refused(refusal);
+    if capped {
+        stop.with("use_tool", app_data::TOOL)
+    } else {
+        stop
+    }
 }
 
 fn done(kind: Kind, total: i64, repeated: bool) -> Value {
@@ -254,7 +266,7 @@ pub async fn run(
         (Some(kind), Confirmed::Repeated { total }) => Ok(done(kind, total, true)),
         (_, Confirmed::Changed) => {
             let read = sign_in::preview(app, caller, named, id.clone(), asked).await;
-            match sign_in::read_now(read)? {
+            match sign_in::read_now(read).map_err(refused)? {
                 Some(Closing::Key) | None => Err(stale(CHANGED_GONE, None)),
                 Some(closing) => {
                     let body = preview_body(app, caller, &id, asked, closing)?;

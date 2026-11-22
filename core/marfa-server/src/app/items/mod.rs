@@ -35,7 +35,7 @@ pub use read::{
     Caption, Choosing, Detail, GoesWith, Going, Listing, Many, PurgePreview, Selector, bin,
     bin_selection, bin_total, bulk_get, captions, counts_of_types, detail, extension, extensions,
     history, lookup, purge_preview, summaries, tag_counts, titles, trash_preview,
-    versions_of_types,
+    types_under_vendor, versions_of_types,
 };
 pub(crate) use read::{
     Reader, listed, listed_rows, readable_tags, reading, reading_background, reading_under,

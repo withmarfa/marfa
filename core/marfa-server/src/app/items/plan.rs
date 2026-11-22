@@ -537,8 +537,7 @@ fn edges_taken(
     Ok(edges)
 }
 
-/// A purge of exactly `rows`: a part or a neighbor outside them keeps its row and loses only
-/// the edge.
+/// A purge of exactly `rows`; a part or neighbor outside them loses only the edge.
 pub(super) fn rows_walk(tx: &Transaction<'_>, rows: Vec<Item>) -> Result<Vec<Purging>> {
     let mut taken = HashSet::new();
     rows.into_iter()

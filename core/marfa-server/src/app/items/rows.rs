@@ -901,6 +901,40 @@ pub(super) fn counts_of_types(
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Each type an item holds whose id starts `{prefix}.`, one index probe a type.
+pub(super) fn types_under(tx: &Transaction<'_>, prefix: &str) -> Result<Vec<String>> {
+    let upper = format!("{prefix}/");
+    let mut after = format!("{prefix}.");
+    let mut statement =
+        tx.prepare_cached("SELECT MIN(type) FROM items WHERE type > ?1 AND type < ?2")?;
+    let mut found = Vec::new();
+    while let Some(next) =
+        statement.query_row(params![after, upper], |row| row.get::<_, Option<String>>(0))?
+    {
+        found.push(next.clone());
+        after = next;
+    }
+    Ok(found)
+}
+
+/// The ID and version of the oldest `limit` items of `types`, in every state.
+pub(super) fn versions_of_types(
+    tx: &Transaction<'_>,
+    types: &[String],
+    limit: i64,
+) -> Result<Vec<(String, i64)>> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT id, version FROM items WHERE type IN (SELECT value FROM json_each(?1)) \
+             ORDER BY created_at, id LIMIT ?2",
+        )?
+        .query_map(
+            params![serde_json::json!(types).to_string(), limit],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
 /// Items of `types` in every state, oldest first, after `after`.
 pub(super) fn of_types(
     tx: &Transaction<'_>,
