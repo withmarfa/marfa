@@ -2,7 +2,7 @@
   "id": "in-folder",
   "label": "In folder",
   "reverse_label": "Folder contents",
-  "description": "Runs from the item to the system.folder its file sits in. Saving an item cannot set this edge, because it needs a path, and no item file writes it.",
+  "description": "Runs from the item to the system.folder its file sits in. Saving an item cannot set this edge, because the edge needs the file's path.",
   "cardinality": "many-to-many",
   "from_type_constraints": ["*"],
   "to_type_constraints": ["system.folder"],

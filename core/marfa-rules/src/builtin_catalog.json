@@ -4,7 +4,7 @@
    "id": "core.bookmark",
    "label": "Bookmark",
    "description": "Something you saved from elsewhere, such as a link, a highlighted excerpt or a clipped paragraph.",
-   "guidance": "**Use for**\n\n- A web address to come back to.\n\n**Not for**\n\n- A copy of the page. Saved HTML is a `core.file.webpage`. The article's own text is a `core.media.article`.\n- A highlighted passage. That is a `core.highlight`.\n\n**Body**\n\n- `url` is the address. `title` is the page title. `body` is a short note you add, not the page.\n\n**Edges**\n\n- `in-collection` runs from this bookmark to a `core.collection`, such as a reading list.",
+   "guidance": "**Use for**\n\n- A web address to come back to.\n\n**Not for**\n\n- A copy of the page. Saved HTML is a `core.file.webpage`. The article's own text is a `core.media.article`.\n- A highlighted passage. That is a `core.highlight`.\n\n**Body**\n\n- `url` is the address. `title` is the page title. `body` is text you captured from it, such as a clipped paragraph. `notes` holds your own comments.\n\n**Edges**\n\n- `in-collection` runs from this bookmark to a `core.collection`, such as a reading list.",
    "version": 0,
    "fields": {
     "url": {
@@ -2326,7 +2326,7 @@
    "id": "core.task",
    "label": "Task",
    "description": "Something you need to do, such as booking flights or sending an invoice.",
-   "guidance": "**Use for**\n\n- Something to do.\n\n**Not for**\n\n- Notes about the work. Those are a `core.note`. Name that note from the task with `about` when the task is about it.\n\n**Body**\n\n- `title` is what needs doing. `status` is `not_started`, `in_progress`, `completed`, or `canceled`. `due_at` is when it is due.\n\n**Edges**\n\n- `about` runs from this task to the item the work is about.",
+   "guidance": "**Use for**\n\n- Something to do.\n\n**Not for**\n\n- Notes about the work. Those are a `core.note`. When saving that note, `about` names the task.\n\n**Body**\n\n- `title` is what needs doing. `status` is `not_started`, `in_progress`, `completed`, or `canceled`. `due_at` is when it is due.\n\n**Edges**\n\n- `about` runs from this task to the item the work is about.",
    "version": 0,
    "fields": {
     "title": {
@@ -2693,7 +2693,7 @@
    "id": "in-collection",
    "label": "In collection",
    "reverse_label": "Contents",
-   "description": "Runs from the member to the collection. When saving a member, in-collection names the collection. A collection does not nest inside another.",
+   "description": "Runs from the member to its container, such as a collection, a series or an album. When saving a member, in-collection names the container. A container does not nest inside another.",
    "cardinality": "many-to-many",
    "from_type_constraints": [
     "*"
@@ -2717,7 +2717,7 @@
    "id": "in-folder",
    "label": "In folder",
    "reverse_label": "Folder contents",
-   "description": "Runs from the item to the system.folder its file sits in. Saving an item cannot set this edge, because it needs a path, and no item file writes it.",
+   "description": "Runs from the item to the system.folder its file sits in. Saving an item cannot set this edge, because the edge needs the file's path.",
    "cardinality": "many-to-many",
    "from_type_constraints": [
     "*"

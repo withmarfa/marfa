@@ -4,7 +4,7 @@
 
 **Not for**
 
-- Notes about the work. Those are a `core.note`. Name that note from the task with `about` when the task is about it.
+- Notes about the work. Those are a `core.note`. When saving that note, `about` names the task.
 
 **Body**
 

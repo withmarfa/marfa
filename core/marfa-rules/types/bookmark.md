@@ -9,7 +9,7 @@
 
 **Body**
 
-- `url` is the address. `title` is the page title. `body` is a short note you add, not the page.
+- `url` is the address. `title` is the page title. `body` is text you captured from it, such as a clipped paragraph. `notes` holds your own comments.
 
 **Edges**
 
