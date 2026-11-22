@@ -8,10 +8,10 @@ use super::delete_connector::stale;
 use super::{Definition, text};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
-use crate::app::mcp::app_data;
+use crate::app::mcp::app_data::{self, Repeat};
 use crate::app::mcp::confirm;
 use crate::app::mcp::connector::Confirmed;
-use crate::app::vendor_data::{self, MOST_REMOVED};
+use crate::app::vendor_data::{self, MOST_REMOVED, Removal};
 use crate::http::mcp::results::Outcome;
 
 pub const NAME: &str = app_data::TOOL;
@@ -106,25 +106,72 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
         return Err(stale(STALE, None));
     };
     let confirmed = app_data::remove_confirmed(app, caller, vendor.clone(), bound).await?;
-    let (removed, repeated) = match confirmed {
-        Confirmed::Done { total } => (total, false),
-        Confirmed::Repeated { total } => (total, true),
+    confirmed_body(vendor, confirmed)
+}
+
+/// The answer to a confirming call, from what its write did or read.
+fn confirmed_body(vendor: String, confirmed: Confirmed<Removal, Repeat>) -> Outcome {
+    let mut body = Map::new();
+    body.insert("vendor".into(), vendor.into());
+    let next = match confirmed {
+        Confirmed::Done { total } => {
+            body.insert("removed_items".into(), total.items.into());
+            body.insert("remaining_items".into(), total.remaining.into());
+            if total.remaining == 0 {
+                REMOVED_ALL
+            } else {
+                REMOVED_PART
+            }
+        }
+        Confirmed::Repeated { total } => {
+            body.insert("removed_items".into(), total.items.into());
+            if let Some(remaining) = total.remaining {
+                body.insert("remaining_items".into(), remaining.into());
+            }
+            body.insert("already_done".into(), true.into());
+            REPEATED
+        }
         Confirmed::Changed => return Err(stale(CHANGED, None)),
         Confirmed::Stale => return Err(stale(STALE, None)),
     };
-    let (left, _) = vendor_data::preview(app, caller, vendor.clone()).await?;
-    let mut body = Map::new();
-    body.insert("vendor".into(), vendor.into());
-    body.insert("removed_items".into(), removed.into());
-    body.insert("remaining_items".into(), left.items.into());
-    if repeated {
-        body.insert("already_done".into(), true.into());
-    }
-    let next = match (repeated, left.items) {
-        (true, _) => REPEATED,
-        (false, 0) => REMOVED_ALL,
-        (false, _) => REMOVED_PART,
-    };
     body.insert("next".into(), next.into());
     Ok(Value::Object(body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_confirmed_removal_answers_the_counts_its_write_carried() {
+        let done = Confirmed::Done {
+            total: Removal {
+                items: 1_000,
+                types: 0,
+                remaining: 5,
+            },
+        };
+        let body = confirmed_body("app.acme".into(), done).unwrap_or_default();
+        assert_eq!(body["removed_items"], 1_000);
+        assert_eq!(body["remaining_items"], 5);
+        assert_eq!(body["next"], REMOVED_PART);
+        assert!(body.get("already_done").is_none());
+    }
+
+    #[test]
+    fn a_repeat_answers_what_it_spent_and_no_remaining_count_it_may_not_read() {
+        for (remaining, shown) in [(Some(0), Some(0)), (None, None)] {
+            let repeated = Confirmed::Repeated {
+                total: Repeat {
+                    items: 4,
+                    remaining,
+                },
+            };
+            let body = confirmed_body("app.acme".into(), repeated).unwrap_or_default();
+            assert_eq!(body["removed_items"], 4);
+            assert_eq!(body.get("remaining_items").and_then(Value::as_u64), shown);
+            assert_eq!(body["already_done"], true);
+            assert_eq!(body["next"], REPEATED);
+        }
+    }
 }

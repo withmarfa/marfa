@@ -14,15 +14,15 @@ use crate::app::unit::Unit;
 pub const DELETE_TOOL: &str = "marfa_delete_connector";
 pub const RETIRE_TOOL: &str = "marfa_retire_endpoint";
 
-/// What a confirmed call did.
+/// What a confirmed call did: `D` the change it made, `S` what a repeat reads of the change spent.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Confirmed {
+pub enum Confirmed<D = i64, S = i64> {
     Done {
-        total: i64,
+        total: D,
     },
     /// This credential spent the token on this target, and that change committed.
     Repeated {
-        total: i64,
+        total: S,
     },
     /// The token is not this credential's for this target, or it expired. Nothing was read.
     Stale,
@@ -145,7 +145,7 @@ pub fn read_now<T>(read: Result<T>) -> Result<Option<T>> {
 pub(super) async fn confirmed<R, A>(
     app: &Arc<App>,
     caller: &Caller,
-    (tool, action, target): (&'static str, &'static str, String),
+    named: (&'static str, &'static str, String),
     bound: Bound,
     read: R,
     act: A,
@@ -154,12 +154,46 @@ where
     R: FnOnce(&Unit<'_, '_>) -> Result<Option<String>> + Send + 'static,
     A: FnOnce(&Unit<'_, '_>) -> Result<i64> + Send + 'static,
 {
+    confirmed_as(
+        app,
+        caller,
+        named,
+        bound,
+        read,
+        move |unit| act(unit).map(|total| (total, total)),
+        |_, total| Ok(total),
+    )
+    .await
+}
+
+/// [`confirmed`], with the act answering what it did beside the total it spends, and a repeat
+/// reading, in the same write, what to answer of the change the token spent.
+pub(super) async fn confirmed_as<R, A, P, D, S>(
+    app: &Arc<App>,
+    caller: &Caller,
+    (tool, action, target): (&'static str, &'static str, String),
+    bound: Bound,
+    read: R,
+    act: A,
+    repeat: P,
+) -> Result<Confirmed<D, S>>
+where
+    R: FnOnce(&Unit<'_, '_>) -> Result<Option<String>> + Send + 'static,
+    A: FnOnce(&Unit<'_, '_>) -> Result<(i64, D)> + Send + 'static,
+    P: FnOnce(&Unit<'_, '_>, i64) -> Result<S> + Send + 'static,
+    D: Send + 'static,
+    S: Send + 'static,
+{
     let credential = caller.credential_handle();
     let signer = app.mcp.signer.clone();
     app.write(caller, action, move |unit| {
         match signer.open(unit.tx(), tool, &credential, &target, &bound, unit.instant)? {
             Opening::Stale => return Ok(Confirmed::Stale),
-            Opening::Spent { total } => return Ok(Confirmed::Repeated { total }),
+            Opening::Spent { total } => {
+                return Ok(Confirmed::Repeated {
+                    total: repeat(unit, total)?,
+                });
+            }
             Opening::Open => {}
         }
         let Some(digest) = read(unit)? else {
@@ -168,9 +202,9 @@ where
         if !signer.holds_subject(tool, &credential, &subject(&target, &digest), &bound)? {
             return Ok(Confirmed::Changed);
         }
-        let total = act(unit)?;
+        let (total, done) = act(unit)?;
         confirm::spend_bound(unit.tx(), &bound, &credential, &target, total)?;
-        Ok(Confirmed::Done { total })
+        Ok(Confirmed::Done { total: done })
     })
     .await
 }
