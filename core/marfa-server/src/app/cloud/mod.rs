@@ -119,8 +119,15 @@ async fn resync(app: &Arc<App>) -> Result<()> {
                 .map(|link| link.link_id))
         })
         .await?;
-    app.cloud.tunnel.set(linked.is_some());
-    app.cloud.connector.want(linked);
+    if linked.is_some() {
+        app.cloud.tunnel.set(true);
+        app.cloud.connector.want(linked);
+    } else {
+        // The connector's last requests are still its callers', so they are read as such until it ends.
+        app.cloud.connector.want(None);
+        app.cloud.connector.quiet().await;
+        app.cloud.tunnel.set(false);
+    }
     Ok(())
 }
 

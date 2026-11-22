@@ -331,7 +331,7 @@ fn transient(refusal: &Refusal) -> bool {
 }
 
 /// Marfa Cloud's own answer that it does not know a link credential.
-fn unauthorized(answer: &Answer) -> bool {
+pub(super) fn unauthorized(answer: &Answer) -> bool {
     answer.status == 401
         && answer.body.pointer("/error/code").and_then(Value::as_str) == Some("unauthorized")
 }

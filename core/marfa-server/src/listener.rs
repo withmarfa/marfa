@@ -91,11 +91,14 @@ impl Tunnel {
         self.0.store(linked, Ordering::Release);
     }
 
-    /// The trust in force: the one the owner configured, or, where they configured none, the tunnel's while linked.
-    pub fn trust<'a>(&self, configured: &'a Trust) -> &'a Trust {
-        match configured {
-            Trust::Nothing if self.0.load(Ordering::Acquire) => &TUNNEL_TRUST,
-            configured => configured,
+    /// The trust in force for `peer`: the one the owner configured, or, while linked, the tunnel's
+    /// for a loopback peer the configured trust does not already believe.
+    pub fn trust<'a>(&self, configured: &'a Trust, peer: IpAddr) -> &'a Trust {
+        let peer = peer.to_canonical();
+        if peer.is_loopback() && !configured.believes(peer) && self.0.load(Ordering::Acquire) {
+            &TUNNEL_TRUST
+        } else {
+            configured
         }
     }
 }
@@ -147,19 +150,39 @@ mod tests {
     }
 
     #[test]
-    fn a_linked_instance_believes_the_tunnel_only_where_the_owner_set_no_trust() {
+    fn a_linked_instance_believes_the_tunnel_from_loopback_unless_the_owner_trust_already_does() {
         let tunnel = Tunnel::default();
-        let proxies = Trust::Proxies(proxy_ranges("10.0.0.0/8").unwrap());
-        assert_eq!(tunnel.trust(&Trust::Nothing), &Trust::Nothing);
+        let loopback: IpAddr = "127.0.0.1".parse().unwrap();
+        let elsewhere: IpAddr = "192.0.2.1".parse().unwrap();
+        let other = Trust::Proxies(proxy_ranges("10.0.0.0/8").unwrap());
+        let loop_proxies = Trust::Proxies(proxy_ranges("127.0.0.0/8").unwrap());
+        let loop_edge = Trust::EdgeHeader {
+            header: "x-client".to_string(),
+            ranges: proxy_ranges("::1/128").unwrap(),
+        };
+        assert_eq!(tunnel.trust(&Trust::Nothing, loopback), &Trust::Nothing);
+        assert_eq!(tunnel.trust(&other, loopback), &other);
         tunnel.set(true);
-        let linked = tunnel.trust(&Trust::Nothing);
-        assert!(linked.believes("127.0.0.1".parse().unwrap()));
+        let linked = tunnel.trust(&Trust::Nothing, loopback);
+        assert!(linked.believes(loopback));
         assert!(linked.believes("::1".parse().unwrap()));
         assert!(linked.believes("::ffff:127.0.0.1".parse().unwrap()));
-        assert!(!linked.believes("192.0.2.1".parse().unwrap()));
-        assert_eq!(tunnel.trust(&proxies), &proxies);
+        assert!(!linked.believes(elsewhere));
+        // A configured trust for another route leaves loopback to the tunnel, and its own peers to itself.
+        assert_eq!(tunnel.trust(&other, loopback), &*TUNNEL_TRUST);
+        assert_eq!(
+            tunnel.trust(&other, "::ffff:127.0.0.1".parse().unwrap()),
+            &*TUNNEL_TRUST
+        );
+        assert_eq!(tunnel.trust(&other, elsewhere), &other);
+        assert_eq!(tunnel.trust(&Trust::Nothing, elsewhere), &Trust::Nothing);
+        // A configured trust that believes the loopback peer keeps it.
+        assert_eq!(tunnel.trust(&loop_proxies, loopback), &loop_proxies);
+        assert_eq!(tunnel.trust(&loop_edge, "::1".parse().unwrap()), &loop_edge);
+        assert_eq!(tunnel.trust(&loop_edge, loopback), &*TUNNEL_TRUST);
         tunnel.set(false);
-        assert_eq!(tunnel.trust(&Trust::Nothing), &Trust::Nothing);
+        assert_eq!(tunnel.trust(&Trust::Nothing, loopback), &Trust::Nothing);
+        assert_eq!(tunnel.trust(&other, loopback), &other);
     }
 
     #[test]

@@ -15,9 +15,9 @@ use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use super::client::{self, Method};
+use super::client::{self, Answer, Method};
 use super::store::{self, State};
-use super::worker::{end_by_service, write_link};
+use super::worker::{end_by_service, unauthorized, write_link};
 use super::{LINK_CREDENTIAL, TUNNEL_TOKEN, announce_if_linked, seal, text_at};
 use crate::app::App;
 use crate::app::access::Caller;
@@ -29,6 +29,8 @@ const PROGRAM: &str = "cloudflared";
 const TOKEN_FILE: &str = "tunnel-token";
 const FIRST_WAIT: Duration = Duration::from_secs(1);
 const MOST_WAIT: Duration = Duration::from_secs(60);
+/// The longest wait Marfa Cloud can ask of a read of the tunnel token.
+const MOST_TOKEN_WAIT: Duration = Duration::from_secs(60 * 60);
 /// How long a connector asked to end has to do so before it is killed.
 const GRACE: Duration = Duration::from_secs(2);
 const POLL_UNTIL_READY: Duration = Duration::from_secs(1);
@@ -78,6 +80,8 @@ pub struct Connector {
     wanted: watch::Sender<Option<String>>,
     stopped: watch::Sender<bool>,
     running: watch::Sender<bool>,
+    /// Whether a connector is being run or supervised for a link.
+    serving: watch::Sender<bool>,
 }
 
 impl Connector {
@@ -91,6 +95,7 @@ impl Connector {
             wanted: watch::Sender::new(None),
             stopped: watch::Sender::new(false),
             running: watch::Sender::new(false),
+            serving: watch::Sender::new(false),
         }
     }
 
@@ -114,6 +119,12 @@ impl Connector {
 
     pub fn stop(&self) {
         self.stopped.send_replace(true);
+    }
+
+    /// Waits until no connector is run or supervised.
+    pub async fn quiet(&self) {
+        let mut serving = self.serving.subscribe();
+        let _ = serving.wait_for(|serving| !*serving).await;
     }
 
     pub async fn idle(&self) {
@@ -146,7 +157,9 @@ pub fn start(app: &Arc<App>) {
     tokio::spawn(async move {
         remove_token_file(token_path(&app.settings.start.database)).await;
         while let Some(link_id) = watching.next_link().await {
+            app.cloud.connector.serving.send_replace(true);
             serve(&app, &mut watching, &link_id).await;
+            app.cloud.connector.serving.send_replace(false);
         }
         app.cloud.connector.running.send_replace(false);
     });
@@ -226,18 +239,35 @@ enum Ended {
 /// Runs the connector for `link_id` until the link is no longer wanted.
 async fn serve(app: &Arc<App>, watching: &mut Watching, link_id: &str) {
     let mut waits = Backoff::new();
+    // Marfa Cloud asked for a wait before the next request for the token, which the connector does not run in.
+    let mut asking = false;
     while !watching.gone(link_id) {
         let ended = match tunnel_token(app, link_id).await {
-            Some(token) => match attempt(app, watching, link_id, &token).await {
-                Ended::Refused => match renew(app, link_id, &token).await {
-                    Renewed::Changed => {
-                        waits.reset();
-                        continue;
-                    }
-                    Renewed::Same | Renewed::Gone => Ended::Refused,
-                },
-                other => other,
-            },
+            Some(token) => {
+                let tried = if std::mem::take(&mut asking) {
+                    Ended::Refused
+                } else {
+                    attempt(app, watching, link_id, &token).await
+                };
+                match tried {
+                    Ended::Refused => match renew(app, link_id, &token).await {
+                        Renewed::Changed => {
+                            waits.reset();
+                            continue;
+                        }
+                        Renewed::Wait(wait) => {
+                            asking = true;
+                            report(app, Condition::Failed, Some("refused")).await;
+                            if !watching.pause(link_id, wait).await {
+                                break;
+                            }
+                            continue;
+                        }
+                        Renewed::Same | Renewed::Gone => Ended::Refused,
+                    },
+                    other => other,
+                }
+            }
             None => Ended::Token,
         };
         match ended {
@@ -306,6 +336,35 @@ enum Renewed {
     Same,
     /// Marfa Cloud does not know the link, which is ended here.
     Gone,
+    /// Marfa Cloud asks for this long before the next request for the token.
+    Wait(Duration),
+}
+
+/// What Marfa Cloud's answer to the request for the link's tunnel token says.
+#[derive(Debug, PartialEq, Eq)]
+enum Asked {
+    Fresh(String),
+    Same,
+    Ended,
+    Wait(Duration),
+}
+
+/// Reads the answer to a request for the tunnel token, made after the connector was refused `refused`.
+fn read_of(answer: &Answer, refused: &str) -> Asked {
+    match answer.status {
+        200 => match text_at(&answer.body, "tunnel_token").filter(|fresh| fresh != refused) {
+            Some(fresh) => Asked::Fresh(fresh),
+            None => Asked::Same,
+        },
+        401 if unauthorized(answer) => Asked::Ended,
+        429 | 503 => Asked::Wait(
+            answer
+                .retry_after
+                .unwrap_or(MOST_WAIT)
+                .clamp(Duration::from_secs(1), MOST_TOKEN_WAIT),
+        ),
+        _ => Asked::Same,
+    }
 }
 
 /// Asks Marfa Cloud for the link's current tunnel token, after the connector was refused `refused`.
@@ -334,16 +393,9 @@ async fn renew(app: &Arc<App>, link_id: &str, refused: &Secret) -> Renewed {
         Some(&credential),
     )
     .await;
-    match answer {
-        Ok(answer) if answer.status == 200 => {
-            let Some(fresh) =
-                text_at(&answer.body, "tunnel_token").filter(|fresh| fresh != refused.expose())
-            else {
-                return Renewed::Same;
-            };
-            keep(app, link_id, fresh).await
-        }
-        Ok(answer) if answer.status == 401 => {
+    match answer.map(|answer| read_of(&answer, refused.expose())) {
+        Ok(Asked::Fresh(fresh)) => keep(app, link_id, fresh).await,
+        Ok(Asked::Ended) => {
             if let Err(refusal) = end_by_service(app, &link, false).await {
                 tracing::warn!(
                     code = refusal.code.wire(),
@@ -353,7 +405,8 @@ async fn renew(app: &Arc<App>, link_id: &str, refused: &Secret) -> Renewed {
             app.cloud.wake();
             Renewed::Gone
         }
-        Ok(_) | Err(_) => Renewed::Same,
+        Ok(Asked::Wait(wait)) => Renewed::Wait(wait),
+        Ok(Asked::Same) | Err(_) => Renewed::Same,
     }
 }
 
@@ -650,6 +703,17 @@ fn token_path(database: &DatabasePath) -> PathBuf {
 }
 
 fn write_token_file(database: &DatabasePath, token: &str) -> io::Result<PathBuf> {
+    write_token_with(database, token, |file, text| {
+        file.write_all(text.as_bytes())
+    })
+}
+
+/// Makes the token's file, and fills it with `fill`.
+fn write_token_with(
+    database: &DatabasePath,
+    token: &str,
+    fill: impl FnOnce(&mut fs::File, &str) -> io::Result<()>,
+) -> io::Result<PathBuf> {
     let folder = std::path::absolute(token_folder(database))?;
     match DirBuilder::new().mode(0o700).create(&folder) {
         Ok(()) => {}
@@ -677,7 +741,11 @@ fn write_token_file(database: &DatabasePath, token: &str) -> io::Result<PathBuf>
         .create_new(true)
         .mode(0o600)
         .open(&path)?;
-    file.write_all(token.as_bytes())?;
+    if let Err(error) = fill(&mut file, token) {
+        drop(file);
+        let _ = fs::remove_file(&path);
+        return Err(error);
+    }
     Ok(path)
 }
 
@@ -761,13 +829,105 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let database = DatabasePath::File(dir.path().join("marfa.db"));
         let first = write_token_file(&database, "first").unwrap();
-        assert_eq!(first, token_path(&database).canonicalize().unwrap());
+        assert_eq!(
+            first.canonicalize().unwrap(),
+            token_path(&database).canonicalize().unwrap()
+        );
         assert_eq!(fs::read_to_string(&first).unwrap(), "first");
         let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&first), 0o600);
         assert_eq!(mode(first.parent().unwrap()), 0o700);
         let second = write_token_file(&database, "second").unwrap();
         assert_eq!(fs::read_to_string(&second).unwrap(), "second");
+    }
+
+    #[test]
+    fn a_token_file_that_could_not_be_filled_is_removed() {
+        let dir = TempDir::new().unwrap();
+        let database = DatabasePath::File(dir.path().join("marfa.db"));
+        let failed = write_token_with(&database, "token", |file, _| {
+            file.write_all(b"tok")?;
+            Err(io::Error::new(ErrorKind::StorageFull, "the disk is full"))
+        })
+        .unwrap_err();
+        assert_eq!(failed.kind(), ErrorKind::StorageFull);
+        assert!(!token_path(&database).exists());
+        // The witness: the same write that does not fail leaves the file.
+        let kept = write_token_with(&database, "token", |file, text| {
+            file.write_all(text.as_bytes())
+        })
+        .unwrap();
+        assert!(kept.exists());
+    }
+
+    fn answered(status: u16, body: Value, retry_after: Option<u64>) -> Answer {
+        Answer {
+            status,
+            body,
+            retry_after: retry_after.map(Duration::from_secs),
+        }
+    }
+
+    #[test]
+    fn only_marfa_clouds_own_401_ends_the_link_and_a_limit_is_waited_out() {
+        let seconds = |count: u64| Asked::Wait(Duration::from_secs(count));
+        let unauthorized = json!({ "error": { "code": "unauthorized" } });
+        let proxy = json!({ "error": { "code": "proxy_auth_required" } });
+        let cases = [
+            (
+                "a new token",
+                answered(200, json!({ "tunnel_token": "new" }), None),
+                Asked::Fresh("new".into()),
+            ),
+            (
+                "the same token",
+                answered(200, json!({ "tunnel_token": "old" }), None),
+                Asked::Same,
+            ),
+            ("no token", answered(200, json!({}), None), Asked::Same),
+            (
+                "its own 401",
+                answered(401, unauthorized, None),
+                Asked::Ended,
+            ),
+            ("a proxy's 401", answered(401, proxy, None), Asked::Same),
+            (
+                "a 401 with no body",
+                answered(401, Value::Null, None),
+                Asked::Same,
+            ),
+            ("a limit", answered(429, json!({}), Some(37)), seconds(37)),
+            (
+                "a limit with no wait",
+                answered(429, json!({}), None),
+                seconds(60),
+            ),
+            (
+                "a limit with no seconds",
+                answered(429, json!({}), Some(0)),
+                seconds(1),
+            ),
+            (
+                "a limit that is absurd",
+                answered(429, json!({}), Some(u64::MAX / 2)),
+                seconds(3600),
+            ),
+            (
+                "no answer from Cloudflare",
+                answered(503, json!({}), Some(60)),
+                seconds(60),
+            ),
+            (
+                "no answer and no wait",
+                answered(503, Value::Null, None),
+                seconds(60),
+            ),
+            ("a fault", answered(500, json!({}), Some(60)), Asked::Same),
+            ("no such route", answered(404, json!({}), None), Asked::Same),
+        ];
+        for (what, answer, wanted) in cases {
+            assert_eq!(read_of(&answer, "old"), wanted, "{what}");
+        }
     }
 
     #[test]

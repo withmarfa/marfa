@@ -141,7 +141,11 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     let caller_address = peer.map(|peer| {
         caller_address(
             peer,
-            observed.app.cloud.tunnel().trust(&observed.listener.trust),
+            observed
+                .app
+                .cloud
+                .tunnel()
+                .trust(&observed.listener.trust, peer),
             request.headers(),
         )
     });
