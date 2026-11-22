@@ -198,7 +198,10 @@ fn require_same_connector(held: &Installed, bundle: &Obj) -> Result<()> {
     };
     let before = marfa_rules::plugin_connector::source(before);
     let (path, message) = match connector_of(bundle) {
-        None => ("connector", "the newer version has no connector".to_string()),
+        None => (
+            "connector",
+            "the newer version has no connector".to_string(),
+        ),
         Some(after) if marfa_rules::plugin_connector::source(after) != before => (
             "connector.source",
             format!(

@@ -64,7 +64,8 @@ pub fn resolve(remote: &Remote, host: &str) -> Result<String, CliError> {
 pub fn run(command: HostsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     match command {
         HostsCommand::Add { name } => {
-            let answer = remote.json(&Request::post(&["connector-hosts"]).json(json!({ "name": name })))?;
+            let answer =
+                remote.json(&Request::post(&["connector-hosts"]).json(json!({ "name": name })))?;
             out.report(&answer, linked_words)
         }
         HostsCommand::List => out.value(&remote.json(&list_request())?),

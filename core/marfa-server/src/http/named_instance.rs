@@ -96,7 +96,7 @@ mod tests {
 
     const OTHER: &str = "019537a0-7b80-7000-8000-0000000000ff";
     /// Doors in `shared` that take no credential.
-    const OPEN: [&str; 1] = ["POST /owner"];
+    const OPEN: [&str; 2] = ["POST /connector-hosts/redeem", "POST /owner"];
 
     impl Instance {
         async fn send(&self, route: &str, key: bool, named: &[&str]) -> (StatusCode, String) {

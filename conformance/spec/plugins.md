@@ -406,7 +406,7 @@ If `POST /restore` would restore a plugin with a connector whose source another 
 
 A connector host is one machine that runs connectors. The owner makes a host and links it once with a one-time link; the host then holds a key of its own and mints a key for each connector assigned to it. Every door in this section but `POST /connector-hosts/redeem` and the two under `/connector-hosts/self` needs `connectors.manage`.
 
-The doors judge in this order and answer the first refusal. `POST /connector-hosts`: the caller's permission, then the body. `GET /connector-hosts/{id}`, `POST /connector-hosts/{id}/link` and `DELETE /connector-hosts/{id}`: the caller's permission, then the host. `PUT /plugins/{name}/connector`: the caller's permission, the body, the plugin, its connector, then the host. `POST /connector-hosts/redeem`: the rate limit, the body, then the code. `GET /connector-hosts/self` and `POST /connector-hosts/self/connectors/{plugin}/key`: the credential, then the plugin.
+The doors judge in this order and answer the first refusal. `POST /connector-hosts`: the caller's permission, then the body. `GET /connector-hosts/{id}`, `POST /connector-hosts/{id}/link` and `DELETE /connector-hosts/{id}`: the caller's permission, then the host. `PUT /plugins/{name}/connector`: the caller's permission, the body, the plugin, its connector, then the host. `POST /connector-hosts/redeem`: the rate limit, the instance `X-Marfa-Instance-Id` names, the body, then the code. `GET /connector-hosts/self` and `POST /connector-hosts/self/connectors/{plugin}/key`: the credential, then the plugin.
 
 ### `plugins/host-create`
 
@@ -546,17 +546,17 @@ When `POST /connector-hosts/redeem` mints a host's key, the server MUST give it 
 
 ### `plugins/host-key-only-own-doors`
 
-If a host's key sends a request to an operation other than `GET /connector-hosts/self` and `POST /connector-hosts/self/connectors/{plugin}/key`, then the server MUST answer `403 forbidden`.
+If a host's key sends a request to an operation other than `GET /connector-hosts/self` and `POST /connector-hosts/self/connectors/{plugin}/key`, then the server MUST answer `401 unauthorized`, as to a request with no credential.
 
-**Reason:** a host is a machine the owner may not watch, so its key cannot act as the owner or an app, whatever a door's own rule would allow.
+**Reason:** a host is a machine the owner may not watch, so its key cannot act as the owner or an app, whatever a door's own rule would allow. Every other door takes it for no credential, as a door group that does not take a credential does.
 
-**Tests:** `compliance/connector-hosts.test.ts › refuses the host's key 403 on every door but its own, and its own doors 403 to every other credential`.
+**Tests:** `compliance/connector-hosts.test.ts › refuses the host's key 401 on every door but its own, and its own doors 403 to every other credential`.
 
 ### `plugins/host-doors-host-only`
 
 If a credential other than a host's key sends `GET /connector-hosts/self` or `POST /connector-hosts/self/connectors/{plugin}/key`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connector-hosts.test.ts › refuses the host's key 403 on every door but its own, and its own doors 403 to every other credential`.
+**Tests:** `compliance/connector-hosts.test.ts › refuses the host's key 401 on every door but its own, and its own doors 403 to every other credential`.
 
 ### `plugins/host-self`
 

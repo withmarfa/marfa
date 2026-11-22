@@ -161,8 +161,6 @@ fn connector_host_doors() -> Routes {
         )
         .route("/connector-hosts/{id}/link", post(connector_hosts::link))
         .route("/plugins/{name}/connector", put(connector_hosts::assign))
-        .route("/connector-hosts/redeem", post(connector_hosts::redeem))
-        .asking_at(Method::POST, "/connector-hosts/redeem", Asks::Nothing)
         .route("/connector-hosts/self", get(connector_hosts::own))
         .route(
             "/connector-hosts/self/connectors/{plugin}/key",
@@ -174,6 +172,8 @@ fn connector_host_doors() -> Routes {
             "/connector-hosts/self/connectors/{plugin}/key",
             Asks::Host,
         )
+        .route("/connector-hosts/redeem", post(connector_hosts::redeem))
+        .asking_at(Method::POST, "/connector-hosts/redeem", Asks::Nothing)
         .route_layer(from_fn(no_store))
 }
 

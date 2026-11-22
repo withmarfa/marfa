@@ -49,9 +49,18 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
     ("Remove a plugin with a connector", &["plugins remove"]),
     (
         "Make, link and remove the machines that run connectors",
-        &["hosts add", "hosts list", "hosts get", "hosts link", "hosts remove"],
+        &[
+            "hosts add",
+            "hosts list",
+            "hosts get",
+            "hosts link",
+            "hosts remove",
+        ],
     ),
-    ("Choose which machine runs a plugin's connector", &["plugins assign"]),
+    (
+        "Choose which machine runs a plugin's connector",
+        &["plugins assign"],
+    ),
     ("See what a key can read", &["overview"]),
     ("Read the instance's name and enforcement", &["config get"]),
     (

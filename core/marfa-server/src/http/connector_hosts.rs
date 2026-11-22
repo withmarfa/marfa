@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use axum::http::{StatusCode, Uri};
+use axum::http::{HeaderMap, StatusCode, Uri};
 
 use super::answer::{Answer, json_answer};
 use super::body::JsonBody;
+use super::named_instance;
 use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
@@ -71,9 +72,16 @@ pub async fn remove(
     ))
 }
 
-pub async fn redeem(State(app): State<Arc<App>>, visit: Visit, uri: Uri, body: JsonBody) -> Answer {
+pub async fn redeem(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    visit: Visit,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
     query::only(&uri, &[])?;
     connector_hosts::hold_redeem(&app, visit.address)?;
+    named_instance::judge(&app, &headers)?;
     let mut body = body.object(&["code"]).await?;
     let redeemed = connector_hosts::redeem(&app, body.remove("code")).await?;
     Ok(json_answer(StatusCode::CREATED, &redeemed))

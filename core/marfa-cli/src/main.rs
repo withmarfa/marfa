@@ -36,9 +36,9 @@ use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
     apps, attention, audit, backups, blobs, config, connectors, docs, edge_types, edges, events,
-    export, extensions, housekeeping, items, keys, login, logout, metrics, operations, overview,
-    hosts, owner, plugins, profile, restore, rows, search, sign_ins, sources, status, tables, tags, types,
-    update, views, webhooks, whoami,
+    export, extensions, hosts, housekeeping, items, keys, login, logout, metrics, operations,
+    overview, owner, plugins, profile, restore, rows, search, sign_ins, sources, status, tables,
+    tags, types, update, views, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, DOCS_HINT, Exit, long_help_footer};

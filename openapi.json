@@ -34415,7 +34415,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you lack `connectors.manage`, or your key is a connector host's.",
+            "description": "- `forbidden`: you lack `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34730,7 +34730,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you lack `connectors.manage`, or your key is a connector host's.",
+            "description": "- `forbidden`: you lack `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34987,7 +34987,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you lack `connectors.manage`, or your key is a connector host's.",
+            "description": "- `forbidden`: you lack `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35288,7 +35288,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you lack `connectors.manage`, or your key is a connector host's.",
+            "description": "- `forbidden`: you lack `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35549,7 +35549,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you lack `connectors.manage`, or your key is a connector host's.",
+            "description": "- `forbidden`: you lack `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35880,7 +35880,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you lack `connectors.manage`, or your key is a connector host's.",
+            "description": "- `forbidden`: you lack `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -36139,6 +36139,7 @@
             }
           }
         },
+        "x-marfa-local-command": true,
         "responses": {
           "201": {
             "description": "Returns the host's key.",

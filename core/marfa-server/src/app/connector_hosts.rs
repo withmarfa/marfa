@@ -389,7 +389,14 @@ pub async fn link(app: &App, caller: &Caller, id: String) -> Result<Value> {
             params![id, unit.at],
         )?;
         unit.audit("connector_host", &id, None)?;
-        linked_answer(&origin, unit.tx(), &host, &code.plain, &expires_at, &unit.at)
+        linked_answer(
+            &origin,
+            unit.tx(),
+            &host,
+            &code.plain,
+            &expires_at,
+            &unit.at,
+        )
     })
     .await
 }
@@ -465,11 +472,12 @@ pub async fn redeem(app: &App, code: Option<Value>) -> Result<Value> {
     let code = match code {
         Some(Value::String(code)) => code,
         _ => {
-            return Err(Refusal::validation("code must be the text of a one-time link.")
-                .with_detail(
+            return Err(
+                Refusal::validation("code must be the text of a one-time link.").with_detail(
                     "errors",
                     vec![json!({ "path": "code", "message": "code is required, as text" })],
-                ));
+                ),
+            );
         }
     };
     let digest = keys::digest_of(&app.settings.start.key_salt, &code)?;
@@ -489,8 +497,10 @@ pub async fn redeem(app: &App, code: Option<Value>) -> Result<Value> {
             return Err(link_not_found());
         }
         let host = found(unit.tx(), &host_id)?;
-        unit.tx()
-            .execute("DELETE FROM connector_host_links WHERE host_id = ?1", [&host_id])?;
+        unit.tx().execute(
+            "DELETE FROM connector_host_links WHERE host_id = ?1",
+            [&host_id],
+        )?;
         if let Some(old) = host.key_id.as_deref()
             && keys::unrevoked_by_id(unit.tx(), old)?.is_some()
         {
@@ -513,7 +523,11 @@ pub async fn redeem(app: &App, code: Option<Value>) -> Result<Value> {
             "UPDATE connector_hosts SET key_id = ?2, updated_at = ?3 WHERE id = ?1",
             params![host_id, key.id, unit.at],
         )?;
-        unit.audit("connector_host", &host_id, Some(json!({ "key_id": key.id })))?;
+        unit.audit(
+            "connector_host",
+            &host_id,
+            Some(json!({ "key_id": key.id })),
+        )?;
         Ok(json!({
             "host": { "id": host.id, "name": host.name },
             "key": plain,
@@ -607,7 +621,12 @@ pub async fn mint(app: &App, caller: &Caller, plugin: String) -> Result<Value> {
     .await
 }
 
-pub async fn assign(app: &App, caller: &Caller, plugin: String, host: Option<String>) -> Result<Value> {
+pub async fn assign(
+    app: &App,
+    caller: &Caller,
+    plugin: String,
+    host: Option<String>,
+) -> Result<Value> {
     app.write(caller, ASSIGNED, move |unit| {
         unit.caller.require(Permission::ConnectorsManage)?;
         if plugins::installed(unit.tx(), &plugin)?.is_none() {
@@ -643,7 +662,11 @@ pub async fn assign(app: &App, caller: &Caller, plugin: String, host: Option<Str
 
 /// Each restored plugin's connector, recorded with no host and no key; refused where its source
 /// is held on this instance.
-pub(crate) fn restore(tx: &Transaction<'_>, connectors: &[(String, String)], at: &str) -> Result<()> {
+pub(crate) fn restore(
+    tx: &Transaction<'_>,
+    connectors: &[(String, String)],
+    at: &str,
+) -> Result<()> {
     for (plugin, source) in connectors {
         if record(tx, plugin)?.is_some() {
             continue;

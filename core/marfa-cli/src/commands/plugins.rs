@@ -212,7 +212,11 @@ fn installed(
         also = Some(format!("its connector runs on host {host}"));
     } else if has_connector && answer["connector_host"].is_null() {
         let hosts = remote.json(&super::hosts::list_request())?;
-        if let [only] = hosts["data"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        if let [only] = hosts["data"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        {
             let host = only["name"].as_str().unwrap_or_default();
             also = Some(format!(
                 "its connector runs on no host yet; host {host} could run it: marfa plugins assign {name} --host {host:?}"

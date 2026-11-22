@@ -872,7 +872,9 @@ mod tests {
             assert_eq!(scope.literal(), literal);
         }
         for permission in Permission::ALL {
-            let parsed = permission.grantable().then_some(Scope::Permission(permission));
+            let parsed = permission
+                .grantable()
+                .then_some(Scope::Permission(permission));
             assert_eq!(Scope::parse(permission.word()), parsed);
         }
     }

@@ -123,7 +123,13 @@ impl Judge {
         }
     }
 
-    fn word<'a>(&mut self, object: &'a Obj, path: &str, key: &str, words: &[&str]) -> Option<&'a str> {
+    fn word<'a>(
+        &mut self,
+        object: &'a Obj,
+        path: &str,
+        key: &str,
+        words: &[&str],
+    ) -> Option<&'a str> {
         let at = format!("{path}.{key}");
         match object.get(key) {
             None => {
@@ -165,13 +171,21 @@ impl Judge {
             None => false,
             Some(Value::Bool(flag)) => *flag,
             Some(_) => {
-                self.wrong(format!("{path}.{key}"), format!("{key} must be true or false"));
+                self.wrong(
+                    format!("{path}.{key}"),
+                    format!("{key} must be true or false"),
+                );
                 false
             }
         }
     }
 
-    fn list<'a>(&mut self, object: &'a Obj, path: &str, key: &str) -> Option<Vec<(String, &'a Obj)>> {
+    fn list<'a>(
+        &mut self,
+        object: &'a Obj,
+        path: &str,
+        key: &str,
+    ) -> Option<Vec<(String, &'a Obj)>> {
         let at = format!("{path}.{key}");
         let Some(Value::Array(entries)) = object.get(key) else {
             self.wrong(at, format!("{key} must be an array"));
@@ -198,10 +212,7 @@ impl Judge {
             return;
         };
         if kinds.is_empty() && section.get("kinds").is_some_and(Value::is_array) {
-            self.wrong(
-                format!("{path}.kinds"),
-                "kinds must name at least one kind",
-            );
+            self.wrong(format!("{path}.kinds"), "kinds must name at least one kind");
         }
         let mut seen = BTreeSet::new();
         for (at, kind) in kinds {
@@ -220,7 +231,10 @@ impl Judge {
                 Some(_) => self.wrong(format!("{at}.type"), "type must be a type identifier"),
             }
             self.word(kind, &at, "direction", &DIRECTIONS);
-            if kind.get("default_mapping").is_some_and(|held| !held.is_object()) {
+            if kind
+                .get("default_mapping")
+                .is_some_and(|held| !held.is_object())
+            {
                 self.wrong(
                     format!("{at}.default_mapping"),
                     "default_mapping must be an object",
@@ -254,9 +268,7 @@ impl Judge {
                     Some("text") => default.is_string(),
                     Some("number") => default.is_number(),
                     Some("boolean") => default.is_boolean(),
-                    Some("choice") => default
-                        .as_str()
-                        .is_some_and(|word| choices.contains(&word)),
+                    Some("choice") => default.as_str().is_some_and(|word| choices.contains(&word)),
                     _ => true,
                 };
                 if !fits {

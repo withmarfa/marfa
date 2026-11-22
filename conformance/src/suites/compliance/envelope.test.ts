@@ -252,7 +252,7 @@ describe("one envelope for every list and search", () => {
             parameter.in === "query" && parameter.name === "cursor",
         ),
     );
-    expect(whole).toHaveLength(20);
+    expect(whole).toHaveLength(21);
     for (const door of whole) {
       const body = (await read(door.path(), credentialOf(door))) as Record<
         string,

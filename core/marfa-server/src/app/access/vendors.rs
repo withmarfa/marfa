@@ -35,9 +35,7 @@ pub fn reach_of(tx: &Connection, maker: &Maker, stored: &Grants) -> Result<Grant
     match maker {
         Maker::Owner => Ok(stored.clone()),
         Maker::App(client) => app_key_reach(tx, client, stored),
-        Maker::Unknown | Maker::Host(_) => {
-            Ok(unknown_maker_reach(stored, &vendors::app_held(tx)?))
-        }
+        Maker::Unknown | Maker::Host(_) => Ok(unknown_maker_reach(stored, &vendors::app_held(tx)?)),
     }
 }
 

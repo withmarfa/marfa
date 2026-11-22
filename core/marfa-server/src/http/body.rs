@@ -791,7 +791,7 @@ mod presented_tests {
     async fn a_door_that_asks_no_credential_refuses_a_body_past_its_cap_declared_or_streamed() {
         let instance = start().await;
         let doors = open_body_doors(&instance);
-        assert_eq!(doors.len(), 14, "the witness: {doors:?}");
+        assert_eq!(doors.len(), 15, "the witness: {doors:?}");
         let mut wrong = Vec::new();
         for (method, path) in &doors {
             let cap = open_cap(path);
@@ -830,7 +830,8 @@ mod presented_tests {
     }
 
     #[tokio::test]
-    async fn the_shared_doors_that_ask_nothing_are_the_root_health_document_link_and_claim() {
+    async fn the_shared_doors_that_ask_nothing_are_the_root_health_document_link_claim_and_host_link()
+     {
         let instance = start().await;
         let open: BTreeSet<String> = shared(instance.app.clone())
             .credentials()
@@ -844,6 +845,7 @@ mod presented_tests {
             "GET /health",
             "GET /openapi.json",
             "HEAD /blobs/{hash}/fetch",
+            "POST /connector-hosts/redeem",
             "POST /owner",
         ]
         .map(String::from);

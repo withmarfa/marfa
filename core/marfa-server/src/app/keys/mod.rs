@@ -70,9 +70,7 @@ impl Maker {
             _ => Err(rusqlite::Error::FromSqlConversionFailure(
                 0,
                 rusqlite::types::Type::Integer,
-                Box::new(std::io::Error::other(
-                    "a key names more than one maker",
-                )),
+                Box::new(std::io::Error::other("a key names more than one maker")),
             )),
         }
     }
@@ -567,7 +565,11 @@ pub(crate) fn live_of_host(tx: &Transaction<'_>, host: &str, at: &str) -> Result
 }
 
 /// The oldest live key holding `source` as its own or as a claim.
-pub(crate) fn oldest_holding(tx: &Transaction<'_>, source: &str, at: &str) -> Result<Option<String>> {
+pub(crate) fn oldest_holding(
+    tx: &Transaction<'_>,
+    source: &str,
+    at: &str,
+) -> Result<Option<String>> {
     Ok(live_rows(
         tx,
         &format!(
@@ -590,7 +592,9 @@ fn require_not_plugins<'a>(
 ) -> Result<()> {
     for source in sources {
         if let Some(plugin) = super::connector_hosts::plugin_holding(tx, source)? {
-            return Err(super::connector_hosts::source_held_by_plugin(source, &plugin));
+            return Err(super::connector_hosts::source_held_by_plugin(
+                source, &plugin,
+            ));
         }
     }
     Ok(())

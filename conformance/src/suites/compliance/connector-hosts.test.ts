@@ -269,7 +269,7 @@ describe("redeeming a link", () => {
 });
 
 describe("a host's key", () => {
-  it("refuses the host's key 403 on every door but its own, and its own doors 403 to every other credential", async () => {
+  it("refuses the host's key 401 on every door but its own, and its own doors 403 to every other credential", async () => {
     const { name, type } = await plugin("gated");
     const host = await linkedHost(server, owner, `gated ${fresh()}`);
     expect((await owner.assignConnector(name, host.id)).status).toBe(200);
@@ -310,7 +310,9 @@ describe("a host's key", () => {
       ["assign", () => host.client.assignConnector(name, null)],
     ];
     for (const [label, door] of doors) {
-      expect((await door()).status, label).toBe(403);
+      const refused = await door();
+      expect(refused.status, label).toBe(401);
+      expect(refused.error?.error.code, label).toBe("unauthorized");
     }
     // The witness: its own doors answer it.
     expect((await host.client.connectorHostSelf()).status).toBe(200);

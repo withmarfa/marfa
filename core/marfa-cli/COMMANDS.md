@@ -1478,7 +1478,7 @@ marfa plugins remove [OPTIONS] <NAME>
 Assign a plugin's connector to a connector host, or to none. Moving it revokes the key its former host minted for it. Requires `connectors.manage`.
 
 ```text
-marfa plugins assign [OPTIONS] <NAME|--host <HOST>|--none>
+marfa plugins assign [OPTIONS] <--host <HOST>|--none> <NAME>
 ```
 
 | Argument | Description |

@@ -1,4 +1,4 @@
-//! A connector host's key reaches only the doors that ask for one.
+//! A connector host's key reaches only the doors that ask for one; elsewhere it is no credential.
 
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use super::answer::refusal_answer;
 use super::caller::{bears_token, identify};
 use super::doors::{Asks, Credentials};
 use crate::app::App;
-use crate::app::refusal::{Code, Refusal};
+use crate::app::access::unauthorized;
 
 #[derive(Clone)]
 pub struct Gate {
@@ -35,10 +35,7 @@ pub async fn kept(State(gate): State<Gate>, request: Request, next: Next) -> Res
         && let Ok(Some(caller)) = identify(&mut parts, &gate.app).await
         && caller.host_id().is_some()
     {
-        return refusal_answer(&Refusal::new(
-            Code::Forbidden,
-            "A connector host's key reaches only GET /connector-hosts/self and POST /connector-hosts/self/connectors/{plugin}/key.",
-        ));
+        return refusal_answer(&unauthorized());
     }
     next.run(Request::from_parts(parts, body)).await
 }
