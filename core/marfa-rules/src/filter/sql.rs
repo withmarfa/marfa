@@ -216,7 +216,7 @@ fn json_path<S: Sink>(out: &mut S, name: &str) {
     out.bind(Bind::Text(format!("$.{name}")));
 }
 
-/// A condition on member `name` of the item's `properties`. Against a text literal, a list is judged by its scalar members, each as a whole value, and `neq` holds when none is equal; a number or a range never selects a list.
+/// A condition on member `name` of the item's `properties`. Against a text literal, a list is judged by its scalar members, each as a whole value, and `neq` holds when none is equal; any other comparison reads the whole value.
 fn property<S: Sink>(out: &mut S, items: &Items, name: &str, op: Op, value: &Literal) {
     let source = items.properties();
     items.guarded(out, |out| {

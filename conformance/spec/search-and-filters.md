@@ -584,7 +584,7 @@ When a `filter` compares a property using an operator that takes a value, the se
 
 When a `filter` compares a property whose value is a list with a double-quoted string using `eq`, `contains` or `starts_with`, the server MUST select the items whose list holds at least one member, other than a list or an object, that the condition would select were that member the property's whole value.
 
-**Reason:** `properties.words eq "kitchen"` finds an item whose words include `kitchen`, and `contains "kit"` matches within one member, never within the list's JSON text or across two members. A range or a number still never selects a list (`search-and-filters/filter-range-numbers`, `search-and-filters/filter-range-text`, `search-and-filters/filter-numeric-only`).
+**Reason:** `properties.words eq "kitchen"` finds an item whose words include `kitchen`, and `contains "kit"` matches within one member, never within the list's JSON text or across two members. A range, and `eq` with a number, still select no list (`search-and-filters/filter-range-numbers`, `search-and-filters/filter-range-text`, `search-and-filters/filter-numeric-only`).
 
 **Tests:** `compliance/filter-grammar.test.ts › compares each member of a list, never the list's JSON text`.
 
