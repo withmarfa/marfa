@@ -10,7 +10,8 @@ use crate::folder::Settings;
 use crate::model::{Completeness, Item, ItemState, Rows, SearchHit, Shown, SliceTier, Sort};
 use crate::store::Unreadable;
 use crate::{Core, CoreError, Result, search, store};
-use marfa_rules::catalog::Catalog;
+use marfa_rules::catalog::{Catalog, STATUS_GROUPS};
+use marfa_rules::filter::parse;
 use marfa_rules::recurrence::{DAY, Zone, week_start};
 use marfa_rules::time::{self, civil_from_days, days_from_civil};
 
@@ -170,35 +171,58 @@ impl Core {
         store::read_marked(&mut *self.conn()?, |conn, completeness| {
             let scope = scope(conn, id, completeness)?;
             let group = scope.view.settings.get("group");
-            let by = group.and_then(|g| g.get("by")).and_then(Value::as_str);
-            let bucket = group.and_then(|g| g.get("bucket")).and_then(Value::as_str);
+            let by = named_setting(group, "by")?;
+            let bucket = named_setting(group, "bucket")?;
+            if let Some(field) = by
+                && !groups_by(field)
+            {
+                return Err(invalid(&format!("unsupported group.by {field:?}")));
+            }
             if let Some(bucket) = bucket {
-                if !matches!(bucket, "day" | "week" | "month" | "year") {
-                    return Err(invalid("unknown date bucket"));
-                }
-                if !by.is_some_and(|field| {
-                    matches!(field, "created_at" | "updated_at" | "occurred_at")
-                        || field.starts_with("properties.")
-                }) {
-                    return Err(invalid("a date bucket requires a date field"));
+                match bucket {
+                    "day" | "week" | "month" | "year" => {
+                        if !by.is_some_and(|field| {
+                            matches!(field, "created_at" | "updated_at" | "occurred_at")
+                                || field.starts_with("properties.")
+                        }) {
+                            return Err(invalid(&format!(
+                                "group.bucket {bucket:?} requires a date field in group.by"
+                            )));
+                        }
+                    }
+                    "presence" => {
+                        if !by.is_some_and(|field| {
+                            field == "tags"
+                                || field.starts_with("properties.")
+                                || edge_ref(field).is_some()
+                        }) {
+                            return Err(invalid(
+                                "group.bucket \"presence\" requires tags, a property or an edge type in group.by",
+                            ));
+                        }
+                    }
+                    other => return Err(invalid(&format!("unsupported group.bucket {other:?}"))),
                 }
             }
+            let mut key_values = Vec::new();
             let (key_sql, join) = match by {
                 None => ("'null'".into(), String::new()),
+                Some(field) if bucket == Some("presence") => (
+                    presence_sql(conn, field, &scope.catalog, &mut key_values)?,
+                    String::new(),
+                ),
+                Some("status_group") => (
+                    status_group_sql(&scope.catalog, &mut key_values)?,
+                    String::new(),
+                ),
+                Some("source") => ("json_quote(items.source)".into(), String::new()),
                 Some("tags") => (
                     "json_quote(view_tags.tag)".into(),
                     "LEFT JOIN tags view_tags ON view_tags.item_id = items.id".into(),
                 ),
                 Some(field) if edge_ref(field).is_some() => {
                     let (backref, edge_type) = edge_ref(field).expect("matched edge field");
-                    if !store::whole_edge_types(conn)?
-                        .iter()
-                        .any(|held| held == edge_type)
-                    {
-                        return Err(invalid(&format!(
-                            "this copy cannot group by {field}: edge type {edge_type:?} is not held whole"
-                        )));
-                    }
+                    require_whole(conn, field, edge_type)?;
                     let (own, other) = if backref {
                         ("to_id", "from_id")
                     } else {
@@ -214,8 +238,9 @@ impl Core {
                 }
                 Some(field) => (field_sql(field, &scope.catalog, true)?, String::new()),
             };
-            let reads_properties =
-                by.is_some_and(|field| field == "title" || field.starts_with("properties."));
+            let reads_properties = by.is_some_and(|field| {
+                matches!(field, "title" | "status_group") || field.starts_with("properties.")
+            });
             let readable = if reads_properties {
                 "CASE WHEN json_valid(items.properties) THEN json_type(items.properties) = 'object' ELSE 0 END"
             } else {
@@ -225,11 +250,13 @@ impl Core {
                 "SELECT {key_sql}, {readable}, items.id FROM items {join} WHERE {}",
                 scope.clauses.join(" AND ")
             );
-            let zone = bucket.map(|_| named.clone().unwrap_or_else(device_zone));
+            let zone = bucket
+                .filter(|bucket| *bucket != "presence")
+                .map(|_| named.clone().unwrap_or_else(device_zone));
             let mut statement = conn.prepare(&sql)?;
-            let params = scope
-                .values
+            let params = key_values
                 .iter()
+                .chain(&scope.values)
                 .map(store::sql_value)
                 .collect::<Vec<_>>();
             let mut rows = statement.query(rusqlite::params_from_iter(params.iter()))?;
@@ -284,9 +311,10 @@ impl Core {
                         .copied()
                         .unwrap_or(usize::MAX)
                 };
-                rank(&a.key)
-                    .cmp(&rank(&b.key))
-                    .then_with(|| compare_keys(&a.key, &b.key))
+                rank(&a.key).cmp(&rank(&b.key)).then_with(|| match by {
+                    Some("status_group") => status_rank(&a.key).cmp(&status_rank(&b.key)),
+                    _ => compare_keys(&a.key, &b.key),
+                })
             });
             Ok(Rows { rows, completeness })
         })
@@ -346,6 +374,86 @@ fn scope(conn: &Connection, id: &str, completeness: Completeness) -> Result<Scop
         clauses,
         values,
     })
+}
+
+fn named_setting<'a>(group: Option<&'a Value>, name: &str) -> Result<Option<&'a str>> {
+    match group.and_then(|g| g.get(name)) {
+        None => Ok(None),
+        Some(Value::String(text)) => Ok(Some(text)),
+        Some(other) => Err(invalid(&format!("unsupported group.{name} {other}"))),
+    }
+}
+
+fn groups_by(field: &str) -> bool {
+    matches!(
+        field,
+        "tags"
+            | "title"
+            | "created_at"
+            | "updated_at"
+            | "occurred_at"
+            | "type"
+            | "state"
+            | "tier"
+            | "source"
+            | "status_group"
+    ) || edge_ref(field).is_some()
+        || (field.starts_with("properties.") && property_name(field).is_ok())
+}
+
+fn require_whole(conn: &Connection, field: &str, edge_type: &str) -> Result<()> {
+    if store::whole_edge_types(conn)?
+        .iter()
+        .any(|held| held == edge_type)
+    {
+        return Ok(());
+    }
+    Err(not_held_whole(field, edge_type))
+}
+
+fn not_held_whole(field: &str, edge_type: &str) -> CoreError {
+    invalid(&format!(
+        "this copy cannot group by {field}: edge type {edge_type:?} is not held whole"
+    ))
+}
+
+/// `true` where `<field> exists` selects the item, compiled by the filter's own rules.
+fn presence_sql(
+    conn: &Connection,
+    field: &str,
+    catalog: &Catalog,
+    values: &mut Vec<Value>,
+) -> Result<String> {
+    let held = store::whole_edge_types(conn)?;
+    if let Some((_, edge_type)) = edge_ref(field)
+        && !held.iter().any(|whole| whole == edge_type)
+    {
+        return Err(not_held_whole(field, edge_type));
+    }
+    let expression = parse(&format!("{field} exists"))?;
+    let predicate = crate::filter::expression_clause(&expression, values, &held, catalog)?;
+    Ok(format!(
+        "CASE WHEN {predicate} THEN 'true' ELSE 'false' END"
+    ))
+}
+
+fn status_group_sql(catalog: &Catalog, values: &mut Vec<Value>) -> Result<String> {
+    let mut cases = String::new();
+    for group in STATUS_GROUPS {
+        let expression = parse(&format!("status_group eq {}", Value::String(group.into())))?;
+        let predicate = crate::filter::expression_clause(&expression, values, &[], catalog)?;
+        cases.push_str(&format!(
+            " WHEN {predicate} THEN {}",
+            quoted(&Value::String(group.into()).to_string())
+        ));
+    }
+    Ok(format!("CASE{cases} ELSE 'null' END"))
+}
+
+fn status_rank(key: &Value) -> usize {
+    key.as_str()
+        .and_then(|group| STATUS_GROUPS.iter().position(|named| *named == group))
+        .unwrap_or(STATUS_GROUPS.len())
 }
 
 fn view_error(error: CoreError) -> CoreError {
@@ -1089,6 +1197,82 @@ mod tests {
                 .to_string()
                 .contains("Unknown status group")
         );
+    }
+
+    fn group_keys(core: &Core) -> Vec<(Value, u64)> {
+        core.view_groups("view", None)
+            .unwrap()
+            .rows
+            .into_iter()
+            .map(|group| (group.key, group.count))
+            .collect()
+    }
+
+    #[test]
+    fn status_groups_come_out_in_group_order_with_no_status_last() {
+        let core = copy();
+        {
+            let conn = core.conn().unwrap();
+            let mut note = wire_type("core.note", None, Some("title"));
+            note.rest.insert(
+                "fields".into(),
+                json!({ "status": { "type": "status", "status_values": [
+                    { "value": "todo", "group": "not_started" },
+                    { "value": "doing", "group": "in_progress" },
+                    { "value": "done", "group": "completed" },
+                    { "value": "dropped", "group": "canceled" }
+                ] } }),
+            );
+            store::replace_types(&conn, &[note, wire_type("system.view", None, None)]).unwrap();
+        }
+        for (id, status) in [
+            ("a", "dropped"),
+            ("b", "done"),
+            ("c", "doing"),
+            ("d", "todo"),
+        ] {
+            put(&core, id, json!({ "status": status }), &[]);
+        }
+        put(&core, "e", json!({ "status": "pending" }), &[]);
+        view(&core, json!({ "group": { "by": "status_group" } }));
+        assert_eq!(
+            group_keys(&core),
+            [
+                (json!("not_started"), 1),
+                (json!("in_progress"), 1),
+                (json!("completed"), 1),
+                (json!("canceled"), 1),
+                (Value::Null, 1),
+            ]
+        );
+        view(
+            &core,
+            json!({ "group": { "by": "status_group", "order": [null, "canceled"] } }),
+        );
+        assert_eq!(
+            group_keys(&core)[..2],
+            [(Value::Null, 1), (json!("canceled"), 1)]
+        );
+    }
+
+    #[test]
+    fn presence_counts_an_empty_list_and_an_empty_string_as_set_and_each_item_once() {
+        let core = copy();
+        put(&core, "a", json!({ "when": [] }), &["x", "y"]);
+        put(&core, "b", json!({ "when": "" }), &[]);
+        put(&core, "c", json!({ "when": null }), &["x"]);
+        put(&core, "d", json!({}), &[]);
+        for (by, expected) in [("properties.when", (2, 2)), ("tags", (2, 2))] {
+            view(
+                &core,
+                json!({ "group": { "by": by, "bucket": "presence" } }),
+            );
+            assert_eq!(
+                group_keys(&core),
+                [(json!(false), expected.0), (json!(true), expected.1)],
+                "{by}"
+            );
+        }
     }
 
     /// As on the server: a hidden item is never listed, and the walk beneath an item still passes

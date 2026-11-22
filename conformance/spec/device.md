@@ -6146,6 +6146,14 @@ When a caller lists views or reads a held view by ID, a device MUST return the h
 
 **Tests:** `device/views.test.ts › reads the saved views and their settings offline`, `device/listing-unlisted-pins.test.ts › leaves a pinned view the server did not list out of the views list, and still reads it by id`.
 
+### `device/view-read-whole`
+
+When a caller reads a held view, a device MUST return its settings as held, including a `group` whose `by` or `bucket` this chapter does not define.
+
+**Reason:** a view saved by a newer app stays readable, listable, and searchable by an older one.
+
+**Tests:** `device/views.test.ts › reads, lists and searches a view with a group this device does not define, and refuses only its groups`.
+
 ### `device/view-sort-property`
 
 When a caller reads a view sorted by a property, a device MUST order its items as `search-and-filters/sort-property-ascending`, `search-and-filters/sort-property-descending`, `search-and-filters/sort-property-missing`, and `search-and-filters/sort-property-ties` specify.
@@ -6186,25 +6194,25 @@ When a caller pages a view's sorted items with a limit and offset, a device MUST
 
 ### `device/view-group-value`
 
-When a caller reads a view's groups by a field, a device MUST return one group per distinct scalar value and a null group for missing, null, object, or array values, with each group's item count.
+When a caller reads a view's groups by a field with no bucket, a device MUST return one group per distinct scalar value and a null group for missing, null, object, or array values, with each group's item count.
 
 **Tests:** `device/views.test.ts › counts scalar and missing groups`.
 
 ### `device/view-group-tags`
 
-When a caller reads a view grouped by tags, a device MUST count each item once in every tag group it belongs to and each untagged item once in the null group.
+When a caller reads a view grouped by tags with no bucket, a device MUST count each item once in every tag group it belongs to and each untagged item once in the null group.
 
 **Tests:** `device/views.test.ts › counts an item in each tag group and honors ordered and hidden groups`.
 
 ### `device/view-group-order`
 
-When a caller reads a view's groups, a device MUST return the groups named by `group.order` first in that order, followed by remaining scalar groups in ascending value order and the null group last.
+When a caller reads a view's groups, a device MUST return the groups named by `group.order` first in that order, where `null` names the null group, followed by the remaining groups in ascending value order with `false` before `true`, or for a view grouped by `status_group` in the order `device/view-group-status-order` states, and the null group last unless `group.order` names it.
 
-**Tests:** `device/views.test.ts › counts scalar and missing groups`, `› counts an item in each tag group and honors ordered and hidden groups`.
+**Tests:** `device/views.test.ts › counts scalar and missing groups`, `› counts an item in each tag group and honors ordered and hidden groups`, `› orders the null group where order names it`.
 
 ### `device/view-group-hidden`
 
-When a view names `group.hidden`, a device MUST omit those groups from its group answer without narrowing the view's item listing.
+When a view names `group.hidden`, a device MUST omit those groups from its group answer, where `null` names the null group, without narrowing the view's item listing.
 
 **Tests:** `device/views.test.ts › counts an item in each tag group and honors ordered and hidden groups`.
 
@@ -6216,9 +6224,57 @@ Where the copy holds the named edge type whole, when a caller reads a view group
 
 ### `device/view-group-edge-refusal`
 
-If a view groups by an edge type the copy does not hold whole, then a device MUST refuse its groups with `invalid`, naming the edge type and the need to hold it whole.
+If a view groups by an edge type the copy does not hold whole, with or without the `presence` bucket, then a device MUST refuse its groups with `invalid`, naming the edge type and the need to hold it whole.
 
-**Tests:** `device/views.test.ts › groups by each %s other end only with the edge type held whole`.
+**Tests:** `device/views.test.ts › groups by each %s other end only with the edge type held whole`, `› groups by presence of a property, tags, an edge and a backref, matching exists`.
+
+### `device/view-group-bucket-field`
+
+If a view's `group.bucket` is `presence` and its `group.by` is not `tags`, `properties.<name>`, `edge[<type>]` or `backref[<type>]`, then a device MUST refuse its groups with `invalid`, naming `group.bucket` and the bucket.
+
+**Reason:** only those fields can lack a value: the system fields always hold one (`search-and-filters/filter-system-presence`), the filter has no `title exists` term, and `status_group` already has a null group.
+
+**Tests:** `device/views.test.ts › groups by presence of a property, tags, an edge and a backref, matching exists`.
+
+### `device/view-group-presence`
+
+When a caller reads a view grouped with the `presence` bucket on `tags`, `properties.<name>`, or an edge type the copy holds whole, a device MUST put in the group `true` each item that `<group.by> exists` selects, and in the group `false` every other item the view lists, with no null group.
+
+**Reason:** a group and the filter it suggests then select the same items, so an empty string, an empty list and an object count as set, and a missing value and a JSON null do not.
+
+**Tests:** `device/views.test.ts › groups by presence of a property, tags, an edge and a backref, matching exists`.
+
+### `device/view-group-status`
+
+When a caller reads a view grouped by `status_group`, a device MUST put each item in the group `"not_started"`, `"in_progress"`, `"completed"`, or `"canceled"` that `device/filter-status-group` resolves for it, and in the null group each item that `status_group not_exists` selects.
+
+**Tests:** `device/views.test.ts › groups by status group across types with different words, with no status last`.
+
+### `device/view-group-status-order`
+
+When a caller reads a view grouped by `status_group`, a device MUST return the groups that `group.order` does not name in the order `not_started`, `in_progress`, `completed`, `canceled`, with the null group last.
+
+**Reason:** ascending text order would put `canceled` first.
+
+**Tests:** `device/views.test.ts › groups by status group across types with different words, with no status last`.
+
+### `device/view-group-source`
+
+When a caller reads a view grouped by `source`, a device MUST put each item in the group named by its source, and return the groups that `group.order` does not name in ascending text order.
+
+**Tests:** `device/views.test.ts › groups by source in ascending text order after the groups group.order names`.
+
+### `device/view-group-unknown`
+
+If a view's `group.by` or `group.bucket` is one that this chapter does not define, then a device MUST refuse its groups with `invalid`, naming that setting and its value.
+
+**Tests:** `device/views.test.ts › reads, lists and searches a view with a group this device does not define, and refuses only its groups`.
+
+### `device/view-group-unknown-items`
+
+If a view's `group.by` or `group.bucket` is one that this chapter does not define, then a device MUST answer the view's item list and search as it answers the view with no `group`.
+
+**Tests:** `device/views.test.ts › reads, lists and searches a view with a group this device does not define, and refuses only its groups`.
 
 ### `device/view-date-bucket`
 

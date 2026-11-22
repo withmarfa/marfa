@@ -43,6 +43,7 @@ async function copy(
     whole?: string[];
     slice?: string[];
     tier?: "library" | "all";
+    types?: Array<Record<string, unknown>>;
     partial?: boolean;
     replay?: (cursor: string) => Answer;
   } = {},
@@ -69,10 +70,17 @@ async function copy(
         ({ item }) => !item.type || item.type === "core.note",
       ),
       "core.task": items.filter(({ item }) => item.type === "core.task"),
+      ...Object.fromEntries(
+        (options.types ?? []).map(({ id: type }) => [
+          type as string,
+          items.filter(({ item }) => item.type === type),
+        ]),
+      ),
     },
     catalog: typeCatalog([
       { id: "system.view", version: 0, fields: {} },
       { id: "core.task", version: 0, fields: {} },
+      ...(options.types ?? []),
     ]),
     edges: {
       references: [
@@ -578,4 +586,287 @@ it("reads a view's sort and ignores layouts stored with it", async () => {
   );
   expect(await listed()).toEqual([2, 3, 1].map(id));
   expect(await groups()).toEqual([{ key: null, count: 3 }]);
+});
+
+async function refusedGroups(): Promise<string> {
+  const refused = await harness!.device.attempt(["views", "groups", VIEW]);
+  expect(refused.ok, JSON.stringify(refused)).toBe(false);
+  if (refused.ok) throw new Error("groups were answered");
+  expect(refused.refusal.code).toBe("invalid");
+  return refused.refusal.raw;
+}
+
+it("groups by presence of a property, tags, an edge and a backref, matching exists", async () => {
+  const set = { when: "2026-01-01" };
+  const items = [
+    { item: { id: id(1), properties: set }, tags: ["a"] },
+    { item: { id: id(2), properties: { when: "" } }, tags: [] },
+    { item: { id: id(3), properties: { when: [] } }, tags: ["a", "b"] },
+    { item: { id: id(4), properties: { when: null } } },
+    { item: { id: id(5), properties: {} } },
+    { item: { id: id(6), properties: { when: {} } } },
+  ];
+  // The edges are 1 to 2, 1 to 3 and 2 to 3, so 1 and 2 draw one and 2 and 3 receive one.
+  const cases: Array<[string, number[]]> = [
+    ["properties.when", [1, 2, 3, 6]],
+    ["tags", [1, 3]],
+    ["edge[references]", [1, 2]],
+    ["backref[references]", [2, 3]],
+  ];
+  for (const [by, members] of cases) {
+    const query = (filter: string) => ({ filter });
+    const whole = { whole: ["references"] };
+    await copy(items, {}, { query: query(`${by} exists`), ...whole });
+    const exists = (await listed()).sort();
+    expect(exists, `${by} exists`).toEqual(members.map(id));
+    await copy(items, {}, { query: query(`${by} not_exists`), ...whole });
+    const missing = (await listed()).sort();
+    expect(missing, `${by} not_exists`).toEqual(
+      [1, 2, 3, 4, 5, 6].filter((n) => !members.includes(n)).map(id),
+    );
+    await copy(items, { group: { by, bucket: "presence" } }, whole);
+    expect(await groups(), by).toEqual([
+      { key: false, count: missing.length },
+      { key: true, count: exists.length },
+    ]);
+    await copy(
+      items,
+      { group: { by, bucket: "presence", order: [true], hidden: [false] } },
+      whole,
+    );
+    expect(await groups(), `${by} ordered and hidden`).toEqual([
+      { key: true, count: exists.length },
+    ]);
+    await copy(
+      items,
+      { group: { by, bucket: "presence", order: [true] } },
+      whole,
+    );
+    expect((await groups()).map((group) => group.key)).toEqual([true, false]);
+  }
+  // An edge type the copy does not hold whole is refused by name, and a bucket
+  // on any other field is refused naming the bucket.
+  await copy(items, { group: { by: "edge[references]", bucket: "presence" } });
+  expect(await refusedGroups()).toMatch(/references.*whole|whole.*references/);
+  await copy(items, { group: { by: "created_at", bucket: "presence" } });
+  expect(await refusedGroups()).toContain("group.bucket");
+  await copy(items, { group: { by: "status_group", bucket: "presence" } });
+  expect(await refusedGroups()).toContain("group.bucket");
+});
+
+const WORDS = [
+  { value: "todo", group: "not_started" },
+  { value: "doing", group: "in_progress" },
+  { value: "done", group: "completed" },
+  { value: "dropped", group: "canceled" },
+];
+const statusTypes = [
+  {
+    id: "fixture.task",
+    version: 0,
+    fields: { stage: { type: "status", status_values: WORDS } },
+  },
+  {
+    id: "fixture.sprint",
+    version: 0,
+    fields: {
+      phase: {
+        type: "status",
+        status_values: [
+          { value: "backlog", group: "not_started" },
+          { value: "active", group: "in_progress" },
+          { value: "shipped", group: "completed" },
+          { value: "abandoned", group: "canceled" },
+        ],
+      },
+    },
+  },
+];
+const statusItem = (
+  n: number,
+  type: string,
+  properties: Record<string, unknown>,
+) => ({ item: { id: id(n), type, properties } });
+const statusOptions = {
+  types: statusTypes,
+  query: { types: ["fixture.task", "fixture.sprint"] },
+  slice: ["system.view", "fixture.task", "fixture.sprint"],
+};
+
+it("groups by status group across types with different words, with no status last", async () => {
+  const items = [
+    statusItem(1, "fixture.task", { stage: "todo" }),
+    statusItem(2, "fixture.task", { stage: "doing" }),
+    statusItem(3, "fixture.task", { stage: "done" }),
+    statusItem(4, "fixture.task", { stage: "done" }),
+    statusItem(5, "fixture.sprint", { phase: "abandoned" }),
+    statusItem(6, "fixture.sprint", { phase: "backlog" }),
+    statusItem(7, "fixture.sprint", { phase: "shipped" }),
+    // No status, and a word the type does not declare (the sprint's word on a task).
+    statusItem(8, "fixture.task", {}),
+    statusItem(9, "fixture.task", { stage: "backlog" }),
+  ];
+  const group = (settings: Settings) =>
+    copy(items, { group: { by: "status_group", ...settings } }, statusOptions);
+  await group({});
+  expect(await groups()).toEqual([
+    { key: "not_started", count: 2 },
+    { key: "in_progress", count: 1 },
+    { key: "completed", count: 3 },
+    { key: "canceled", count: 1 },
+    { key: null, count: 2 },
+  ]);
+  // Each group holds the items the filter term selects.
+  const filters: Array<[string, number]> = [
+    ['status_group eq "not_started"', 2],
+    ['status_group eq "in_progress"', 1],
+    ['status_group eq "completed"', 3],
+    ['status_group eq "canceled"', 1],
+    ["status_group not_exists", 2],
+  ];
+  for (const [filter, count] of filters) {
+    await copy(
+      items,
+      {},
+      { ...statusOptions, query: { ...statusOptions.query, filter } },
+    );
+    expect(await listed(), filter).toHaveLength(count);
+  }
+  await group({ order: ["completed"] });
+  expect((await groups()).map((entry) => entry.key)).toEqual([
+    "completed",
+    "not_started",
+    "in_progress",
+    "canceled",
+    null,
+  ]);
+  await group({ hidden: [null, "canceled"] });
+  expect((await groups()).map((entry) => entry.key)).toEqual([
+    "not_started",
+    "in_progress",
+    "completed",
+  ]);
+  // Only the groups that hold items are answered.
+  await copy(
+    items.slice(0, 1).concat(items.slice(2, 3)),
+    { group: { by: "status_group" } },
+    statusOptions,
+  );
+  expect(await groups()).toEqual([
+    { key: "not_started", count: 1 },
+    { key: "completed", count: 1 },
+  ]);
+  await group({ bucket: "day" });
+  expect(await refusedGroups()).toContain("group.bucket");
+});
+
+it("groups by source in ascending text order after the groups group.order names", async () => {
+  const items = [
+    ["zeta", 1],
+    ["inkwell", 2],
+    ["zeta", 3],
+    ["alpha", 4],
+    ["zeta", 5],
+    ["inkwell", 6],
+  ].map(([source, n]) => ({
+    item: { id: id(n as number), source: source as string },
+  }));
+  await copy(items, { group: { by: "source" } });
+  expect(await groups()).toEqual([
+    { key: "alpha", count: 1 },
+    { key: "inkwell", count: 2 },
+    { key: "zeta", count: 3 },
+  ]);
+  await copy(items, { group: { by: "source", order: ["zeta"] } });
+  expect((await groups()).map((entry) => entry.key)).toEqual([
+    "zeta",
+    "alpha",
+    "inkwell",
+  ]);
+  await copy(items, { group: { by: "source", hidden: ["alpha"] } });
+  expect((await groups()).map((entry) => entry.key)).toEqual([
+    "inkwell",
+    "zeta",
+  ]);
+});
+
+it("orders the null group where order names it", async () => {
+  const items = [
+    { item: { id: id(1), properties: { status: "open" } } },
+    { item: { id: id(2), properties: { status: "open" } } },
+    { item: { id: id(3), properties: { status: "closed" } } },
+    { item: { id: id(4), properties: {} } },
+  ];
+  // The witness: with no order the null group is last.
+  await copy(items, { group: { by: "properties.status" } });
+  expect((await groups()).map((entry) => entry.key)).toEqual([
+    "closed",
+    "open",
+    null,
+  ]);
+  await copy(items, { group: { by: "properties.status", order: [null] } });
+  expect(await groups()).toEqual([
+    { key: null, count: 1 },
+    { key: "closed", count: 1 },
+    { key: "open", count: 2 },
+  ]);
+  await copy(items, {
+    group: { by: "properties.status", order: ["open", null] },
+  });
+  expect((await groups()).map((entry) => entry.key)).toEqual([
+    "open",
+    null,
+    "closed",
+  ]);
+});
+
+it("reads, lists and searches a view with a group this device does not define, and refuses only its groups", async () => {
+  const items = [3, 1, 2].map((n) => ({
+    item: { id: id(n), properties: { when: "2026-03-29T10:00:00Z", rank: n } },
+  }));
+  const sort = [{ by: "properties.rank", direction: "asc" }];
+  const answers = async () => ({
+    list: value(
+      await harness!.device.attempt(["items", "list", "--view", VIEW]),
+    ),
+    search: value(
+      await harness!.device.attempt(["search", "body", "--view", VIEW]),
+    ),
+  });
+  await copy(items, { sort });
+  const ungrouped = await answers();
+  expect(
+    (ungrouped.list as { data: unknown[] }).data,
+    "the witness lists items",
+  ).toHaveLength(3);
+  // The witness: a bucket this device defines answers its groups.
+  await copy(items, { sort, group: { by: "properties.when", bucket: "day" } });
+  expect(await groups("UTC")).toEqual([{ key: "2026-03-29", count: 3 }]);
+  for (const [group, setting, named] of [
+    [
+      { by: "properties.when", bucket: "fortnight" },
+      "group.bucket",
+      "fortnight",
+    ],
+    [
+      { by: "properties.when", bucket: "fortnight", order: ["x"] },
+      "group.bucket",
+      "fortnight",
+    ],
+    [{ by: "last_seen" }, "group.by", "last_seen"],
+    [{ by: "last_seen", bucket: "day" }, "group.by", "last_seen"],
+    [{ by: "last_seen", bucket: "presence" }, "group.by", "last_seen"],
+    [{ by: "last_activity_at" }, "group.by", "last_activity_at"],
+    [{ by: "properties.rank", bucket: 7 }, "group.bucket", "7"],
+  ] as const) {
+    const device = await copy(items, { sort, group });
+    expect(
+      value(await device.attempt(["views", "get", VIEW])),
+      JSON.stringify(group),
+    ).toMatchObject({ settings: { group } });
+    expect(await answers(), JSON.stringify(group)).toEqual(ungrouped);
+    const message = await refusedGroups();
+    expect(message, JSON.stringify(group)).toContain(setting);
+    expect(message, JSON.stringify(group)).toContain(named);
+  }
 });
