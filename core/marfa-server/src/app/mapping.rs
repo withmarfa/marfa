@@ -1,19 +1,21 @@
 //! The owner's mapping of a plugin connector's kinds, and the rewrites the owner asks of it.
 
-use arc_swap::ArcSwap;
+use std::collections::BTreeSet;
+use std::sync::{Mutex, PoisonError};
+
 use marfa_rules::catalog::Catalog as Rules;
 use marfa_rules::connector::{self, Connector, Kinds};
 use marfa_rules::schema::Problem;
 use rusqlite::{OptionalExtension, Transaction, params};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::App;
 use super::access::{Caller, Level, Mapped};
-use super::catalog::{self, Catalog, Snapshot};
+use super::catalog::{self, Snapshot};
+use super::connector_hosts;
 use super::items::{self, reading};
 use super::plugins::{self, Installed};
 use super::refusal::{Code, Refusal, Result};
-use super::unit::Unit;
 
 fn no_connector(name: &str) -> Refusal {
     Refusal::new(
@@ -101,7 +103,7 @@ fn saved(tx: &Transaction<'_>, plugin: &str) -> Result<Option<Saved>> {
             .and_then(connector::stored)
             .map(|kinds| Saved { version, kinds })
             .ok_or_else(|| {
-                Refusal::internal(&format!(
+                Refusal::unread(&format!(
                     "the stored mapping of plugin {plugin} does not read"
                 ))
             })
@@ -160,49 +162,46 @@ fn answered(
     }))
 }
 
-/// Refuses a bundle whose connector holds a `default_mapping` a save would refuse, judged against
-/// the bundle's types as the install registers them.
-pub fn require_defaults(
-    unit: &Unit<'_, '_>,
-    cache: &ArcSwap<Catalog>,
-    bundle: &Map<String, Value>,
-) -> Result<()> {
-    let catalog = catalog::current(cache, unit.tx(), Snapshot::Pending)?;
-    let problems = connector::default_faults(bundle, &catalog.rules, |target| {
-        unit.caller.require_type(target, Level::Write).is_ok()
-    });
-    if problems.is_empty() {
-        return Ok(());
+static REPORTED: Mutex<BTreeSet<(String, &'static str)>> = Mutex::new(BTreeSet::new());
+
+/// Logs once per plugin that its connector or mapping does not read, so its key reaches nothing
+/// through the mapping.
+fn unread(plugin: &str, what: &'static str) {
+    let first = REPORTED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert((plugin.to_string(), what));
+    if first {
+        tracing::error!(
+            plugin,
+            what,
+            "A plugin's stored connector or mapping does not read, so its key reaches nothing through the mapping"
+        );
     }
-    let named: Vec<&str> = problems
-        .iter()
-        .map(|problem| problem.path.as_str())
-        .collect();
-    Err(Refusal::validation(format!(
-        "The plugin's connector holds a default mapping this server refuses: {}.",
-        named.join(", ")
-    ))
-    .with_detail(
-        "errors",
-        problems
-            .iter()
-            .map(|problem| json!({ "path": problem.path, "message": problem.message }))
-            .collect::<Vec<_>>(),
-    ))
 }
 
-/// What the key holding `source` reaches through a plugin's mapping, if a plugin's connector holds it.
+/// What the key holding `source` reaches through a plugin's mapping, where a plugin's connector
+/// holds the source. A connector or mapping that does not read reaches nothing beyond the key's
+/// type map, and the key stays a plugin's connector key.
 pub fn reach(tx: &Transaction<'_>, source: &str) -> Result<Option<Mapped>> {
-    let Some(installed) = plugins::holding_source(tx, source)? else {
+    let Some(plugin) = connector_hosts::plugin_holding(tx, source)? else {
         return Ok(None);
     };
-    let Some(connector) = connector::connector_of(&installed.manifest) else {
-        return Ok(None);
+    let connector = plugins::find(tx, &plugin)?
+        .and_then(|installed| connector::connector_of(&installed.manifest))
+        .filter(|connector| connector.source == source);
+    let Some(connector) = connector else {
+        unread(&plugin, "connector");
+        return Ok(Some(Mapped::default()));
     };
-    if connector.source != source {
-        return Ok(None);
-    }
-    let held = saved(tx, &installed.name)?;
+    let held = match saved(tx, &plugin) {
+        Ok(held) => held,
+        Err(refused) if refused.unread => {
+            unread(&plugin, "mapping");
+            return Ok(Some(Mapped::default()));
+        }
+        Err(refused) => return Err(refused),
+    };
     let kinds = connector::in_force(held.as_ref().map(|held| &held.kinds), &connector, None);
     Ok(Some(Mapped::of(&kinds, &connector)))
 }

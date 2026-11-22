@@ -611,7 +611,7 @@ impl Rows {
                 });
             }
             "plugin" => {
-                let archived = plugins::archived(body).map_err(|why| {
+                let archived = plugins::archived(body, row).map_err(|why| {
                     invalid(format!(
                         "Line {row} of {INSTANCE} holds a plugin that {why}."
                     ))

@@ -1350,10 +1350,77 @@ marfa edge-types delete [OPTIONS] <ID>
 | --- | --- |
 | `<ID>` | The edge type id. |
 
+## hosts
+
+Connector hosts, the machines that run connectors: make one and print its one-time link, list, read, link again and remove them.
+
+### marfa hosts
+
+```text
+marfa hosts [OPTIONS] <COMMAND>
+```
+
+### marfa hosts add
+
+Make a connector host, a machine that runs connectors, and print its one-time link. Give the link to the host program once, within 15 minutes. Requires `connectors.manage`.
+
+```text
+marfa hosts add [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The name people see for the host, such as the machine's. |
+
+### marfa hosts list
+
+Every connector host, with the connectors assigned to each. Requires `connectors.manage`.
+
+```text
+marfa hosts list [OPTIONS]
+```
+
+### marfa hosts get
+
+One connector host, with the connectors assigned to it. Requires `connectors.manage`.
+
+```text
+marfa hosts get [OPTIONS] <HOST>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<HOST>` | The host's ID or name. |
+
+### marfa hosts link
+
+Make a fresh one-time link for a host, to move it to a new machine. Redeeming it revokes the host's key. Requires `connectors.manage`.
+
+```text
+marfa hosts link [OPTIONS] <HOST>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<HOST>` | The host's ID or name. |
+
+### marfa hosts remove
+
+Remove a host: revoke its key and every connector key it minted, and assign its connectors to no host. Requires `connectors.manage`.
+
+```text
+marfa hosts remove [OPTIONS] <HOST>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<HOST>` | The host's ID or name. |
+
 ## plugins
 
 Plugins: install one, by name or from a file or folder, assign its connector to a host, set its connector's settings and secrets, list and remove them, and check or build a plugin's source folder.
 Plugins: install one, by name or from a file or folder, list and remove them, and check or build a plugin's source folder.
+Plugins: install one, by name or from a file or folder, assign its connector to a host, list and remove them, and check or build a plugin's source folder.
 
 ### marfa plugins
 
@@ -1363,7 +1430,7 @@ marfa plugins [OPTIONS] <COMMAND>
 
 ### marfa plugins install
 
-Install a plugin by name from the latest plugins release, from a bundle file, or from a source folder. Requires `schema.write` and write access to each type and each forward and reverse edge name. A bundle with a connector also requires `connectors.manage`. A newer version may only add to its types.
+Install a plugin by name from the latest plugins release, from a bundle file, or from a source folder. Requires `schema.write` and write access to each type and each forward and reverse edge name. A bundle with a connector also requires `connectors.manage`, and `--host` assigns the connector to a connector host. A newer version may only add to its types and keeps its connector's source.
 
 ```text
 marfa plugins install [OPTIONS] <NAME_OR_PATH>
@@ -1376,6 +1443,7 @@ marfa plugins install [OPTIONS] <NAME_OR_PATH>
 | Option | Description |
 | --- | --- |
 | `--version <VERSION>` | The version a source folder is built at, such as `1.4.0`. A folder installs at `0.0.0` without it. |
+| `--host <HOST>` | The connector host, by ID or name, to assign the plugin's connector to once it is installed. |
 
 ### marfa plugins list
 
@@ -1399,7 +1467,7 @@ marfa plugins get [OPTIONS] <NAME>
 
 ### marfa plugins remove
 
-Remove a plugin's install record. Its types, edge types and items stay, and keep saying which plugin they came from. Needs `schema.write`.
+Remove a plugin's install record. Its types, edge types and items stay, and keep saying which plugin they came from. A connector stops: its key is revoked and its registrations go, and its source keeps its state and agreements. Needs `schema.write`, and `connectors.manage` for a plugin with a connector.
 
 ```text
 marfa plugins remove [OPTIONS] <NAME>
@@ -1408,6 +1476,23 @@ marfa plugins remove [OPTIONS] <NAME>
 | Argument | Description |
 | --- | --- |
 | `<NAME>` | The plugin's name. |
+
+### marfa plugins assign
+
+Assign a plugin's connector to a connector host, or to none. Moving it revokes the key its former host minted for it. Requires `connectors.manage`.
+
+```text
+marfa plugins assign [OPTIONS] <--host <HOST>|--none> <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+
+| Option | Description |
+| --- | --- |
+| `--host <HOST>` | The connector host, by ID or name, to run the connector. |
+| `--none` | Assign the connector to no host. |
 
 ### marfa plugins mapping
 

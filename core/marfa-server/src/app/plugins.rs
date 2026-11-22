@@ -137,23 +137,6 @@ pub fn find(tx: &Transaction<'_>, name: &str) -> Result<Option<Installed>> {
     row(tx, name)
 }
 
-/// The one installed plugin whose bundle names `source` as its connector's, if exactly one does.
-pub fn holding_source(tx: &Transaction<'_>, source: &str) -> Result<Option<Installed>> {
-    let mut statement = tx.prepare_cached(
-        "SELECT name, version, manifest, edge_types, fingerprint, installed_at, installed_by, \
-         updated_at FROM plugins WHERE json_extract(manifest, '$.connector.source') = ?1 LIMIT 2",
-    )?;
-    let found = statement.query_map([source], stored)?;
-    let mut held = Vec::new();
-    for read in found {
-        held.push(read_row(read?)?);
-    }
-    Ok(match held.len() {
-        1 => held.pop(),
-        _ => None,
-    })
-}
-
 fn rows(tx: &Transaction<'_>) -> Result<Vec<Installed>> {
     let mut statement = tx.prepare(
         "SELECT name, version, manifest, edge_types, fingerprint, installed_at, installed_by, \
@@ -210,6 +193,21 @@ fn presented(tx: &Transaction<'_>, installed: &Installed, catalog: &Catalog) -> 
 
 fn connector_of(bundle: &Obj) -> Option<&Obj> {
     bundle.get("connector").and_then(Value::as_object)
+}
+
+/// Each `default_mapping` of the bundle's connector a save of the mapping would refuse, judged on
+/// the types `catalog` holds and the caller's write.
+fn default_faults(caller: &Caller, catalog: &Catalog, bundle: &Obj) -> Vec<Problem> {
+    connector_of(bundle).map_or_else(Vec::new, |section| {
+        marfa_rules::plugin_connector::default_faults(section, &catalog.rules, |target| {
+            caller.require_type(target, Level::Write).is_ok()
+        })
+    })
+}
+
+fn paths_of(faults: &[Problem]) -> String {
+    let named: Vec<&str> = faults.iter().map(|fault| fault.path.as_str()).collect();
+    named.join(", ")
 }
 
 /// A later version keeps its connector and the connector's source.
@@ -447,7 +445,15 @@ pub async fn install(
             edge_types::install(unit, &catalog, &bundle_objects(&bundle, "edge_types"))?;
             let before = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             types::write::write_install(unit, &cache, &before, plan, &origin)?;
-            super::mapping::require_defaults(unit, &cache, &bundle)?;
+            let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
+            let faults = default_faults(caller, &after, &bundle);
+            if !faults.is_empty() {
+                return Err(Refusal::validation(format!(
+                    "The plugin's connector holds a default mapping this server refuses: {}.",
+                    paths_of(&faults)
+                ))
+                .with_detail("errors", problems_json(&faults)));
+            }
             let manifest = Value::Object(bundle.clone()).to_string();
             let mut brought = held.as_ref().map(|held| held.edge_types.clone()).unwrap_or_default();
             for id in bundle_ids(&bundle, "edge_types") {
@@ -539,6 +545,8 @@ pub async fn remove(app: &App, caller: &Caller, name: String) -> Result<Value> {
 pub struct Archived {
     pub name: String,
     line: Installed,
+    /// Its line in `instance.ndjson.gz`.
+    row: usize,
 }
 
 pub fn archive_lines(tx: &Transaction<'_>) -> Result<Vec<Value>> {
@@ -571,7 +579,7 @@ pub fn is_actor(value: &Value) -> bool {
         && text("name").is_some()
 }
 
-pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
+pub fn archived(body: &Value, row: usize) -> std::result::Result<Archived, String> {
     let line = body.as_object().ok_or("is not an object")?;
     let read = |key: &str| line.get(key).and_then(Value::as_str).map(str::to_string);
     let bundle = line
@@ -630,6 +638,7 @@ pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
             installed_by,
             updated_at,
         },
+        row,
     })
 }
 
@@ -688,11 +697,15 @@ pub(crate) fn connectors_restoring<'a>(
     Ok(found)
 }
 
-/// The name of each plugin it recorded, and how many it found recorded already.
+/// Restores each archived plugin the instance does not hold, refusing one whose connector holds a
+/// `default_mapping` installing would refuse, judged on the types as restored and `caller`'s write.
+/// Answers the name of each plugin it recorded, and how many it found recorded already.
 pub fn restore(
     tx: &Transaction<'_>,
     archived: &[Archived],
     at: &str,
+    caller: &Caller,
+    catalog: &Catalog,
 ) -> Result<(Vec<String>, usize)> {
     let (mut added, mut held) = (Vec::new(), 0);
     let mut connectors = Vec::new();
@@ -722,6 +735,19 @@ pub fn restore(
                 Value::from(installed.edge_types.clone()).to_string(),
             ],
         )?;
+        let faults = default_faults(caller, catalog, &installed.manifest);
+        if !faults.is_empty() {
+            return Err(Refusal::validation(format!(
+                "Line {} of instance.ndjson.gz holds plugin {} whose connector holds a default mapping this instance refuses: {}.",
+                line.row,
+                installed.name,
+                paths_of(&faults)
+            ))
+            .with_detail("entry", "instance.ndjson.gz")
+            .with_detail("line", line.row)
+            .with_detail("name", installed.name.as_str())
+            .with_detail("errors", problems_json(&faults)));
+        }
         if let Some(source) =
             connector_of(&installed.manifest).and_then(marfa_rules::plugin_connector::source)
         {

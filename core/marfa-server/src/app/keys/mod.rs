@@ -533,6 +533,7 @@ pub(crate) fn given(
         created_at: at.to_string(),
         expires_at: None,
         last_used_at: None,
+        mapped: None,
     }
 }
 

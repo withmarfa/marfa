@@ -57,7 +57,7 @@ fn own_entry(own_type: &str) -> Entry {
 }
 
 /// A kind's `default_mapping` over its own type at the feed, its faults named under `at`.
-fn read_default(
+pub(crate) fn read_default(
     value: Option<&Value>,
     own_type: &str,
     at: &str,
@@ -172,7 +172,11 @@ fn problem(path: &str, message: impl Into<String>) -> Problem {
 }
 
 /// Each field the target declares that the kind's own type also declares, taken from it.
-fn identity(own_type: &str, target_type: &str, catalog: &Catalog) -> BTreeMap<String, Field> {
+pub(crate) fn identity(
+    own_type: &str,
+    target_type: &str,
+    catalog: &Catalog,
+) -> BTreeMap<String, Field> {
     let own = catalog.resolved(own_type).unwrap_or_default();
     catalog
         .resolved(target_type)
@@ -439,51 +443,8 @@ pub fn judge(
     problems
 }
 
-/// Each `default_mapping` in a bundle's `connector`, judged as a save judges a kind's entry, with
-/// its faults named by their place in the bundle. A bundle whose connector does not read as one
-/// is left to the bundle's own checks.
-pub fn default_faults(
-    bundle: &Map<String, Value>,
-    catalog: &Catalog,
-    may_write: impl Fn(&str) -> bool,
-) -> Vec<Problem> {
-    let Some(kinds) = bundle
-        .get("connector")
-        .and_then(|section| section.get("kinds"))
-        .and_then(Value::as_array)
-    else {
-        return Vec::new();
-    };
-    let mut problems = Vec::new();
-    let mut read = Vec::new();
-    for (index, kind) in kinds.iter().enumerate() {
-        let Some(own_type) = kind.get("type").and_then(Value::as_str) else {
-            continue;
-        };
-        let default = kind
-            .get("default_mapping")
-            .filter(|default| !default.is_null());
-        if default.is_none() {
-            continue;
-        }
-        let at = format!("connector.kinds.{index}.default_mapping");
-        if let Some((mut entry, fields)) = read_default(default, own_type, &at, &mut problems) {
-            if !fields {
-                entry.fields = identity(own_type, own_type, catalog);
-            }
-            read.push((own_type, entry, at));
-        }
-    }
-    if problems.is_empty() {
-        for (own_type, entry, at) in read {
-            judge_entry(own_type, &entry, &at, catalog, &may_write, &mut problems);
-        }
-    }
-    problems
-}
-
 /// One enabled kind's entry, its faults named under `at`.
-fn judge_entry(
+pub(crate) fn judge_entry(
     own_type: &str,
     entry: &Entry,
     at: &str,
@@ -620,31 +581,6 @@ mod tests {
         assert_eq!(
             (note.enabled, note.target_type.as_str(), note.tier.as_str()),
             (true, "trk.note", "library")
-        );
-    }
-
-    #[test]
-    fn a_default_mapping_sets_only_tier_overrides_and_fields() {
-        let bundle = json!({ "connector": { "source": "trk", "kinds": [
-            { "name": "issue", "type": "trk.issue", "direction": "in",
-              "default_mapping": { "target_type": "core.note", "enabled": false, "colour": 1 } },
-            { "name": "note", "type": "trk.note", "direction": "in",
-              "default_mapping": { "tier": "library" } },
-        ] } });
-        let bundle = bundle.as_object().unwrap();
-        assert!(connector_of(bundle).is_none());
-        let mut paths: Vec<String> = default_faults(bundle, &Catalog::empty(), |_| true)
-            .into_iter()
-            .map(|fault| fault.path)
-            .collect();
-        paths.sort_unstable();
-        assert_eq!(
-            paths,
-            [
-                "connector.kinds.0.default_mapping.colour",
-                "connector.kinds.0.default_mapping.enabled",
-                "connector.kinds.0.default_mapping.target_type",
-            ]
         );
     }
 

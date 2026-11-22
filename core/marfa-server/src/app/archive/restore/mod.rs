@@ -508,7 +508,13 @@ impl App {
                             icons.skip("already_set");
                         }
                         let named = sources::restore(tx, &unit.at, &registrations.sources)?;
-                        let (plugins_recorded, plugins_skipped) = plugins::restore(tx, &registrations.plugins, &unit.at)?;
+                        let (plugins_recorded, plugins_skipped) = plugins::restore(
+                            tx,
+                            &registrations.plugins,
+                            &unit.at,
+                            &unit.caller,
+                            &catalog,
+                        )?;
                         let plugins_added = plugins_recorded.len();
                         let connector_secrets_to_set = connector_settings::restore(
                             tx,
