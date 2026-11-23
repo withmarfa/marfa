@@ -332,11 +332,51 @@ If a key without `schema.write` sends `POST /types` naming non-empty `guidance` 
 
 ### `types/guidance-app-made`
 
-If an app's access token, or a key an app made, including an owner's key an app minted with `owner_key: true`, that holds `schema.write` sends `POST /types`, `PUT /types/{id}` or `POST /restore` that would add, change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
+If a key an app made, including an owner's key an app minted with `owner_key: true`, that holds `schema.write` sends `POST /types`, `PUT /types/{id}` or `POST /restore` that would add, change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
 
-**Reason:** agents read guidance as instructions, so the owner writes it, directly or by installing a plugin (`plugins/install-guidance`): through the local command, or a key that no app made. An owner's key an app minted reaches what the owner gave it, but an app still chose what it says. A key no record names a maker for counts as one an app made (`types/guidance-unknown-maker`). An app the owner allowed `user.*` may still make and change the types themselves.
+**Reason:** agents read guidance as instructions, so a person decides what it says. A key has no sign-in to renew, so only a key the owner made writes guidance; an owner's key an app minted reaches what the owner gave it, but an app still chose what it says. A key no record names a maker for counts as one an app made (`types/guidance-unknown-maker`). The same key may still make and change the types themselves.
 
-**Tests:** `compliance/plugins.test.ts › refuses guidance to an app holding user.*:write and schema.write, and takes the same registration without it`, `› refuses an app's replacement that adds guidance, and lets an owner's key add it`, `› refuses guidance to an owner's key an app minted, on registration and on install, and takes both without it`, `compliance/type-guidance-restore.test.ts › answers 403 forbidden naming guidance to an app holding backups.manage and schema.write, and registers none of its types`.
+**Tests:** `compliance/guidance-step-up.test.ts › writes guidance through a key the owner made, and refuses a key an app made 403 with details.changes at a registration and an install`, `compliance/plugins.test.ts › refuses guidance to an owner's key an app minted, on registration and on install, and takes both without it`.
+
+### `types/guidance-app-recent`
+
+When an app's access token that holds `schema.write`, and whose browser session began at most 900 seconds before the request, sends `POST /types` or `PUT /types/{id}` that adds, changes or removes a type's `guidance`, the server MUST store the type with that guidance.
+
+**Reason:** agents read guidance as instructions, so a person decides what it says. A recent sign-in proves the owner is present at this app now, as a restore asks (`keys-and-oauth/step-up-recent`). A restore that admits the token stores an archive's guidance the same way (`archive/restore-type-guidance`).
+
+**Tests:** `compliance/guidance-step-up.test.ts › adds, changes and removes guidance at POST /types and PUT /types/{id} when its owner signed in within fifteen minutes`, `› writes guidance at exactly fifteen minutes after its owner signed in and is challenged one millisecond later`.
+
+### `types/guidance-app-challenge`
+
+If an app's access token that holds `schema.write`, and whose browser session began more than 900 seconds before the request or after it, sends `POST /types` or `PUT /types/{id}` that would add, change or remove a type's `guidance`, then the server MUST answer `401 insufficient_user_authentication` with `details.max_age` set to `900`.
+
+**Reason:** the app sends the person to sign in again and retries with the new token, as for the acts of `keys-and-oauth/step-up-challenge`, and the answer carries the header of `keys-and-oauth/step-up-challenge-header`. A refreshed token keeps the date of its sign-in (`keys-and-oauth/step-up-refresh-keeps`).
+
+**Tests:** `compliance/guidance-step-up.test.ts › is challenged at POST /types and PUT /types/{id} with 401 insufficient_user_authentication, max_age and the header once its owner signed in more than fifteen minutes ago, and writes nothing`, `› writes guidance at exactly fifteen minutes after its owner signed in and is challenged one millisecond later`, `› is challenged when its owner's sign-in is dated after the request, as when the server's clock is set back`, `› keeps its owner's sign-in time through a refresh, so the refreshed token is challenged at guidance fifteen minutes after the sign-in`.
+
+### `types/guidance-app-writes-nothing`
+
+When the server answers `POST /types` or `PUT /types/{id}` with `401 insufficient_user_authentication`, the server MUST leave the type registry as it was.
+
+**Reason:** as `keys-and-oauth/step-up-writes-nothing` holds for the acts that need a recent sign-in, the retry after a new sign-in makes the whole change.
+
+**Tests:** `compliance/guidance-step-up.test.ts › is challenged at POST /types and PUT /types/{id} with 401 insufficient_user_authentication, max_age and the header once its owner signed in more than fifteen minutes ago, and writes nothing`.
+
+### `types/guidance-app-permission-first`
+
+If an app's access token without `schema.write` sends `POST /types` or `PUT /types/{id}` that would add, change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `schema.write` in `details.required_scope` and no `WWW-Authenticate` header, however long ago its browser session began.
+
+**Reason:** a new sign-in would not give the token the permission (`keys-and-oauth/step-up-permission-first`).
+
+**Tests:** `compliance/guidance-step-up.test.ts › refuses an app's token without schema.write 403 naming it, never a challenge, however long ago its owner signed in`.
+
+### `types/guidance-unchanged-no-challenge`
+
+When an app's access token whose browser session began more than 900 seconds before the request sends `PUT /types/{id}` that leaves the type's `guidance` as stored, the server MUST judge the replacement without regard to when the session began.
+
+**Reason:** only a change to guidance needs the owner present; the rest of a type is written as the token's permissions allow.
+
+**Tests:** `compliance/guidance-step-up.test.ts › is not challenged at a replacement that leaves the type's guidance as stored, however long ago its owner signed in`.
 
 ### `types/guidance-register-no-write`
 

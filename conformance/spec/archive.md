@@ -974,11 +974,11 @@ When an archive registers a type whose definition carries `compatible_with`, the
 
 ### `archive/restore-type-guidance`
 
-When a caller holding `schema.write` or local authority sends `POST /restore` for an archive with a `type` line of a type outside `app.*` that carries guidance, and the instance does not hold the type, the server MUST register the type with that guidance.
+When local authority, a key the owner made that holds `schema.write`, or an app's access token that holds `schema.write` sends `POST /restore` for an archive with a `type` line of a type outside `app.*` that carries guidance, and the instance does not hold the type, the server MUST register the type with that guidance.
 
-**Reason:** a type the instance already holds the same way is skipped, and one it holds differently is a conflict (`archive/restore-type-conflict`), so a restore registers only a type the instance lacks.
+**Reason:** a type the instance already holds the same way is skipped, and one it holds differently is a conflict (`archive/restore-type-conflict`), so a restore registers only a type the instance lacks. A restore admits an app only after a recent sign-in (`keys-and-oauth/step-up-recent`), which is what an app needs to write guidance (`types/guidance-app-recent`); a key an app made is refused (`types/guidance-app-made`).
 
-**Tests:** `compliance/type-guidance-restore.test.ts › carries a type's guidance and status word descriptions through an export and a restore into a new instance`.
+**Tests:** `compliance/type-guidance-restore.test.ts › carries a type's guidance and status word descriptions through an export and a restore into a new instance`, `› stores an archive's guidance for an app holding backups.manage and schema.write whose owner signed in just now`.
 
 ### `archive/restore-type-guidance-app`
 
