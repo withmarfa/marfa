@@ -106,7 +106,7 @@ When `POST /plugins` installs or updates a type, the server MUST record the plug
 
 ### `plugins/install-guidance`
 
-When the local socket, a key the owner made, or an app's access token whose browser session began at most 900 seconds before the request sends `POST /plugins` with a type whose definition carries `guidance`, the server MUST store the guidance as the bundle gives it.
+When the local socket, a key the owner made that holds `schema.write`, or an app's access token that holds `schema.write` and whose browser session began at most 900 seconds before the request sends `POST /plugins` with a type whose definition carries `guidance`, the server MUST store the guidance as the bundle gives it.
 
 **Reason:** installing a plugin is the owner's way to give a type guidance, besides writing it directly. Agents read guidance as instructions, so a person decides what it says, and a recent sign-in proves the owner is present at this app now (`types/guidance-app-recent`).
 
@@ -114,7 +114,7 @@ When the local socket, a key the owner made, or an app's access token whose brow
 
 ### `plugins/install-guidance-app`
 
-If an app's access token whose browser session began more than 900 seconds before the request, or after it, sends `POST /plugins` with a bundle that would add, change or remove a type's `guidance`, then the server MUST answer `401 insufficient_user_authentication` with `details.max_age` set to `900` and write no type, edge type, connector or plugin record.
+If an app's access token that holds `schema.write` and whose browser session began more than 900 seconds before the request, or after it, sends `POST /plugins` with a bundle that would add, change or remove a type's `guidance`, then the server MUST answer `401 insufficient_user_authentication` with `details.max_age` set to `900` and write no type, edge type, connector or plugin record.
 
 **Reason:** the app sends the person to sign in again and installs the whole bundle with the new token (`types/guidance-app-challenge`, `keys-and-oauth/step-up-writes-nothing`). A bundle installs whole or not at all, so one guided type holds back the rest.
 

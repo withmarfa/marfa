@@ -332,7 +332,7 @@ If a key without `schema.write` sends `POST /types` naming non-empty `guidance` 
 
 ### `types/guidance-app-made`
 
-If a key an app made, including an owner's key an app minted with `owner_key: true`, that holds `schema.write` sends `POST /types`, `PUT /types/{id}` or `POST /restore` that would add, change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
+If a key an app made, including an owner's key an app minted with `owner_key: true`, that holds `schema.write` sends `POST /types` or `PUT /types/{id}` that would add, change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
 
 **Reason:** agents read guidance as instructions, so a person decides what it says. A key has no sign-in to renew, so only a key the owner made writes guidance; an owner's key an app minted reaches what the owner gave it, but an app still chose what it says. A key no record names a maker for counts as one an app made (`types/guidance-unknown-maker`). The same key may still make and change the types themselves.
 
@@ -340,7 +340,7 @@ If a key an app made, including an owner's key an app minted with `owner_key: tr
 
 ### `types/guidance-app-recent`
 
-When an app's access token that holds `schema.write`, and whose browser session began at most 900 seconds before the request, sends `POST /types` or `PUT /types/{id}` that adds, changes or removes a type's `guidance`, the server MUST store the type with that guidance.
+When an app's access token that holds `schema.write` and write on the type and on each non-platform parent the request names, and whose browser session began at most 900 seconds before the request, sends `POST /types` or `PUT /types/{id}` that adds, changes or removes a type's `guidance`, the server MUST store the type with that guidance.
 
 **Reason:** agents read guidance as instructions, so a person decides what it says. A recent sign-in proves the owner is present at this app now, as a restore asks (`keys-and-oauth/step-up-recent`). A restore that admits the token stores an archive's guidance the same way (`archive/restore-type-guidance`).
 
@@ -348,7 +348,7 @@ When an app's access token that holds `schema.write`, and whose browser session 
 
 ### `types/guidance-app-challenge`
 
-If an app's access token that holds `schema.write`, and whose browser session began more than 900 seconds before the request or after it, sends `POST /types` or `PUT /types/{id}` that would add, change or remove a type's `guidance`, then the server MUST answer `401 insufficient_user_authentication` with `details.max_age` set to `900`.
+If an app's access token that holds `schema.write` and write on the type and on each non-platform parent the request names, and whose browser session began more than 900 seconds before the request or after it, sends `POST /types` or `PUT /types/{id}` that would add, change or remove a type's `guidance`, then the server MUST answer `401 insufficient_user_authentication` with `details.max_age` set to `900`.
 
 **Reason:** the app sends the person to sign in again and retries with the new token, as for the acts of `keys-and-oauth/step-up-challenge`, and the answer carries the header of `keys-and-oauth/step-up-challenge-header`. A refreshed token keeps the date of its sign-in (`keys-and-oauth/step-up-refresh-keeps`).
 
@@ -369,6 +369,14 @@ If an app's access token without `schema.write` sends `POST /types` or `PUT /typ
 **Reason:** a new sign-in would not give the token the permission (`keys-and-oauth/step-up-permission-first`).
 
 **Tests:** `compliance/guidance-step-up.test.ts › refuses an app's token without schema.write 403 naming it, never a challenge, however long ago its owner signed in`.
+
+### `types/guidance-app-reach-first`
+
+If an app's access token that holds `schema.write` and write on a type, but not write on a non-platform parent that `POST /types` or `PUT /types/{id}` names, sends that request so that it would add, change or remove the type's `guidance`, then the server MUST answer `403 type_not_permitted` with `details.grant` naming that parent and no `WWW-Authenticate` header, however long ago its browser session began.
+
+**Reason:** a new sign-in would not grant write on the parent (`types/parent-reach`), so a challenge would send the person to sign in for nothing and, over MCP, mark the app for renewal (`mcp/save-type-guidance-reach-first`).
+
+**Tests:** `compliance/guidance-step-up.test.ts › refuses a stale app that may write the type but not its parent with 403 type_not_permitted and no challenge, on register and on replace`.
 
 ### `types/guidance-unchanged-no-challenge`
 

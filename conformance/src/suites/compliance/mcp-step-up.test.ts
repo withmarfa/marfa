@@ -752,4 +752,129 @@ describe("guidance through marfa_save_type", () => {
     );
     expect(await guidanceOf(id)).toBe("Asked.");
   });
+
+  it("refuses marfa_save_type for a parent the app may not write with type_not_permitted and sets no renewal mark", async () => {
+    const app = await registerApp(server, TYPES);
+    const other = await registerApp(server, TYPES);
+    const stale = await signIn();
+    const access = await schemaToken(app, stale);
+    await schemaToken(other, stale);
+    await server.advanceClock(PAST_RECENT);
+    const resource = SCHEMA();
+    expectCodeAtOnce(
+      (await authorizing(app, stale, resource, TYPES)).landed,
+      "before",
+    );
+
+    const parent = `ghost.missing-${String(++addresses)}`;
+    const id = `user.mcp-parent-${String(addresses)}`;
+    const refused = toolError(
+      await saveType(access, {
+        action: "register",
+        id,
+        parent,
+        guidance: "No.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    expect(refused.code, JSON.stringify(refused)).toBe("type_not_permitted");
+    expect(refused.details).toMatchObject({
+      grant: { kind: "type", name: parent, level: "write" },
+    });
+    expect((await call(server.workingKey, "GET", `/types/${id}`)).status).toBe(
+      404,
+    );
+    expectCodeAtOnce(
+      (await authorizing(app, stale, resource, TYPES)).landed,
+      "after the refusal",
+    );
+    expectCodeAtOnce(
+      (await authorizing(other, stale, resource, TYPES)).landed,
+      "another app",
+    );
+
+    // The witness: the same token is challenged, and marked, when it names no parent.
+    const witness = `user.mcp-shipped-${String(++addresses)}`;
+    expectRenewalAsked(
+      await saveType(access, {
+        action: "register",
+        id: witness,
+        guidance: "Yes.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    expectSignInAsked(
+      (await authorizing(app, stale, resource, TYPES)).landed,
+      "marked",
+    );
+    expect(
+      (await call(server.workingKey, "GET", `/types/${witness}`)).status,
+    ).toBe(404);
+  });
+
+  it("keeps the renewal where it was when marfa_save_type refuses a token from the older sign-in again after the person signed in again", async () => {
+    const app = await registerApp(server, TYPES);
+    const stale = await signIn();
+    const old = await schemaToken(app, stale);
+    await server.advanceClock(PAST_RECENT);
+    const id = newType();
+    const body = {
+      action: "register",
+      id,
+      guidance: "Kept.",
+      fields: { title: { type: "string" } },
+    };
+    expectRenewalAsked(await saveType(old, body));
+
+    const fresh = await signIn();
+    const renewed = await schemaToken(app, fresh);
+    await server.advanceClock(1000);
+    expectRenewalAsked(await saveType(old, body));
+    toolResult(await saveType(renewed, body));
+    expect(await guidanceOf(id)).toBe("Kept.");
+
+    const resource = SCHEMA();
+    expectSignInAsked(
+      (await authorizing(app, stale, resource, TYPES)).landed,
+      "the older browser",
+    );
+    expectCodeAtOnce(
+      (await authorizing(app, fresh, resource, TYPES)).landed,
+      "the new browser",
+    );
+  });
+
+  it("marks only the app marfa_save_type refused, so another app's older browser still gets a code", async () => {
+    const app = await registerApp(server, TYPES);
+    const other = await registerApp(server, TYPES);
+    const stale = await signIn();
+    const access = await schemaToken(app, stale);
+    await schemaToken(other, stale);
+    await server.advanceClock(PAST_RECENT);
+    const resource = SCHEMA();
+    expectCodeAtOnce(
+      (await authorizing(other, stale, resource, TYPES)).landed,
+      "before",
+    );
+    const id = newType();
+    expectRenewalAsked(
+      await saveType(access, {
+        action: "register",
+        id,
+        guidance: "Asked.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    expectSignInAsked(
+      (await authorizing(app, stale, resource, TYPES)).landed,
+      "the refused app",
+    );
+    expectCodeAtOnce(
+      (await authorizing(other, stale, resource, TYPES)).landed,
+      "another app",
+    );
+    expect((await call(server.workingKey, "GET", `/types/${id}`)).status).toBe(
+      404,
+    );
+  });
 });

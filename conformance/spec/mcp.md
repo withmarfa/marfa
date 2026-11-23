@@ -206,11 +206,11 @@ When `marfa_change_settings` or `marfa_save_type` refuses with `insufficient_use
 
 ### `mcp/settings-step-up-renewal-kept`
 
-If `marfa_change_settings` refuses with `insufficient_user_authentication` an app's access token whose browser session began before the time the app's consent already asks a browser session to begin after, then the server MUST leave that time as it is.
+If `marfa_change_settings` or `marfa_save_type` refuses with `insufficient_user_authentication` an app's access token whose browser session began before the time the app's consent already asks a browser session to begin after, then the server MUST leave that time as it is.
 
 **Reason:** a retry by a token from before the person signed in again would otherwise move the time past the new sign-in, and the new connection would be sent to sign in again without end.
 
-**Tests:** `compliance/mcp-step-up.test.ts › keeps the renewal where it was when a token from the older sign-in is refused again after the person signed in again`.
+**Tests:** `compliance/mcp-step-up.test.ts › keeps the renewal where it was when a token from the older sign-in is refused again after the person signed in again`, `› keeps the renewal where it was when marfa_save_type refuses a token from the older sign-in again after the person signed in again`.
 
 ### `mcp/settings-step-up-refresh`
 
@@ -230,11 +230,11 @@ When the person approves again an app whose grant ended after `marfa_change_sett
 
 ### `mcp/settings-step-up-renewal-own`
 
-When `marfa_change_settings` refuses an app with `insufficient_user_authentication`, the server MUST answer another app's authorization as it would have before the refusal.
+When `marfa_change_settings` or `marfa_save_type` refuses an app with `insufficient_user_authentication`, the server MUST answer another app's authorization as it would have before the refusal.
 
 **Reason:** the refusal marks only the calling app's own consent.
 
-**Tests:** `compliance/mcp-step-up.test.ts › sends the browser to sign in again when the refused app reconnects, and the token it then gets changes the setting`.
+**Tests:** `compliance/mcp-step-up.test.ts › sends the browser to sign in again when the refused app reconnects, and the token it then gets changes the setting`, `› marks only the app marfa_save_type refused, so another app's older browser still gets a code`.
 
 ### `mcp/open-world-hint`
 
@@ -408,11 +408,19 @@ If `marfa_save_type` is called by a key that may not write guidance under `types
 
 ### `mcp/save-type-guidance-step-up`
 
-If an app's access token that holds `schema.write`, and whose browser session began more than 900 seconds before the call, calls `marfa_save_type` with `guidance` that would add, change or remove a type's guidance, then the server MUST answer the tool error code `insufficient_user_authentication` with `details.max_age` set to `900`, and write nothing but the app's own consent mark of `mcp/settings-step-up-renewal`.
+If an app's access token that holds `schema.write` and write on the type and on each non-platform parent the call names, and whose browser session began more than 900 seconds before the call, calls `marfa_save_type` with `guidance` that would add, change or remove a type's guidance, then the server MUST answer the tool error code `insufficient_user_authentication` with `details.max_age` set to `900`, and write nothing but the app's own consent mark of `mcp/settings-step-up-renewal`.
 
-**Reason:** agents read guidance as instructions, so a person decides what it says, and a recent sign-in proves the owner is present at this app now (`types/guidance-app-challenge`). The tool answers inside a successful MCP response, so the refusal is a tool error, as for settings (`mcp/settings-step-up-refused`).
+**Reason:** agents read guidance as instructions, so a person decides what it says, and a recent sign-in proves the owner is present at this app now (`types/guidance-app-challenge`). The tool answers inside a successful MCP response, so the refusal is a tool error, as for settings (`mcp/settings-step-up-refused`). A parent the token may not write is refused first (`mcp/save-type-guidance-reach-first`).
 
 **Tests:** `compliance/mcp-step-up.test.ts › refuses guidance through marfa_save_type to an app whose owner signed in longer ago than the recent sign-in window with insufficient_user_authentication and max_age, and keeps the type`.
+
+### `mcp/save-type-guidance-reach-first`
+
+If an app's access token that holds `schema.write` and write on a type, but not write on a non-platform parent, calls `marfa_save_type` to register that type with `guidance` while its browser session began more than 900 seconds before the call, then the server MUST answer a tool error carrying `type_not_permitted` and leave the app's consent renewal as it was.
+
+**Reason:** the refusal is the parent grant (`types/guidance-app-reach-first`), which a new sign-in does not give, so the app is not marked for renewal (`mcp/settings-step-up-renewal`).
+
+**Tests:** `compliance/mcp-step-up.test.ts › refuses marfa_save_type for a parent the app may not write with type_not_permitted and sets no renewal mark`.
 
 ## Calling a tool
 

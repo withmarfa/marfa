@@ -100,7 +100,6 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             let id = text_of(&schema, "id")
                 .ok_or_else(|| Refusal::internal("a registered type has no id"))?
                 .to_string();
-            caller.require_guidance(None, text_of(&schema, "guidance"), &unit.at)?;
             require_reach(caller, &schema, None)?;
             if let Some(parent) = text_of(&schema, "parent")
                 && let Some(fault) = parent_chain_fault(&catalog.types, &id, parent, 0)
@@ -113,6 +112,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
                     format!("Type \"{id}\" already exists"),
                 ));
             }
+            caller.require_guidance(None, text_of(&schema, "guidance"), &unit.at)?;
             let creator = caller.actor();
             unit.tx().execute(
                 "INSERT INTO types (id, parent, origin, created_by, definition, created_at, updated_at) \
@@ -305,14 +305,14 @@ async fn replacing(
                 }
                 None => schema,
             };
+            let family = with_subtypes(unit.tx(), &id)?;
+            require_evolution(unit.tx(), caller, &family, stored, &schema)?;
+            require_reach(caller, &schema, stored)?;
             caller.require_guidance(
                 stored.and_then(|held| text_of(held, "guidance")),
                 text_of(&schema, "guidance"),
                 &unit.at,
             )?;
-            let family = with_subtypes(unit.tx(), &id)?;
-            require_evolution(unit.tx(), caller, &family, stored, &schema)?;
-            require_reach(caller, &schema, stored)?;
             if let Some(parent) = text_of(&schema, "parent") {
                 let below = descendant_depth(&catalog.types, &id);
                 if let Some(fault) = parent_chain_fault(&catalog.types, &id, parent, below) {

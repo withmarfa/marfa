@@ -167,9 +167,15 @@ async function guidanceOf(id: string): Promise<unknown> {
 
 const TYPE_SCOPE = "user.*:write metadata.types:write schema.write";
 
-function typeBody(id: string, guidance?: string, extra = false) {
+function typeBody(
+  id: string,
+  guidance?: string,
+  extra = false,
+  parent?: string,
+) {
   return {
     id,
+    ...(parent === undefined ? {} : { parent }),
     ...(guidance === undefined ? {} : { guidance }),
     fields: {
       title: { type: "string" },
@@ -349,6 +355,65 @@ describe("an app's token writing a type's guidance", () => {
     // The witness: the same token registers the type without guidance.
     const plain = await call(access, "POST", "/types", typeBody(id));
     expect(plain.status, JSON.stringify(plain.body)).toBe(201);
+  });
+
+  it("refuses a stale app that may write the type but not its parent with 403 type_not_permitted and no challenge, on register and on replace", async () => {
+    const { access } = await signedIn(
+      "user.*:write metadata.types:write schema.write",
+    );
+    await server.advanceClock(PAST_RECENT);
+    const parent = `ghost${fresh()}.missing`;
+    const denied = `user.denied-${fresh()}`;
+    const shipped = `user.shipped-${fresh()}`;
+
+    // The witness: the same token is challenged when the registration names no parent.
+    expectChallenged(
+      await call(access, "POST", "/types", typeBody(shipped, "Asked.")),
+      "no parent",
+    );
+    expect((await owner.getType(shipped)).status).toBe(404);
+
+    const registered = await call(
+      access,
+      "POST",
+      "/types",
+      typeBody(denied, "No.", false, parent),
+    );
+    expect(registered.status, JSON.stringify(registered.body)).toBe(403);
+    expect(registered.challenge).toBeNull();
+    expect(registered.body.error.code).toBe("type_not_permitted");
+    expect(registered.body.error.details?.grant).toEqual({
+      kind: "type",
+      name: parent,
+      level: "write",
+    });
+    expect((await owner.getType(denied)).status).toBe(404);
+
+    const kept = `user.kept-${fresh()}`;
+    const made = await owner.registerType(typeBody(kept, "Kept.") as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    expectChallenged(
+      await call(access, "PUT", `/types/${kept}`, typeBody(kept, "Moved.")),
+      "guidance alone",
+    );
+    const replaced = await call(
+      access,
+      "PUT",
+      `/types/${kept}`,
+      typeBody(kept, "Moved.", false, parent),
+    );
+    expect(replaced.status, JSON.stringify(replaced.body)).toBe(403);
+    expect(replaced.challenge).toBeNull();
+    expect(replaced.body.error.code).toBe("type_not_permitted");
+    expect(replaced.body.error.details?.grant).toEqual({
+      kind: "type",
+      name: parent,
+      level: "write",
+    });
+    const read = await owner.getType(kept);
+    expect(read.status).toBe(200);
+    expect(read.data.guidance).toBe("Kept.");
+    expect(read.data.parent).toBeUndefined();
   });
 });
 
