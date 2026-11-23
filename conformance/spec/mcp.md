@@ -4,6 +4,14 @@ The MCP endpoint, `/mcp`, serves Marfa's tools to an agent over Streamable HTTP.
 
 Two more endpoints serve the same tools and a group of their own. `/mcp/schema` adds `marfa_save_type`, `marfa_save_view`, `marfa_move_items`, `marfa_bulk_save`, `marfa_search_docs`, `marfa_sources` and `marfa_name_source`, for shaping what the instance holds. `/mcp/admin` adds `marfa_health`, `marfa_audit`, the key and webhook tools, and the owner's tasks that `mcp/tools-for-admin` names, for running it. Unless a statement names an endpoint, it holds at all three.
 
+## An item's addresses
+
+### `mcp/item-web-url`
+
+When an MCP tool answers an item or a summary of an item, the server MUST include `web_url` and `app_url` on it.
+
+**Tests:** `compliance/item-links.test.ts › answers web_url and app_url from an MCP tool that returns an item`.
+
 ## Who may call it
 
 The challenges an MCP client signs in and steps up from are stated with the server's other resources, in `keys-and-oauth/mcp-challenge-credential` and `keys-and-oauth/mcp-challenge-scope`.

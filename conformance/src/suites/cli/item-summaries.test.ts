@@ -4,6 +4,11 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import {
+  instanceIdOf,
+  itemLinks,
+  unsetSignInOrigin,
+} from "../../utils/item-links.js";
 import { MarfaClient } from "../../client/api.js";
 import { Cli, releaseHeld, requireBinary } from "./harness.js";
 let server: FreshServer;
@@ -30,7 +35,7 @@ it("lists and searches names through local authority without item content", asyn
   }
   const local = cli.viaSocket(server.controlSocket);
   const first = await local.json<{
-    data: { name: string }[];
+    data: { id: string; name: string; web_url: string; app_url: string }[];
     next_cursor: string;
   }>([
     "items",
@@ -63,14 +68,21 @@ it("lists and searches names through local authority without item content", asyn
   expect(next.data.map((row) => row.name)).toEqual(["Chosen first"]);
   expect(next.next_cursor).toBeNull();
   expect(JSON.stringify([first, next])).not.toContain("private-body-witness");
-  expect(Object.keys(first.data[0]!).sort()).toEqual([
+  const row = first.data[0]!;
+  expect(Object.keys(row).sort()).toEqual([
+    "app_url",
     "created_at",
     "id",
     "name",
     "source",
     "type",
     "version",
+    "web_url",
   ]);
+  const instance = await instanceIdOf(server.apiUrl, server.workingKey);
+  expect({ web_url: row.web_url, app_url: row.app_url }).toEqual(
+    itemLinks(unsetSignInOrigin(server.apiUrl), instance, row.id),
+  );
 });
 
 it("manages trash through local authority with summary responses", async () => {

@@ -333,6 +333,13 @@ describe("starting on a database an earlier release wrote", () => {
     async () => {
       await startedOn(async ({ url, client }) => {
         expect((await fetch(`${url}/health`)).status).toBe(200);
+        const root = await client.root();
+        expect(root.ok, JSON.stringify(root.error)).toBe(true);
+        const port = new URL(url).port;
+        const origin =
+          port === "" || port === "80"
+            ? "http://localhost"
+            : `http://localhost:${port}`;
         for (const [id, recorded] of [
           [ITEM_IDS[0], ITEM1],
           [ITEM_IDS[1], ITEM2],
@@ -340,7 +347,15 @@ describe("starting on a database an earlier release wrote", () => {
         ] as const) {
           const read = await client.getItem(id);
           expect(read.ok, JSON.stringify(read.error)).toBe(true);
-          expect(read.data, id).toEqual(recorded);
+          // The recorded body is what v0.0.90 answered. This build adds the two addresses.
+          expect(read.data, id).toEqual({
+            ...recorded,
+            item: {
+              ...recorded.item,
+              web_url: `${origin}/i/${id}`,
+              app_url: `marfa://${root.data.instance_id}/${id}`,
+            },
+          });
         }
         const edge = await client.getEdge(EDGE_ID);
         expect(edge.ok, JSON.stringify(edge.error)).toBe(true);

@@ -2816,7 +2816,7 @@ When `GET /app-vendors` or `PUT /app-vendors/{vendor}` answers a vendor, the ser
 
 ### `keys-and-oauth/app-data-list`
 
-When the owner's browser session, the local command or a caller holding `grants.manage` sends `GET /app-vendors/{vendor}/data` for a vendor an app or the owner holds, the server MUST answer the `vendor`, the `client_id` of the app that holds it or `null`, under `types` each type registered under the vendor or held by an item whose type is under it, with how many of its items are `active`, `archived` and `trashed`, and under `data` a page of the items whose type is under the vendor, in every state, each with its `state`.
+When the owner's browser session, the local command or a caller holding `grants.manage` sends `GET /app-vendors/{vendor}/data` for a vendor an app or the owner holds, the server MUST answer the `vendor`, the `client_id` of the app that holds it or `null`, under `types` each type registered under the vendor or held by an item whose type is under it, with how many of its items are `active`, `archived` and `trashed`, and under `data` a page of the items whose type is under the vendor, in every state, each with its `state`, `web_url` and `app_url`.
 
 **Reason:** an app's data is hidden from ordinary listings, so the owner needs one place that shows everything an app keeps, the trash included, before deciding to remove it.
 

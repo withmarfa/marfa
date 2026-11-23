@@ -14,6 +14,7 @@ use super::App;
 use super::access::{Caller, Level, Permission};
 use super::catalog::Snapshot;
 use super::connectors::{ReadOnly, read_only};
+use super::item_links::Links;
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use super::{edges, items};
@@ -251,6 +252,7 @@ async fn replay(app: &App, caller: &Caller, key: &str, record: Held) -> Result<K
     let caller = caller.clone();
     let clock = app.clock.clone();
     let marked = app.read_only_handle();
+    let links = app.item_links();
     let contract = app.contract();
     app.db
         .read(move |tx| {
@@ -283,6 +285,7 @@ async fn replay(app: &App, caller: &Caller, key: &str, record: Held) -> Result<K
                 status,
                 body: with_current_read_only(
                     &read_only::current(&marked, tx, &at, Snapshot::Committed)?,
+                    &links,
                     status.as_u16(),
                     body,
                 )?,
@@ -401,8 +404,13 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
     Ok(())
 }
 
-/// A kept answer's `read_only` is the one thing judged at replay.
-fn with_current_read_only(read_only: &ReadOnly, status: u16, body: Vec<u8>) -> Result<Vec<u8>> {
+/// A kept answer's `read_only`, `web_url` and `app_url` are judged again at replay.
+fn with_current_read_only(
+    read_only: &ReadOnly,
+    links: &Links,
+    status: u16,
+    body: Vec<u8>,
+) -> Result<Vec<u8>> {
     if !(200..300).contains(&status) {
         return Ok(body);
     }
@@ -414,7 +422,60 @@ fn with_current_read_only(read_only: &ReadOnly, status: u16, body: Vec<u8>) -> R
     };
     let text = |name: &str| item.get(name).and_then(Value::as_str).unwrap_or_default();
     let now = read_only.of(text("source"), text("type"))?;
-    Ok(read_only_set(body, now))
+    Ok(stamp_links(read_only_set(body, now), links))
+}
+
+/// Puts the current addresses on every answered item, leaving a property of the same name.
+fn stamp_links(body: Vec<u8>, links: &Links) -> Vec<u8> {
+    let Ok(mut value) = serde_json::from_slice::<Value>(&body) else {
+        return body;
+    };
+    let mut changed = false;
+    stamp_value(&mut value, links, &mut changed);
+    if !changed {
+        return body;
+    }
+    match marfa_rules::number::to_vec(&value) {
+        Ok(printed) => printed,
+        Err(_) => body,
+    }
+}
+
+fn stamp_value(value: &mut Value, links: &Links, changed: &mut bool) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                stamp_value(item, links, changed);
+            }
+        }
+        Value::Object(map) => {
+            let id = map.get("id").and_then(Value::as_str).map(str::to_string);
+            let typed = map.get("type").and_then(Value::as_str).is_some();
+            let full = map.get("properties").is_some_and(Value::is_object);
+            let summary = map.contains_key("name")
+                && map.contains_key("source")
+                && !map.contains_key("properties");
+            if let Some(id) = id.filter(|_| typed && (full || summary)) {
+                let web_url = links.web_url(&id);
+                let app_url = links.app_url(&id);
+                if map.get("web_url").and_then(Value::as_str) != Some(web_url.as_str()) {
+                    map.insert("web_url".into(), web_url.into());
+                    *changed = true;
+                }
+                if map.get("app_url").and_then(Value::as_str) != Some(app_url.as_str()) {
+                    map.insert("app_url".into(), app_url.into());
+                    *changed = true;
+                }
+            }
+            for (key, child) in map.iter_mut() {
+                if full && key == "properties" {
+                    continue;
+                }
+                stamp_value(child, links, changed);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Sets the first `read_only`, which is the item's: its own fields come before
@@ -626,6 +687,24 @@ mod tests {
             br#"{"item":{"id":"a","read_only":true,"properties":{"read_only":false}}}"#
         );
         assert_eq!(read_only_set(changed.clone(), true), changed);
+    }
+
+    #[test]
+    fn a_replay_refreshes_the_items_addresses_and_leaves_a_propertys() {
+        let links = Links::of("https://marfa.example", "inst");
+        let body = br#"{"item":{"id":"a","type":"core.note","read_only":false,"properties":{"url":"keep","web_url":"keep","app_url":"keep"},"neighbors":[{"item":{"id":"b","type":"core.note","name":"B","source":"s"}}]}}"#;
+        let changed = stamp_links(body.to_vec(), &links);
+        let value: Value = serde_json::from_slice(&changed).unwrap();
+        assert_eq!(value["item"]["web_url"], "https://marfa.example/i/a");
+        assert_eq!(value["item"]["app_url"], "marfa://inst/a");
+        assert_eq!(value["item"]["properties"]["url"], "keep");
+        assert_eq!(value["item"]["properties"]["web_url"], "keep");
+        assert_eq!(value["item"]["properties"]["app_url"], "keep");
+        assert_eq!(
+            value["item"]["neighbors"][0]["item"]["web_url"],
+            "https://marfa.example/i/b"
+        );
+        assert_eq!(stamp_links(changed.clone(), &links), changed);
     }
 
     #[test]

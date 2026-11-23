@@ -184,6 +184,8 @@ describe("a starting definition for a type", () => {
       "source_id",
       "version",
       "schema_version",
+      "web_url",
+      "app_url",
       "capture_latitude",
       "capture_longitude",
       "trashed_at",

@@ -2882,6 +2882,7 @@
   "webhooks"
  ],
  "reserved_field_names": [
+  "app_url",
   "capture_latitude",
   "capture_longitude",
   "created_at",
@@ -2900,7 +2901,8 @@
   "trashed_with",
   "type",
   "updated_at",
-  "version"
+  "version",
+  "web_url"
  ],
  "searched_field_names": [
   "body",

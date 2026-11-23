@@ -68,13 +68,13 @@ impl Group {
     pub const fn instructions(self) -> &'static str {
         match self {
             Group::Items => {
-                "Marfa is the person's own data store. Call marfa_overview first. Find and read with marfa_find and marfa_get, save with marfa_create (text, or a file by web address), change with marfa_update and delete with marfa_delete. Read table rows with marfa_read_rows and change them with marfa_write_rows. Read an item before changing it and send the version you read. marfa_delete only previews first: show the person what would go and ask before you confirm."
+                "Marfa is the person's own data store. Call marfa_overview first. Find and read with marfa_find and marfa_get, save with marfa_create (text, or a file by web address), change with marfa_update and delete with marfa_delete. Read table rows with marfa_read_rows and change them with marfa_write_rows. Read an item before changing it and send the version you read. marfa_delete only previews first: show the person what would go and ask before you confirm. To point the person at an item, give its web_url."
             }
             Group::Schema => {
-                "Marfa is the person's own data store. Call marfa_overview first. Here you also shape it: marfa_save_type and marfa_save_view define types and views, marfa_bulk_save writes many items, marfa_move_items moves items to another type, and marfa_sources and marfa_name_source list and name sources. Ask marfa_search_docs how Marfa works. marfa_delete and marfa_move_items only preview first: show the person what would change and ask before you confirm."
+                "Marfa is the person's own data store. Call marfa_overview first. Here you also shape it: marfa_save_type and marfa_save_view define types and views, marfa_bulk_save writes many items, marfa_move_items moves items to another type, and marfa_sources and marfa_name_source list and name sources. Ask marfa_search_docs how Marfa works. marfa_delete and marfa_move_items only preview first: show the person what would change and ask before you confirm. To point the person at an item, give its web_url."
             }
             Group::Admin => {
-                "Marfa is the person's own data store, and here you run it. Call marfa_health first. Tools that remove, end, replace or restart something preview first, such as marfa_purge and marfa_update_server: show the person exactly what would happen, and confirm only once they agree. A change marfa_change_settings refuses for want of a recent sign-in needs the person to sign in to this app's connection again (re-authenticate it, not only reconnect)."
+                "Marfa is the person's own data store, and here you run it. Call marfa_health first. Tools that remove, end, replace or restart something preview first, such as marfa_purge and marfa_update_server: show the person exactly what would happen, and confirm only once they agree. A change marfa_change_settings refuses for want of a recent sign-in needs the person to sign in to this app's connection again (re-authenticate it, not only reconnect). To point the person at an item, give its web_url."
             }
         }
     }
