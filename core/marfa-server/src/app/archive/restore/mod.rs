@@ -296,6 +296,7 @@ fn judge_types(
     edge_types: &[Obj],
     archived_plugins: &[plugins::Archived],
     caller: &Caller,
+    at: &str,
 ) -> Result<(types::write::Restoring, edge_types::Restoring)> {
     let definitions: Vec<Obj> = types
         .iter()
@@ -314,7 +315,7 @@ fn judge_types(
         return Err(conflicting(conflicts));
     }
     caller.require_restored_vendors(tx, types_plan.ids())?;
-    types_plan.require_guidance(caller)?;
+    types_plan.require_guidance(caller, at)?;
     Ok((types_plan, edges_plan))
 }
 
@@ -394,6 +395,7 @@ impl App {
                 registrations.mapped(),
             );
             app.faults.hold(HOLD_RESTORE_SETTINGS, None).await;
+            let judged_at = started_at.clone();
             // On the writer, so every write admitted before the hold has landed.
             app.db
                 .write(Write::own().unsynced(), move |tx| {
@@ -421,8 +423,16 @@ impl App {
                         connector_settings::restoring(tx, &archived_settings, &archived_plugins)?;
                     caller.require_connector_restore(&connected, &named, &mapped)?;
                     let before = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
-                    judge_types(tx, &before, &types, &edge_types, &archived_plugins, &caller)
-                        .map(drop)
+                    judge_types(
+                        tx,
+                        &before,
+                        &types,
+                        &edge_types,
+                        &archived_plugins,
+                        &caller,
+                        &judged_at,
+                    )
+                    .map(drop)
                 })
                 .await?;
             let placed = app.place_restored(carried, absent).await?;
@@ -474,6 +484,7 @@ impl App {
                             &registrations.edge_types,
                             &registrations.plugins,
                             &unit.caller,
+                            &started_at,
                         )?;
                         let (types_registered, types_skipped) =
                             (types_plan.registered(), types_plan.skipped);
