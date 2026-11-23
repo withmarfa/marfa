@@ -235,6 +235,26 @@ describe("cleanup", () => {
     ).rejects.toThrow(/Cleanup left fixtures on the target.*Item 1\/1/s);
   });
 
+  it("tries a delete again when the server answers 503 write_contention", async () => {
+    const contention: Result = { ok: false, status: 503 };
+    itemDeleteById.set("i1", [contention, contention, okResult]);
+    const { cleanup } = await import("./setup.js");
+
+    await expect(
+      cleanup(contextWithFixtures() as Parameters<typeof cleanup>[0]),
+    ).resolves.toBeUndefined();
+    expect(calls.filter((call) => call === "item-delete:i1")).toHaveLength(3);
+  });
+
+  it("counts a delete that stays contended as a leak", async () => {
+    itemDeleteResult = { ok: false, status: 503 };
+    const { cleanup } = await import("./setup.js");
+
+    await expect(
+      cleanup(contextWithFixtures() as Parameters<typeof cleanup>[0]),
+    ).rejects.toThrow(/Cleanup left fixtures on the target.*Item/s);
+  });
+
   it("treats an already-gone item as done rather than as a leak", async () => {
     // Tests legitimately remove their own fixtures mid-run. Counting the
     // second delete as a failure turns every such file red on teardown while
