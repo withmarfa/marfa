@@ -575,7 +575,6 @@ pub async fn rewrite_done(app: &App, caller: &Caller, name: String, body: Value)
     .await
 }
 
-/// One line per saved mapping of an installed plugin, with its former targets and open rewrites.
 pub fn archive_lines(tx: &Transaction<'_>) -> Result<Vec<Value>> {
     let mut statement =
         tx.prepare_cached("SELECT plugin, version, kinds FROM connector_mappings ORDER BY plugin")?;
@@ -726,7 +725,6 @@ fn archived_rewrite_list(held: Option<&Value>) -> Option<Vec<ArchivedRewrite>> {
         .collect()
 }
 
-/// Stores the line's former targets and open rewrites beside the mapping it restores.
 fn restore_rewrite_state(
     tx: &Transaction<'_>,
     line: &Archived,
