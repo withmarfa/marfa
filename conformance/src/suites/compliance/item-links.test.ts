@@ -119,7 +119,9 @@ it("answers the new web_url on the next read after the sign-in address moves", a
   await setAddress(MOVED_ADDRESS);
   const second = await working.getItem(id);
   expect(second.status, JSON.stringify(second.error)).toBe(200);
-  expect(second.data.item.web_url).toBe(page(new URL(MOVED_ADDRESS).origin, id));
+  expect(second.data.item.web_url).toBe(
+    page(new URL(MOVED_ADDRESS).origin, id),
+  );
   expect(second.data.item.app_url).toBe(first.data.item.app_url);
 });
 
