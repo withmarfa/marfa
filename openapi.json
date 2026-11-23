@@ -16080,7 +16080,7 @@
                 "count": {
                   "type": "integer",
                   "minimum": 0,
-                  "description": "The items outside the bin of the target type under the connector's source."
+                  "description": "The items outside the bin under the connector's source that the rewrite moves onto the target type: those on the kind's own type and on each type the kind was mapped onto before."
                 }
               },
               "required": [
@@ -16152,6 +16152,16 @@
             },
             "description": "The kinds to rewrite."
           },
+          "from": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "Each kind's types that the rewrite moves its items from, by name: its own type and each type it was mapped onto before, other than its target."
+          },
           "requested_at": {
             "type": "string",
             "format": "date-time",
@@ -16163,6 +16173,7 @@
           "number",
           "version",
           "kinds",
+          "from",
           "requested_at"
         ],
         "additionalProperties": false,

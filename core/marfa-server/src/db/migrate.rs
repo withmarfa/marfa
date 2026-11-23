@@ -93,6 +93,11 @@ pub const MIGRATIONS: &[Migration] = &[
              WHERE name = 'origin_port')",
         ),
     },
+    Migration {
+        version: 13,
+        sql: include_str!("migrations/0013_connector_former_targets.sql"),
+        done: None,
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

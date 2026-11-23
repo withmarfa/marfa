@@ -1721,7 +1721,7 @@ marfa plugins mapping set [OPTIONS] <NAME> <FILE>
 
 ### marfa plugins mapping rewrite
 
-Count the connector's items on each kind's target type and ask the connector to rewrite them to the mapping on its next run, as a numbered request it clears when done. Marfa changes no item itself. Needs `connectors.manage`.
+Count the connector's items that a rewrite moves onto each kind's target type, from the kind's own type and from each type the kind was mapped onto before, and ask the connector to move them to the mapping on its next run, as a numbered request it clears when done. Until it does, the connector's key reaches its own items on those former types to move them. Marfa changes no item itself. Needs `connectors.manage`.
 
 ```text
 marfa plugins mapping rewrite [OPTIONS] <NAME>

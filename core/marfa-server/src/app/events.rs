@@ -33,7 +33,7 @@ pub async fn judge_types(app: &App, caller: &Caller, entries: Vec<String>) -> Re
                         json!([{ "path": "type", "message": error.message }]),
                     )
             })?;
-            judge_type_within(read, entry, &|type_id| read.caller.maps_onto(type_id))
+            judge_type_within(read, entry, &|type_id| read.caller.reads_mapped(type_id))
         })
     })
     .await

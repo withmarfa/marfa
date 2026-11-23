@@ -1384,7 +1384,15 @@ When the server stores a mapping, the server MUST change no stored item.
 
 **Reason:** a changed mapping applies to what the connector writes next; existing items change only when the owner asks for a rewrite (`plugins/rewrite-request`).
 
-**Tests:** `compliance/connector-mapping.test.ts › counts exactly the items under the connector's source on a kind's target type, and changes no item on a save or a rewrite`.
+**Tests:** `compliance/connector-mapping.test.ts › counts exactly the items under the connector's source that a rewrite would move onto a kind's target type, from its own type and from a type it was mapped onto before, and changes no item on a save or a rewrite`.
+
+### `plugins/mapping-former-target`
+
+When the server stores a mapping that moves a kind's `target_type` off a type that is none of its connector's kinds' own types, the server MUST keep that type as one the kind was mapped onto before, until a later save makes it the kind's `target_type` again.
+
+**Reason:** the connector's items of the kind stay on that type until a rewrite moves them (`plugins/mapping-keeps-items`), and a rewrite finds them there (`plugins/reach-former-read`). A kind's own types are decided by the key's type map alone (`plugins/reach-own-types`), so they are not kept.
+
+**Tests:** `compliance/connector-reach.test.ts › lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`, `› moves its own items from the former target type onto the kind's new target type and no other`.
 
 ### `plugins/mapping-audit`
 
@@ -1438,7 +1446,7 @@ While a plugin's connector key holds no write on a type in its type map, when th
 
 **Reason:** a mapping onto a type that also holds the owner's items never opens those items to the connector. Each door answers as it does for a type the key cannot reach, so the connector learns nothing of the owner's items.
 
-**Tests:** `compliance/connector-reach.test.ts › answers an owner's item of the target type as one the key cannot reach on every door, where the same call on its own item succeeds`, `› mints a connector key holding write on the edge types its connector names, own and shipped, which writes both from its own item and no other`, `› refuses to move the owner's item of its own type into the target type, an item into a type outside its reach, and its own item once the kind is off`, `› writes, reads, lists and clears the agreements of its own items of the mapped type, and skips the owner's`.
+**Tests:** `compliance/connector-reach.test.ts › answers an owner's item of the target type as one the key cannot reach on every door, where the same call on its own item succeeds`, `› mints a connector key holding write on the edge types its connector names, own and shipped, which writes both from its own item and no other`, `› refuses to move the owner's item of its own type into the target type, an item into a type outside its reach, and its own item once the kind is off`, `› writes, reads, lists and clears the agreements of its own items of the mapped type, and skips the owner's`, `› lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`.
 
 ### `plugins/reach-create-own-source`
 
@@ -1514,7 +1522,7 @@ While a plugin's connector key's mapping holds an enabled kind whose `target_typ
 
 ### `plugins/reach-disabled`
 
-When a saved mapping turns a kind off or moves it to another `target_type`, the server MUST answer every later write of the plugin's connector key to the former target type as `plugins/reach-target-own-source` does not hold for it.
+When a saved mapping turns a kind off or moves it to another `target_type`, the server MUST answer every later write of the plugin's connector key to the former target type, other than a move `plugins/reach-former-move` takes, as `plugins/reach-target-own-source` does not hold for it.
 
 **Tests:** `compliance/connector-reach.test.ts › refuses the target type once the kind is off or moved, and takes it again once it is back`, `› refuses to move the owner's item of its own type into the target type, an item into a type outside its reach, and its own item once the kind is off`.
 
@@ -1532,15 +1540,47 @@ When the server answers a plugin's connector key, the server MUST answer its `ty
 
 **Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`.
 
+### `plugins/reach-former-read`
+
+While a rewrite request the connector has not cleared names an enabled kind, when the plugin's connector key reads an item of a type that kind was mapped onto before (`plugins/mapping-former-target`) whose `source` is its own, on a door that `plugins/reach-read-own` names, or lists that type with `GET /items`, the server MUST answer it as `plugins/reach-read-own` and `plugins/reach-list-own` answer an item of a mapped target type.
+
+**Reason:** the connector finds its items where the kind was mapped before so that it can move them onto the kind's target. The owner's items of the type, and another source's, stay out of reach (`plugins/reach-target-other-source`), and so do the agreements of its own items there (`connectors/agreements-skip-unreadable`), which it keeps only on a type it writes.
+
+**Tests:** `compliance/connector-reach.test.ts › lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`.
+
+### `plugins/reach-former-move`
+
+While a rewrite request the connector has not cleared names an enabled kind, when the plugin's connector key sends `PATCH /items/{id}` or `POST /items/bulk` with `retype` `true`, moving an item of a type that kind was mapped onto before whose `source` is its own onto the kind's `target_type`, whatever kind wrote the item, the server MUST take the move as it would were the type the item leaves granted write in its type map.
+
+**Reason:** a rewrite moves the connector's items of the kind onto its target, and the server never moves one itself (`plugins/rewrite-request`). The reach is per type: the server does not know which kind wrote an item, so on a type two kinds were mapped onto before, the key may move its own items onto either kind's target, and the connector, which knows each item's kind, moves each onto its own kind's target.
+
+**Tests:** `compliance/connector-reach.test.ts › lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`, `› moves its own items from the former target type onto the kind's new target type and no other`, `› counts and opens under each kind the connector's own items of both kinds on a type both were mapped onto before, and moves each onto its own kind's target`.
+
+### `plugins/reach-former-other-write`
+
+While a plugin's connector key's type map does not grant write on a type an enabled kind was mapped onto before and no enabled kind's `target_type` is that type, the server MUST answer every write of the key to that type, other than a move `plugins/reach-former-move` takes, as `plugins/reach-target-own-source` does not hold for it.
+
+**Reason:** the reach a rewrite opens is for moving the connector's items onto the kind's target, so the connector creates and edits nothing on the type it leaves, and moves nothing onto another type.
+
+**Tests:** `compliance/connector-reach.test.ts › lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`, `› moves its own items from the former target type onto the kind's new target type and no other`.
+
+### `plugins/reach-former-ends`
+
+When the connector clears the last rewrite request naming a kind (`plugins/rewrite-done`), the server MUST answer every later read and write of the plugin's connector key to a type that kind was mapped onto before, and that no enabled kind's `target_type` is, as it answers a type its type map does not reach.
+
+**Reason:** a cleared request says the move is done, so the reach it opened ends with it.
+
+**Tests:** `compliance/connector-reach.test.ts › lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`.
+
 ## Rewriting existing items
 
 ### `plugins/rewrite-count`
 
-When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/mapping/rewrite` with `dry_run` `true`, the server MUST answer `200` with `dry_run` `true`, the mapping's `version` and `kinds` holding, for each kind the request names or, with none named, each enabled kind, its `target_type` and the `count` of items outside the bin of that type whose `source` is the connector's source, and store nothing.
+When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/mapping/rewrite` with `dry_run` `true`, the server MUST answer `200` with `dry_run` `true`, the mapping's `version` and `kinds` holding, for each kind the request names or, with none named, each enabled kind, its `target_type` and the `count` of items outside the bin whose `source` is the connector's source on the kind's own type and on each type it was mapped onto before (`plugins/mapping-former-target`), other than its `target_type`, counted by type whatever kind wrote them, or 0 for a kind that is off, and store nothing.
 
-**Reason:** the owner sees how many items a rewrite would touch before asking for it.
+**Reason:** the owner sees how many items a rewrite would move before asking for it. Items already on the target type stay where they are. The server does not know which kind wrote an item, so a type two kinds were mapped onto before counts the connector's items of both under each kind. A kind that is off writes nothing, so a rewrite moves none of its items.
 
-**Tests:** `compliance/connector-mapping.test.ts › counts exactly the items under the connector's source on a kind's target type, and changes no item on a save or a rewrite`.
+**Tests:** `compliance/connector-mapping.test.ts › counts exactly the items under the connector's source that a rewrite would move onto a kind's target type, from its own type and from a type it was mapped onto before, and changes no item on a save or a rewrite`, `compliance/connector-reach.test.ts › counts and opens under each kind the connector's own items of both kinds on a type both were mapped onto before, and moves each onto its own kind's target`, `› counts nothing and moves from no type for a kind turned off`.
 
 ### `plugins/rewrite-request`
 
@@ -1552,11 +1592,11 @@ When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/
 
 ### `plugins/rewrite-pending`
 
-While the connector has not cleared a rewrite request, the server MUST answer it in `rewrites` in `GET /plugins/{name}/connector/mapping`, with its `number`, `version`, `kinds` and `requested_at`, ordered by `number`.
+While the connector has not cleared a rewrite request, the server MUST answer it in `rewrites` in `GET /plugins/{name}/connector/mapping`, with its `number`, `version`, `kinds`, `from` holding for each of its kinds the types a rewrite moves that kind's items from (`plugins/rewrite-count`), none for a kind that is off, and `requested_at`, ordered by `number`.
 
-**Reason:** the owner may ask again before the connector runs; each request stands until the connector carries it out.
+**Reason:** the owner may ask again before the connector runs; each request stands until the connector carries it out. `from` tells the connector where to find the items it moves.
 
-**Tests:** `compliance/connector-mapping.test.ts › stores each rewrite request under its own number, which the connector clears one at a time, and refuses another key clearing one`.
+**Tests:** `compliance/connector-reach.test.ts › lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`, `compliance/connector-mapping.test.ts › stores each rewrite request under its own number, which the connector clears one at a time, and refuses another key clearing one`, `compliance/connector-reach.test.ts › counts nothing and moves from no type for a kind turned off`.
 
 ### `plugins/rewrite-unknown-kind`
 

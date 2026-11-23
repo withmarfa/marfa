@@ -648,8 +648,8 @@ describe("restore", () => {
       ],
       [
         "a later version",
-        (m) => ({ ...m, version: 4 }),
-        "The archive is at version 4, written by marfa-server 0.0.1; this build reads archives up to version 3.",
+        (m) => ({ ...m, version: 5 }),
+        "The archive is at version 5, written by marfa-server 0.0.1; this build reads archives up to version 4.",
       ],
       [
         "another format",

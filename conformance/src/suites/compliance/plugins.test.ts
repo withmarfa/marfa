@@ -880,7 +880,7 @@ describe("plugins in an archive", () => {
   it("keeps plugin provenance and the install record through an export and a restore", async () => {
     const archive = await owner.exportArchive({ state: "any" });
     expect(archive.status).toBe(200);
-    expect(archiveManifest(archive.data).version).toBe(3);
+    expect(archiveManifest(archive.data).version).toBe(4);
     const plugins = archiveLines(archive.data, "instance").filter(
       (line) => "plugin" in line,
     );

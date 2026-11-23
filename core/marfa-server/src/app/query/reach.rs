@@ -69,7 +69,7 @@ impl Reach {
             if !caller.may_read_type(&type_id) {
                 reach.whole = false;
                 if own
-                    && caller.maps_onto(&type_id)
+                    && caller.reads_mapped(&type_id)
                     && caller
                         .levers()?
                         .lists(&catalog.rules, &type_id, &reach.own_source)

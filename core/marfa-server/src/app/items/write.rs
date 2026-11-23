@@ -1394,12 +1394,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     }
 
     fn update(&self, update: Update) -> Result<Done> {
-        let row = self.gate().writable_row(&update.id)?;
-        let moving = update.retype
-            && update
-                .type_id
-                .as_deref()
-                .is_some_and(|declared| declared != row.type_id);
+        let to = update.type_id.as_deref().filter(|_| update.retype);
+        let row = self.gate().writable_row_moving(&update.id, to)?;
+        let moving = to.is_some_and(|declared| declared != row.type_id);
         if moving {
             if let Some(destination) = update.type_id.as_deref() {
                 self.gate()
@@ -2255,7 +2252,11 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 )
             });
         }
-        self.gate().row_gate(&row)?;
+        if retype {
+            self.gate().moving_gate(&row, &put.type_id)?;
+        } else {
+            self.gate().row_gate(&row)?;
+        }
         if row.state == "trashed" {
             if !retype {
                 refuse_other_type(&row, &put.type_id, named_by_id)?;

@@ -731,13 +731,14 @@ impl Rows {
                     .push((source.to_string(), state.clone()));
             }
             "connector_mapping" => {
-                let archived = crate::app::mapping::archived(body, row).map_err(|why| {
-                    invalid(format!(
-                        "Line {row} of {INSTANCE} holds a connector mapping that {why}."
-                    ))
-                    .with_detail("entry", INSTANCE)
-                    .with_detail("line", row)
-                })?;
+                let archived =
+                    crate::app::mapping::archived(body, row, self.version).map_err(|why| {
+                        invalid(format!(
+                            "Line {row} of {INSTANCE} holds a connector mapping that {why}."
+                        ))
+                        .with_detail("entry", INSTANCE)
+                        .with_detail("line", row)
+                    })?;
                 if registrations
                     .mappings
                     .iter()
@@ -1541,15 +1542,15 @@ mod tests {
 
     #[test]
     fn a_manifest_at_a_later_version_is_refused_and_one_at_none_is_mistyped() {
-        let text = r#"{"format":"marfa-archive","version":4,"written_by":"marfa-server 9.0.0"}"#;
+        let text = r#"{"format":"marfa-archive","version":5,"written_by":"marfa-server 9.0.0"}"#;
         let refused = manifest(text.as_bytes()).unwrap_err();
         assert!(
-            refused.message.contains("up to version 3"),
+            refused.message.contains("up to version 4"),
             "{}",
             refused.message
         );
         let details = refused.details.unwrap();
-        assert_eq!(details["version"], 4);
+        assert_eq!(details["version"], 5);
         assert_eq!(details["written_by"], "marfa-server 9.0.0");
         for version in ["0", "1.5", "\"1\"", "null"] {
             let text = format!(r#"{{"format":"marfa-archive","version":{version}}}"#);
