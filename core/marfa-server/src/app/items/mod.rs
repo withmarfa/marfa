@@ -27,6 +27,7 @@ use super::access::Caller;
 use super::catalog::Catalog;
 use super::connectors::ReadOnly;
 use super::edges::{self, Reach};
+use super::item_links::Links;
 use super::refusal::{Code, Refusal, Result};
 
 pub(crate) use archived::{Archived, archived, versions};
@@ -173,6 +174,10 @@ struct ItemHead<'a> {
     trashed_with_type: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     read_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    app_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -208,7 +213,7 @@ pub(crate) fn parsed(text: &str) -> Result<Map<String, Value>> {
 }
 
 impl Item {
-    fn head(&self, read_only: Option<bool>, shown: Marks) -> ItemHead<'_> {
+    fn head(&self, read_only: Option<bool>, links: Option<&Links>, shown: Marks) -> ItemHead<'_> {
         let mark = self.mark.as_ref();
         let named = mark.filter(|mark| match shown {
             Marks::To(caller) => caller.may_read_type(&mark.with_type),
@@ -236,13 +241,15 @@ impl Item {
                 .filter(|_| matches!(shown, Marks::Logged))
                 .map(|mark| mark.with_type.as_str()),
             read_only,
+            url: links.map(|links| links.url(&self.id)),
+            app_url: links.map(|links| links.app_url(&self.id)),
         }
     }
 
-    pub fn answered(&self, read_only: &ReadOnly, caller: &Caller) -> Result<String> {
+    pub fn answered(&self, read_only: &ReadOnly, caller: &Caller, links: &Links) -> Result<String> {
         let read_only = read_only.of(&self.source, &self.type_id)?;
         with_properties(
-            &self.head(Some(read_only), Marks::To(caller)),
+            &self.head(Some(read_only), Some(links), Marks::To(caller)),
             &self.properties,
         )
     }
@@ -254,14 +261,18 @@ impl Item {
         caller: &Caller,
         catalog: &Catalog,
         cursors: &crate::app::query::Secret,
+        links: &Links,
     ) -> Result<String> {
         let blocks = edges::hydrate(tx, caller, catalog, cursors, &self.id, Reach::Outbound)?;
-        Ok(with_blocks(self.answered(read_only, caller)?, &blocks.text))
+        Ok(with_blocks(
+            self.answered(read_only, caller, links)?,
+            &blocks.text,
+        ))
     }
 
-    /// A frame adds `read_only` when it is sent.
+    /// A frame adds `read_only`, `url` and `app_url` when it is sent.
     fn logged(&self) -> Result<String> {
-        with_properties(&self.head(None, Marks::Logged), &self.properties)
+        with_properties(&self.head(None, None, Marks::Logged), &self.properties)
     }
 
     fn state_named(&self) -> Result<Value> {
@@ -498,7 +509,7 @@ fn naming_host(
     )
 }
 
-fn summary_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<Value> {
+fn summary_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item, links: &Links) -> Result<Value> {
     Ok(json!({
         "id": row.id,
         "type": row.type_id,
@@ -506,6 +517,8 @@ fn summary_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<Val
         "name": name_of(tx, catalog, row)?,
         "source": row.source,
         "created_at": row.created_at,
+        "url": links.url(&row.id),
+        "app_url": links.app_url(&row.id),
     }))
 }
 

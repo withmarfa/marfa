@@ -18,6 +18,7 @@ use crate::app::catalog::{self, Catalog};
 use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::events::{Head, Judge, Judged};
 use crate::app::faults::{HOLD_WEBHOOK_CONNECTED, HOLD_WEBHOOK_RESPONSE};
+use crate::app::item_links::Links;
 use crate::app::outbound::{self, Asker, Outcome, Outgoing, Reach};
 use crate::app::refusal::{Refusal, Result};
 use crate::db::Write;
@@ -53,6 +54,7 @@ fn prepare(
     tx: &Transaction<'_>,
     catalog: &Catalog,
     read_only: &ReadOnly,
+    links: &Links,
     id: &str,
     at: &str,
 ) -> Result<Prepared> {
@@ -87,6 +89,7 @@ fn prepare(
         levers: caller.levers()?,
         rules: &catalog.rules,
         read_only,
+        links,
         filter: &UNFILTERED,
         own: false,
     };
@@ -228,12 +231,13 @@ async fn prepared(app: &App, id: &str) -> Result<Prepared> {
     let at = app.clock.stamp();
     let cache = app.catalog_handle();
     let marked = app.read_only_handle();
+    let links = app.item_links();
     let looked_up = id.to_string();
     app.db
         .read(move |tx| {
             let catalog = catalog::current(&cache, tx, catalog::Snapshot::Committed)?;
             let read_only = read_only::current(&marked, tx, &at, catalog::Snapshot::Committed)?;
-            prepare(tx, &catalog, &read_only, &looked_up, &at)
+            prepare(tx, &catalog, &read_only, &links, &looked_up, &at)
         })
         .await
 }

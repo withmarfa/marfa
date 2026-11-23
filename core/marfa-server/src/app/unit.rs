@@ -12,6 +12,7 @@ use super::clock::Stamp;
 use super::connectors::{ReadOnly, Registry, read_only};
 use super::events::{self, Event};
 use super::faults::{FAIL_EVENT_STAMP, Faults};
+use super::item_links::Links;
 use super::provenance::{self, Origin};
 use super::query::Secret;
 use super::refusal::Result;
@@ -32,6 +33,8 @@ pub struct Unit<'t, 'c> {
     read_only: Arc<ArcSwap<Registry>>,
     /// What a listing this write answers signs its cursor with.
     pub cursors: Secret,
+    /// The addresses this write stamps on every item it answers.
+    pub links: Links,
     /// A job's chunk records one entry for its rows, as an atomic page does.
     summarised: bool,
     faults: Arc<Faults>,
@@ -58,6 +61,7 @@ impl<'c> Unit<'_, 'c> {
             origin: self.origin.clone(),
             read_only: self.read_only.clone(),
             cursors: self.cursors.clone(),
+            links: self.links.clone(),
             summarised: self.summarised,
             faults: self.faults.clone(),
         }
@@ -166,6 +170,7 @@ impl App {
         let origin = provenance::current();
         let read_only = self.read_only_handle();
         let cursors = self.cursor_secret.clone();
+        let links = self.item_links();
         let faults = self.faults.clone();
         let write = if matches!(caller, Caller::Server) {
             Write::server(action)
@@ -187,6 +192,7 @@ impl App {
                     origin,
                     read_only,
                     cursors,
+                    links,
                     summarised: false,
                     faults,
                 })

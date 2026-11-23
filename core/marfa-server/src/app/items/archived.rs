@@ -10,6 +10,7 @@ use crate::app::access::Caller;
 use crate::app::blobs::references::{self, Row};
 use crate::app::catalog::Catalog;
 use crate::app::connectors::ReadOnly;
+use crate::app::item_links::Links;
 use crate::app::refusal::{Refusal, Result};
 
 const FILE_TYPE: &str = "core.file";
@@ -72,12 +73,13 @@ pub fn archived(
     caller: &Caller,
     catalog: &Catalog,
     read_only: &ReadOnly,
+    links: &Links,
     seqs: &[i64],
     with_history: bool,
 ) -> Result<Vec<Archived>> {
     rows::by_seqs(tx, seqs)?
         .iter()
-        .map(|row| one(tx, caller, catalog, read_only, row, with_history))
+        .map(|row| one(tx, caller, catalog, read_only, links, row, with_history))
         .collect()
 }
 
@@ -107,6 +109,7 @@ fn one(
     caller: &Caller,
     catalog: &Catalog,
     read_only: &ReadOnly,
+    links: &Links,
     row: &Item,
     with_history: bool,
 ) -> Result<Archived> {
@@ -139,7 +142,7 @@ fn one(
                 lending_extensions.insert(namespace.clone(), lent);
             }
         }
-        let item = with_properties(&row.head(None, Marks::To(caller)), &row.properties)?;
+        let item = with_properties(&row.head(None, None, Marks::To(caller)), &row.properties)?;
         let trashed_by: Option<&Writer> = row.trashed_by.as_ref();
         format!(
             "{{\"item\":{item},\"metadata\":{metadata},\"writer\":{},\"restored_at\":{},\
@@ -153,7 +156,7 @@ fn one(
     } else {
         format!(
             "{{\"item\":{},\"metadata\":{metadata}}}",
-            row.answered(read_only, caller)?
+            row.answered(read_only, caller, links)?
         )
     };
     Ok(Archived {

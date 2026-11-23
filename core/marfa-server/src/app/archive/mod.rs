@@ -643,7 +643,15 @@ fn select<W: RowSink>(
         };
         after = *last;
         read.hydrating();
-        let held = items::archived(read.tx, caller, catalog, &read.read_only, &seqs, true)?;
+        let held = items::archived(
+            read.tx,
+            caller,
+            catalog,
+            &read.read_only,
+            &read.links,
+            &seqs,
+            true,
+        )?;
         for row in held {
             let value = line_value(&row.line)?;
             checks::item(catalog, cap, &value, items.lines as usize + 1)

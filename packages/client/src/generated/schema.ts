@@ -3270,6 +3270,18 @@ export interface components {
             source_id?: string;
             /** @description `true` if every connector with a live write key for the item's type that owns or claims its `source` lists the type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit. */
             read_only: boolean;
+            /**
+             * Format: uri
+             * @description The item's page at this instance's sign-in address, then `/i/` and the item's ID. Marfa builds it when it answers the item, so it changes when the sign-in address moves.
+             * @example https://marfa.example/i/01a1011a-3923-73d1-963d-9e3779b19e37
+             */
+            readonly url: string;
+            /**
+             * Format: uri
+             * @description The item's address for apps on one device: `marfa://`, the instance's ID, then the item's ID. It stays the same when the sign-in address moves.
+             * @example marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-3923-73d1-963d-9e3779b19e37
+             */
+            readonly app_url: string;
             /** @description The latitude where the item was captured. Absent if the writer set none. */
             capture_latitude?: number;
             /** @description The longitude where the item was captured. Absent if the writer set none. */
@@ -3977,6 +3989,18 @@ export interface components {
              * @example 2026-10-03T09:30:00.000Z
              */
             created_at: string;
+            /**
+             * Format: uri
+             * @description The item's page at this instance's sign-in address, then `/i/` and the item's ID. Marfa builds it when it answers the item, so it changes when the sign-in address moves.
+             * @example https://marfa.example/i/01a1011a-3923-73d1-963d-9e3779b19e37
+             */
+            readonly url: string;
+            /**
+             * Format: uri
+             * @description The item's address for apps on one device: `marfa://`, the instance's ID, then the item's ID. It stays the same when the sign-in address moves.
+             * @example marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-3923-73d1-963d-9e3779b19e37
+             */
+            readonly app_url: string;
         };
         /** @description A page of trashed item summaries. */
         TrashSummaryPage: {
@@ -10743,6 +10767,8 @@ export interface operations {
                      *           "schema_version": 1,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "url": "https://marfa.example/i/01a10119-55c0-77ac-9589-f7c48fa642b6",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10119-55c0-77ac-9589-f7c48fa642b6",
                      *           "properties": {
                      *             "name": "Pilot for Sample Ltd",
                      *             "amount": 4500,
@@ -10765,6 +10791,8 @@ export interface operations {
                      *           "schema_version": 1,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *           "properties": {
                      *             "name": "Renewal for Example Co",
                      *             "amount": 12000,
@@ -10992,6 +11020,8 @@ export interface operations {
                      *         "schema_version": 1,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "url": "https://marfa.example/i/01a10119-55c0-77ac-9589-f7c48fa642b6",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10119-55c0-77ac-9589-f7c48fa642b6",
                      *         "properties": {
                      *           "name": "Pilot for Sample Ltd",
                      *           "amount": 4500,
@@ -11036,6 +11066,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "url": "https://marfa.example/i/01a10119-cf61-7ef1-bc70-3c55fcd9f838",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10119-cf61-7ef1-bc70-3c55fcd9f838",
                      *         "properties": {
                      *           "name": "Invoice 2026-001"
                      *         },
@@ -11290,6 +11322,8 @@ export interface operations {
                      *         "schema_version": 1,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *         "properties": {
                      *           "name": "Renewal for Example Co",
                      *           "amount": 12000,
@@ -11734,6 +11768,8 @@ export interface operations {
                      *         "schema_version": 1,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *         "properties": {
                      *           "name": "Renewal for Example Co",
                      *           "amount": 12000,
@@ -12438,6 +12474,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "url": "https://marfa.example/i/01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-c2a3-78ab-88fe-01dda6454da2",
                      *         "properties": {
                      *           "name": "Casey Sample"
                      *         }
@@ -12881,6 +12919,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "url": "https://marfa.example/i/01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-c2a3-78ab-88fe-01dda6454da2",
                      *         "properties": {
                      *           "name": "Casey Sample"
                      *         }
@@ -13301,6 +13341,8 @@ export interface operations {
                      *           "schema_version": 1,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *           "properties": {
                      *             "name": "Renewal for Example Co",
                      *             "amount": 12000,
@@ -13713,6 +13755,8 @@ export interface operations {
                      *           "schema_version": 1,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *           "properties": {
                      *             "name": "Renewal for Example Co",
                      *             "amount": 12000,
@@ -13734,6 +13778,8 @@ export interface operations {
                      *           "schema_version": 0,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "url": "https://marfa.example/i/01a1011c-2f86-76b6-9594-050c109f4957",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011c-2f86-76b6-9594-050c109f4957",
                      *           "properties": {
                      *             "name": "Alex Example"
                      *           }
@@ -14601,7 +14647,9 @@ export interface operations {
                      *           "type": "core.note",
                      *           "version": 1,
                      *           "source": "notes",
-                     *           "created_at": "2026-01-01T12:00:00.000Z"
+                     *           "created_at": "2026-01-01T12:00:00.000Z",
+                     *           "url": "https://marfa.example/i/01900000-0000-7000-8000-000000000001",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01900000-0000-7000-8000-000000000001"
                      *         }
                      *       ],
                      *       "next_cursor": null
@@ -14754,6 +14802,8 @@ export interface operations {
                      *             "schema_version": 1,
                      *             "trashed_at": null,
                      *             "read_only": false,
+                     *             "url": "https://marfa.example/i/01a1012b-8d07-7a13-b5c4-61e0f39a2d78",
+                     *             "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1012b-8d07-7a13-b5c4-61e0f39a2d78",
                      *             "properties": {
                      *               "title": "Dentist",
                      *               "starts_at": "2026-10-07T08:00:00.000Z",
@@ -14778,6 +14828,8 @@ export interface operations {
                      *             "schema_version": 1,
                      *             "trashed_at": null,
                      *             "read_only": false,
+                     *             "url": "https://marfa.example/i/01a1012b-5e31-7c42-9a6e-2d4f8b1c7e50",
+                     *             "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1012b-5e31-7c42-9a6e-2d4f8b1c7e50",
                      *             "properties": {
                      *               "title": "Team review",
                      *               "starts_at": "2026-09-04T10:00:00.000Z",
@@ -15142,6 +15194,8 @@ export interface operations {
                      *           "name": "Casey Sample",
                      *           "source": "crm",
                      *           "created_at": "2026-10-03T09:44:15.777Z",
+                     *           "url": "https://marfa.example/i/01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-c2a3-78ab-88fe-01dda6454da2",
                      *           "trashed_at": "2026-10-03T09:47:15.447Z",
                      *           "trashed_by": {
                      *             "kind": "key",
@@ -20649,6 +20703,8 @@ export interface operations {
                      *             "schema_version": 1,
                      *             "trashed_at": null,
                      *             "read_only": false,
+                     *             "url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *             "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *             "properties": {
                      *               "name": "Renewal for Example Co",
                      *               "amount": 12000,
@@ -31356,6 +31412,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "url": "https://marfa.example/i/01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10122-54e3-7447-9e6f-91e7d99f361f",
                      *         "properties": {
                      *           "title": "Deals",
                      *           "query": {
@@ -31612,6 +31670,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "url": "https://marfa.example/i/01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10122-54e3-7447-9e6f-91e7d99f361f",
                      *         "properties": {
                      *           "title": "Open deals",
                      *           "query": {
@@ -31858,6 +31918,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": "2026-10-03T10:10:45.735Z",
                      *         "read_only": false,
+                     *         "url": "https://marfa.example/i/01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10122-54e3-7447-9e6f-91e7d99f361f",
                      *         "properties": {
                      *           "title": "Open deals",
                      *           "query": {
@@ -32472,6 +32534,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "url": "https://marfa.example/i/01a10122-ce84-7b6c-b1fd-38287d45e791",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10122-ce84-7b6c-b1fd-38287d45e791",
                      *         "properties": {
                      *           "title": "Won deals",
                      *           "query": {
@@ -32704,6 +32768,8 @@ export interface operations {
                      *           "schema_version": 1,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *           "properties": {
                      *             "name": "Renewal for Example Co",
                      *             "amount": 12000,
@@ -32725,6 +32791,8 @@ export interface operations {
                      *           "schema_version": 1,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "url": "https://marfa.example/i/01a10119-55c0-77ac-9589-f7c48fa642b6",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10119-55c0-77ac-9589-f7c48fa642b6",
                      *           "properties": {
                      *             "name": "Pilot for Sample Ltd",
                      *             "amount": 4500,
@@ -33110,6 +33178,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "url": "https://marfa.example/i/01a10122-ce84-7b6c-b1fd-38287d45e791",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10122-ce84-7b6c-b1fd-38287d45e791",
                      *         "properties": {
                      *           "title": "Won this quarter",
                      *           "query": {

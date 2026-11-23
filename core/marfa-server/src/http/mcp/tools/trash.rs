@@ -21,7 +21,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "List the trash",
-        description: "Use to see what is in the trash and when each item becomes eligible for deletion. Pass next_cursor to read further.",
+        description: "Use to see what is in the trash and when each item becomes eligible for deletion. Pass next_cursor to read further. Give the person an item's url when you point at it.",
         input: json!({
             "type": "object",
             "properties": {
@@ -36,7 +36,13 @@ pub fn definition() -> Definition {
         output: json!({
             "type": "object",
             "properties": {
-                "items": { "type": "array", "items": { "type": "object" } },
+                "items": { "type": "array", "items": { "type": "object",
+                    "properties": {
+                        "url": { "type": "string" },
+                        "app_url": { "type": "string" },
+                    },
+                    "required": ["url", "app_url"],
+                } },
                 "next_cursor": { "type": ["string", "null"] },
                 "retention_days": { "type": "integer" },
             },

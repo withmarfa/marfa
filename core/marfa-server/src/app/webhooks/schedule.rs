@@ -10,6 +10,7 @@ use crate::app::connectors::ReadOnly;
 use crate::app::events::fanout::{self, Logged};
 use crate::app::events::{Filter, Judge, Judged};
 use crate::app::faults::{Faults, HOLD_WEBHOOK_SCHEDULE_QUEUED};
+use crate::app::item_links::Links;
 use crate::app::refusal::Result;
 use crate::db::Pulse;
 
@@ -46,6 +47,7 @@ pub enum Pass {
 pub struct Context<'a> {
     pub catalog: &'a Catalog,
     pub read_only: &'a ReadOnly,
+    pub links: &'a Links,
     pub faults: &'a Faults,
     pub pulse: &'a Pulse,
     pub at: &'a str,
@@ -217,6 +219,7 @@ fn queue(
             levers: each.caller.levers()?,
             rules: &context.catalog.rules,
             read_only: context.read_only,
+            links: context.links,
             filter: &UNFILTERED,
             own: false,
         };

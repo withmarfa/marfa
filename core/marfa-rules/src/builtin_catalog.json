@@ -2882,6 +2882,7 @@
   "webhooks"
  ],
  "reserved_field_names": [
+  "app_url",
   "capture_latitude",
   "capture_longitude",
   "created_at",

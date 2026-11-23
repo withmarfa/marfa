@@ -1026,7 +1026,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     fn answer(&self, status: u16, item: &Item, also: &str) -> Result<Done> {
         self.answer_with(
             status,
-            item.answered(&self.read_only, self.caller())?,
+            item.answered(&self.read_only, self.caller(), &self.unit.links)?,
             item,
             also,
         )
@@ -1039,6 +1039,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             self.caller(),
             &self.catalog,
             &self.unit.cursors,
+            &self.unit.links,
         )?;
         self.answer_with(status, shown, item, also)
     }
@@ -2671,7 +2672,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             OwnerAct::Trash | OwnerAct::Restore => self.caller().require_local()?,
         }
         let row = self.gate().owner_row(&id)?;
-        let summary = summary_of(self.unit.tx(), &self.catalog, &row)?;
+        let summary = summary_of(self.unit.tx(), &self.catalog, &row, &self.unit.links)?;
         if row.version != version {
             let conflict = Done {
                 status: 409,

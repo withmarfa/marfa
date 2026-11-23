@@ -12,6 +12,40 @@ When the server returns item data or related metadata, extensions, edges, histor
 
 **Tests:** `compliance/item-read-boundary.test.ts › keeps item and metadata reads in the state that authorized them during a retype`, `› authorizes hydrated occurrences after a concurrent retype`, `› authorizes occurrence parent relationships with their source state`, `› keeps extensions, history, lookup and edge hydration in the authorized state`.
 
+## Item link
+
+An answered item carries two addresses. `url` shares the item. `app_url` opens it in an app on the same device.
+
+### `items/item-url`
+
+When the server answers an item, the server MUST include `url` as the origin of the sign-in address in force, then `/i/`, then the item's id.
+
+**Tests:** `compliance/item-links.test.ts › answers url from the sign-in address, including localhost, a port and an IDN host`.
+
+### `items/item-app-url`
+
+When the server answers an item, the server MUST include `app_url` as `marfa://`, then the instance's id, a slash and the item's id.
+
+**Tests:** `compliance/item-links.test.ts › answers app_url from the instance id`.
+
+### `items/item-url-follows-address`
+
+When the sign-in address changes, the server MUST answer an item's `url` on the next read from the sign-in address then in force.
+
+**Tests:** `compliance/item-links.test.ts › answers the new url on the next read after the sign-in address moves`, `› answers every item in a list from the sign-in address of that read, and the next list from the address after it moves`.
+
+### `items/item-url-trashed`
+
+When the server answers a trashed item, the server MUST include `url` and `app_url`.
+
+**Tests:** `compliance/item-links.test.ts › answers url and app_url on a trashed item`.
+
+### `items/item-url-frame`
+
+When the server sends an event frame that carries an item, the server MUST include `url` and `app_url` on that item.
+
+**Tests:** `compliance/item-links.test.ts › answers url and app_url on an event frame`.
+
 ## Read only
 
 A connector declares the types whose items it holds read only in its registration's `read_only_types` (`connectors/read-only-types-stored`).

@@ -52,6 +52,7 @@ async fn item_page(
             &admitted,
             &read.catalog,
             &read.read_only,
+            &read.links,
             &seqs,
             false,
         )?;

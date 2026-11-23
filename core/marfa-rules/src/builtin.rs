@@ -90,7 +90,7 @@ pub const RESERVED_TYPE_ROOTS: [&str; 23] = [
 ];
 
 /// The first-class names of an item, which no field may take: a row would carry two values under one key.
-pub const RESERVED_FIELD_NAMES: [&str; 19] = [
+pub const RESERVED_FIELD_NAMES: [&str; 20] = [
     "id",
     "type",
     "state",
@@ -103,6 +103,7 @@ pub const RESERVED_FIELD_NAMES: [&str; 19] = [
     "source_id",
     "version",
     "schema_version",
+    "app_url",
     "capture_latitude",
     "capture_longitude",
     "trashed_at",

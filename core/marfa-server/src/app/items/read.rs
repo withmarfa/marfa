@@ -39,6 +39,8 @@ pub(crate) struct Reader<'a, 'c> {
     pub read_only: ReadOnly,
     /// What every listing signs its cursor with.
     pub cursors: Secret,
+    /// The addresses this read stamps on every item it answers.
+    pub links: crate::app::item_links::Links,
     faults: &'a Faults,
     /// The read answers a request that presented a reach, which it found current.
     certified: bool,
@@ -96,6 +98,7 @@ where
     let clock = app.clock.clone();
     let faults = app.faults.clone();
     let cursors = app.cursor_secret.clone();
+    let links = app.item_links();
     let read = move |tx: &rusqlite::Transaction<'_>| {
         let at = clock.stamp();
         let caller = caller.current(tx, &at)?;
@@ -113,6 +116,7 @@ where
             catalog,
             read_only,
             cursors,
+            links,
             faults: &faults,
             certified: demand.is_some(),
         })
@@ -169,6 +173,7 @@ impl<'a, 'c> Reader<'a, 'c> {
             catalog: self.catalog.clone(),
             read_only: self.read_only.clone(),
             cursors: self.cursors.clone(),
+            links: self.links.clone(),
             faults: self.faults,
             certified: false,
         }
@@ -260,7 +265,7 @@ fn neighbors_of(read: &Reader<'_, '_>, far_ends: &[String]) -> Result<String> {
         };
         held.push(format!(
             "{{\"item\":{},\"metadata\":{}{listed}}}",
-            row.answered(&read.read_only, &read.caller)?,
+            row.answered(&read.read_only, &read.caller, &read.links)?,
             metadata_for(read.tx, &row, &read.caller)?
         ));
     }
@@ -328,7 +333,10 @@ pub async fn detail(
         };
         Ok(format!(
             "{{\"item\":{},\"metadata\":{}{listed}{versions}{backrefs}{neighbors}}}",
-            with_blocks(row.answered(&read.read_only, &read.caller)?, &outbound.text),
+            with_blocks(
+                row.answered(&read.read_only, &read.caller, &read.links)?,
+                &outbound.text,
+            ),
             metadata_for(read.tx, &row, &read.caller)?
         ))
     })
@@ -398,9 +406,10 @@ pub async fn bulk_get(
                     &read.caller,
                     &read.catalog,
                     &read.cursors,
+                    &read.links,
                 )?
             } else {
-                row.answered(&read.read_only, &read.caller)?
+                row.answered(&read.read_only, &read.caller, &read.links)?
             };
             text.pop();
             if include.extensions {
@@ -448,9 +457,10 @@ pub(crate) fn listed_rows(
                     &read.caller,
                     &read.catalog,
                     &read.cursors,
+                    &read.links,
                 )?
             } else {
-                row.answered(&read.read_only, &read.caller)?
+                row.answered(&read.read_only, &read.caller, &read.links)?
             };
             if include.extensions {
                 let held =
@@ -771,7 +781,7 @@ impl Reader<'_, '_> {
         let data = page
             .iter()
             .map(|row| {
-                let mut summary = summary_of(self.tx, &self.catalog, row)?;
+                let mut summary = summary_of(self.tx, &self.catalog, row, &self.links)?;
                 summary["state"] = json!(row.state);
                 Ok(summary)
             })
@@ -810,7 +820,7 @@ pub async fn summaries(app: &App, caller: &Caller, listing: Listing) -> Result<S
         let (page, next) = read.named_page(listing, false)?;
         let data = page
             .iter()
-            .map(|row| summary_of(read.tx, &read.catalog, row))
+            .map(|row| summary_of(read.tx, &read.catalog, row, &read.links))
             .collect::<Result<Vec<Value>>>()?;
         Ok(json!({ "data": data, "next_cursor": next }).to_string())
     })
@@ -834,7 +844,7 @@ pub async fn bin(app: &App, caller: &Caller, listing: Listing) -> Result<String>
         let data = page
             .iter()
             .map(|row| {
-                let mut summary = summary_of(read.tx, &read.catalog, row)?;
+                let mut summary = summary_of(read.tx, &read.catalog, row, &read.links)?;
                 summary["trashed_at"] = json!(row.trashed_at);
                 summary["trashed_by"] = json!(row.trashed_by);
                 summary["eligible_for_deletion_at"] =
@@ -1090,9 +1100,10 @@ pub async fn lookup(
                     &read.caller,
                     &read.catalog,
                     &read.cursors,
+                    &read.links,
                 )?
             } else {
-                row.answered(&read.read_only, &read.caller)?
+                row.answered(&read.read_only, &read.caller, &read.links)?
             });
         }
         let tombstones = match keys.filter(|_| readable) {
