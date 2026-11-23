@@ -21060,7 +21060,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: no `schema.write`, no `connectors.manage` for a `connector` (`details.required_scope`), a type under `core`, `system`, `marfa`, `app` or `user` (`details.namespace`), or an app-made key's guidance.
+             * @description - `forbidden`: no `schema.write`, no `connectors.manage` for a `connector` (`details.required_scope`), a type under `core`, `system`, `marfa`, `app` or `user` (`details.namespace`), or guidance, which a key an app made can't change.
              *     - `type_not_permitted`: no write on a type of the bundle, or a parent outside it that isn't shipped or under `common`.
              *     - `edge_type_not_permitted`: no write on an edge type of the bundle.
              */
@@ -26339,7 +26339,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: no `metadata.types:write`, guidance needs `schema.write` and not an app-made key, the identifier is under `core.*`, `system.*`, `marfa.*` or `common.*` (install its plugin), or you are an app and another holds its `app.<vendor>` namespace (`details.namespace`).
+             * @description - `forbidden`: no `metadata.types:write`, guidance needs `schema.write`, or guidance, which a key an app made can't change, the identifier is under `core.*`, `system.*`, `marfa.*` or `common.*` (install its plugin), or you are an app and another holds its `app.<vendor>` namespace (`details.namespace`).
              *     - `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` (`details.grant` names it).
              */
             403: {
