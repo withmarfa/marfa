@@ -2370,7 +2370,7 @@ If `GET /i/{text}` names text that is not a well-formed id, a trailing slash, an
 
 ### `instance/item-page-malformed-unechoed`
 
-If `GET /i/{text}` names text that is not a well-formed id, then the server MUST NOT put any of the text in the page.
+If `GET /i/{text}` names text that is not a well-formed id, then the server MUST answer the same page whatever the text, apart from the nonce.
 
 **Reason:** a page that echoed text from an address would let anyone who can share a link write on it.
 
@@ -2378,7 +2378,7 @@ If `GET /i/{text}` names text that is not a well-formed id, then the server MUST
 
 ### `instance/item-page-headers`
 
-When the server answers `GET /i/{text}`, a malformed id included, the server MUST send `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`.
+When the server answers `GET /i/{text}` with `200` or `404`, the server MUST send `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`.
 
 **Reason:** an item's id is in the address, so the page is kept out of caches and search indexes, and a link on it leaves no referrer.
 
