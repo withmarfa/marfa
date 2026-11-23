@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import { controlRequest } from "../../utils/control-request.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -34,20 +35,16 @@ const IDN_ADDRESS = "https://bücher.example";
 const MOVED_ADDRESS = "https://moved.example";
 
 async function setAddress(address: string | null): Promise<void> {
-  const response = await fetch(`${server.apiUrl}/config`, {
+  // Only the private socket may skip the check. These hosts do not answer as this instance.
+  const response = await controlRequest(server.controlSocket, "/config", {
     method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${server.managementKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+    body: {
       sign_in_address: address,
       confirm_sign_in_address_change: true,
       skip_sign_in_address_check: true,
-    }),
+    },
   });
-  const body: unknown = await response.json();
-  expect(response.status, JSON.stringify(body)).toBe(200);
+  expect(response.status, JSON.stringify(response.body)).toBe(200);
 }
 
 async function instanceId(): Promise<string> {
