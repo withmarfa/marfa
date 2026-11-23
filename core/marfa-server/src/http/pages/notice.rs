@@ -1,7 +1,7 @@
 use askama::Template;
 use axum::http::StatusCode;
 
-use super::{Needs, Page, document, render_body};
+use super::{Needs, Page, document_opening, render_body};
 use crate::app::auth::return_to::through_sign_in;
 use crate::app::connector_sign_in::Failure;
 use crate::app::refusal::Result;
@@ -19,6 +19,8 @@ pub struct Notice {
     pub heading: String,
     pub message: String,
     pub link: Option<Link>,
+    /// The browser goes to the link without a click.
+    pub opens_link: bool,
 }
 
 impl Notice {
@@ -29,7 +31,31 @@ impl Notice {
             heading: heading.to_owned(),
             message: message.to_owned(),
             link: None,
+            opens_link: false,
         }
+    }
+
+    /// `app_url` is the `marfa://` link of an item, built from an id the caller has read as well formed.
+    pub fn opening_item(instance_name: &str, app_url: &str) -> Notice {
+        Notice {
+            opens_link: true,
+            ..Notice::new(
+                instance_name,
+                StatusCode::OK,
+                "Opening in a Marfa app",
+                "If nothing opens, no app on this device opens Marfa links.",
+            )
+            .linked("Open in Marfa", app_url)
+        }
+    }
+
+    pub fn not_an_item_link(instance_name: &str) -> Notice {
+        Notice::new(
+            instance_name,
+            StatusCode::NOT_FOUND,
+            "This is not a Marfa link",
+            "Check the link, or ask whoever sent it for a new one.",
+        )
     }
 
     pub fn unverified_request(instance_name: &str) -> Notice {
@@ -172,10 +198,19 @@ struct NoticeBody<'a> {
 
 pub fn notice(view: &Notice) -> Result<Page> {
     let body = render_body(&NoticeBody { view })?;
-    Ok(
-        document(&view.heading, &view.instance_name, &body, Needs::default())?
-            .with_status(view.status),
-    )
+    let opens = view
+        .link
+        .as_ref()
+        .filter(|_| view.opens_link)
+        .map(|link| link.href.as_str());
+    Ok(document_opening(
+        &view.heading,
+        &view.instance_name,
+        &body,
+        Needs::default(),
+        opens,
+    )?
+    .with_status(view.status))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

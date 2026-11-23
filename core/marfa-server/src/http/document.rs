@@ -104,6 +104,11 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "GET /auth/error",
         "the OAuth failure page a redirect lands on",
     ),
+    ("GET /i/", "the page of an item's link with no id"),
+    (
+        "GET /i/{*id}",
+        "the page an item's link opens, which names no operation",
+    ),
     ("GET /auth/consent", "the consent screen"),
     ("POST /auth/consent", "its decision"),
     (
