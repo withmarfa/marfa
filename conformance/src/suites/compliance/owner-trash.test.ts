@@ -11,11 +11,17 @@ import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { generateId } from "../../generators/items.js";
 import { itemsArchive } from "../../utils/archive.js";
+import {
+  instanceIdOf,
+  itemLinks,
+  unsetSignInOrigin,
+} from "../../utils/item-links.js";
 type RefusalBody = { error: { details?: unknown } };
 let server: FreshServer;
 beforeAll(async () => {
   server = await bootFreshServer("owner-trash");
   vi.stubEnv("MARFA_API_URL", server.apiUrl);
+  instanceId = await instanceIdOf(server.apiUrl, server.workingKey);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 afterAll(async () => {
   await server?.stop();
@@ -57,6 +63,8 @@ interface BinRow {
   trashed_at: string;
   trashed_by: { kind: string; id: string; name: string };
   eligible_for_deletion_at: string | null;
+  web_url: string;
+  app_url: string;
 }
 interface BinPage {
   data: BinRow[];
@@ -89,13 +97,24 @@ async function binned(title: string, extra: Record<string, unknown> = {}) {
   return item.id;
 }
 const SUMMARY_FIELDS = [
+  "app_url",
   "created_at",
   "id",
   "name",
   "source",
   "type",
   "version",
+  "web_url",
 ];
+let instanceId = "";
+function expectLinks(
+  id: string,
+  row: { web_url?: unknown; app_url?: unknown },
+) {
+  expect({ web_url: row.web_url, app_url: row.app_url }).toEqual(
+    itemLinks(unsetSignInOrigin(server.apiUrl), instanceId, id),
+  );
+}
 
 it("lists a trashed item as a summary with its fields and retention_days beside the page", async () => {
   const tag = tagged();
@@ -117,6 +136,7 @@ it("lists a trashed item as a summary with its fields and retention_days beside 
     ].sort(),
   );
   expect(page.retention_days).toBeGreaterThan(0);
+  expectLinks(id, page.data[0]!);
 });
 
 it("lists only the items in the bin", async () => {
@@ -288,6 +308,7 @@ it("answers a move to the bin, a restore and a purge with the item's summary", a
     const body = (await done.json()) as Record<string, unknown>;
     expect(Object.keys(body).sort(), action).toEqual(SUMMARY_FIELDS);
     expect(body.id, action).toBe(item.id);
+    expectLinks(item.id, body);
     return body;
   };
   await expectMatchesSchema(
@@ -435,6 +456,7 @@ it("keeps item content out of every answer to an owner trash action, the current
     expect(parsed.properties).toBeUndefined();
     if (parsed.current !== undefined) {
       expect(Object.keys(parsed.current).sort()).toEqual(SUMMARY_FIELDS);
+      expectLinks(item.id, parsed.current);
     }
   }
   // The witness: the refusals and the successes are both in the set.

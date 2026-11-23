@@ -7,6 +7,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { instanceIdOf, unsetSignInOrigin } from "../../utils/item-links.js";
 import { callTool, connectMcp, toolResult } from "../../utils/mcp.js";
 import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 
@@ -48,22 +49,8 @@ async function setAddress(address: string | null): Promise<void> {
   expect(response.status, JSON.stringify(response.body)).toBe(200);
 }
 
-async function instanceId(): Promise<string> {
-  const response = await fetch(server.apiUrl, {
-    headers: { Authorization: `Bearer ${server.workingKey}` },
-  });
-  const body = (await response.json()) as { instance_id?: string };
-  expect(response.status, JSON.stringify(body)).toBe(200);
-  expect(typeof body.instance_id).toBe("string");
-  return body.instance_id as string;
-}
-
-function localhostOrigin(): string {
-  const port = new URL(server.apiUrl).port;
-  return port === "" || port === "80"
-    ? "http://localhost"
-    : `http://localhost:${port}`;
-}
+const instanceId = () => instanceIdOf(server.apiUrl, server.workingKey);
+const localhostOrigin = () => unsetSignInOrigin(server.apiUrl);
 
 function page(origin: string, id: string): string {
   return `${origin}/i/${id}`;

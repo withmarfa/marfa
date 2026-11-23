@@ -2846,7 +2846,7 @@ If a `GET /search` query contains a NUL character, then the server MUST answer `
 
 ### `items/owner-trash-summary`
 
-When a caller holding `items.purge` calls `GET /trash`, the server MUST return a page of summaries containing `id`, `type`, `version`, `name`, `source`, `created_at`, `trashed_at`, `trashed_by` and `eligible_for_deletion_at`, with `retention_days` beside the page.
+When a caller holding `items.purge` calls `GET /trash`, the server MUST return a page of summaries containing `id`, `type`, `version`, `name`, `source`, `created_at`, `web_url`, `app_url`, `trashed_at`, `trashed_by` and `eligible_for_deletion_at`, with `retention_days` beside the page.
 
 **Tests:** `compliance/owner-trash.test.ts › lists a trashed item as a summary with its fields and retention_days beside the page`.
 
@@ -2914,7 +2914,7 @@ If `GET /trash` names a `cursor` it did not issue, then the server MUST answer `
 
 ### `items/owner-trash-actions`
 
-When the private local command sends `DELETE /items/{id}`, `POST /items/{id}/restore` or `POST /items/{id}/purge` with the item's current `version`, the server MUST answer `200` with the item's summary: `id`, `type`, `version`, `name`, `source` and `created_at`.
+When the private local command sends `DELETE /items/{id}`, `POST /items/{id}/restore` or `POST /items/{id}/purge` with the item's current `version`, the server MUST answer `200` with the item's summary: `id`, `type`, `version`, `name`, `source`, `created_at`, `web_url` and `app_url`.
 
 **Reason:** the private local command holds no type map, so it is told an item's name and nothing of its content (`items/local-authority-content`).
 

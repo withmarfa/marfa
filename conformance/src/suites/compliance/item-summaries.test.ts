@@ -5,6 +5,11 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import {
+  instanceIdOf,
+  itemLinks,
+  unsetSignInOrigin,
+} from "../../utils/item-links.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { controlRequest, localFetch } from "../../utils/control-request.js";
 
@@ -35,6 +40,8 @@ interface Summary {
   name: string;
   source: string;
   created_at: string;
+  web_url: string;
+  app_url: string;
 }
 interface Page {
   data: Summary[];
@@ -240,15 +247,22 @@ it("pages name matches without leaking content or widening other owner reads", a
     "Needle 3",
     "Needle 1",
   ]);
-  for (const row of rows)
+  const instance = await instanceIdOf(server.apiUrl, server.workingKey);
+  for (const row of rows) {
     expect(Object.keys(row).sort()).toEqual([
+      "app_url",
       "created_at",
       "id",
       "name",
       "source",
       "type",
       "version",
+      "web_url",
     ]);
+    expect({ web_url: row.web_url, app_url: row.app_url }).toEqual(
+      itemLinks(unsetSignInOrigin(server.apiUrl), instance, row.id),
+    );
+  }
   const noHit = await owner(
     "/items/summaries?type=core.note&q=private-body-witness",
   );

@@ -10634,6 +10634,18 @@ export interface components {
              * @example 2026-11-21T09:30:00.000Z
              */
             created_at: string;
+            /**
+             * Format: uri
+             * @description The item's page at this instance's sign-in address, then `/i/` and the item's ID. Marfa builds it when it answers the item, so it changes when the sign-in address moves.
+             * @example https://marfa.example/i/019980d6-7612-7000-8000-000000000002
+             */
+            readonly web_url: string;
+            /**
+             * Format: uri
+             * @description The item's address for apps on one device: `marfa://`, the instance's ID, then the item's ID. It stays the same when the sign-in address moves.
+             * @example marfa://01a1011e-87bd-7ab7-bbab-538453d75381/019980d6-7612-7000-8000-000000000002
+             */
+            readonly app_url: string;
         };
         /** @description What an app keeps under one `app.<vendor>` namespace: its types with counts, and a page of its items in every state. */
         AppVendorDataPage: {
@@ -39819,7 +39831,9 @@ export interface operations {
                      *           "name": "Preferences",
                      *           "source": "oauth:01a10127-d974-7c54-8cc4-5c5581d45c4c",
                      *           "state": "active",
-                     *           "created_at": "2026-11-21T09:30:00.000Z"
+                     *           "created_at": "2026-11-21T09:30:00.000Z",
+                     *           "web_url": "https://marfa.example/i/019980d6-7612-7000-8000-000000000002",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/019980d6-7612-7000-8000-000000000002"
                      *         }
                      *       ],
                      *       "next_cursor": null

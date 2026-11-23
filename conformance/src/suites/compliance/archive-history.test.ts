@@ -24,6 +24,11 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import {
+  instanceIdOf,
+  itemLinks,
+  unsetSignInOrigin,
+} from "../../utils/item-links.js";
+import {
   cleanup,
   createTestContext,
   getOwnerClient,
@@ -362,9 +367,16 @@ describe("the history a restore writes", () => {
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(restored.data.imported).toBeGreaterThanOrEqual(1);
 
-    expect((await freshReader.getItem(item.id)).data.item).toEqual(
-      before.data.item,
+    const destination = fresh;
+    expect(destination, "the fresh server booted").toBeDefined();
+    const instance = await instanceIdOf(
+      destination!.apiUrl,
+      destination!.workingKey,
     );
+    expect((await freshReader.getItem(item.id)).data.item).toEqual({
+      ...before.data.item,
+      ...itemLinks(unsetSignInOrigin(destination!.apiUrl), instance, item.id),
+    });
     expect(await allVersions(freshReader, item.id)).toEqual(history);
   });
 
