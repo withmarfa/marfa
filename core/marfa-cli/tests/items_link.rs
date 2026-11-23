@@ -181,6 +181,7 @@ fn prints_nothing_the_server_gave_that_is_not_an_address_in_its_scheme() {
         ("web_url", "file:///etc/passwd", vec![ID]),
         ("web_url", "javascript:alert(1)", vec![ID]),
         ("web_url", "https://marfa.example/i/x\u{1b}[2J", vec![ID]),
+        ("web_url", "https://marfa.example/i/x\u{202E}", vec![ID]),
         ("app_url", "https://marfa.example/i/x", vec![ID, "--app"]),
     ] {
         let mut item = item("active");
@@ -191,6 +192,21 @@ fn prints_nothing_the_server_gave_that_is_not_an_address_in_its_scheme() {
         assert_eq!(ran.stdout, "");
         assert!(ran.stderr.contains("other than"), "{}", ran.stderr);
     }
+
+    let folder = scratch("opener-bidi");
+    let witness = opener(&folder, 0);
+    let mut marked = item("active");
+    marked["item"]["web_url"] = json!("https://marfa.example/i/x\u{202E}");
+    let door = Door::open(vec![Answer::json("200 OK", &marked.to_string())]);
+    let ran = run(&door.url, Some(&folder), &[ID, "--open"]);
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert!(ran.stderr.contains("other than"), "{}", ran.stderr);
+    assert!(
+        !witness.exists(),
+        "the opener was handed a link that is not an address"
+    );
+    std::fs::remove_dir_all(folder).unwrap();
 }
 
 #[test]
@@ -203,6 +219,44 @@ fn opens_the_web_url_and_prints_nothing_with_open() {
     assert_eq!(ran.stdout, "");
     assert_eq!(std::fs::read_to_string(witness).unwrap(), WEB);
     std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn prints_nothing_with_json_and_open_when_the_opener_takes_the_link() {
+    for args in [
+        vec!["--json", ID, "--open"],
+        vec!["--json", ID, "--app", "--open"],
+    ] {
+        let folder = scratch("opener-json");
+        let witness = opener(&folder, 0);
+        let door = Door::open(vec![Answer::json("200 OK", &item("active").to_string())]);
+        let ran = run(&door.url, Some(&folder), &args);
+        assert_eq!(ran.code, 0, "{args:?}: {}", ran.stderr);
+        assert_eq!(ran.stdout, "", "{args:?}");
+        let wanted = if args.contains(&"--app") { APP } else { WEB };
+        assert_eq!(std::fs::read_to_string(&witness).unwrap(), wanted);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+}
+
+#[test]
+fn prints_the_json_object_when_json_and_open_and_the_opener_does_not_take_it() {
+    let folder = scratch("opener-json-refuses");
+    let witness = opener(&folder, 1);
+    let door = Door::open(vec![Answer::json("200 OK", &item("active").to_string())]);
+    let refused = run(&door.url, Some(&folder), &["--json", ID, "--app", "--open"]);
+    assert_eq!(std::fs::read_to_string(&witness).unwrap(), APP);
+    let empty = scratch("no-opener-json");
+    let door = Door::open(vec![Answer::json("200 OK", &item("active").to_string())]);
+    let absent = run(&door.url, Some(&empty), &["--json", ID, "--open"]);
+    for ran in [refused, absent] {
+        assert_eq!(ran.code, 3, "{}", ran.stderr);
+        let output = serde_json::from_str::<Value>(&ran.stdout).unwrap();
+        assert_eq!(output, json!({"web_url": WEB, "app_url": APP}));
+        assert!(ran.stderr.contains("could not open"), "{}", ran.stderr);
+    }
+    std::fs::remove_dir_all(folder).unwrap();
+    std::fs::remove_dir_all(empty).unwrap();
 }
 
 #[test]

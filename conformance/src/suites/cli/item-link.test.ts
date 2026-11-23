@@ -1,7 +1,13 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, trackItem } from "../../utils/setup.js";
@@ -137,11 +143,42 @@ describe("an item's link from the terminal", () => {
     const read = await c.cli.json<{
       item: { web_url: string; app_url: string };
     }>(["items", "get", id]);
-    const printed = await c.cli.json(["items", "link", id]);
-    expect(printed).toEqual({
+    const expected = {
       web_url: read.item.web_url,
       app_url: read.item.app_url,
+    };
+    expect(await c.cli.json(["items", "link", id])).toEqual(expected);
+    expect(await c.cli.json(["items", "link", id, "--app"])).toEqual(expected);
+  });
+
+  it("reads the item with state=any", async () => {
+    const id = UNKNOWN_ID;
+    const listener = await serving({
+      id,
+      state: "active",
+      web_url: `https://marfa.example/i/${id}`,
+      app_url: `marfa://instance/${id}`,
     });
+    const open = opener("state-any", 0);
+    const sets: string[][] = [
+      [],
+      ["--app"],
+      ["--json"],
+      ["--json", "--app"],
+      ["--open"],
+      ["--app", "--open"],
+      ["--json", "--open"],
+      ["--json", "--app", "--open"],
+    ];
+    for (const args of sets) {
+      const before = listener.paths.length;
+      let cli = c.cli.at(listener.url);
+      if (args.includes("--open")) cli = cli.withEnv({ PATH: open.path });
+      const outcome = await cli.run(["items", "link", id, ...args]);
+      expect(outcome.code, `${args.join(" ")}: ${outcome.stderr}`).toBe(0);
+      const asked = listener.paths.slice(before);
+      expect(asked, args.join(" ")).toEqual([`/items/${id}?state=any`]);
+    }
   });
 
   it("prints the link of an item in the bin and says on standard error that it is in Recently Deleted", async () => {
@@ -153,16 +190,38 @@ describe("an item's link from the terminal", () => {
     expect(printed.code, printed.stderr).toBe(0);
     expect(printed.stdout).toBe(active.stdout);
     expect(printed.stderr).toContain("Recently Deleted");
+
+    for (const args of [["--app"], ["--json"], ["--json", "--app"]]) {
+      const again = await c.cli.run(["items", "link", id, ...args]);
+      expect(again.code, `${args.join(" ")}: ${again.stderr}`).toBe(0);
+      expect(again.stderr).toContain("Recently Deleted");
+    }
+    const web = opener("opens-trashed", 0);
+    for (const args of [
+      ["--open"],
+      ["--app", "--open"],
+      ["--json", "--open"],
+      ["--json", "--app", "--open"],
+    ]) {
+      const opened = await c.cli
+        .withEnv({ PATH: web.path })
+        .run(["items", "link", id, ...args]);
+      expect(opened.code, `${args.join(" ")}: ${opened.stderr}`).toBe(0);
+      expect(opened.stdout).toBe("");
+      expect(opened.stderr).toContain("Recently Deleted");
+    }
   });
 
   it("refuses an id that is not a lowercase UUIDv7 before it sends a request", async () => {
     const listener = await serving({});
     for (const bad of ["x", UNKNOWN_ID.toUpperCase(), "../items"]) {
-      const refused = await c.cli
-        .at(listener.url)
-        .refused(["items", "link", bad]);
-      expect(refused.code).toBe(1);
-      expect(refused.envelope.error.code).toBe("invalid");
+      for (const args of [[], ["--app", "--open"]]) {
+        const refused = await c.cli
+          .at(listener.url)
+          .refused(["items", "link", bad, ...args]);
+        expect(refused.code, bad).toBe(1);
+        expect(refused.envelope.error.code).toBe("invalid");
+      }
     }
     expect(listener.paths).toEqual([]);
 
@@ -184,15 +243,27 @@ describe("an item's link from the terminal", () => {
   it("says a server that answers an item with no link needs a newer release, and prints nothing", async () => {
     const id = await note();
     const old = await serving({ id, state: "active", type: "core.note" });
-    for (const args of [[], ["--app"]]) {
-      const outcome = await c.cli
-        .at(old.url)
-        .run(["items", "link", id, ...args]);
-      expect(outcome.code).toBe(1);
-      expect(outcome.stdout).toBe("");
-      expect(outcome.stderr).toContain("newer release");
+    const open = opener("old-server", 0);
+    const sets = [
+      [],
+      ["--app"],
+      ["--json"],
+      ["--json", "--app"],
+      ["--open"],
+      ["--app", "--open"],
+      ["--json", "--open"],
+      ["--json", "--app", "--open"],
+    ];
+    for (const args of sets) {
+      let cli = c.cli.at(old.url);
+      if (args.includes("--open")) cli = cli.withEnv({ PATH: open.path });
+      const outcome = await cli.run(["items", "link", id, ...args]);
+      expect(outcome.code, args.join(" ")).toBe(1);
+      expect(outcome.stdout, args.join(" ")).toBe("");
+      expect(outcome.stderr, args.join(" ")).toContain("newer release");
     }
-    expect(old.paths).toHaveLength(2);
+    expect(old.paths).toHaveLength(sets.length);
+    expect(existsSync(open.seen)).toBe(false);
   });
 
   it("hands the web_url, or the app_url with --app, to the system's opener and prints nothing", async () => {
@@ -215,11 +286,33 @@ describe("an item's link from the terminal", () => {
     expect(openedApp.code, openedApp.stderr).toBe(0);
     expect(openedApp.stdout).toBe("");
     expect(readFileSync(app.seen, "utf8")).toBe(read.item.app_url);
+
+    const json = opener("opens-json", 0);
+    const openedJson = await c.cli
+      .withEnv({ PATH: json.path })
+      .run(["--json", "items", "link", id, "--open"]);
+    expect(openedJson.code, openedJson.stderr).toBe(0);
+    expect(openedJson.stdout).toBe("");
+    expect(readFileSync(json.seen, "utf8")).toBe(read.item.web_url);
+
+    const jsonApp = opener("opens-json-app", 0);
+    const openedJsonApp = await c.cli
+      .withEnv({ PATH: jsonApp.path })
+      .run(["--json", "items", "link", id, "--app", "--open"]);
+    expect(openedJsonApp.code, openedJsonApp.stderr).toBe(0);
+    expect(openedJsonApp.stdout).toBe("");
+    expect(readFileSync(jsonApp.seen, "utf8")).toBe(read.item.app_url);
   });
 
   it("prints the link and exits non-zero where no opener takes it", async () => {
     const id = await note();
     const printed = await c.cli.run(["items", "link", id]);
+    const printedApp = await c.cli.run(["items", "link", id, "--app"]);
+    const printedJson = await c.cli.json<{ web_url: string; app_url: string }>([
+      "items",
+      "link",
+      id,
+    ]);
     const refusing = opener("opener-refuses", 1);
     const absent = join(dir, "no-opener");
     mkdirSync(absent);
@@ -230,7 +323,28 @@ describe("an item's link from the terminal", () => {
       expect(outcome.code).not.toBe(0);
       expect(outcome.stdout).toBe(printed.stdout);
       expect(outcome.stderr).toContain("could not open");
+
+      const app = await c.cli
+        .withEnv({ PATH: path })
+        .run(["items", "link", id, "--app", "--open"]);
+      expect(app.code).not.toBe(0);
+      expect(app.stdout).toBe(printedApp.stdout);
+      expect(app.stderr).toContain("could not open");
+
+      const json = await c.cli
+        .withEnv({ PATH: path })
+        .run(["--json", "items", "link", id, "--open"]);
+      expect(json.code).not.toBe(0);
+      expect(JSON.parse(json.stdout)).toEqual(printedJson);
+      expect(json.stderr).toContain("could not open");
+
+      const jsonApp = await c.cli
+        .withEnv({ PATH: path })
+        .run(["--json", "items", "link", id, "--app", "--open"]);
+      expect(jsonApp.code).not.toBe(0);
+      expect(JSON.parse(jsonApp.stdout)).toEqual(printedJson);
+      expect(jsonApp.stderr).toContain("could not open");
     }
-    expect(readFileSync(refusing.seen, "utf8")).toBe(printed.stdout.trim());
+    expect(readFileSync(refusing.seen, "utf8")).toBe(printedJson.app_url);
   });
 });

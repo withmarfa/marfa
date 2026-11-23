@@ -1359,7 +1359,9 @@ fn item_link(item: &Value, name: &str, schemes: &[&str]) -> Result<String, CliEr
         )
     })?;
     let plain = url::Url::parse(link).is_ok_and(|parsed| schemes.contains(&parsed.scheme()))
-        && !link.chars().any(|c| c.is_control() || c.is_whitespace());
+        && !link
+            .chars()
+            .any(|c| c.is_whitespace() || output::needs_escape(c));
     if plain {
         Ok(link.to_string())
     } else {

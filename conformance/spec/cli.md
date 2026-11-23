@@ -934,7 +934,7 @@ When `marfa items get` prints an item whose state is not `active` without `--jso
 
 ### `cli/command-link-web`
 
-When `marfa items link` runs, the CLI MUST print the `web_url` of the item the server answers, as the server gave it, alone on one line of standard output.
+When `marfa items link` runs without `--app`, without `--json` and without `--open`, the CLI MUST print the `web_url` of the item the server answers, as the server gave it, alone on one line of standard output.
 
 **Reason:** the address is the sign-in address the server holds, which is not always the address the CLI reaches the API at, so the CLI never builds it.
 
@@ -942,21 +942,29 @@ When `marfa items link` runs, the CLI MUST print the `web_url` of the item the s
 
 ### `cli/command-link-app`
 
-When `marfa items link` runs with `--app`, the CLI MUST print the `app_url` of the item the server answers, in place of its `web_url`, alone on one line of standard output.
+When `marfa items link` runs with `--app` and without `--json` and without `--open`, the CLI MUST print the `app_url` of the item the server answers, in place of its `web_url`, alone on one line of standard output.
 
 **Tests:** `cli/item-link.test.ts › prints the app_url with --app`.
 
 ### `cli/command-link-json`
 
-When `marfa items link` runs with `--json`, the CLI MUST print one JSON object holding the `web_url` and the `app_url` of the item the server answers.
+When `marfa items link` runs with `--json` and without `--open`, the CLI MUST print one JSON object holding the `web_url` and the `app_url` of the item the server answers.
 
 **Tests:** `cli/item-link.test.ts › prints both links as one JSON object under --json`.
 
 ### `cli/command-link-any-state`
 
-When `marfa items link` runs, the CLI MUST send `state=any`, and where the server answers an item in the bin, print its link and say on standard error that the item is in Recently Deleted.
+When `marfa items link` is given a lowercase UUIDv7, the CLI MUST read the item with `state=any`.
 
-**Reason:** a person who holds an item's id asks for its link whatever its state, and the link of an item in the bin opens it where it waits.
+**Reason:** a person who holds an item's id asks for its link whatever its state.
+
+**Tests:** `cli/item-link.test.ts › reads the item with state=any`.
+
+### `cli/command-link-deleted`
+
+When `marfa items link` prints or opens the link of an item the server answers from the bin, the CLI MUST say on standard error that the item is in Recently Deleted.
+
+**Reason:** the link of an item in the bin opens it where it waits, and the line names that place.
 
 **Tests:** `cli/item-link.test.ts › prints the link of an item in the bin and says on standard error that it is in Recently Deleted`.
 
@@ -976,13 +984,13 @@ If the server answers the item without the link `marfa items link` prints, then 
 
 ### `cli/command-link-open`
 
-When `marfa items link` runs with `--open`, the CLI MUST hand the link it would print, the `app_url` with `--app`, to the system's opener and print nothing on standard output.
+When `marfa items link` runs with `--open` and the system's opener takes the link, the CLI MUST hand the opener the `web_url`, or the `app_url` where `--app` is given, and print nothing on standard output.
 
 **Tests:** `cli/item-link.test.ts › hands the web_url, or the app_url with --app, to the system's opener and prints nothing`.
 
 ### `cli/command-link-open-failed`
 
-If the system's opener is absent or does not take the link of `marfa items link --open`, then the CLI MUST print the link on standard output, say on standard error that it could not open it, and exit with a code other than `0`.
+If the system's opener is absent or does not take the link of `marfa items link --open`, then the CLI MUST print on standard output what it would print without `--open`, the `web_url` or with `--app` the `app_url` alone on one line, or with `--json` one JSON object holding the `web_url` and the `app_url`, say on standard error that it could not open the link, and exit with a code other than `0`.
 
 **Tests:** `cli/item-link.test.ts › prints the link and exits non-zero where no opener takes it`.
 
