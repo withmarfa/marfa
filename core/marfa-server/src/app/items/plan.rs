@@ -161,8 +161,7 @@ impl<'c> Gate<'_, 'c> {
         self.type_gate_under(&row.type_id, Some(&row.source))
     }
 
-    /// The gate for the row a type move takes onto `to`. A rewrite moving a connector's own item
-    /// back from a type its kind was mapped onto before opens that type for the move alone.
+    /// The gate for a row a move takes onto `to`, opening a former target for an open rewrite.
     pub fn moving_gate(&self, row: &Item, to: &str) -> Result<()> {
         if !self.caller.moves_back(&row.type_id, &row.source, to) {
             return self.row_gate(row);

@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use super::App;
 use super::access::{Caller, Level, Mapped};
 use super::catalog::{self, Snapshot};
+use super::clock::Stamp;
 use super::connector_hosts;
 use super::items::{self, reading};
 use super::plugins::{self, Installed};
@@ -128,15 +129,17 @@ fn former_targets(tx: &Transaction<'_>, plugin: &str) -> Result<BTreeMap<String,
     Ok(former)
 }
 
-/// Each type a rewrite moves a kind's items from: its own type and the types it was mapped onto
-/// before, other than its target.
+/// The types a rewrite moves a kind's items from: its own type and its former targets.
 fn moves_from(
     connector: &Connector,
     kinds: &Kinds,
     former: &BTreeMap<String, Vec<String>>,
     kind: &str,
 ) -> Vec<String> {
-    let (Some(own), Some(entry)) = (connector.kind(kind), kinds.get(kind)) else {
+    let (Some(own), Some(entry)) = (
+        connector.kind(kind),
+        kinds.get(kind).filter(|entry| entry.enabled),
+    ) else {
         return Vec::new();
     };
     std::iter::once(&own.own_type)
@@ -318,8 +321,7 @@ fn is_system(type_id: &str) -> bool {
     type_id.split('.').next() == Some("system")
 }
 
-/// Keeps, for each kind whose target a save moves, the type it leaves, unless it is one of the
-/// connector's own types, which the key's type map alone decides.
+/// Records the target a save moves each kind off, unless it is one of the connector's own types.
 fn record_former_targets(
     tx: &Transaction<'_>,
     plugin: &str,
@@ -573,7 +575,7 @@ pub async fn rewrite_done(app: &App, caller: &Caller, name: String, body: Value)
     .await
 }
 
-/// One line per saved mapping of an installed plugin.
+/// One line per saved mapping of an installed plugin, with its former targets and open rewrites.
 pub fn archive_lines(tx: &Transaction<'_>) -> Result<Vec<Value>> {
     let mut statement =
         tx.prepare_cached("SELECT plugin, version, kinds FROM connector_mappings ORDER BY plugin")?;
@@ -596,9 +598,34 @@ pub fn archive_lines(tx: &Transaction<'_>) -> Result<Vec<Value>> {
             "plugin": plugin,
             "version": version,
             "kinds": kinds,
+            "former_targets": former_targets(tx, &plugin)?,
+            "rewrites": archived_rewrites(tx, &plugin)?,
         } }));
     }
     Ok(lines)
+}
+
+fn archived_rewrites(tx: &Transaction<'_>, plugin: &str) -> Result<Vec<Value>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT version, kinds, requested_at FROM connector_rewrites \
+         WHERE plugin = ?1 ORDER BY number",
+    )?;
+    let found = statement.query_map([plugin], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut held = Vec::new();
+    for row in found {
+        let (version, kinds, requested_at) = row?;
+        let kinds: Vec<String> = serde_json::from_str(&kinds).map_err(|_| {
+            Refusal::internal(&format!("a rewrite asked of plugin {plugin} does not read"))
+        })?;
+        held.push(json!({ "version": version, "kinds": kinds, "requested_at": requested_at }));
+    }
+    Ok(held)
 }
 
 #[derive(Clone, Debug)]
@@ -606,11 +633,21 @@ pub struct Archived {
     pub plugin: String,
     version: i64,
     kinds: Value,
+    former: BTreeMap<String, Vec<String>>,
+    rewrites: Vec<ArchivedRewrite>,
     /// Its line in `instance.ndjson.gz`.
     line: usize,
 }
 
-pub fn archived(body: &Value, line: usize) -> std::result::Result<Archived, String> {
+#[derive(Clone, Debug)]
+struct ArchivedRewrite {
+    version: i64,
+    kinds: Vec<String>,
+    requested_at: String,
+}
+
+/// An archived mapping line. From archive version 4 it carries `former_targets` and `rewrites`.
+pub fn archived(body: &Value, line: usize, archive: u64) -> std::result::Result<Archived, String> {
     let held = body.as_object().ok_or("is not an object")?;
     let plugin = held
         .get("plugin")
@@ -626,12 +663,117 @@ pub fn archived(body: &Value, line: usize) -> std::result::Result<Archived, Stri
         .get("kinds")
         .filter(|kinds| connector::stored(kinds).is_some())
         .ok_or("holds kinds that do not read as a mapping")?;
+    let (former, rewrites) = if archive >= 4 {
+        (
+            archived_former(held.get("former_targets"))
+                .ok_or("holds former_targets that are not an object of lists of type ids")?,
+            archived_rewrite_list(held.get("rewrites")).ok_or(
+                "holds rewrites that are not a list of a version, kinds and a requested_at time",
+            )?,
+        )
+    } else {
+        (BTreeMap::new(), Vec::new())
+    };
     Ok(Archived {
         plugin: plugin.to_string(),
         version,
         kinds: kinds.clone(),
+        former,
+        rewrites,
         line,
     })
+}
+
+fn names(held: &Value) -> Option<Vec<String>> {
+    held.as_array()?
+        .iter()
+        .map(|name| {
+            name.as_str()
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+fn archived_former(held: Option<&Value>) -> Option<BTreeMap<String, Vec<String>>> {
+    held?
+        .as_object()?
+        .iter()
+        .map(|(kind, types)| Some((kind.clone(), names(types)?)))
+        .collect()
+}
+
+fn archived_rewrite_list(held: Option<&Value>) -> Option<Vec<ArchivedRewrite>> {
+    held?
+        .as_array()?
+        .iter()
+        .map(|rewrite| {
+            let version = rewrite
+                .get("version")
+                .and_then(Value::as_i64)
+                .filter(|version| *version >= 0)?;
+            let kinds = names(rewrite.get("kinds")?)?;
+            let requested_at = rewrite
+                .get("requested_at")
+                .and_then(Value::as_str)
+                .filter(|at| Stamp::parsed(at).is_some())?;
+            Some(ArchivedRewrite {
+                version,
+                kinds,
+                requested_at: requested_at.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Stores the line's former targets and open rewrites beside the mapping it restores.
+fn restore_rewrite_state(
+    tx: &Transaction<'_>,
+    line: &Archived,
+    connector: &Connector,
+    kinds: &Kinds,
+) -> Result<()> {
+    let unknown = |kind: &str| {
+        refused_line(
+            line,
+            format!(
+                "Line {} of the archive holds a former target or a rewrite for kind {kind}, which plugin {}'s connector does not bring.",
+                line.line, line.plugin
+            ),
+        )
+    };
+    for (kind, types) in &line.former {
+        let Some(entry) = kinds.get(kind) else {
+            return Err(unknown(kind));
+        };
+        for type_id in types {
+            let own = connector.kinds.iter().any(|held| held.own_type == *type_id);
+            if own || *type_id == entry.target_type {
+                continue;
+            }
+            tx.prepare_cached(
+                "INSERT OR IGNORE INTO connector_former_targets (plugin, kind, type_id) \
+                 VALUES (?1, ?2, ?3)",
+            )?
+            .execute(params![line.plugin, kind, type_id])?;
+        }
+    }
+    for rewrite in &line.rewrites {
+        if let Some(kind) = rewrite.kinds.iter().find(|kind| kinds.get(*kind).is_none()) {
+            return Err(unknown(kind));
+        }
+        tx.prepare_cached(
+            "INSERT INTO connector_rewrites (plugin, version, kinds, requested_at) \
+             VALUES (?1, ?2, ?3, ?4)",
+        )?
+        .execute(params![
+            line.plugin,
+            rewrite.version,
+            json!(rewrite.kinds).to_string(),
+            rewrite.requested_at
+        ])?;
+    }
+    Ok(())
 }
 
 fn refused_line(line: &Archived, message: String) -> Refusal {
@@ -714,6 +856,7 @@ pub fn restore(
                 at
             ],
         )?;
+        restore_rewrite_state(tx, line, &connector, &kinds)?;
         added += 1;
     }
     Ok((added, held))

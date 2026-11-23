@@ -99,6 +99,21 @@ function refusedAsUnreached(answer: ApiResponse<unknown>, door: string) {
   );
 }
 
+/** A connector registered by `own`, and the hold it took to write agreements. */
+async function holding(own: MarfaClient): Promise<{
+  id: string;
+  process: string;
+}> {
+  const registered = await own.registerConnector({
+    name: `agreements ${fresh()}`,
+  });
+  expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+  const process = `run-${fresh()}`;
+  const held = await own.takeConnectorHold(registered.data.id, process);
+  expect(held.status, JSON.stringify(held.error)).toBe(200);
+  return { id: registered.data.id, process };
+}
+
 describe("the connector's own items on its target type", () => {
   it("creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type", async () => {
     const plugin = await installed(owner);
@@ -1399,20 +1414,6 @@ describe("what the connector reads of its own item's history, extensions and tab
 });
 
 describe("the agreements on its own items of the target type", () => {
-  async function holding(own: MarfaClient): Promise<{
-    id: string;
-    process: string;
-  }> {
-    const registered = await own.registerConnector({
-      name: `agreements ${fresh()}`,
-    });
-    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
-    const process = `run-${fresh()}`;
-    const held = await own.takeConnectorHold(registered.data.id, process);
-    expect(held.status, JSON.stringify(held.error)).toBe(200);
-    return { id: registered.data.id, process };
-  }
-
   it("writes, reads, lists and clears the agreements of its own items of the mapped type, and skips the owner's", async () => {
     const { plugin, key } = await mapped();
     const own = key.client;
@@ -1923,5 +1924,180 @@ describe("a rewrite back from a type the kind was mapped onto before", () => {
       type: third,
       source: plugin.source,
     });
+  });
+
+  it("skips its own item on the former target type when setting, clearing, looking up and listing agreements while a rewrite is open, and answers it again once it is moved back", async () => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const { id, process } = await holding(own);
+    const mine = await ticket(own, plugin, {
+      source_id: `held-${fresh()}`,
+      properties: { title: "held", reporter: "tracker" },
+    });
+    // The witness: on the mapped target the agreement is written and read.
+    const first = await own.writeConnectorAgreements(id, {
+      process,
+      set: [{ item_id: mine.id, waiting: false, record: { at: "mapped" } }],
+    });
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    expect(first.data).toEqual({ written: 1, cleared: 0, skipped: [] });
+    expect(
+      (await own.lookupConnectorAgreements(id, [mine.id])).data.data.map(
+        (row) => row.item_id,
+      ),
+    ).toEqual([mine.id]);
+
+    const moved = await owner.saveConnectorMapping(plugin.name, {
+      version: 1,
+      kinds: { issue: { target_type: plugin.issue } },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    const asked = await owner.rewriteConnectorItems(plugin.name, {
+      kinds: ["issue"],
+    });
+    expect(asked.status, JSON.stringify(asked.error)).toBe(200);
+    expect((await own.getItem(mine.id)).status).toBe(200);
+
+    const set = await own.writeConnectorAgreements(id, {
+      process,
+      set: [{ item_id: mine.id, waiting: true, record: { at: "former" } }],
+    });
+    expect(set.status, JSON.stringify(set.error)).toBe(200);
+    expect(set.data).toEqual({ written: 0, cleared: 0, skipped: [mine.id] });
+    const cleared = await own.writeConnectorAgreements(id, {
+      process,
+      clear: [mine.id],
+    });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    expect(cleared.data).toEqual({
+      written: 0,
+      cleared: 0,
+      skipped: [mine.id],
+    });
+    const looked = await own.lookupConnectorAgreements(id, [mine.id]);
+    expect(looked.status, JSON.stringify(looked.error)).toBe(200);
+    expect(looked.data.data).toEqual([]);
+    const listed = await own.listConnectorAgreements(id);
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    expect(listed.data.data.map((row) => row.item_id)).not.toContain(mine.id);
+
+    const back = await own.updateItem(mine.id, {
+      version: mine.version,
+      type: plugin.issue,
+      retype: true,
+    });
+    expect(back.status, JSON.stringify(back.error)).toBe(200);
+    const kept = await own.lookupConnectorAgreements(id, [mine.id]);
+    expect(kept.data.data).toEqual([
+      expect.objectContaining({ item_id: mine.id, record: { at: "mapped" } }),
+    ]);
+  });
+
+  it("counts and opens under each kind the connector's own items of both kinds on a type both were mapped onto before, and moves each onto its own kind's target", async () => {
+    const plugin = await installed(owner);
+    const key = await connectorKey(server, plugin);
+    const own = key.client;
+    const onto = {
+      target_type: plugin.ticket,
+      fields: { title: { from: "title" }, reporter: { fixed: "tracker" } },
+    };
+    const both = await owner.saveConnectorMapping(plugin.name, {
+      version: 0,
+      kinds: { issue: onto, comment: onto },
+    });
+    expect(both.status, JSON.stringify(both.error)).toBe(200);
+    const issues = [];
+    for (const title of ["first issue", "second issue"]) {
+      issues.push(
+        await ticket(own, plugin, {
+          source_id: `issue-${fresh()}`,
+          properties: { title, reporter: "tracker" },
+        }),
+      );
+    }
+    const comment = await ticket(own, plugin, {
+      source_id: `comment-${fresh()}`,
+      properties: { title: "a comment", reporter: "tracker" },
+    });
+    await ticket(owner, plugin);
+    const back = await owner.saveConnectorMapping(plugin.name, {
+      version: 1,
+      kinds: {
+        issue: { target_type: plugin.issue },
+        comment: { target_type: plugin.comment },
+      },
+    });
+    expect(back.status, JSON.stringify(back.error)).toBe(200);
+
+    const counted = await owner.rewriteConnectorItems(plugin.name, {
+      dry_run: true,
+    });
+    expect(counted.status, JSON.stringify(counted.error)).toBe(200);
+    expect(counted.data.kinds).toEqual({
+      issue: { target_type: plugin.issue, count: 3 },
+      comment: { target_type: plugin.comment, count: 3 },
+    });
+    const asked = await owner.rewriteConnectorItems(plugin.name, {});
+    expect(asked.status, JSON.stringify(asked.error)).toBe(200);
+    const mapping = await own.getConnectorMapping(plugin.name);
+    expect(mapping.data.rewrites[0]?.from).toEqual({
+      issue: [plugin.ticket],
+      comment: [plugin.ticket],
+    });
+
+    for (const item of issues) {
+      const moved = await own.updateItem(item.id, {
+        version: item.version,
+        type: plugin.issue,
+        retype: true,
+      });
+      expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    }
+    const moved = await own.updateItem(comment.id, {
+      version: comment.version,
+      type: plugin.comment,
+      retype: true,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.type).toBe(plugin.comment);
+    const left = await owner.rewriteConnectorItems(plugin.name, {
+      dry_run: true,
+    });
+    expect(left.data.kinds).toEqual({
+      issue: { target_type: plugin.issue, count: 0 },
+      comment: { target_type: plugin.comment, count: 0 },
+    });
+  });
+
+  it("counts nothing and moves from no type for a kind turned off", async () => {
+    const { plugin } = await strandedOnTickets((plugin) => ({
+      target_type: plugin.issue,
+      enabled: false,
+    }));
+    const counted = await owner.rewriteConnectorItems(plugin.name, {
+      dry_run: true,
+      kinds: ["issue"],
+    });
+    expect(counted.status, JSON.stringify(counted.error)).toBe(200);
+    expect(counted.data.kinds.issue?.count).toBe(0);
+    const asked = await owner.rewriteConnectorItems(plugin.name, {
+      kinds: ["issue"],
+    });
+    expect(asked.status, JSON.stringify(asked.error)).toBe(200);
+    const mapping = await owner.getConnectorMapping(plugin.name);
+    expect(mapping.data.rewrites).toEqual([
+      expect.objectContaining({ kinds: ["issue"], from: { issue: [] } }),
+    ]);
+    // The witness: the same kind turned back on counts its items stranded on tickets.
+    const on = await owner.saveConnectorMapping(plugin.name, {
+      version: 2,
+      kinds: { issue: { target_type: plugin.issue } },
+    });
+    expect(on.status, JSON.stringify(on.error)).toBe(200);
+    const again = await owner.rewriteConnectorItems(plugin.name, {
+      dry_run: true,
+      kinds: ["issue"],
+    });
+    expect(again.data.kinds.issue?.count).toBe(4);
   });
 });

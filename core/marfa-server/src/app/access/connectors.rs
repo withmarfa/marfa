@@ -71,8 +71,7 @@ pub struct Mapped {
     /// The enabled target types that are none of the kinds' own types: the key's type map alone
     /// decides those.
     reach: Vec<String>,
-    /// While a rewrite of a kind is open, each type it was mapped onto before, with its target:
-    /// the key reads its own items there and moves them only onto that target.
+    /// Each former target an open rewrite moves own items from, with the target they move onto.
     returning: Vec<(String, String)>,
 }
 
@@ -163,8 +162,12 @@ impl Caller {
                 .is_some_and(|mapped| mapped.reads(type_id))
     }
 
-    /// Moves its own item of `from` onto `to` as an open rewrite of its kind asks, where nothing
-    /// else lets it write `from`.
+    /// Holds an agreement on an item of `type_id` under `source`, through the type map or the mapping.
+    pub fn may_hold_agreement(&self, type_id: &str, source: &str) -> bool {
+        self.may_read_type(type_id) || self.mapped_onto(type_id, source)
+    }
+
+    /// Moves its own item off a former target onto `to`, as an open rewrite of its kind asks.
     pub fn moves_back(&self, from: &str, source: &str, to: &str) -> bool {
         self.mapped(source)
             .is_some_and(|mapped| mapped.returns(from, to))

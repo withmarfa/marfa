@@ -640,10 +640,10 @@ fn agreement_json(agreement: &store::Agreement) -> Value {
     })
 }
 
-/// Whether the caller reads the stored row, through its type map or its mapping.
+/// Whether the caller holds an agreement on the stored row, through its type map or its mapping.
 fn readable(tx: &Transaction<'_>, caller: &Caller, item_id: &str) -> Result<bool> {
     Ok(items::type_and_source_of(tx, item_id)?
-        .is_some_and(|(type_id, source)| caller.may_read_item(&type_id, &source)))
+        .is_some_and(|(type_id, source)| caller.may_hold_agreement(&type_id, &source)))
 }
 
 pub async fn write_agreements(

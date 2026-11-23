@@ -1,6 +1,6 @@
 # Archives
 
-An archive is the tar file that `GET /export?format=archive` writes and `POST /restore` reads. The statements on archives describe archive version 3 (`archive/archive-version`), and a restore reads version 1 and version 2 as `archive/restore-version-one` and `archive/restore-version-two` say. An archive that holds a new entry, a new line file or a new field that a restore must read is a later version, because a restore skips an entry, a field or a line kind it does not know (`archive/restore-unread-entry`, `archive/restore-unknown-field`, `archive/restore-unknown-line-kind`) and an older build would restore such an archive without it.
+An archive is the tar file that `GET /export?format=archive` writes and `POST /restore` reads. The statements on archives describe archive version 4 (`archive/archive-version`), and a restore reads versions 1, 2 and 3 as `archive/restore-version-one`, `archive/restore-version-two` and `archive/restore-version-three` say. An archive that holds a new entry, a new line file or a new field that a restore must read is a later version, because a restore skips an entry, a field or a line kind it does not know (`archive/restore-unread-entry`, `archive/restore-unknown-field`, `archive/restore-unknown-line-kind`) and an older build would restore such an archive without it.
 
 ## What an archive is
 
@@ -14,7 +14,7 @@ When a credential that may export sends `GET /export?format=archive`, the server
 
 ### `archive/archive-version`
 
-When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 3.
+When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 4.
 
 **Reason:** the version is the one marker of the archive's layout, and a restore reads every version up to its own build's and refuses a later one (`archive/restore-version`). A field or a line kind added within a version is optional to a reader of that version (`archive/archive-version-additions`): a restore skips a field it does not read and a line kind it does not know, and names the kind (`archive/restore-unknown-field`, `archive/restore-unknown-line-kind`). An archive with a new entry, line file or field that a restore must read is a new version, because an older build would skip what it does not know.
 
@@ -500,11 +500,11 @@ When `POST /restore` writes an `app_vendor` line whose `claimed_at` is an RFC 33
 
 ### `archive/archive-connector-mapping`
 
-When the credential requesting `GET /export?format=archive` holds `connectors.manage`, the server MUST carry in `instance.ndjson.gz` one `connector_mapping` line, holding the plugin's name as `plugin`, the mapping's `version` and its `kinds` as saved, for each installed plugin with a saved mapping.
+When the credential requesting `GET /export?format=archive` holds `connectors.manage`, the server MUST carry in `instance.ndjson.gz` one `connector_mapping` line, holding the plugin's name as `plugin`, the mapping's `version` and its `kinds` as saved, `former_targets` holding for each kind the types it was mapped onto before (`plugins/mapping-former-target`), and `rewrites` holding the `version`, `kinds` and `requested_at` of each rewrite request the connector has not cleared, ordered by `number`, for each installed plugin with a saved mapping.
 
-**Reason:** the owner's mapping is work they did, and it restores with its plugin. A rewrite the connector has not carried out stays out.
+**Reason:** the owner's mapping is work they did, and it restores with its plugin. The connector's items of a kind stay on a type it was mapped onto before until a rewrite moves them, so the archive carries those types and the requests still open, and a rewrite after a restore reaches the same items.
 
-**Tests:** `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`.
+**Tests:** `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`, `compliance/connector-mapping.test.ts › keeps a kind's former targets and open rewrites through an export and a restore, so a rewrite on the restored instance moves every one of the connector's own items back`.
 
 ### `archive/connector-control-not-carried`
 
@@ -520,11 +520,19 @@ When `POST /restore` reads a `connector_mapping` line naming a plugin that the a
 
 **Tests:** `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`.
 
+### `archive/restore-connector-rewrites`
+
+When `POST /restore` stores a `connector_mapping` line's mapping, the server MUST keep each type its `former_targets` names as one the kind was mapped onto before, other than the kind's `target_type` and its connector's kinds' own types, and store each of its `rewrites` as a rewrite request the connector has not cleared, with its `version`, `kinds` and `requested_at`, in the line's order.
+
+**Reason:** a rewrite after the restore moves the connector's items from the types it would have moved them from before the export (`plugins/reach-former-read`).
+
+**Tests:** `compliance/connector-mapping.test.ts › keeps a kind's former targets and open rewrites through an export and a restore, so a rewrite on the restored instance moves every one of the connector's own items back`.
+
 ### `archive/restore-connector-mapping-refused`
 
-If `POST /restore` reads a `connector_mapping` line naming a plugin neither the archive nor the instance holds or whose bundle holds no connector, with a `version` that is not a whole number from 1, or with `kinds` that `PUT /plugins/{name}/connector/mapping` would refuse for its shape (`plugins/mapping-shape`), then the server MUST answer `400 validation_error` with `details.entry` `instance.ndjson.gz` and `details.line` the line's number, and restore nothing of the archive.
+If `POST /restore` reads a `connector_mapping` line naming a plugin neither the archive nor the instance holds or whose bundle holds no connector, with a `version` that is not a whole number from 1, with `kinds` that `PUT /plugins/{name}/connector/mapping` would refuse for its shape (`plugins/mapping-shape`), or, in an archive from version 4, with `former_targets` that is not an object of lists of type ids or `rewrites` that is not a list each holding a `version` from 0, a list of `kinds` and a `requested_at` time in the form the server writes, then the server MUST answer `400 validation_error` with `details.entry` `instance.ndjson.gz` and `details.line` the line's number, and restore nothing of the archive.
 
-**Tests:** `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`.
+**Tests:** `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`, `compliance/connector-mapping.test.ts › refuses a version 4 mapping line that leaves out its former targets or rewrites, naming its line, and restores a version 3 line without them`.
 
 ### `archive/restore-connector-mapping-judged`
 
@@ -1125,6 +1133,14 @@ When `POST /restore` reads an archive at version 2, the server MUST read its man
 **Reason:** version 2 carried no setting of a plugin's connector and no connector mapping, so a backup taken before version 3 still restores.
 
 **Tests:** `compliance/connector-settings.test.ts › refuses a version 3 manifest that leaves out or mistypes connector_setting_count, and restores a version 2 archive without it`, `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`.
+
+### `archive/restore-version-three`
+
+When `POST /restore` reads an archive at version 3, the server MUST read each `connector_mapping` line without `former_targets` and `rewrites`, and keep none.
+
+**Reason:** version 3 carried no type a kind was mapped onto before and no open rewrite request, so a backup taken before version 4 still restores.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses a version 4 mapping line that leaves out its former targets or rewrites, naming its line, and restores a version 3 line without them`.
 
 ### `archive/restore-type-origin`
 

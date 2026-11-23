@@ -1,5 +1,4 @@
--- Each type a kind of a plugin's connector was mapped onto before, other than its target and
--- the connector's own types. A rewrite of the kind moves the connector's items from them.
+-- Each type a connector's kind was mapped onto before, other than the connector's own types.
 CREATE TABLE IF NOT EXISTS connector_former_targets (
     plugin TEXT NOT NULL REFERENCES plugins (name) ON DELETE CASCADE,
     kind TEXT NOT NULL,

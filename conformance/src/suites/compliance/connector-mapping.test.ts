@@ -6,6 +6,7 @@ import {
   editLineFile,
   emptyManifest,
   lineFile,
+  listEntries,
   ndjson,
   tar,
 } from "../../utils/archive.js";
@@ -820,7 +821,7 @@ describe("a mapping in an archive", () => {
     const archive = await owner.exportArchive({ state: "any" });
     expect(archive.status).toBe(200);
     const manifest = archiveManifest(archive.data);
-    expect(manifest.version).toBe(3);
+    expect(manifest.version).toBe(4);
     const lines = archiveLines(archive.data, "instance").filter(
       (line) => "connector_mapping" in line,
     );
@@ -829,6 +830,8 @@ describe("a mapping in an archive", () => {
         plugin: plugin.name,
         version: 1,
         kinds: mapping.kinds,
+        former_targets: {},
+        rewrites: [],
       },
     });
     expect(manifest.connector_mapping_count).toBe(lines.length);
@@ -946,6 +949,180 @@ describe("a mapping in an archive", () => {
     ]);
     const older = await local(destination).restoreArchive(versionTwo);
     expect(older.status, JSON.stringify(older.error)).toBe(200);
+  });
+
+  it(
+    "keeps a kind's former targets and open rewrites through an export and a restore, so a rewrite on the restored instance moves every one of the connector's own items back",
+    async () => {
+      const plugin = await installed(owner);
+      const own = await connectorKey(server, plugin);
+      await saved(plugin, onTickets(plugin, 0));
+      const mine = [];
+      for (const title of ["first", "second", "third"]) {
+        const made = await own.client.createItem({
+          type: plugin.ticket,
+          source_id: `kept-${fresh()}`,
+          properties: { title, reporter: "tracker" },
+        });
+        expect(made.status, JSON.stringify(made.error)).toBe(201);
+        mine.push(made.data.item);
+      }
+      const owners = await owner.createItem({
+        type: plugin.ticket,
+        properties: { title: "the owner's", reporter: "me" },
+      });
+      expect(owners.status).toBe(201);
+      await saved(plugin, {
+        version: 1,
+        kinds: { issue: { target_type: plugin.issue } },
+      });
+      const asked = await owner.rewriteConnectorItems(plugin.name, {
+        kinds: ["issue"],
+      });
+      expect(asked.status, JSON.stringify(asked.error)).toBe(200);
+      const pending = (await owner.getConnectorMapping(plugin.name)).data
+        .rewrites;
+      expect(pending).toHaveLength(1);
+
+      const archive = await owner.exportArchive({ state: "any" });
+      expect(archive.status).toBe(200);
+      const line = archiveLines<{
+        connector_mapping?: Record<string, unknown>;
+      }>(archive.data, "instance").find(
+        (held) => held.connector_mapping?.plugin === plugin.name,
+      );
+      expect(line?.connector_mapping).toMatchObject({
+        version: 2,
+        former_targets: { issue: [plugin.ticket] },
+        rewrites: [
+          {
+            version: 2,
+            kinds: ["issue"],
+            requested_at: pending[0]!.requested_at,
+          },
+        ],
+      });
+
+      const target = await bootFreshServer("connector-mapping-former");
+      try {
+        const restored = await local(target).restoreArchive(archive.data);
+        expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+        const carried = await local(target).getConnectorMapping(plugin.name);
+        expect(carried.status, JSON.stringify(carried.error)).toBe(200);
+        expect(carried.data.version).toBe(2);
+        expect(carried.data.rewrites).toEqual([
+          {
+            number: expect.any(Number),
+            version: 2,
+            kinds: ["issue"],
+            from: { issue: [plugin.ticket] },
+            requested_at: pending[0]!.requested_at,
+          },
+        ]);
+        const again = await local(target).rewriteConnectorItems(plugin.name, {
+          kinds: ["issue"],
+        });
+        expect(again.status, JSON.stringify(again.error)).toBe(200);
+        expect(again.data.kinds).toEqual({
+          issue: { target_type: plugin.issue, count: 3 },
+        });
+
+        const key = await connectorKey(target, plugin);
+        const listed = await key.client.listItems({ type: plugin.ticket });
+        expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+        expect(listed.data.data.map((item) => item.id).sort()).toEqual(
+          mine.map((item) => item.id).sort(),
+        );
+        for (const item of mine) {
+          const back = await key.client.updateItem(item.id, {
+            version: item.version,
+            type: plugin.issue,
+            retype: true,
+          });
+          expect(back.status, JSON.stringify(back.error)).toBe(200);
+          expect(back.data.item.type).toBe(plugin.issue);
+        }
+        for (const number of [carried.data.rewrites[0]!.number, again.data.number]) {
+          const done = await key.client.finishConnectorRewrite(plugin.name, {
+            number,
+          });
+          expect(done.status, JSON.stringify(done.error)).toBe(200);
+        }
+        const left = await local(target).rewriteConnectorItems(plugin.name, {
+          dry_run: true,
+          kinds: ["issue"],
+        });
+        expect(left.data.kinds.issue?.count).toBe(0);
+        const theirs = await local(target).getItem(owners.data.item.id);
+        expect(theirs.data.item.type).toBe(plugin.ticket);
+      } finally {
+        await target.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it("refuses a version 4 mapping line that leaves out its former targets or rewrites, naming its line, and restores a version 3 line without them", async () => {
+    const plugin = await installed(owner);
+    await saved(plugin, onTickets(plugin, 0));
+    await saved(plugin, {
+      version: 1,
+      kinds: { issue: { target_type: plugin.issue } },
+    });
+    const archive = await owner.exportArchive({ state: "any" });
+    expect(archive.status).toBe(200);
+    const without = (field: string) => {
+      let line = 0;
+      const edited = editLineFile(archive.data, "instance", (text) =>
+        text
+          .split("\n")
+          .map((held, at) => {
+            if (!held.startsWith('{"connector_mapping"')) return held;
+            const parsed = JSON.parse(held) as {
+              connector_mapping: Record<string, unknown>;
+            };
+            if (parsed.connector_mapping.plugin !== plugin.name) return held;
+            line = at + 1;
+            delete parsed.connector_mapping[field];
+            return JSON.stringify(parsed);
+          })
+          .join("\n"),
+      );
+      expect(line).toBeGreaterThan(0);
+      return { edited, line };
+    };
+    for (const field of ["former_targets", "rewrites"]) {
+      const { edited, line } = without(field);
+      const refused = await local(destination).restoreArchive(edited);
+      expect(refused.status, field).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details).toMatchObject({
+        entry: "instance.ndjson.gz",
+        line,
+      });
+    }
+    expect(
+      (await local(destination).getConnectorMapping(plugin.name)).status,
+    ).toBe(404);
+
+    const atThree = tar(
+      listEntries(without("former_targets").edited).map((entry) =>
+        entry.name === "manifest.json"
+          ? {
+              name: entry.name,
+              body: JSON.stringify({
+                ...(JSON.parse(entry.body.toString("utf8")) as object),
+                version: 3,
+              }),
+            }
+          : { name: entry.name, body: entry.body },
+      ),
+    );
+    const restored = await local(destination).restoreArchive(atThree);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    const read = await local(destination).getConnectorMapping(plugin.name);
+    expect(read.status, JSON.stringify(read.error)).toBe(200);
+    expect(read.data.version).toBe(2);
   });
 
   it(

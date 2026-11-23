@@ -2638,7 +2638,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     ) -> Result<RowDone> {
         let gate = self.gate();
         let row = gate.readable_row(&selected.id)?;
-        gate.moving_gate(&row, to)?;
+        gate.row_gate(&row)?;
         gate.type_gate_under(to, Some(&row.source))?;
         self.change_row(
             row,
