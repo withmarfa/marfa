@@ -242,6 +242,50 @@ When an instance with no owner and a stored sign-in address starts, the server M
 
 **Tests:** `compliance/remote-claim.test.ts › stores MARFA_CLAIM_ADDRESS as the sign-in address of an instance with no owner, and names the full setup address in the setup code's line`.
 
+### `instance-claim/setup-code-shape`
+
+When the server issues a setup code or a recovery code, the server MUST make it twenty-five characters from `A` to `Z` and `2` to `7`, in five groups of five joined by hyphens.
+
+**Reason:** A code read off a log and typed by hand is easier to keep place in as groups, and twenty-five characters of five bits each are 125 bits for a guesser to find.
+
+**Tests:** `compliance/remote-claim.test.ts › is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once`, `› is the shape of a recovery code too`.
+
+### `instance-claim/setup-code-typed`
+
+When a claim carries a setup code typed in lowercase, with spaces or line breaks for hyphens or with none, the server MUST take it as the code it was made from.
+
+**Tests:** `compliance/remote-claim.test.ts › is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once`.
+
+### `instance-claim/setup-link-logged`
+
+When an instance with no owner starts, the server MUST print, on the log line that holds its setup code, a link to its setup page in the form of `/setup#handoff=…` that carries a handoff ticket.
+
+**Reason:** A person with the log in front of them can open one link instead of copying the code. The ticket is the one the private local command issues, so it works once and ends after five minutes.
+
+**Tests:** `compliance/remote-claim.test.ts › is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once`.
+
+### `instance-claim/claim-form-mismatch`
+
+If a form post to `POST /setup/claim` carries `confirm_password` and it differs from `password`, then the server MUST refuse the claim with `400` and create no owner.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a claim form whose two passwords differ, with both password fields empty and nothing claimed`.
+
+### `instance-claim/claim-form-mismatch-page`
+
+If a form post to `POST /setup/claim` is refused because `confirm_password` differs from `password`, then the server MUST answer the claim form again with "The passwords don't match." and with both password fields empty.
+
+**Reason:** A password typed twice and wrong is easier to retype than to correct, and a page that sent it back would hold it in the browser's history.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a claim form whose two passwords differ, with both password fields empty and nothing claimed`.
+
+### `instance-claim/claim-script-no-confirmation`
+
+When a claim is sent as JSON without `confirm_password`, the server MUST NOT refuse it for that.
+
+**Reason:** Only a person typing into a form can mistype a password twice; a command line or script sends the one it holds.
+
+**Tests:** `compliance/remote-claim.test.ts › is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once`.
+
 ## Code attempts
 
 ### `instance-claim/address-attempt-limit`
@@ -581,6 +625,18 @@ If the new password sent to `POST /setup/recover` is shorter than 8 or longer th
 When `POST /setup/recover` refuses a new password with `400 validation_error`, the server MUST keep the recovery code it was sent with.
 
 **Tests:** `compliance/remote-claim.test.ts › refuses a new password the private socket's recovery refuses, and keeps the code for another try`.
+
+### `instance-claim/recover-form-mismatch`
+
+If a form post to `POST /setup/recover` carries `confirm_password` and it differs from `password`, then the server MUST refuse it with `400`, keep the owner's password and keep the recovery code it was sent with.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a recovery form whose two passwords differ, with both password fields empty, and keeps the password and the code for another try`.
+
+### `instance-claim/recover-form-mismatch-page`
+
+If a form post to `POST /setup/recover` is refused because `confirm_password` differs from `password`, then the server MUST answer the new password form again with "The passwords don't match." and with both password fields empty.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a recovery form whose two passwords differ, with both password fields empty, and keeps the password and the code for another try`.
 
 ### `instance-claim/recovery-attempt-limit`
 

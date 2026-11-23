@@ -26,6 +26,10 @@
 {% if let Some(message) = view.errors.password %}<p class="error" id="password-error">{{ message }}</p>{% endif %}
 </div>
 <div class="field">
+<label for="confirm-password">Confirm password</label>
+<input id="confirm-password" type="password" name="confirm_password" autocomplete="new-password" required>
+</div>
+<div class="field">
 <label for="email">Email (optional)</label>
 <input id="email" type="email" name="email" value="{{ view.email }}" autocomplete="email" autocapitalize="none" spellcheck="false"{% if view.errors.email.is_some() %} aria-invalid="true" aria-describedby="email-error"{% endif %}>
 {% if let Some(message) = view.errors.email %}<p class="error" id="email-error">{{ message }}</p>{% endif %}

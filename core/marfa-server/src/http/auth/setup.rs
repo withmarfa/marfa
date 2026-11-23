@@ -21,12 +21,31 @@ const EXCHANGE_FIELDS: [&str; 2] = ["ticket", "code"];
 const EXCHANGE_FORM_FIELDS: [&str; 3] = ["code", RETURN_TO, PURPOSE];
 const CLAIM_FIELDS: [&str; 5] = ["username", "password", "name", "email", "code"];
 const RECOVER_FIELDS: [&str; 2] = ["password", "code"];
+const RECOVER_FORM_FIELDS: [&str; 3] = ["password", "code", CONFIRM];
+/// A page's second password field. A script's body has none, so it is never asked for one.
+const CONFIRM: &str = "confirm_password";
 const AFTER_CLAIM: &str = "/auth/sign-in";
 /// Where the browser goes once the instance is claimed. Only the setup pages' forms carry it.
 const RETURN_TO: &str = "return_to";
 /// Only the recovery code form carries it, so a form without it holds a setup code.
 const PURPOSE: &str = "purpose";
 const RECOVERY: &str = "recovery";
+
+/// Takes the confirmation out of a form's fields and refuses a password it does not repeat.
+fn take_confirmation(fields: &mut Map<String, Value>) -> Result<(), Refusal> {
+    let Some(confirm) = fields.remove(CONFIRM) else {
+        return Ok(());
+    };
+    let repeated = fields.get("password").and_then(Value::as_str) == confirm.as_str();
+    if repeated {
+        Ok(())
+    } else {
+        Err(Refusal::invalid_at(
+            "password",
+            "The passwords don't match.",
+        ))
+    }
+}
 
 /// A form's `return_to` as `kept` reads it, taken out of the fields.
 fn take_return_to(app: &App, fields: &mut Map<String, Value>) -> String {
@@ -203,7 +222,16 @@ pub async fn claim(
     {
         fields.remove("email");
     }
-    let (owner, signed_in) = match make_claim(&app, &headers, visit, fields).await {
+    let confirmed = if form {
+        take_confirmation(&mut fields)
+    } else {
+        Ok(())
+    };
+    let claimed = match confirmed {
+        Ok(()) => make_claim(&app, &headers, visit, fields).await,
+        Err(refusal) => Err(refusal.into()),
+    };
+    let (owner, signed_in) = match claimed {
         Err(Stopped::Refused(refusal)) if browser && pages::wants_page(&headers) => {
             return Ok(pages::claim_refused(&app, &refusal, typed, return_to).await?);
         }
@@ -246,16 +274,25 @@ pub async fn recover(
         _ => return Err(not_our_page().into()),
     }
     let form = body.declares_form();
-    let fields = if form {
-        only_declared(body.form().await?, &RECOVER_FIELDS)?
+    let mut fields = if form {
+        only_declared(body.form().await?, &RECOVER_FORM_FIELDS)?
     } else {
         body.object(&RECOVER_FIELDS).await?
     };
     let browser = form && said == Source::Own;
+    let confirmed = if form {
+        take_confirmation(&mut fields)
+    } else {
+        Ok(())
+    };
     let text = |name: &str| fields.get(name).and_then(Value::as_str);
     let proof = presented(&headers, text("code"));
     let password = text("password").unwrap_or("").to_string();
-    match claim::recover(&app, proof, password, visit).await {
+    let recovered = match confirmed {
+        Ok(()) => claim::recover(&app, proof, password, visit).await,
+        Err(refusal) => Err(refusal),
+    };
+    match recovered {
         Err(refusal) if browser && pages::wants_page(&headers) => {
             return Ok(pages::recover_refused(&app, &refusal).await?);
         }

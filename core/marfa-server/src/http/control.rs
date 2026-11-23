@@ -40,12 +40,11 @@ pub async fn setup_code(State(app): State<Arc<App>>, caller: Caller) -> Answer {
 
 pub async fn setup_ticket(State(app): State<Arc<App>>, caller: Caller) -> Answer {
     let (ticket, expires_at) = claim::issue_ticket(&app, &caller).await?;
-    let origin = app.addresses().sign_in().origin().to_string();
     Ok(json_answer(
         StatusCode::OK,
         &json!({
             "ticket": ticket,
-            "url": format!("{origin}/setup#handoff={ticket}"),
+            "url": claim::handoff_link(&app, &ticket),
             "expires_at": expires_at,
         }),
     ))

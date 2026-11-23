@@ -18,6 +18,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { pageField, visibleText } from "../../utils/page-html.js";
 import { listened, settingLines } from "../../utils/refused-boot.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { tempFolder } from "../../utils/temp-folder.js";
@@ -33,6 +34,8 @@ const PROXIED = {
 const CLAIM_ADDRESS = "https://marfa.example";
 const NEW_PASSWORD = "a recovered owner password";
 const HOUR_MS = 60 * 60_000;
+const CODE_SHAPE = /^[A-Z2-7]{5}(-[A-Z2-7]{5}){4}$/;
+const MISMATCH = "The passwords don't match.";
 
 interface Unclaimed {
   state: string;
@@ -227,6 +230,104 @@ function forged(
     sent.end(body);
   });
 }
+
+/** A browser's form post to a setup door, as its page sends it. */
+function formPost(
+  url: string,
+  path: string,
+  fields: Record<string, string>,
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  return fetch(`${url}${path}`, {
+    method: "POST",
+    redirect: "manual",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      accept: "text/html",
+      origin: new URL(url).origin,
+      ...headers,
+    },
+    body: new URLSearchParams(fields),
+  });
+}
+
+describe("the setup code", () => {
+  it(
+    "is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once",
+    async () => {
+      const server = await bootUnclaimed("setup-code-shape");
+      const log = serverOutput(server.state);
+      const [code] = codesIn(log, "setup");
+      expect(code).toMatch(CODE_SHAPE);
+      const line = log.split("\n").find((one) => one.includes("setup code:"))!;
+      const ticket = /\/setup#handoff=([0-9a-f]+)/.exec(line)?.[1];
+      expect(ticket).toBeDefined();
+      const origin = new URL(server.url).origin;
+      const exchange = () =>
+        post(server.url, "/setup/exchange", { ticket }, { origin });
+      expect((await exchange()).status).toBe(200);
+      expect(await answer(await exchange())).toEqual({
+        status: 401,
+        code: "setup_proof_invalid",
+      });
+      // The witness: the line's code is still good, typed in lowercase with spaces.
+      const typed = ` ${code!.toLowerCase().replaceAll("-", " ")}\n`;
+      expect(
+        (await post(server.url, "/setup/claim", { ...TEST_OWNER, code: typed }))
+          .status,
+      ).toBe(201);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "is the shape of a recovery code too",
+    async () => {
+      const server = await recoverable("recovery-code-shape");
+      await server.restart();
+      expect(await lastRecoveryCode(server)).toMatch(CODE_SHAPE);
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a claim form whose two passwords differ, with both password fields empty and nothing claimed",
+    async () => {
+      const server = await bootUnclaimed("claim-confirm");
+      const [code] = codesIn(serverOutput(server.state), "setup");
+      const claimed = async () =>
+        (await controlRequest(server.controlSocket, "/_control/setup/status"))
+          .body.claimed;
+      const fields = {
+        username: TEST_OWNER.username,
+        name: "",
+        password: TEST_OWNER.password,
+        code: code!,
+      };
+      const refused = await formPost(server.url, "/setup/claim", {
+        ...fields,
+        confirm_password: `${TEST_OWNER.password}!`,
+      });
+      expect(refused.status).toBe(400);
+      const html = await refused.text();
+      expect(visibleText(html)).toContain(MISMATCH);
+      expect(pageField(html, "username")?.value).toBe(TEST_OWNER.username);
+      expect(pageField(html, "password")?.value ?? "").toBe("");
+      expect(pageField(html, "confirm_password")?.value ?? "").toBe("");
+      expect(html).not.toContain(TEST_OWNER.password);
+      expect(await claimed()).toBe(false);
+
+      // The witness: the same form with the passwords alike claims.
+      const matched = await formPost(server.url, "/setup/claim", {
+        ...fields,
+        confirm_password: TEST_OWNER.password,
+      });
+      expect(matched.status).toBe(303);
+      expect(await claimed()).toBe(true);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
 
 describe("the claim address", () => {
   it(
@@ -697,6 +798,48 @@ describe("owner recovery", () => {
           )
         ).status,
       ).toBe(401);
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a recovery form whose two passwords differ, with both password fields empty, and keeps the password and the code for another try",
+    async () => {
+      const server = await recoverable("recovery-confirm");
+      await server.restart();
+      const code = await lastRecoveryCode(server);
+      const exchanged = await formPost(server.apiUrl, "/setup/exchange", {
+        code,
+        purpose: "recovery",
+      });
+      expect(exchanged.status).toBe(303);
+      const setup = cookiesOf(exchanged);
+
+      const refused = await formPost(
+        server.apiUrl,
+        "/setup/recover",
+        { password: NEW_PASSWORD, confirm_password: `${NEW_PASSWORD}!` },
+        { cookie: setup },
+      );
+      expect(refused.status).toBe(400);
+      const html = await refused.text();
+      expect(visibleText(html)).toContain(MISMATCH);
+      expect(html).toContain('id="recover-form"');
+      expect(pageField(html, "password")?.value ?? "").toBe("");
+      expect(pageField(html, "confirm_password")?.value ?? "").toBe("");
+      expect(html).not.toContain(NEW_PASSWORD);
+      expect(await signsIn(server, TEST_OWNER.password)).toBe(true);
+
+      // The witness: the same session, with the passwords alike, recovers.
+      const matched = await formPost(
+        server.apiUrl,
+        "/setup/recover",
+        { password: NEW_PASSWORD, confirm_password: NEW_PASSWORD },
+        { cookie: setup },
+      );
+      expect(matched.status).toBe(303);
+      expect(await signsIn(server, NEW_PASSWORD)).toBe(true);
+      expect(await signsIn(server, TEST_OWNER.password)).toBe(false);
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
   );
