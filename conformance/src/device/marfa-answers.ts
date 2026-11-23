@@ -28,6 +28,10 @@ export interface WireItemOptions {
   trashed_at?: string | null;
   /** Null leaves the field out, as a server from before it does. */
   read_only?: boolean | null;
+  /** The page at the sign-in address. A stand-in: fidelity compares presence. */
+  url?: string;
+  /** `marfa://`, an instance id, then the item's id. A stand-in, as `url` is. */
+  app_url?: string;
   /** The edges the server hydrates onto the item, keyed by edge type. */
   edges?: Record<string, unknown>;
 }
@@ -66,6 +70,8 @@ export function wireItem(options: WireItemOptions): Record<string, unknown> {
     ...(options.read_only === null
       ? {}
       : { read_only: options.read_only ?? false }),
+    url: options.url ?? `https://marfa.example/i/${options.id}`,
+    app_url: options.app_url ?? `marfa://instance/${options.id}`,
     // Present and empty, which is what the server answers for an item with no
     // edges. Absent would be a different thing to a device, and this is the
     // shape every door that returns an item returns.
