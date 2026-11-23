@@ -8,7 +8,7 @@ export interface MarfaItem {
   /** Whether connectors hold the item read only, worked out on each read. */
   read_only: boolean;
   /** The item's page at the sign-in address, worked out on each read. */
-  url: string;
+  web_url: string;
   /** `marfa://`, the instance's id, then the item's id. */
   app_url: string;
   state: string; // Lifecycle state, such as "active", "archived", "trashed" or "revoked"

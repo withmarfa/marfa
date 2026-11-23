@@ -24,7 +24,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Save a new item",
-        description: "Use to save something new: a note, task, record or other item, or a file from a web address or the chat. Read the type with marfa_overview first, several at once if you are choosing, and pick the type whose guidance fits. To change an existing item, use marfa_update instead. Give the person the new item's url.",
+        description: "Use to save something new: a note, task, record or other item, or a file from a web address or the chat. Read the type with marfa_overview first, several at once if you are choosing, and pick the type whose guidance fits. To change an existing item, use marfa_update instead. Give the person the new item's web_url.",
         input: json!({
             "type": "object",
             "properties": {
@@ -69,7 +69,7 @@ pub fn definition() -> Definition {
             "properties": {
                 "id": { "type": "string" },
                 "type": { "type": "string" },
-                "url": { "type": "string" },
+                "web_url": { "type": "string" },
                 "app_url": { "type": "string" },
                 "version": { "type": "integer" },
                 "title": { "type": "string" },
@@ -86,7 +86,7 @@ pub fn definition() -> Definition {
                 },
                 "attached_to": { "type": "string" },
             },
-            "required": ["id", "type", "url", "app_url", "version", "title", "tags", "created"],
+            "required": ["id", "type", "web_url", "app_url", "version", "title", "tags", "created"],
         }),
         annotations: json!({
             "readOnlyHint": false,
@@ -292,7 +292,7 @@ pub async fn run(
                     return Err(Stop::refused(refusal)
                         .with(
                             "saved",
-                            json!({ "id": item_id_made, "type": field("type"), "version": field("version"), "url": field("url"), "app_url": field("app_url") }),
+                            json!({ "id": item_id_made, "type": field("type"), "version": field("version"), "web_url": field("web_url"), "app_url": field("app_url") }),
                         )
                         .with(
                             "hint",
@@ -318,7 +318,7 @@ pub async fn run(
     let mut answer = Map::new();
     answer.insert("id".into(), item_id_made.into());
     answer.insert("type".into(), field("type"));
-    answer.insert("url".into(), field("url"));
+    answer.insert("web_url".into(), field("web_url"));
     answer.insert("app_url".into(), field("app_url"));
     answer.insert("version".into(), field("version"));
     answer.insert("title".into(), title.into());

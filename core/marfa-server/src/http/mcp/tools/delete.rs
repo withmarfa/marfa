@@ -26,7 +26,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Move items to the trash",
-        description: "Use to delete notes, tasks, records, files or other items, which moves them to the trash. The first call only previews what would go, including items that go with them. Show the person and ask; only if they agree, call again with the same ids and confirm. A confirmation works once. Restore with marfa_update. Give the person an item's url when you point at what would go.",
+        description: "Use to delete notes, tasks, records, files or other items, which moves them to the trash. The first call only previews what would go, including items that go with them. Show the person and ask; only if they agree, call again with the same ids and confirm. A confirmation works once. Restore with marfa_update. Give the person an item's web_url when you point at what would go.",
         input: json!({
             "type": "object",
             "properties": {
@@ -49,23 +49,23 @@ pub fn definition() -> Definition {
                         "type": { "type": "string" },
                         "title": { "type": "string" },
                         "version": { "type": "integer" },
-                        "url": { "type": "string" },
+                        "web_url": { "type": "string" },
                         "app_url": { "type": "string" },
                         "also_trashes": { "type": "array", "items": {
                             "type": "object",
                             "properties": {
                                 "id": { "type": "string" },
                                 "type": { "type": "string" },
-                                "url": { "type": "string" },
+                                "web_url": { "type": "string" },
                                 "app_url": { "type": "string" },
                             },
-                            "required": ["id", "type", "url", "app_url"],
+                            "required": ["id", "type", "web_url", "app_url"],
                         } },
                         "count": { "type": "integer",
                             "description": "How many items trashing it moves to the trash, itself included." },
                         "truncated": { "type": "boolean" },
                     },
-                    "required": ["id", "type", "version", "url", "app_url", "also_trashes", "count"],
+                    "required": ["id", "type", "version", "web_url", "app_url", "also_trashes", "count"],
                 } },
                 "total": { "type": "integer" },
                 "confirm": { "type": "string" },
@@ -113,7 +113,7 @@ async fn preview_body(
                 "version".into(),
                 entry.get("version").cloned().unwrap_or(Value::Null),
             );
-            out.insert("url".into(), links.url(id).into());
+            out.insert("web_url".into(), links.web_url(id).into());
             out.insert("app_url".into(), links.app_url(id).into());
             let also: Vec<Value> = entry
                 .get("takes")
@@ -127,7 +127,7 @@ async fn preview_body(
                             json!({
                                 "id": item.get("id").cloned().unwrap_or(Value::Null),
                                 "type": item.get("type").cloned().unwrap_or(Value::Null),
-                                "url": links.url(also_id),
+                                "web_url": links.web_url(also_id),
                                 "app_url": links.app_url(also_id),
                             })
                         })

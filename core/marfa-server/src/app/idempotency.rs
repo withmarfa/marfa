@@ -404,7 +404,7 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
     Ok(())
 }
 
-/// A kept answer's `read_only`, `url` and `app_url` are judged again at replay.
+/// A kept answer's `read_only`, `web_url` and `app_url` are judged again at replay.
 fn with_current_read_only(
     read_only: &ReadOnly,
     links: &Links,
@@ -456,10 +456,10 @@ fn stamp_value(value: &mut Value, links: &Links, changed: &mut bool) {
                 && map.contains_key("source")
                 && !map.contains_key("properties");
             if let Some(id) = id.filter(|_| typed && (full || summary)) {
-                let url = links.url(&id);
+                let web_url = links.web_url(&id);
                 let app_url = links.app_url(&id);
-                if map.get("url").and_then(Value::as_str) != Some(url.as_str()) {
-                    map.insert("url".into(), url.into());
+                if map.get("web_url").and_then(Value::as_str) != Some(web_url.as_str()) {
+                    map.insert("web_url".into(), web_url.into());
                     *changed = true;
                 }
                 if map.get("app_url").and_then(Value::as_str) != Some(app_url.as_str()) {
@@ -692,15 +692,16 @@ mod tests {
     #[test]
     fn a_replay_refreshes_the_items_addresses_and_leaves_a_propertys() {
         let links = Links::of("https://marfa.example", "inst");
-        let body = br#"{"item":{"id":"a","type":"core.note","read_only":false,"properties":{"url":"keep","app_url":"keep"},"neighbors":[{"item":{"id":"b","type":"core.note","name":"B","source":"s"}}]}}"#;
+        let body = br#"{"item":{"id":"a","type":"core.note","read_only":false,"properties":{"url":"keep","web_url":"keep","app_url":"keep"},"neighbors":[{"item":{"id":"b","type":"core.note","name":"B","source":"s"}}]}}"#;
         let changed = stamp_links(body.to_vec(), &links);
         let value: Value = serde_json::from_slice(&changed).unwrap();
-        assert_eq!(value["item"]["url"], "https://marfa.example/i/a");
+        assert_eq!(value["item"]["web_url"], "https://marfa.example/i/a");
         assert_eq!(value["item"]["app_url"], "marfa://inst/a");
         assert_eq!(value["item"]["properties"]["url"], "keep");
+        assert_eq!(value["item"]["properties"]["web_url"], "keep");
         assert_eq!(value["item"]["properties"]["app_url"], "keep");
         assert_eq!(
-            value["item"]["neighbors"][0]["item"]["url"],
+            value["item"]["neighbors"][0]["item"]["web_url"],
             "https://marfa.example/i/b"
         );
         assert_eq!(stamp_links(changed.clone(), &links), changed);

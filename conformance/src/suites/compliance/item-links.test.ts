@@ -11,9 +11,10 @@ import { callTool, connectMcp, toolResult } from "../../utils/mcp.js";
 import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 
 /**
- * The addresses an answered item carries (`items/item-url`,
- * `items/item-app-url`, `items/item-url-follows-address`,
- * `items/item-url-trashed`, `items/item-url-frame` and `mcp/item-url`).
+ * The addresses an answered item carries (`items/item-web-url`,
+ * `items/item-app-url`, `items/item-web-url-follows-address`,
+ * `items/item-web-url-trashed`, `items/item-web-url-frame` and
+ * `mcp/item-web-url`).
  *
  * On a server of the fixture's own: the sign-in address is the instance's.
  */
@@ -77,22 +78,22 @@ async function note(title: string): Promise<{ id: string; version: number }> {
   return { id: made.data.item.id, version: made.data.item.version };
 }
 
-it("answers url from the sign-in address, including localhost, a port and an IDN host", async () => {
+it("answers web_url from the sign-in address, including localhost, a port and an IDN host", async () => {
   await setAddress(null);
   const { id } = await note("localhost");
   const cleared = await working.getItem(id);
   expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
-  expect(cleared.data.item.url).toBe(page(localhostOrigin(), id));
+  expect(cleared.data.item.web_url).toBe(page(localhostOrigin(), id));
 
   await setAddress(PORT_ADDRESS);
   const ported = await working.getItem(id);
   expect(ported.status, JSON.stringify(ported.error)).toBe(200);
-  expect(ported.data.item.url).toBe(page(new URL(PORT_ADDRESS).origin, id));
+  expect(ported.data.item.web_url).toBe(page(new URL(PORT_ADDRESS).origin, id));
 
   await setAddress(IDN_ADDRESS);
   const named = await working.getItem(id);
   expect(named.status, JSON.stringify(named.error)).toBe(200);
-  expect(named.data.item.url).toBe(page(new URL(IDN_ADDRESS).origin, id));
+  expect(named.data.item.web_url).toBe(page(new URL(IDN_ADDRESS).origin, id));
 });
 
 it("answers app_url from the instance id", async () => {
@@ -108,17 +109,17 @@ it("answers app_url from the instance id", async () => {
   expect(moved.data.item.app_url).toBe(`marfa://${instance}/${id}`);
 });
 
-it("answers the new url on the next read after the sign-in address moves", async () => {
+it("answers the new web_url on the next read after the sign-in address moves", async () => {
   await setAddress(PORT_ADDRESS);
   const { id } = await note("moves");
   const first = await working.getItem(id);
   expect(first.status, JSON.stringify(first.error)).toBe(200);
-  expect(first.data.item.url).toBe(page(new URL(PORT_ADDRESS).origin, id));
+  expect(first.data.item.web_url).toBe(page(new URL(PORT_ADDRESS).origin, id));
 
   await setAddress(MOVED_ADDRESS);
   const second = await working.getItem(id);
   expect(second.status, JSON.stringify(second.error)).toBe(200);
-  expect(second.data.item.url).toBe(page(new URL(MOVED_ADDRESS).origin, id));
+  expect(second.data.item.web_url).toBe(page(new URL(MOVED_ADDRESS).origin, id));
   expect(second.data.item.app_url).toBe(first.data.item.app_url);
 });
 
@@ -136,7 +137,7 @@ it("answers every item in a list from the sign-in address of that read, and the 
   const listed = first.data.data.filter((item) => ids.has(item.id));
   expect(listed).toHaveLength(3);
   for (const item of first.data.data) {
-    expect(item.url).toBe(page(origin, item.id));
+    expect(item.web_url).toBe(page(origin, item.id));
   }
 
   await setAddress(MOVED_ADDRESS);
@@ -146,11 +147,11 @@ it("answers every item in a list from the sign-in address of that read, and the 
   const again = second.data.data.filter((item) => ids.has(item.id));
   expect(again).toHaveLength(3);
   for (const item of second.data.data) {
-    expect(item.url).toBe(page(nextOrigin, item.id));
+    expect(item.web_url).toBe(page(nextOrigin, item.id));
   }
 });
 
-it("answers url and app_url on a trashed item", async () => {
+it("answers web_url and app_url on a trashed item", async () => {
   await setAddress(PORT_ADDRESS);
   const { id } = await note("trashed");
   const trashed = await working.trashItems([id]);
@@ -158,12 +159,12 @@ it("answers url and app_url on a trashed item", async () => {
   const read = await working.getItem(id, "trashed");
   expect(read.status, JSON.stringify(read.error)).toBe(200);
   expect(read.data.item.state).toBe("trashed");
-  expect(read.data.item.url).toBe(page(new URL(PORT_ADDRESS).origin, id));
+  expect(read.data.item.web_url).toBe(page(new URL(PORT_ADDRESS).origin, id));
   const instance = await instanceId();
   expect(read.data.item.app_url).toBe(`marfa://${instance}/${id}`);
 });
 
-it("answers url and app_url on an event frame", async ({ signal }) => {
+it("answers web_url and app_url on an event frame", async ({ signal }) => {
   await setAddress(PORT_ADDRESS);
   const instance = await instanceId();
   const frame = await withStreamAtCursor(
@@ -191,13 +192,13 @@ it("answers url and app_url on an event frame", async ({ signal }) => {
     },
   );
   const item = (
-    frame?.data as { item: { id: string; url: string; app_url: string } }
+    frame?.data as { item: { id: string; web_url: string; app_url: string } }
   ).item;
-  expect(item.url).toBe(page(new URL(PORT_ADDRESS).origin, item.id));
+  expect(item.web_url).toBe(page(new URL(PORT_ADDRESS).origin, item.id));
   expect(item.app_url).toBe(`marfa://${instance}/${item.id}`);
 });
 
-it("answers url and app_url from an MCP tool that returns an item", async () => {
+it("answers web_url and app_url from an MCP tool that returns an item", async () => {
   await setAddress(PORT_ADDRESS);
   const instance = await instanceId();
   const mcp = await connectMcp(server.apiUrl, server.workingKey);
@@ -210,23 +211,23 @@ it("answers url and app_url from an MCP tool that returns an item", async () => 
     );
     const id = created.id as string;
     const origin = new URL(PORT_ADDRESS).origin;
-    expect(created.url).toBe(page(origin, id));
+    expect(created.web_url).toBe(page(origin, id));
     expect(created.app_url).toBe(`marfa://${instance}/${id}`);
 
     const got = toolResult(await callTool(mcp, "marfa_get", { ids: [id] }));
     const read = (
-      got.items as { id: string; url: string; app_url: string }[]
+      got.items as { id: string; web_url: string; app_url: string }[]
     )[0];
-    expect(read?.url).toBe(page(origin, id));
+    expect(read?.web_url).toBe(page(origin, id));
     expect(read?.app_url).toBe(`marfa://${instance}/${id}`);
 
     const found = toolResult(
       await callTool(mcp, "marfa_find", { type: "core.note", query: "mcp" }),
     );
     const entry = (
-      found.items as { id: string; url: string; app_url: string }[]
+      found.items as { id: string; web_url: string; app_url: string }[]
     ).find((item) => item.id === id);
-    expect(entry?.url).toBe(page(origin, id));
+    expect(entry?.web_url).toBe(page(origin, id));
     expect(entry?.app_url).toBe(`marfa://${instance}/${id}`);
 
     const changed = toolResult(
@@ -236,7 +237,7 @@ it("answers url and app_url from an MCP tool that returns an item", async () => 
         properties: { title: "mcp renamed" },
       }),
     );
-    expect(changed.url).toBe(page(origin, id));
+    expect(changed.web_url).toBe(page(origin, id));
     expect(changed.app_url).toBe(`marfa://${instance}/${id}`);
   } finally {
     await mcp.close();

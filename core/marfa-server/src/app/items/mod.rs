@@ -175,7 +175,7 @@ struct ItemHead<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     read_only: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    url: Option<String>,
+    web_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     app_url: Option<String>,
 }
@@ -241,7 +241,7 @@ impl Item {
                 .filter(|_| matches!(shown, Marks::Logged))
                 .map(|mark| mark.with_type.as_str()),
             read_only,
-            url: links.map(|links| links.url(&self.id)),
+            web_url: links.map(|links| links.web_url(&self.id)),
             app_url: links.map(|links| links.app_url(&self.id)),
         }
     }
@@ -270,7 +270,7 @@ impl Item {
         ))
     }
 
-    /// A frame adds `read_only`, `url` and `app_url` when it is sent.
+    /// A frame adds `read_only`, `web_url` and `app_url` when it is sent.
     fn logged(&self) -> Result<String> {
         with_properties(&self.head(None, None, Marks::Logged), &self.properties)
     }
@@ -517,7 +517,7 @@ fn summary_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item, links: &Links
         "name": name_of(tx, catalog, row)?,
         "source": row.source,
         "created_at": row.created_at,
-        "url": links.url(&row.id),
+        "web_url": links.web_url(&row.id),
         "app_url": links.app_url(&row.id),
     }))
 }

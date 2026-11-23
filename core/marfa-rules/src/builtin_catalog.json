@@ -2901,7 +2901,8 @@
   "trashed_with",
   "type",
   "updated_at",
-  "version"
+  "version",
+  "web_url"
  ],
  "searched_field_names": [
   "body",

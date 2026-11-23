@@ -352,7 +352,7 @@ describe("starting on a database an earlier release wrote", () => {
             ...recorded,
             item: {
               ...recorded.item,
-              url: `${origin}/i/${id}`,
+              web_url: `${origin}/i/${id}`,
               app_url: `marfa://${root.data.instance_id}/${id}`,
             },
           });

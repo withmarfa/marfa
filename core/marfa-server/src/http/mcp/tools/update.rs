@@ -36,7 +36,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Change an item",
-        description: "Use to change an item's fields, tags or edges, archive it, or restore it from the trash. Send the version you read with marfa_get; if the item changed since, nothing is written and you get it as it is now and which of your fields changed. Give the person the item's url.",
+        description: "Use to change an item's fields, tags or edges, archive it, or restore it from the trash. Send the version you read with marfa_get; if the item changed since, nothing is written and you get it as it is now and which of your fields changed. Give the person the item's web_url.",
         input: json!({
             "type": "object",
             "properties": {
@@ -67,11 +67,11 @@ pub fn definition() -> Definition {
                 "id": { "type": "string" },
                 "version": { "type": "integer" },
                 "state": { "type": "string" },
-                "url": { "type": "string" },
+                "web_url": { "type": "string" },
                 "app_url": { "type": "string" },
                 "applied": { "type": "array", "items": { "type": "string" } },
             },
-            "required": ["id", "version", "state", "url", "app_url", "applied"],
+            "required": ["id", "version", "state", "web_url", "app_url", "applied"],
         }),
         annotations: json!({
             "readOnlyHint": false,
@@ -364,7 +364,7 @@ pub async fn run(
     let id = text(&arguments, "id").unwrap_or_default();
     item_id(&id)?;
     let links = app.item_links();
-    let url = links.url(&id);
+    let web_url = links.web_url(&id);
     let app_url = links.app_url(&id);
     let Some(version) = arguments.get("version").and_then(Value::as_i64) else {
         return Err(Stop::invalid("version must be a whole number."));
@@ -393,7 +393,7 @@ pub async fn run(
                 "id": id,
                 "version": version,
                 "state": state,
-                "url": url,
+                "web_url": web_url,
                 "app_url": app_url,
                 "applied": ["state active"],
             }));
@@ -541,7 +541,7 @@ pub async fn run(
         "id": id,
         "version": version,
         "state": state,
-        "url": url,
+        "web_url": web_url,
         "app_url": app_url,
         "applied": applied,
     }))

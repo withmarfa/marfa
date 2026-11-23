@@ -154,7 +154,7 @@ If `POST /types` names `fields` and no `id`, then the server MUST answer `400 in
 
 ### `types/field-shadows-item`
 
-If a type declares a field named `id`, `type`, `state`, `tier`, `properties`, `created_at`, `updated_at`, `occurred_at`, `source`, `source_id`, `version`, `schema_version`, `app_url`, `capture_latitude`, `capture_longitude`, `trashed_at`, `trashed_by_cascade`, `trashed_with`, `last_activity_at` or `read_only`, then the server MUST answer `400 property_shadows_field` naming each such field.
+If a type declares a field named `id`, `type`, `state`, `tier`, `properties`, `created_at`, `updated_at`, `occurred_at`, `source`, `source_id`, `version`, `schema_version`, `app_url`, `web_url`, `capture_latitude`, `capture_longitude`, `trashed_at`, `trashed_by_cascade`, `trashed_with`, `last_activity_at` or `read_only`, then the server MUST answer `400 property_shadows_field` naming each such field.
 
 **Reason:** an item would carry two values under one key, with nothing to say which is authoritative.
 

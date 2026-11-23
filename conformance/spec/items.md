@@ -14,13 +14,13 @@ When the server returns item data or related metadata, extensions, edges, histor
 
 ## Item link
 
-An answered item carries two addresses. `url` shares the item. `app_url` opens it in an app on the same device.
+An answered item carries two addresses. `web_url` shares the item. `app_url` opens it in an app on the same device.
 
-### `items/item-url`
+### `items/item-web-url`
 
-When the server answers an item, the server MUST include `url` as the origin of the sign-in address in force, then `/i/`, then the item's id.
+When the server answers an item, the server MUST include `web_url` as the origin of the sign-in address in force, then `/i/`, then the item's id.
 
-**Tests:** `compliance/item-links.test.ts › answers url from the sign-in address, including localhost, a port and an IDN host`.
+**Tests:** `compliance/item-links.test.ts › answers web_url from the sign-in address, including localhost, a port and an IDN host`.
 
 ### `items/item-app-url`
 
@@ -28,23 +28,23 @@ When the server answers an item, the server MUST include `app_url` as `marfa://`
 
 **Tests:** `compliance/item-links.test.ts › answers app_url from the instance id`.
 
-### `items/item-url-follows-address`
+### `items/item-web-url-follows-address`
 
-When the sign-in address changes, the server MUST answer an item's `url` on the next read from the sign-in address then in force.
+When the sign-in address changes, the server MUST answer an item's `web_url` on the next read from the sign-in address then in force.
 
-**Tests:** `compliance/item-links.test.ts › answers the new url on the next read after the sign-in address moves`, `› answers every item in a list from the sign-in address of that read, and the next list from the address after it moves`.
+**Tests:** `compliance/item-links.test.ts › answers the new web_url on the next read after the sign-in address moves`, `› answers every item in a list from the sign-in address of that read, and the next list from the address after it moves`.
 
-### `items/item-url-trashed`
+### `items/item-web-url-trashed`
 
-When the server answers a trashed item, the server MUST include `url` and `app_url`.
+When the server answers a trashed item, the server MUST include `web_url` and `app_url`.
 
-**Tests:** `compliance/item-links.test.ts › answers url and app_url on a trashed item`.
+**Tests:** `compliance/item-links.test.ts › answers web_url and app_url on a trashed item`.
 
-### `items/item-url-frame`
+### `items/item-web-url-frame`
 
-When the server sends an event frame that carries an item, the server MUST include `url` and `app_url` on that item.
+When the server sends an event frame that carries an item, the server MUST include `web_url` and `app_url` on that item.
 
-**Tests:** `compliance/item-links.test.ts › answers url and app_url on an event frame`.
+**Tests:** `compliance/item-links.test.ts › answers web_url and app_url on an event frame`.
 
 ## Read only
 

@@ -35,7 +35,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Purge items from the trash",
-        description: "Use to delete items in the trash for good, with their history, tags, extensions and table rows. Name ids, or pass page to take one page of the trash: {} for the first page, then the next_cursor a preview returned. One purge takes at most 1,000 items, counting the parts that go with them; a page shrinks to fit. The first call only previews; show the person and ask. Only if they agree, call again with the ids the preview returned and confirm. A confirmation works once, for this credential only. This cannot be undone. Give the person an item's url when you point at what would be purged.",
+        description: "Use to delete items in the trash for good, with their history, tags, extensions and table rows. Name ids, or pass page to take one page of the trash: {} for the first page, then the next_cursor a preview returned. One purge takes at most 1,000 items, counting the parts that go with them; a page shrinks to fit. The first call only previews; show the person and ask. Only if they agree, call again with the ids the preview returned and confirm. A confirmation works once, for this credential only. This cannot be undone. Give the person an item's web_url when you point at what would be purged.",
         input: json!({
             "type": "object",
             "properties": {
@@ -65,10 +65,10 @@ pub fn definition() -> Definition {
                         "type": { "type": "string" },
                         "title": { "type": "string" },
                         "version": { "type": "integer" },
-                        "url": { "type": "string" },
+                        "web_url": { "type": "string" },
                         "app_url": { "type": "string" },
                     },
-                    "required": ["id", "type", "title", "version", "url", "app_url"],
+                    "required": ["id", "type", "title", "version", "web_url", "app_url"],
                 } },
                 "left_out": { "type": "integer" },
                 "hidden": { "type": "object", "properties": {
@@ -133,7 +133,7 @@ fn preview_body(
                 "type": going.type_id,
                 "title": going.name,
                 "version": going.version,
-                "url": links.url(&going.id),
+                "web_url": links.web_url(&going.id),
                 "app_url": links.app_url(&going.id),
             })
         })

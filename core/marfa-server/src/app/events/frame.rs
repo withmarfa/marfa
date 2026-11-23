@@ -227,17 +227,17 @@ fn before_properties(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let url = Value::String(links.url(&id));
+    let web_url = Value::String(links.web_url(&id));
     let app_url = Value::String(links.app_url(&id));
     let mut out = Map::new();
     let mut stamped = false;
     for (key, value) in item {
-        if key == "url" || key == "app_url" {
+        if key == "web_url" || key == "app_url" {
             continue;
         }
         if key == "properties" {
             out.insert("read_only".into(), read_only.into());
-            out.insert("url".into(), url.clone());
+            out.insert("web_url".into(), web_url.clone());
             out.insert("app_url".into(), app_url.clone());
             stamped = true;
         }
@@ -245,7 +245,7 @@ fn before_properties(
     }
     if !stamped {
         out.insert("read_only".into(), read_only.into());
-        out.insert("url".into(), url);
+        out.insert("web_url".into(), web_url);
         out.insert("app_url".into(), app_url);
     }
     out

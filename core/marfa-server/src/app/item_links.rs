@@ -16,7 +16,7 @@ impl Links {
     }
 
     /// The item's page: the sign-in origin, `/i/`, then the item's id.
-    pub fn url(&self, id: &str) -> String {
+    pub fn web_url(&self, id: &str) -> String {
         format!("{}/i/{id}", self.origin)
     }
 
@@ -36,8 +36,8 @@ mod tests {
             "https://marfa.example",
             "01a1011e-87bd-7ab7-bbab-538453d75381",
         );
-        assert_eq!(links.url("a"), "https://marfa.example/i/a");
-        assert_eq!(links.url("b"), "https://marfa.example/i/b");
+        assert_eq!(links.web_url("a"), "https://marfa.example/i/a");
+        assert_eq!(links.web_url("b"), "https://marfa.example/i/b");
         assert_eq!(
             links.app_url("a"),
             "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/a"
@@ -51,9 +51,9 @@ mod tests {
     #[test]
     fn a_port_stays_and_the_instance_id_does_not_move_with_the_origin() {
         let links = Links::of("http://marfa.example:8600", "inst");
-        assert_eq!(links.url("a"), "http://marfa.example:8600/i/a");
+        assert_eq!(links.web_url("a"), "http://marfa.example:8600/i/a");
         let moved = Links::of("https://xn--bcher-kva.example", "inst");
-        assert_eq!(moved.url("a"), "https://xn--bcher-kva.example/i/a");
+        assert_eq!(moved.web_url("a"), "https://xn--bcher-kva.example/i/a");
         assert_eq!(moved.app_url("a"), links.app_url("a"));
     }
 }

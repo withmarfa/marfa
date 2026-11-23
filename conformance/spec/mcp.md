@@ -6,11 +6,11 @@ Two more endpoints serve the same tools and a group of their own. `/mcp/schema` 
 
 ## An item's addresses
 
-### `mcp/item-url`
+### `mcp/item-web-url`
 
-When an MCP tool answers an item or a summary of an item, the server MUST include `url` and `app_url` on it.
+When an MCP tool answers an item or a summary of an item, the server MUST include `web_url` and `app_url` on it.
 
-**Tests:** `compliance/item-links.test.ts › answers url and app_url from an MCP tool that returns an item`.
+**Tests:** `compliance/item-links.test.ts › answers web_url and app_url from an MCP tool that returns an item`.
 
 ## Who may call it
 

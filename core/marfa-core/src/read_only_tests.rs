@@ -65,9 +65,9 @@ fn asked(rows: &[(&str, &str, Option<bool>)]) -> Answer {
 }
 
 #[test]
-fn an_answer_may_carry_url_and_app_url() {
+fn an_answer_may_carry_web_url_and_app_url() {
     let mut item = row(MADE_HERE, 1, Some(false));
-    item["url"] = json!("http://localhost:8080/i/019a0000-0000-7000-8000-000000000001");
+    item["web_url"] = json!("http://localhost:8080/i/019a0000-0000-7000-8000-000000000001");
     item["app_url"] = json!("marfa://inst/019a0000-0000-7000-8000-000000000001");
     let wire: crate::wire::WireItem = serde_json::from_value(item).unwrap();
     assert_eq!(wire.id, MADE_HERE);
