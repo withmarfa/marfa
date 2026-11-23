@@ -11,6 +11,7 @@ import {
   local,
   mint,
   onTickets,
+  ticketType,
 } from "../../utils/connector-plugin.js";
 import {
   bootFreshServer,
@@ -1746,5 +1747,174 @@ describe("the MCP tools", () => {
     } finally {
       await mcp.close();
     }
+  });
+});
+
+describe("a rewrite back from a type the kind was mapped onto before", () => {
+  /** Its own tickets, the owner's and another source's, then the kind moved off tickets. */
+  async function strandedOnTickets(
+    entry: (plugin: ConnectorPlugin) => Record<string, unknown>,
+  ) {
+    const { plugin, key } = await mapped();
+    const mine = [];
+    for (const title of ["first", "second", "third", "left behind"]) {
+      mine.push(
+        await ticket(key.client, plugin, {
+          source_id: `back-${fresh()}`,
+          properties: { title, reporter: "tracker" },
+        }),
+      );
+    }
+    const owners = await ticket(owner, plugin);
+    const other = await mint(server, `reach-other-${fresh()}`, [], {
+      [plugin.ticket]: "write",
+    });
+    const others = await ticket(other.client, plugin);
+    const moved = await owner.saveConnectorMapping(plugin.name, {
+      version: 1,
+      kinds: { issue: entry(plugin) },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    return { plugin, key, mine, owners, others };
+  }
+
+  it("lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared", async () => {
+    const { plugin, key, mine, owners, others } = await strandedOnTickets(
+      (plugin) => ({ target_type: plugin.issue }),
+    );
+    const own = key.client;
+    // The witness: the kind's move off tickets leaves its items there out of reach.
+    refusedAsUnreached(await own.getItem(mine[0]!.id), "before the rewrite");
+
+    const asked = await owner.rewriteConnectorItems(plugin.name, {
+      kinds: ["issue"],
+    });
+    expect(asked.status, JSON.stringify(asked.error)).toBe(200);
+    expect(asked.data.kinds).toEqual({
+      issue: { target_type: plugin.issue, count: 4 },
+    });
+    const mapping = await own.getConnectorMapping(plugin.name);
+    expect(mapping.status, JSON.stringify(mapping.error)).toBe(200);
+    expect(mapping.data.rewrites).toEqual([
+      expect.objectContaining({
+        number: asked.data.number,
+        kinds: ["issue"],
+        from: { issue: [plugin.ticket] },
+      }),
+    ]);
+
+    const listed = await own.listItems({ type: plugin.ticket, limit: 2 });
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    const ids = listed.data.data.map((item) => item.id);
+    let cursor = listed.data.next_cursor ?? undefined;
+    while (cursor) {
+      const page = await own.listItems({ type: plugin.ticket, limit: 2, cursor });
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      ids.push(...page.data.data.map((item) => item.id));
+      cursor = page.data.next_cursor ?? undefined;
+    }
+    expect(ids.sort()).toEqual(mine.map((item) => item.id).sort());
+    const read = await own.getItem(mine[0]!.id);
+    expect(read.status, JSON.stringify(read.error)).toBe(200);
+
+    for (const theirs of [owners, others]) {
+      expect((await own.getItem(theirs.id)).status).toBe(404);
+      const taken = await own.updateItem(theirs.id, {
+        version: theirs.version,
+        type: plugin.issue,
+        retype: true,
+      });
+      expect(taken.status, JSON.stringify(taken.data)).toBe(404);
+    }
+    const edited = await own.updateItem(mine[0]!.id, {
+      version: mine[0]!.version,
+      properties: { title: "edited where it was" },
+    });
+    expect(edited.status, JSON.stringify(edited.data)).toBe(403);
+    expect(edited.error?.error.code).toBe("type_not_permitted");
+    const created = await own.createItem({
+      type: plugin.ticket,
+      properties: { title: "new on the former target", reporter: "tracker" },
+    });
+    expect(created.status, JSON.stringify(created.data)).toBe(403);
+
+    for (const item of mine.slice(0, 2)) {
+      const back = await own.updateItem(item.id, {
+        version: item.version,
+        type: plugin.issue,
+        retype: true,
+      });
+      expect(back.status, JSON.stringify(back.error)).toBe(200);
+      expect(back.data.item.type).toBe(plugin.issue);
+    }
+    const bulk = await own.bulkItems({
+      retype: true,
+      items: [
+        {
+          type: plugin.issue,
+          source_id: mine[2]!.source_id!,
+          properties: { title: "third" },
+        },
+      ],
+    });
+    expect(bulk.status, JSON.stringify(bulk.error)).toBe(200);
+    expect(bulk.data.results[0]?.outcome, JSON.stringify(bulk.data)).toBe(
+      "updated",
+    );
+    expect((await own.getItem(mine[2]!.id)).data.item.type).toBe(plugin.issue);
+
+    const done = await own.finishConnectorRewrite(plugin.name, {
+      number: asked.data.number,
+    });
+    expect(done.status, JSON.stringify(done.error)).toBe(200);
+    refusedAsUnreached(await own.getItem(mine[3]!.id), "after the rewrite");
+    const after = await own.listItems({ type: plugin.ticket });
+    expect(
+      after.ok ? after.data.data.map((item) => item.id) : [],
+    ).not.toContain(mine[3]!.id);
+    const late = await own.updateItem(mine[3]!.id, {
+      version: mine[3]!.version,
+      type: plugin.issue,
+      retype: true,
+    });
+    refusedAsUnreached(late, "a move after the rewrite");
+    for (const theirs of [owners, others]) {
+      const held = await owner.getItem(theirs.id);
+      expect(held.data.item).toMatchObject({
+        type: plugin.ticket,
+        version: theirs.version,
+      });
+    }
+  });
+
+  it("moves its own items from the former target type onto the kind's new target type and no other", async () => {
+    const third = `user.third${fresh()}`;
+    const registered = await owner.registerType(ticketType(third) as never);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const { plugin, key, mine } = await strandedOnTickets(() => ({
+      target_type: third,
+      fields: { title: { from: "title" }, reporter: { fixed: "tracker" } },
+    }));
+    const own = key.client;
+    const asked = await owner.rewriteConnectorItems(plugin.name, {
+      kinds: ["issue"],
+    });
+    expect(asked.status, JSON.stringify(asked.error)).toBe(200);
+    expect(asked.data.kinds.issue).toEqual({ target_type: third, count: 4 });
+
+    const elsewhere = await own.updateItem(mine[0]!.id, {
+      version: mine[0]!.version,
+      type: plugin.issue,
+      retype: true,
+    });
+    expect(elsewhere.status, JSON.stringify(elsewhere.data)).toBe(403);
+    expect(elsewhere.error?.error.code).toBe("type_not_permitted");
+    const onto = await own.updateItem(mine[0]!.id, {
+      version: mine[0]!.version,
+      type: third,
+      retype: true,
+    });
+    expect(onto.status, JSON.stringify(onto.error)).toBe(200);
+    expect(onto.data.item).toMatchObject({ type: third, source: plugin.source });
   });
 });

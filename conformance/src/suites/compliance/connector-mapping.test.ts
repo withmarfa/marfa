@@ -624,7 +624,7 @@ describe("saving a mapping", () => {
 });
 
 describe("rewriting existing items", () => {
-  it("counts exactly the items under the connector's source on a kind's target type, and changes no item on a save or a rewrite", async () => {
+  it("counts exactly the items under the connector's source that a rewrite would move onto a kind's target type, from its own type and from a type it was mapped onto before, and changes no item on a save or a rewrite", async () => {
     const plugin = await installed(owner);
     const own = await connectorKey(server, plugin);
     await saved(plugin, onTickets(plugin, 0));
@@ -668,7 +668,7 @@ describe("rewriting existing items", () => {
       dry_run: true,
       version: 1,
       kinds: {
-        issue: { target_type: plugin.ticket, count: 2 },
+        issue: { target_type: plugin.ticket, count: 1 },
         comment: { target_type: plugin.comment, count: 0 },
       },
     });
@@ -676,7 +676,18 @@ describe("rewriting existing items", () => {
       (await owner.getConnectorMapping(plugin.name)).data.rewrites,
     ).toEqual([]);
 
-    await saved(plugin, onTickets(plugin, 1, { tier: "library" }));
+    await saved(plugin, {
+      version: 1,
+      kinds: { issue: { target_type: plugin.issue, tier: "library" } },
+    });
+    const back = await owner.rewriteConnectorItems(plugin.name, {
+      dry_run: true,
+      kinds: ["issue"],
+    });
+    expect(back.status, JSON.stringify(back.error)).toBe(200);
+    expect(back.data.kinds).toEqual({
+      issue: { target_type: plugin.issue, count: 2 },
+    });
     const asked = await owner.rewriteConnectorItems(plugin.name, {
       kinds: ["issue"],
     });
@@ -685,7 +696,7 @@ describe("rewriting existing items", () => {
       dry_run: false,
       number: expect.any(Number),
       version: 2,
-      kinds: { issue: { target_type: plugin.ticket, count: 2 } },
+      kinds: { issue: { target_type: plugin.issue, count: 2 } },
     });
     for (const { id, version } of made) {
       const read = await owner.getItem(id);
