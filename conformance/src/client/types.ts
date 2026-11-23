@@ -485,6 +485,8 @@ export interface ConnectorRewriteRequest {
   number: number;
   version: number;
   kinds: string[];
+  /** Each kind's types the rewrite moves its items from. */
+  from: Record<string, string[]>;
   requested_at: string;
 }
 

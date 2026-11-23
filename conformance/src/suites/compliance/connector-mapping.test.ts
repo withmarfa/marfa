@@ -738,12 +738,14 @@ describe("rewriting existing items", () => {
         number: first.data.number,
         version: 1,
         kinds: ["issue"],
+        from: { issue: [plugin.issue] },
         requested_at: expect.any(String),
       },
       {
         number: second.data.number,
         version: 1,
         kinds: ["issue", "comment"].sort(),
+        from: { issue: [plugin.issue], comment: [] },
         requested_at: expect.any(String),
       },
     ]);

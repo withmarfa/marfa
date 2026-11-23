@@ -140,7 +140,7 @@ pub fn judge(read: &Reader<'_, '_>, ask: &Ask) -> Result<()> {
 
 /// As `judge`, also taking each type a connector key's mapping lands a kind on.
 pub fn judge_mapped(read: &Reader<'_, '_>, ask: &Ask) -> Result<()> {
-    judge_within(read, ask, |type_id| read.caller.maps_onto(type_id))
+    judge_within(read, ask, |type_id| read.caller.reads_mapped(type_id))
 }
 
 fn judge_within(read: &Reader<'_, '_>, ask: &Ask, own: impl Fn(&str) -> bool) -> Result<()> {

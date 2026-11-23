@@ -10314,7 +10314,7 @@ export interface components {
                 [key: string]: {
                     /** @description The kind's target type. */
                     target_type: string;
-                    /** @description The items outside the bin of the target type under the connector's source. */
+                    /** @description The items outside the bin under the connector's source that the rewrite moves onto the target type: those on the kind's own type and on each type the kind was mapped onto before. */
                     count: number;
                 };
             };
@@ -10337,6 +10337,10 @@ export interface components {
             version: number;
             /** @description The kinds to rewrite. */
             kinds: string[];
+            /** @description Each kind's types that the rewrite moves its items from, by name: its own type and each type it was mapped onto before, other than its target. */
+            from: {
+                [key: string]: string[];
+            };
             /**
              * Format: date-time
              * @description When the rewrite was asked for.

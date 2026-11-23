@@ -1064,7 +1064,7 @@ pub async fn lookup(
             Selector::Keys(keys) => Some(keys),
             Selector::Ids(_) => None,
         };
-        if read.caller.maps_onto(&type_id) {
+        if read.caller.reads_mapped(&type_id) {
             marfa_rules::query::refuse_unknown_type(&read.catalog.rules, Some(&type_id))
                 .map_err(crate::app::items::write::ruled)?;
         } else {

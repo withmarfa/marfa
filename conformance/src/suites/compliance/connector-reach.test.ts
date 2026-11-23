@@ -1808,7 +1808,11 @@ describe("a rewrite back from a type the kind was mapped onto before", () => {
     const ids = listed.data.data.map((item) => item.id);
     let cursor = listed.data.next_cursor ?? undefined;
     while (cursor) {
-      const page = await own.listItems({ type: plugin.ticket, limit: 2, cursor });
+      const page = await own.listItems({
+        type: plugin.ticket,
+        limit: 2,
+        cursor,
+      });
       expect(page.status, JSON.stringify(page.error)).toBe(200);
       ids.push(...page.data.data.map((item) => item.id));
       cursor = page.data.next_cursor ?? undefined;
@@ -1915,6 +1919,9 @@ describe("a rewrite back from a type the kind was mapped onto before", () => {
       retype: true,
     });
     expect(onto.status, JSON.stringify(onto.error)).toBe(200);
-    expect(onto.data.item).toMatchObject({ type: third, source: plugin.source });
+    expect(onto.data.item).toMatchObject({
+      type: third,
+      source: plugin.source,
+    });
   });
 });

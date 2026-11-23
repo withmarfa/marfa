@@ -2929,7 +2929,7 @@ async fn a_schema_11_database_upgrades_through_12_keeping_its_link_with_no_origi
         )
         .unwrap();
 
-    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+    db_open(&options(&place.file, &MIGRATIONS[..12]), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -2954,4 +2954,55 @@ async fn a_schema_11_database_upgrades_through_12_keeping_its_link_with_no_origi
     }
     conn.execute("UPDATE cloud_link SET origin_port = 65535", [])
         .unwrap();
+}
+
+#[tokio::test]
+async fn a_schema_12_database_upgrades_through_13_keeping_former_targets_that_go_with_their_plugin()
+{
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..12]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    Connection::open(&place.file)
+        .unwrap()
+        .execute(
+            "INSERT INTO plugins (name, version, title, description, mark, maker, marfa, \
+             manifest, edge_types, installed_at, updated_at, fingerprint) \
+             VALUES ('tracker', '1.0.0', 'T', 'T.', 'lucide:bug', 'M', '0.0.1', \
+             '{\"connector\":{\"source\":\"trk\",\"kinds\":[]}}', '[]', 'a', 'a', ?1)",
+            [&"0".repeat(64)],
+        )
+        .unwrap();
+
+    db_open(&options(&place.file, &MIGRATIONS[..13]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    assert_eq!(version_of(&place.file), 13);
+    let conn = Connection::open(&place.file).unwrap();
+    conn.pragma_update(None, "foreign_keys", true).unwrap();
+    let keep = |plugin: &str| {
+        conn.execute(
+            "INSERT INTO connector_former_targets (plugin, kind, type_id) \
+             VALUES (?1, 'issue', 'user.ticket')",
+            [plugin],
+        )
+    };
+    keep("tracker").unwrap();
+    assert!(
+        keep("absent").is_err(),
+        "a former target took a plugin no row holds"
+    );
+    conn.execute("DELETE FROM plugins WHERE name = 'tracker'", [])
+        .unwrap();
+    let left: i64 = conn
+        .query_row("SELECT count(*) FROM connector_former_targets", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(left, 0);
 }

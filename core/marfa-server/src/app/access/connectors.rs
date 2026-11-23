@@ -71,6 +71,9 @@ pub struct Mapped {
     /// The enabled target types that are none of the kinds' own types: the key's type map alone
     /// decides those.
     reach: Vec<String>,
+    /// While a rewrite of a kind is open, each type it was mapped onto before, with its target:
+    /// the key reads its own items there and moves them only onto that target.
+    returning: Vec<(String, String)>,
 }
 
 impl Mapped {
@@ -98,8 +101,26 @@ impl Mapped {
         mapped
     }
 
+    /// Opens `from` while a rewrite moves the connector's items of a kind from it onto `to`.
+    pub fn returning(&mut self, from: String, to: String) {
+        let held = (from, to);
+        if !self.returning.contains(&held) {
+            self.returning.push(held);
+        }
+    }
+
     pub fn writes(&self, type_id: &str) -> bool {
         self.reach.iter().any(|held| held == type_id)
+    }
+
+    fn reads(&self, type_id: &str) -> bool {
+        self.writes(type_id) || self.returning.iter().any(|(from, _)| from == type_id)
+    }
+
+    fn returns(&self, from: &str, to: &str) -> bool {
+        self.returning
+            .iter()
+            .any(|(held, onto)| held == from && onto == to)
     }
 
     fn tier(&self, type_id: &str) -> &str {
@@ -110,25 +131,43 @@ impl Mapped {
     }
 
     fn reaches_any(&self) -> bool {
-        !self.reach.is_empty()
+        !self.reach.is_empty() || !self.returning.is_empty()
     }
 }
 
 impl Caller {
-    /// A plugin's connector key, on a type its mapping lands a kind on, for an item under its own source.
-    fn mapped_onto(&self, type_id: &str, source: &str) -> bool {
-        matches!(self, Caller::Key(key) if key.source == source) && self.maps_onto(type_id)
+    fn mapped(&self, source: &str) -> Option<&Mapped> {
+        match self {
+            Caller::Key(key) if key.source == source => key.mapped.as_ref(),
+            _ => None,
+        }
     }
 
-    /// A plugin's connector key whose mapping lands a kind on `type_id`.
-    pub fn maps_onto(&self, type_id: &str) -> bool {
+    /// A plugin's connector key, on a type its mapping lands a kind on, for an item under its own source.
+    fn mapped_onto(&self, type_id: &str, source: &str) -> bool {
+        self.mapped(source)
+            .is_some_and(|mapped| mapped.writes(type_id))
+    }
+
+    /// A plugin's connector key whose mapping lets it read its own items of `type_id`.
+    pub fn reads_mapped(&self, type_id: &str) -> bool {
         matches!(self, Caller::Key(key)
-            if key.mapped.as_ref().is_some_and(|mapped| mapped.writes(type_id)))
+            if key.mapped.as_ref().is_some_and(|mapped| mapped.reads(type_id)))
     }
 
     /// Reads an item of `type_id` under `source`, through the type map or the mapping.
     pub fn may_read_item(&self, type_id: &str, source: &str) -> bool {
-        self.may_read_type(type_id) || self.mapped_onto(type_id, source)
+        self.may_read_type(type_id)
+            || self
+                .mapped(source)
+                .is_some_and(|mapped| mapped.reads(type_id))
+    }
+
+    /// Moves its own item of `from` onto `to` as an open rewrite of its kind asks, where nothing
+    /// else lets it write `from`.
+    pub fn moves_back(&self, from: &str, source: &str, to: &str) -> bool {
+        self.mapped(source)
+            .is_some_and(|mapped| mapped.returns(from, to))
     }
 
     /// Writes an item of `type_id` under `source`, through the type map or the mapping.
