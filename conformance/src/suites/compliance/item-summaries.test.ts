@@ -315,9 +315,9 @@ it("names a part with no title after its oldest host out of the bin, at read tim
   await edge(reply.id, comment.id, "comments-on");
   await edge(titled.id, host.id, "attached-to");
 
-  expect(await nameOf(comment.id)).toBe("Comment on Plan");
+  expect(await nameOf(comment.id)).toBe("Comment On Plan");
   // A host is named by its own fields, never as a part.
-  expect(await nameOf(reply.id)).toBe("Comment on Looks good");
+  expect(await nameOf(reply.id)).toBe("Comment On Looks good");
   expect(await nameOf(titled.id)).toBe("Kept");
   // The name search reads the same names.
   const searched = await owner(
@@ -332,22 +332,22 @@ it("names a part with no title after its oldest host out of the bin, at read tim
     properties: { title: "Plan v2" },
     version: host.version,
   });
-  expect(await nameOf(comment.id)).toBe("Comment on Plan v2");
+  expect(await nameOf(comment.id)).toBe("Comment On Plan v2");
 
   // A newer host does not take the name while the oldest is out of the bin,
   // and takes it once the oldest is in the bin.
   const later = await made({ title: "Later" });
   await edge(comment.id, later.id, "attached-to");
-  expect(await nameOf(comment.id)).toBe("Comment on Plan v2");
+  expect(await nameOf(comment.id)).toBe("Comment On Plan v2");
   await send("DELETE", `/items/${host.id}`);
-  expect(await nameOf(comment.id)).toBe("Attached to Later");
+  expect(await nameOf(comment.id)).toBe("Attached To Later");
 
   // The name is bounded as every name is.
   const long = await made({ title: "😀".repeat(121) });
   const bounded = await made({ body: "bounded" });
   await edge(bounded.id, long.id, "attached-to");
   expect(await nameOf(bounded.id)).toBe(
-    `Attached to ${"😀".repeat(119 - "Attached to ".length)}…`,
+    `Attached To ${"😀".repeat(119 - "Attached To ".length)}…`,
   );
 });
 it("names a highlight after the item it is an excerpt of, and never by its passage", async () => {
@@ -414,10 +414,10 @@ it("names a highlight after the item it is an excerpt of, and never by its passa
   }
   // Several highlights share the name of what they come from.
   expect(await nameOf("core.highlight", first.id)).toBe(
-    "Excerpt from Thinking, Fast and Slow",
+    "Excerpt From Thinking, Fast and Slow",
   );
   expect(await nameOf("core.highlight", second.id)).toBe(
-    "Excerpt from Thinking, Fast and Slow",
+    "Excerpt From Thinking, Fast and Slow",
   );
 
   // A source in the bin names nothing, and the passage still does not; the
@@ -426,7 +426,7 @@ it("names a highlight after the item it is an excerpt of, and never by its passa
   expect(await nameOf("core.highlight", first.id)).toBe("Untitled");
   await send("POST", `/items/${book.id}/restore`);
   expect(await nameOf("core.highlight", first.id)).toBe(
-    "Excerpt from Thinking, Fast and Slow",
+    "Excerpt From Thinking, Fast and Slow",
   );
 });
 

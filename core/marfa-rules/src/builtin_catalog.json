@@ -2591,7 +2591,7 @@
   {
    "id": "about",
    "label": "About",
-   "reverse_label": "Subject of",
+   "reverse_label": "Subject Of",
    "description": "Runs from the item to what it is about. When saving an item, about names that subject.",
    "cardinality": "many-to-many",
    "from_type_constraints": [
@@ -2609,7 +2609,7 @@
   },
   {
    "id": "attached-to",
-   "label": "Attached to",
+   "label": "Attached To",
    "reverse_label": "Attachments",
    "description": "Runs from the attachment to the item it belongs to. When saving an attachment, attached-to names that item.",
    "cardinality": "many-to-many",
@@ -2634,7 +2634,7 @@
   },
   {
    "id": "comments-on",
-   "label": "Comment on",
+   "label": "Comment On",
    "reverse_label": "Comments",
    "description": "Runs from the comment to the item it comments on. When saving a comment, comments-on names that item. A comment has one subject.",
    "cardinality": "many-to-one",
@@ -2653,8 +2653,8 @@
   },
   {
    "id": "derived-from",
-   "label": "Derived from",
-   "reverse_label": "Basis for",
+   "label": "Derived From",
+   "reverse_label": "Basis For",
    "description": "Runs from the derived item to its source. When saving an item, derived-from names that source.",
    "cardinality": "many-to-many",
    "from_type_constraints": [
@@ -2672,7 +2672,7 @@
   },
   {
    "id": "excerpt-of",
-   "label": "Excerpt from",
+   "label": "Excerpt From",
    "reverse_label": "Excerpts",
    "description": "Runs from the excerpt to the item it was taken from. When saving a highlight or quote, excerpt-of names that item. An excerpt has one source.",
    "cardinality": "many-to-one",
@@ -2691,7 +2691,7 @@
   },
   {
    "id": "in-collection",
-   "label": "In collection",
+   "label": "In Collection",
    "reverse_label": "Contents",
    "description": "Runs from the member to its container, such as a collection, a series or an album. When saving a member, in-collection names the container. A container does not nest inside another.",
    "cardinality": "many-to-many",
@@ -2715,8 +2715,8 @@
   },
   {
    "id": "in-folder",
-   "label": "In folder",
-   "reverse_label": "Folder contents",
+   "label": "In Folder",
+   "reverse_label": "Folder Contents",
    "description": "Runs from the item to the system.folder its file sits in. Saving an item cannot set this edge, because the edge needs the file's path.",
    "cardinality": "many-to-many",
    "from_type_constraints": [
@@ -2743,7 +2743,7 @@
   },
   {
    "id": "in-thread",
-   "label": "In thread",
+   "label": "In Thread",
    "reverse_label": "Messages",
    "description": "Runs from the message to its thread. When saving a message, in-thread names the thread. A message has one thread.",
    "cardinality": "many-to-one",
@@ -2788,7 +2788,7 @@
   {
    "id": "references",
    "label": "References",
-   "reverse_label": "Referenced by",
+   "reverse_label": "Referenced By",
    "description": "Runs from the item to the item it mentions. When saving an item, references names what it mentions.",
    "cardinality": "many-to-many",
    "from_type_constraints": [
@@ -2807,7 +2807,7 @@
   {
    "id": "supersedes",
    "label": "Supersedes",
-   "reverse_label": "Superseded by",
+   "reverse_label": "Superseded By",
    "description": "Runs from the newer item to the item it replaces. Each end holds one item. When saving the current item, supersedes names the one it replaces.",
    "cardinality": "one-to-one",
    "from_type_constraints": [

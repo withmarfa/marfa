@@ -27979,7 +27979,7 @@ export interface operations {
                      *         {
                      *           "id": "about",
                      *           "label": "About",
-                     *           "reverse_label": "Subject of",
+                     *           "reverse_label": "Subject Of",
                      *           "description": "Says that an item is about another item, such as a note about a book.",
                      *           "cardinality": "many-to-many",
                      *           "from_type_constraints": [
@@ -27997,7 +27997,7 @@ export interface operations {
                      *         },
                      *         {
                      *           "id": "attached-to",
-                     *           "label": "Attached to",
+                     *           "label": "Attached To",
                      *           "reverse_label": "Attachments",
                      *           "description": "Says that an item is attached to another item and exists for it, such as a scanned page attached to the document it was scanned for.",
                      *           "cardinality": "many-to-many",

@@ -1171,22 +1171,69 @@ describe("custom edge-type registration", () => {
     expect(r.ok).toBe(true);
     const names = Object.fromEntries(
       r.data.data
-        .filter((t) => !t.id.includes("."))
+        .filter((t) => t.shipped)
         .map((t) => [t.id, [t.label, t.reverse_label]]),
     );
     expect(names).toEqual({
-      about: ["About", "Subject of"],
-      "attached-to": ["Attached to", "Attachments"],
-      "comments-on": ["Comment on", "Comments"],
-      "derived-from": ["Derived from", "Basis for"],
-      "excerpt-of": ["Excerpt from", "Excerpts"],
-      "in-collection": ["In collection", "Contents"],
-      "in-folder": ["In folder", "Folder contents"],
-      "in-thread": ["In thread", "Messages"],
+      about: ["About", "Subject Of"],
+      "attached-to": ["Attached To", "Attachments"],
+      "comments-on": ["Comment On", "Comments"],
+      "derived-from": ["Derived From", "Basis For"],
+      "excerpt-of": ["Excerpt From", "Excerpts"],
+      "in-collection": ["In Collection", "Contents"],
+      "in-folder": ["In Folder", "Folder Contents"],
+      "in-thread": ["In Thread", "Messages"],
       "parent-of": ["Children", "Parent"],
-      references: ["References", "Referenced by"],
-      supersedes: ["Supersedes", "Superseded by"],
+      references: ["References", "Referenced By"],
+      supersedes: ["Supersedes", "Superseded By"],
     });
+  });
+
+  function titleCaseLabel(label: string): boolean {
+    const words = label.split(" ");
+    return (
+      words.length > 0 &&
+      words.every((word) => {
+        const first = word.codePointAt(0);
+        if (first === undefined) {
+          return false;
+        }
+        const character = String.fromCodePoint(first);
+        return (
+          character !== character.toLowerCase() &&
+          character === character.toUpperCase()
+        );
+      })
+    );
+  }
+
+  it("lists every shipped edge type label and reverse label in title case", async () => {
+    // The witness: the same check rejects a sentence-case heading.
+    expect(titleCaseLabel("In collection")).toBe(false);
+    expect(titleCaseLabel("Subject of")).toBe(false);
+    expect(titleCaseLabel("Folder contents")).toBe(false);
+    expect(titleCaseLabel("In Collection")).toBe(true);
+    expect(titleCaseLabel("Subject Of")).toBe(true);
+    expect(titleCaseLabel("Folder Contents")).toBe(true);
+    expect(titleCaseLabel("About")).toBe(true);
+
+    const r = await client.listEdgeTypes();
+    expect(r.ok).toBe(true);
+    const shipped = r.data.data.filter((edgeType) => edgeType.shipped);
+    expect(shipped).not.toHaveLength(0);
+    const offenders = shipped.flatMap((edgeType) => {
+      const bad: string[] = [];
+      if (!titleCaseLabel(edgeType.label)) {
+        bad.push(`${edgeType.id} label ${JSON.stringify(edgeType.label)}`);
+      }
+      if (!titleCaseLabel(edgeType.reverse_label)) {
+        bad.push(
+          `${edgeType.id} reverse label ${JSON.stringify(edgeType.reverse_label)}`,
+        );
+      }
+      return bad;
+    });
+    expect(offenders).toEqual([]);
   });
 
   it("lists the reverse label a registration names, and the label where it names none", async () => {

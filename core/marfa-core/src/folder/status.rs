@@ -750,7 +750,7 @@ mod tests {
             types: serde_json::from_value(serde_json::json!([{ "id": "core.note", "fields": {} }]))
                 .unwrap(),
             edge_types: vec![
-                serde_json::json!({ "id": "references", "label": "References", "reverse_label": "Referenced by", "cardinality": "many-to-many", "from_type_constraints": ["*"], "to_type_constraints": ["*"], "cascade_on_delete": "orphan", "property_schema": {}, "shipped": true, "written_from": written_from }),
+                serde_json::json!({ "id": "references", "label": "References", "reverse_label": "Referenced By", "cardinality": "many-to-many", "from_type_constraints": ["*"], "to_type_constraints": ["*"], "cascade_on_delete": "orphan", "property_schema": {}, "shipped": true, "written_from": written_from }),
             ],
         }
     }

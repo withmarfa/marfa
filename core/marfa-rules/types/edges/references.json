@@ -1,7 +1,7 @@
 {
   "id": "references",
   "label": "References",
-  "reverse_label": "Referenced by",
+  "reverse_label": "Referenced By",
   "description": "Runs from the item to the item it mentions. When saving an item, references names what it mentions.",
   "cardinality": "many-to-many",
   "from_type_constraints": ["*"],

@@ -1,7 +1,7 @@
 {
   "id": "supersedes",
   "label": "Supersedes",
-  "reverse_label": "Superseded by",
+  "reverse_label": "Superseded By",
   "description": "Runs from the newer item to the item it replaces. Each end holds one item. When saving the current item, supersedes names the one it replaces.",
   "cardinality": "one-to-one",
   "from_type_constraints": ["*"],

@@ -1,6 +1,6 @@
 {
   "id": "attached-to",
-  "label": "Attached to",
+  "label": "Attached To",
   "reverse_label": "Attachments",
   "description": "Runs from the attachment to the item it belongs to. When saving an attachment, attached-to names that item.",
   "cardinality": "many-to-many",
