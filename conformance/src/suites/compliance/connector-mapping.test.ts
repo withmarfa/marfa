@@ -1078,7 +1078,7 @@ describe("a mapping in an archive", () => {
     });
     const archive = await owner.exportArchive({ state: "any" });
     expect(archive.status).toBe(200);
-    const without = (field: string) => {
+    const edit = (change: (mapping: Record<string, unknown>) => void) => {
       let line = 0;
       const edited = editLineFile(archive.data, "instance", (text) =>
         text
@@ -1090,7 +1090,7 @@ describe("a mapping in an archive", () => {
             };
             if (parsed.connector_mapping.plugin !== plugin.name) return held;
             line = at + 1;
-            delete parsed.connector_mapping[field];
+            change(parsed.connector_mapping);
             return JSON.stringify(parsed);
           })
           .join("\n"),
@@ -1098,8 +1098,18 @@ describe("a mapping in an archive", () => {
       expect(line).toBeGreaterThan(0);
       return { edited, line };
     };
-    for (const field of ["former_targets", "rewrites"]) {
-      const { edited, line } = without(field);
+    const without = (field: string) =>
+      edit((mapping) => {
+        delete mapping[field];
+      });
+    const notTypeIds = edit((mapping) => {
+      mapping.former_targets = { issue: ["not a type"] };
+    });
+    for (const [field, { edited, line }] of [
+      ["former_targets", without("former_targets")],
+      ["rewrites", without("rewrites")],
+      ["former_targets holding a name that is no type id", notTypeIds],
+    ] as const) {
       const refused = await local(destination).restoreArchive(edited);
       expect(refused.status, field).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");

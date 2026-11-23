@@ -698,7 +698,13 @@ fn archived_former(held: Option<&Value>) -> Option<BTreeMap<String, Vec<String>>
     held?
         .as_object()?
         .iter()
-        .map(|(kind, types)| Some((kind.clone(), names(types)?)))
+        .map(|(kind, types)| {
+            let type_ids = names(types)?;
+            type_ids
+                .iter()
+                .all(|type_id| marfa_rules::grammar::type_id(type_id).unwrap_or(false))
+                .then_some((kind.clone(), type_ids))
+        })
         .collect()
 }
 
