@@ -87,8 +87,7 @@ impl Caller {
         }
     }
 
-    /// Agents read guidance as instructions, so a person decides what it says: an app's sign-in
-    /// only while the owner signed in recently, and a key only when the owner made it.
+    /// Agents follow guidance, so the owner writes it: locally, by own key or recent sign-in.
     pub fn require_guidance(
         &self,
         stored: Option<&str>,

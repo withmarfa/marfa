@@ -224,7 +224,7 @@ While an app's consent asks a browser session to begin after a time (`mcp/settin
 
 When the person approves again an app whose grant ended after `marfa_change_settings` or `marfa_save_type` refused it with `insufficient_user_authentication`, the server MUST NOT refuse under `mcp/settings-step-up-refresh` the refresh of a token that approval issued, whenever the browser session that approved it began.
 
-**Reason:** ending the grant ends every token chain the refusal's time exists to stop, and a token whose browser session is not recent is still refused the settings that need one (`mcp/settings-step-up-refused`).
+**Reason:** ending the grant ends every token chain the refusal's time exists to stop, and a token whose browser session is not recent is still refused the settings and the guidance changes that need one (`mcp/settings-step-up-refused`, `mcp/save-type-guidance-step-up`).
 
 **Tests:** `compliance/mcp-step-up.test.ts › forgets the renewal when the person removes the app, so the app approved again from the older browser refreshes`.
 
