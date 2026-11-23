@@ -87,18 +87,26 @@ impl Caller {
         }
     }
 
-    /// Agents read guidance as instructions, so only installing a plugin or the owner writes it.
-    pub fn require_guidance(&self, stored: Option<&str>, next: Option<&str>) -> Result<()> {
+    /// Agents follow guidance, so the owner writes it: locally, by own key or recent sign-in.
+    pub fn require_guidance(
+        &self,
+        stored: Option<&str>,
+        next: Option<&str>,
+        at: &str,
+    ) -> Result<()> {
         if stored == next {
             return Ok(());
         }
         if self.holds(Permission::SchemaWrite) {
+            if matches!(self, Caller::App { .. }) {
+                return self.require_step_up(Permission::SchemaWrite, at);
+            }
             if !self.app_made() {
                 return Ok(());
             }
             return Err(Refusal::new(
                 Code::Forbidden,
-                "Type guidance is written by installing a plugin, or by the owner. An app, or a key the owner did not make, cannot add, change or remove it.",
+                "Type guidance is written by the owner: through an app they signed in to recently, the local command or a key they made. A key an app made, or one no record names a maker for, cannot add, change or remove it.",
             )
             .with_detail("changes", vec!["guidance"]));
         }

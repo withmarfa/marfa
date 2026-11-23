@@ -351,18 +351,6 @@ fn require_install(caller: &Caller, bundle: &Obj, catalog: &Catalog) -> Result<(
     if bundle.get("connector").is_some_and(|held| !held.is_null()) {
         caller.require(Permission::ConnectorsManage)?;
     }
-    let guided = bundle_objects(bundle, "types").iter().any(|definition| {
-        definition
-            .get("guidance")
-            .is_some_and(|held| !held.is_null())
-    });
-    if guided && caller.app_made() {
-        return Err(Refusal::new(
-            Code::Forbidden,
-            "Installing a plugin whose types carry guidance is the owner's to do. An app, or a key the owner did not make, can install it only without guidance.",
-        )
-        .with_detail("changes", vec!["guidance"]));
-    }
     Ok(())
 }
 
@@ -440,6 +428,7 @@ pub async fn install(
                 &name,
                 &definitions,
                 held.as_ref().map(|held| &held.manifest),
+                &unit.at,
             )?;
             edge_types::install(unit, &catalog, &bundle_objects(&bundle, "edge_types"))?;
             let before = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;

@@ -4,13 +4,10 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::Definition;
+use super::{Definition, step_up};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
 use crate::app::config::{self, Mode, Request};
-use crate::app::oauth::store;
-use crate::app::refusal::Code;
-use crate::db::Write;
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list};
 use crate::settings::registry::{ENTRIES, SIGN_IN_ADDRESS};
 
@@ -21,7 +18,6 @@ const ROOM: usize = ANSWER_BUDGET_CHARS - 2_000;
 
 const NOT_OFFERED: &str = "not_offered_over_mcp";
 const SIGN_IN_ADDRESS_WITHHELD: &str = "sign_in_address is not changed from a tool: moving it ends every sign-in, this app's own included, and a passkey belongs to the address it was made at. The owner moves it with `marfa config set sign_in_address <address>` or from an app, then signs in again at the new address. Nothing changed.";
-const SIGN_IN_AGAIN: &str = "Ask the person to sign in to this app's connection again (re-authenticate it, not only reconnect): Marfa asks them to sign in, and the new connection may make this change. Nothing changed.";
 
 pub fn read_definition() -> Definition {
     Definition {
@@ -135,33 +131,6 @@ pub async fn change(app: &Arc<App>, caller: &Caller, arguments: Map<String, Valu
     let request = Request::from_body(Mode::Patch, &body, &allowed, app.settings.sealer())?;
     match config::update(app, caller, request).await {
         Ok(answer) => Ok(answer),
-        Err(refusal) if refusal.code == Code::InsufficientUserAuthentication => {
-            ask_sign_in_again(app, caller).await;
-            Err(Stop::refused(refusal).with("next", SIGN_IN_AGAIN))
-        }
-        Err(refusal) => Err(refusal.into()),
-    }
-}
-
-/// An MCP client cannot follow a challenge with `max_age`, so the app's next authorization asks
-/// for a sign-in made after this refusal instead.
-async fn ask_sign_in_again(app: &App, caller: &Caller) {
-    let Caller::App { grant, .. } = caller else {
-        return;
-    };
-    let (client_id, owner_id) = (grant.client_id.clone(), grant.owner_id.clone());
-    let signed_in = grant.authenticated_at;
-    let clock = app.clock.clone();
-    let asked = app
-        .db
-        .write(Write::own(), move |tx| {
-            store::ask_login_after(tx, &client_id, &owner_id, signed_in, clock.instant())
-        })
-        .await;
-    if let Err(refused) = asked {
-        tracing::warn!(
-            code = refused.code.wire(),
-            "The app's sign-in could not be marked for renewal"
-        );
+        Err(refusal) => Err(step_up::refused(app, caller, refusal).await),
     }
 }

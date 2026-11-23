@@ -839,7 +839,7 @@ export interface paths {
         put?: never;
         /**
          * Install a plugin
-         * @description Installs a plugin's bundle in one write and records the plugin on each type. Needs `schema.write`, write on each type and edge type name, and `connectors.manage` for a `connector`. An app can't install guidance.
+         * @description Installs a plugin's bundle in one write and records the plugin on each type. Needs `schema.write`, write on each type and edge type name, and `connectors.manage` for a `connector`.
          */
         post: operations["installPlugin"];
         delete?: never;
@@ -21043,22 +21043,26 @@ export interface operations {
                     "application/json": components["schemas"]["PluginBundleRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            /**
+             * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
+             *     - `insufficient_user_authentication`: you are an app adding, changing or removing a type's guidance, and your owner signed in more than fifteen minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "WWW-Authenticate": components["headers"]["WWW-Authenticate"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                    "application/json": components["schemas"]["InsufficientUserAuthenticationOrUnauthorizedRefusal"];
                 };
             };
             /**
-             * @description - `forbidden`: no `schema.write`, no `connectors.manage` for a `connector` (`details.required_scope`), a type under `core`, `system`, `marfa`, `app` or `user` (`details.namespace`), or app guidance.
-             *     - `type_not_permitted`: no write on a type of the bundle, or on a parent outside it that isn't shipped or under `common`.
-             *     - `edge_type_not_permitted`: no write on an edge type name of the bundle.
+             * @description - `forbidden`: no `schema.write`, no `connectors.manage` for a `connector` (`details.required_scope`), a type under `core`, `system`, `marfa`, `app` or `user` (`details.namespace`), or guidance from an app-made key.
+             *     - `type_not_permitted`: no write on a bundle type, or a parent outside it that isn't shipped or under `common`.
+             *     - `edge_type_not_permitted`: no write on a bundle edge type.
              */
             403: {
                 headers: {
@@ -26318,20 +26322,24 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            /**
+             * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
+             *     - `insufficient_user_authentication`: you are an app adding, changing or removing a type's guidance, and your owner signed in more than fifteen minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "WWW-Authenticate": components["headers"]["WWW-Authenticate"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                    "application/json": components["schemas"]["InsufficientUserAuthenticationOrUnauthorizedRefusal"];
                 };
             };
             /**
-             * @description - `forbidden`: you lack `metadata.types:write`, guidance needs `schema.write`, the identifier is under `core.*`, `system.*`, `marfa.*` or `common.*` (install its plugin), or you are an app and another app or the owner holds its `app.<vendor>` namespace (`details.namespace`).
+             * @description - `forbidden`: no `metadata.types:write`, guidance without `schema.write` or from an app-made key, the identifier is under `core.*`, `system.*`, `marfa.*` or `common.*` (install its plugin), or another app holds its `app.<vendor>` namespace (`details.namespace`).
              *     - `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` (`details.grant` names it).
              */
             403: {
@@ -26716,20 +26724,24 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            /**
+             * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
+             *     - `insufficient_user_authentication`: you are an app adding, changing or removing a type's guidance, and your owner signed in more than fifteen minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "WWW-Authenticate": components["headers"]["WWW-Authenticate"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                    "application/json": components["schemas"]["InsufficientUserAuthenticationOrUnauthorizedRefusal"];
                 };
             };
             /**
-             * @description - `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`.
+             * @description - `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`, or guidance, which a key an app made can't change.
              *     - `core_type_immutable`: Marfa ships this type.
              *     - `type_not_permitted`: your type map lacks write on the type or a new non-platform `parent` (`details.grant` names it).
              */

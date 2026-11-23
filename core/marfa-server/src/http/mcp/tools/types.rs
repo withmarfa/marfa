@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde_json::{Map, Value, json};
 
 use super::overview::compact;
-use super::{Definition, text};
+use super::{Definition, step_up, text};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::types::{self, Merge};
@@ -91,7 +91,10 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
                 body.insert(name.into(), value.clone());
             }
         }
-        let made = types::register(app, caller, body).await?;
+        let made = match types::register(app, caller, body).await {
+            Ok(made) => made,
+            Err(refusal) => return Err(step_up::refused(app, caller, refusal).await),
+        };
         return Ok(json!({
             "type": compact(&made),
             "next": "Registered. Save items of it with marfa_create.",
@@ -109,6 +112,9 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
         fields: fields.unwrap_or_default(),
         tables,
     };
-    let changed = types::change(app, caller, id, merge).await?;
+    let changed = match types::change(app, caller, id, merge).await {
+        Ok(changed) => changed,
+        Err(refusal) => return Err(step_up::refused(app, caller, refusal).await),
+    };
     Ok(json!({ "type": compact(&changed) }))
 }

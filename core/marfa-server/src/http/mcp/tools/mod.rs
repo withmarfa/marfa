@@ -28,6 +28,7 @@ mod rows;
 mod settings;
 mod sign_ins;
 mod sources;
+mod step_up;
 mod trash;
 mod types;
 mod update;

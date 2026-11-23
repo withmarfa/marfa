@@ -100,7 +100,6 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             let id = text_of(&schema, "id")
                 .ok_or_else(|| Refusal::internal("a registered type has no id"))?
                 .to_string();
-            caller.require_guidance(None, text_of(&schema, "guidance"))?;
             require_reach(caller, &schema, None)?;
             if let Some(parent) = text_of(&schema, "parent")
                 && let Some(fault) = parent_chain_fault(&catalog.types, &id, parent, 0)
@@ -113,6 +112,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
                     format!("Type \"{id}\" already exists"),
                 ));
             }
+            caller.require_guidance(None, text_of(&schema, "guidance"), &unit.at)?;
             let creator = caller.actor();
             unit.tx().execute(
                 "INSERT INTO types (id, parent, origin, created_by, definition, created_at, updated_at) \
@@ -305,13 +305,14 @@ async fn replacing(
                 }
                 None => schema,
             };
-            caller.require_guidance(
-                stored.and_then(|held| text_of(held, "guidance")),
-                text_of(&schema, "guidance"),
-            )?;
             let family = with_subtypes(unit.tx(), &id)?;
             require_evolution(unit.tx(), caller, &family, stored, &schema)?;
             require_reach(caller, &schema, stored)?;
+            caller.require_guidance(
+                stored.and_then(|held| text_of(held, "guidance")),
+                text_of(&schema, "guidance"),
+                &unit.at,
+            )?;
             if let Some(parent) = text_of(&schema, "parent") {
                 let below = descendant_depth(&catalog.types, &id);
                 if let Some(fault) = parent_chain_fault(&catalog.types, &id, parent, below) {
@@ -701,9 +702,9 @@ impl Restoring {
         self.fresh.iter().map(|(id, _, _, _)| id.as_str())
     }
 
-    pub fn require_guidance(&self, caller: &Caller) -> Result<()> {
+    pub fn require_guidance(&self, caller: &Caller, at: &str) -> Result<()> {
         self.fresh.iter().try_for_each(|(_, schema, _, _)| {
-            caller.require_guidance(None, text_of(schema, "guidance"))
+            caller.require_guidance(None, text_of(schema, "guidance"), at)
         })
     }
 
@@ -950,6 +951,7 @@ pub fn plan_install(
     name: &str,
     definitions: &[Obj],
     installed: Option<&Obj>,
+    at: &str,
 ) -> Result<InstallPlan> {
     let ids: Vec<&str> = definitions
         .iter()
@@ -1041,9 +1043,13 @@ pub fn plan_install(
                     .map(|narrowing| narrowed(id, narrowing)),
             );
         }
+        caller.require_guidance(
+            stored.and_then(|held| text_of(held, "guidance")),
+            text_of(&schema, "guidance"),
+            at,
+        )?;
         match stored {
             Some(held) => {
-                caller.require_guidance(text_of(held, "guidance"), text_of(&schema, "guidance"))?;
                 changes.extend(
                     marfa_rules::plugin::narrowings(held, &schema)
                         .into_iter()

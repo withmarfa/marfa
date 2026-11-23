@@ -4,7 +4,7 @@ A plugin is what an owner adds to Marfa: types under `common.*` or a root of its
 
 A bundle sets `format` to 1 and identifies the plugin by its `name`, `title`, `description`, `mark`, `maker` and `version`. The `marfa` field names the oldest Marfa release it supports. The `types` array holds type definitions with their guidance, and `edge_types` holds edge type definitions. The optional `connector` object describes the plugin's connector: its source, its kinds, its settings, its sign-in and where it runs. `PluginBundle` and `PluginConnector` in `openapi.json` define each field.
 
-`POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, its connector section included, a type under a reserved root, the Marfa release it needs, the caller's permission, a connector without `connectors.manage`, guidance an app sends, the version installed, a newer version's connector source, the connector's source held elsewhere, a type the plugin did not install, a clash with a type below, a parent outside the bundle the caller may not write, each type's definition, what a newer version narrows, each edge type, and each kind's `default_mapping` against the types as installed.
+`POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, its connector section included, a type under a reserved root, the Marfa release it needs, the caller's permission, a connector without `connectors.manage`, the version installed, a newer version's connector source, the connector's source held elsewhere, a type the plugin did not install, a clash with a type below, a parent outside the bundle the caller may not write, each type's definition and the guidance it adds, changes or removes, what a newer version narrows, each edge type, and each kind's `default_mapping` against the types as installed.
 
 ## Installing
 
@@ -106,19 +106,35 @@ When `POST /plugins` installs or updates a type, the server MUST record the plug
 
 ### `plugins/install-guidance`
 
-When a caller that is neither an app's access token, a key an app made nor a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `POST /plugins` with a type whose definition carries `guidance`, the server MUST store the guidance as the bundle gives it.
+When the local socket, a key the owner made that holds `schema.write`, or an app's access token that holds `schema.write` and whose browser session began at most 900 seconds before the request sends `POST /plugins` with a type whose definition carries `guidance`, the server MUST store the guidance as the bundle gives it.
 
-**Reason:** installing a plugin is the owner's way to give a type guidance, besides writing it directly (`types/guidance-app-made`).
+**Reason:** installing a plugin is the owner's way to give a type guidance, besides writing it directly. Agents read guidance as instructions, so a person decides what it says, and a recent sign-in proves the owner is present at this app now (`types/guidance-app-recent`).
 
-**Tests:** `compliance/plugins.test.ts › reads a type a plugin installed with origin plugin, naming the plugin and its version`.
+**Tests:** `compliance/plugins.test.ts › reads a type a plugin installed with origin plugin, naming the plugin and its version`, `compliance/guidance-step-up.test.ts › installs five guided types, an edge type and a connector when its owner signed in just now, and a challenged install writes no type, edge type, connector or plugin record`, `› is challenged at an upgrade that changes or removes guidance and writes nothing, upgrades for a recent sign-in, and is never challenged at an upgrade that leaves guidance as stored`.
 
 ### `plugins/install-guidance-app`
 
-If an app's access token, a key an app made or a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `POST /plugins` with a bundle whose types carry `guidance`, or a later version that would change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
+If an app's access token that holds `schema.write` and whose browser session began more than 900 seconds before the request, or after it, sends `POST /plugins` with a bundle that would add, change or remove a type's `guidance`, then the server MUST answer `401 insufficient_user_authentication` with `details.max_age` set to `900` and write no type, edge type, connector or plugin record.
 
-**Reason:** installing is an owner action, and an app may not write guidance by any door (`types/guidance-app-made`). The same app installs the same plugin without guidance.
+**Reason:** the app sends the person to sign in again and installs the whole bundle with the new token (`types/guidance-app-challenge`, `keys-and-oauth/step-up-writes-nothing`). A bundle installs whole or not at all, so one guided type holds back the rest.
 
-**Tests:** `compliance/plugins.test.ts › refuses 403 an app installing a plugin whose types carry guidance, and installs the same plugin without it`, `› refuses an app's newer version that would remove guidance the owner's install wrote`, `› refuses guidance to an owner's key an app minted, on registration and on install, and takes both without it`.
+**Tests:** `compliance/guidance-step-up.test.ts › installs five guided types, an edge type and a connector when its owner signed in just now, and a challenged install writes no type, edge type, connector or plugin record`, `› is challenged at an upgrade that changes or removes guidance and writes nothing, upgrades for a recent sign-in, and is never challenged at an upgrade that leaves guidance as stored`.
+
+### `plugins/install-guidance-key`
+
+If a key an app made, including an owner's key an app minted, or a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `POST /plugins` with a bundle that would add, change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
+
+**Reason:** a key has no sign-in to renew, so only a key the owner made writes guidance (`types/guidance-app-made`). The same key installs the same plugin without guidance.
+
+**Tests:** `compliance/plugins.test.ts › refuses guidance to an owner's key an app minted, on registration and on install, and takes both without it`, `compliance/guidance-step-up.test.ts › writes guidance through a key the owner made, and refuses a key an app made 403 with details.changes at a registration and an install`.
+
+### `plugins/install-guidance-unchanged`
+
+When a caller sends `POST /plugins` with a version whose types carry the `guidance` already stored for them, the server MUST judge the install without regard to who may write guidance.
+
+**Reason:** guidance a version leaves as it is was already decided by a person; only a change to it needs one.
+
+**Tests:** `compliance/guidance-step-up.test.ts › is challenged at an upgrade that changes or removes guidance and writes nothing, upgrades for a recent sign-in, and is never challenged at an upgrade that leaves guidance as stored`.
 
 ### `plugins/install-connector-permission`
 
