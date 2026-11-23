@@ -1,5 +1,4 @@
-//! The page an item's `https` link opens. It reads only the address and the instance's name,
-//! never the item and never the caller, so it is the same for every id that is well formed.
+//! Reads neither the item nor the caller, so no answer shows whether an item exists.
 
 use std::sync::Arc;
 

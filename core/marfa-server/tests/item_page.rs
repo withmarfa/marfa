@@ -176,7 +176,7 @@ async fn every_well_formed_id_gets_one_page_whatever_became_of_the_item() {
     instance
         .write(Method::POST, &format!("/items/{purged}/purge"), json!({}))
         .await;
-    let never = "01a1ff7f-a1a5-7568-9989-53778f0e85d2".to_string();
+    let never = "01900000-0000-7000-8000-000000000001".to_string();
 
     // The witness: the three items that were made are told apart by the item door.
     let read = |id: &str, state: &str| {
