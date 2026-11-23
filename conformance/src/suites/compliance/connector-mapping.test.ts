@@ -1053,7 +1053,11 @@ describe("a mapping in an archive", () => {
           kinds: ["issue"],
         });
         expect(left.data.kinds.issue?.count).toBe(0);
-        const theirs = await local(target).getItem(owners.data.item.id);
+        const reader = await mint(target, `reader-${fresh()}`, [], {
+          "*": "read",
+        });
+        const theirs = await reader.client.getItem(owners.data.item.id);
+        expect(theirs.status, JSON.stringify(theirs.error)).toBe(200);
         expect(theirs.data.item.type).toBe(plugin.ticket);
       } finally {
         await target.stop();
