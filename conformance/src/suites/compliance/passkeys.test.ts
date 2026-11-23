@@ -11,6 +11,7 @@ import {
   keepStatusLog,
 } from "../../utils/fresh-server.js";
 import { testAuthenticator } from "../../utils/passkey-authenticator.js";
+import { visibleText } from "../../utils/page-html.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
 let document: OpenApiDocument;
@@ -146,7 +147,17 @@ afterAll(async () => {
   }
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
+const WAIT = "/auth/sign-in?error=too_many_attempts&retry_after_seconds=120";
+const signInPage = async (path = "/auth/sign-in") =>
+  visibleText(await (await fetch(base + path)).text());
+
 describe("owner passkeys", () => {
+  it("offers no passkey on the sign-in page, nor names one when an owner is told to wait, until the owner has one", async () => {
+    expect(await signInPage()).not.toContain("passkey");
+    const waiting = await signInPage(WAIT);
+    expect(waiting).toContain("Try again in 2 minutes.");
+    expect(waiting).not.toContain("passkey");
+  });
   it("registers and lists independent owner credentials", async () => {
     firstId = (await register(first, "First")).id;
     secondId = (await register(second, "Second")).id;
@@ -193,6 +204,12 @@ describe("owner passkeys", () => {
         })
       ).status,
     ).toBe(200);
+  });
+  it("offers a passkey on the sign-in page, and names one when an owner is told to wait, once the owner has one for this address", async () => {
+    expect(await signInPage()).toContain("Sign in with a passkey");
+    expect(await signInPage(WAIT)).toContain(
+      "Try again in 2 minutes, or use a passkey.",
+    );
   });
   it("gives passkey options only to a POST, answers a registration 201 with the passkey, and a passkey sign-in with only ok and its session cookie", async () => {
     for (const path of Object.values(OPTIONS)) {

@@ -24,17 +24,18 @@ impl SignInProblem {
         })
     }
 
-    fn message(self) -> String {
+    fn message(self, passkey: bool) -> String {
+        let or_passkey = if passkey { ", or use a passkey" } else { "" };
         match self {
             SignInProblem::InvalidCredentials => {
                 "That username or password isn't right. Check them and try again.".into()
             }
             SignInProblem::MissingField => "Enter your username and your password.".into(),
             SignInProblem::TooManyAttempts(Some(wait)) => {
-                format!("Too many attempts. Try again in {wait}, or sign in with a passkey.")
+                format!("Too many attempts. Try again in {wait}{or_passkey}.")
             }
             SignInProblem::TooManyAttempts(None) => {
-                "Too many attempts. Try again later, or sign in with a passkey.".into()
+                format!("Too many attempts. Try again later{or_passkey}.")
             }
             SignInProblem::Other => "Something went wrong. Try again.".into(),
         }
@@ -51,6 +52,8 @@ pub struct SignIn {
     pub authorization: Option<String>,
     pub app: Option<String>,
     pub problem: Option<SignInProblem>,
+    /// Whether the owner holds a passkey that signs in here, which decides if the page offers one.
+    pub passkey: bool,
 }
 
 #[derive(Template)]
@@ -64,7 +67,7 @@ struct SignInBody<'a> {
 pub fn sign_in(view: &SignIn) -> Result<Page> {
     let body = render_body(&SignInBody {
         view,
-        problem_message: view.problem.map(SignInProblem::message),
+        problem_message: view.problem.map(|problem| problem.message(view.passkey)),
         has_problem: view.problem.is_some(),
     })?;
     document(

@@ -3388,11 +3388,11 @@ If the sign-in form's attempt is refused by a sign-in limit, then the server MUS
 
 ### `keys-and-oauth/sign-in-lockout-page`
 
-While an instance has an owner, when `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after_seconds` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up, and says that a passkey signs in during the lock.
+While an instance has an owner, when `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after_seconds` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up.
 
-**Reason:** A fixed number of minutes would be wrong for one of the two limits, and the passkey is the way in that a password lock does not close (`authentication/passkey-password-lock`).
+**Reason:** A fixed number of minutes would be wrong for one of the two limits. Where the owner has a passkey, the page says it still signs in, because a password lock does not close it (`authentication/passkey-password-lock`, `authentication/passkey-wait-line`).
 
-**Tests:** `compliance/sign-in-surface.test.ts › tells a locked-out person how long to wait, in whole minutes rounded up, and that a passkey still signs in`.
+**Tests:** `compliance/sign-in-surface.test.ts › tells a locked-out person how long to wait, in whole minutes rounded up, and names no passkey when the owner has none`.
 
 ### `keys-and-oauth/sign-in-only-wrong-counted`
 

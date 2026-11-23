@@ -10,6 +10,7 @@ use super::{cookies, require_safe_transport};
 use crate::app::access::Caller;
 use crate::app::auth::claim;
 use crate::app::auth::owner;
+use crate::app::auth::passkeys;
 use crate::app::auth::return_to::{HOME, kept};
 use crate::app::oauth::authorize::app_named;
 use crate::app::oauth::redirect::shown_destination;
@@ -118,6 +119,7 @@ pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
         authorization: sent.map(|_| link),
         app: app_name,
         problem: SignInProblem::from_query(field("error"), field("retry_after_seconds")),
+        passkey: passkeys::signs_in_here(&app).await?,
     };
     Ok(pages::sign_in(&view)?.into_response())
 }

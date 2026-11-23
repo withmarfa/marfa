@@ -488,7 +488,7 @@ describe("the pages a person reads at sign-in", () => {
     expect(page).not.toContain("not-the-password");
   });
 
-  it("tells a locked-out person how long to wait, in whole minutes rounded up, and that a passkey still signs in", async () => {
+  it("tells a locked-out person how long to wait, in whole minutes rounded up, and names no passkey when the owner has none", async () => {
     // The wait the page names is the one the real lock set: lock an address,
     // follow the form's redirect, and read the page it lands on.
     const guesser = "203.0.113.60";
@@ -510,11 +510,9 @@ describe("the pages a person reads at sign-in", () => {
     expect(real).toContain(
       `Try again in ${String(minutes)} ${minutes === 1 ? "minute" : "minutes"}`,
     );
-    // The sentence itself: every sign-in page holds the word "passkey" in the
-    // passkey button, so the word alone proves nothing.
-    expect(real).toMatch(
-      /Try again in \d+ minutes?, or sign in with a passkey/,
-    );
+    // This instance signs in at an address that cannot hold a passkey.
+    expect(real).toMatch(/Try again in \d+ minutes?\./);
+    expect(real).not.toContain("passkey");
 
     // Whole minutes, rounded up, for waits either side of a minute.
     for (const [retryAfter, said] of [
