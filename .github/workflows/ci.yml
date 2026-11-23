@@ -971,7 +971,7 @@ jobs:
       - name: Put an object store beside the server
         working-directory: conformance
         run: |
-          curl --fail --location --retry 3 https://garagehq.deuxfleurs.fr/_releases/v2.4.1/x86_64-unknown-linux-musl/garage -o "$RUNNER_TEMP/garage-bin"
+          curl --fail --location --retry 3 --retry-all-errors https://garagehq.deuxfleurs.fr/_releases/v2.4.1/x86_64-unknown-linux-musl/garage -o "$RUNNER_TEMP/garage-bin"
           sudo install -m 755 "$RUNNER_TEMP/garage-bin" /usr/local/bin/garage
           pnpm garage:up --state "$RUNNER_TEMP/garage"
 
@@ -1240,7 +1240,7 @@ jobs:
       - name: Boot the object store
         working-directory: conformance
         run: |
-          curl --fail --location --retry 3 https://garagehq.deuxfleurs.fr/_releases/v2.4.1/x86_64-unknown-linux-musl/garage -o "$RUNNER_TEMP/garage-bin"
+          curl --fail --location --retry 3 --retry-all-errors https://garagehq.deuxfleurs.fr/_releases/v2.4.1/x86_64-unknown-linux-musl/garage -o "$RUNNER_TEMP/garage-bin"
           sudo install -m 755 "$RUNNER_TEMP/garage-bin" /usr/local/bin/garage
           pnpm garage:up --state "$RUNNER_TEMP/garage"
 
