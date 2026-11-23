@@ -98,6 +98,7 @@ struct Base<'a> {
     script: &'static str,
     body: &'a str,
     confirm_dialog: bool,
+    opens: Option<&'a str>,
 }
 
 fn new_nonce() -> Result<String> {
@@ -107,6 +108,17 @@ fn new_nonce() -> Result<String> {
 }
 
 fn document(title: &str, instance_name: &str, body: &str, needs: Needs) -> Result<Page> {
+    document_opening(title, instance_name, body, needs, None)
+}
+
+/// `opens` is an address the browser goes to as soon as the page loads, by a refresh the policy allows.
+fn document_opening(
+    title: &str,
+    instance_name: &str,
+    body: &str,
+    needs: Needs,
+    opens: Option<&str>,
+) -> Result<Page> {
     let nonce = new_nonce()?;
     let connect = needs.connect || needs.confirm_dialog;
     let html = Base {
@@ -117,6 +129,7 @@ fn document(title: &str, instance_name: &str, body: &str, needs: Needs) -> Resul
         script: SCRIPT,
         body,
         confirm_dialog: needs.confirm_dialog,
+        opens,
     }
     .render()
     .map_err(|_| Refusal::internal("a page did not render"))?;

@@ -98,6 +98,8 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /auth/device/consent": [200, 302, 400],
   "POST /auth/device/consent": [200, 302, 400, 403, 404, 413],
   "GET /auth/owner/passkeys": [200, 302, 401, 403],
+  "GET /i/": [404],
+  "GET /i/{*id}": [200, 404],
 };
 
 /**

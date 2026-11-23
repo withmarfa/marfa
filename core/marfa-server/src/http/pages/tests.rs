@@ -163,6 +163,8 @@ fn a_hostile_value_stays_text_on_every_other_page() {
         })
         .unwrap(),
         notice(&Notice::already_claimed(HOSTILE, HOSTILE)).unwrap(),
+        notice(&Notice::opening_item(HOSTILE, HOSTILE)).unwrap(),
+        notice(&Notice::not_an_item_link(HOSTILE)).unwrap(),
         device_entry(&DeviceEntry {
             instance_name: HOSTILE.into(),
             user_code: HOSTILE.into(),
@@ -625,4 +627,22 @@ mod consent_pages {
         assert_eq!(directive(policy, "img-src"), Some("data:"));
         assert_eq!(directive(policy, "form-action"), None);
     }
+}
+
+#[test]
+fn only_the_page_that_opens_an_item_refreshes_to_its_link() {
+    let url = "marfa://a/b";
+    let opening = notice(&Notice::opening_item("Marfa", url)).unwrap();
+    assert!(opening.html().contains(&format!("<a href=\"{url}\">")));
+    assert!(opening.html().contains(&format!(
+        "<meta http-equiv=\"refresh\" content=\"0;url={url}\">"
+    )));
+    for other in [
+        Notice::not_an_item_link("Marfa"),
+        Notice::signed_out("Marfa"),
+    ] {
+        assert!(!notice(&other).unwrap().html().contains("http-equiv"));
+    }
+    let hostile = notice(&Notice::opening_item("Marfa", "\"><img src=x>")).unwrap();
+    assert!(!hostile.html().contains("<img"));
 }

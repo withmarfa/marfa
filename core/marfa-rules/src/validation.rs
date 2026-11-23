@@ -215,18 +215,22 @@ pub fn cleared_names(cleared: &[String], set: &Map<String, Value>) -> Result<(),
     refuse(Code::ValidationError, faults)
 }
 
-/// A lowercase UUIDv7. The server refuses any other id, on a read too, so a copy that queued one could never read the row back to put itself right.
-pub fn id(field: &str, id: &str) -> Result<(), RuleError> {
+/// Whether `id` is a lowercase UUIDv7, the only form the server accepts as an id.
+pub fn is_id(id: &str) -> bool {
     let bytes = id.as_bytes();
     let hex = |b: &u8| b.is_ascii_digit() || (b'a'..=b'f').contains(b);
-    let valid = bytes.len() == 36
+    bytes.len() == 36
         && bytes.iter().enumerate().all(|(at, b)| match at {
             8 | 13 | 18 | 23 => *b == b'-',
             14 => *b == b'7',
             19 => matches!(b, b'8' | b'9' | b'a' | b'b'),
             _ => hex(b),
-        });
-    if valid {
+        })
+}
+
+/// A lowercase UUIDv7. The server refuses any other id, on a read too, so a copy that queued one could never read the row back to put itself right.
+pub fn id(field: &str, id: &str) -> Result<(), RuleError> {
+    if is_id(id) {
         Ok(())
     } else {
         let message = format!("Invalid {field}: {id:?} is not a UUIDv7 in lowercase");
