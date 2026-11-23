@@ -337,7 +337,7 @@ mod tests {
             "http://localhost:3118/callback",
             "https://app.example/universal",
             "com.example.app:/callback",
-            "so.marfa.mapp:/signed-in",
+            "com.withmarfa.marfa:/signed-in",
             "Com.Example.App:/callback",
             "com.example-app.ios:/a/b?c=d",
         ] {
