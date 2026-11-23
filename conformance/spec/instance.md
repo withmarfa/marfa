@@ -2332,7 +2332,7 @@ When `GET /i/{id}` names a well-formed id, the server MUST answer `200` with an 
 
 When `GET /i/{id}` names a well-formed id, the server MUST put in the page a refresh with no delay to the item's `marfa://` link.
 
-**Reason:** a person who follows an `https` link expects the app to open without a second click. A refresh needs no script, which the page's policy (`instance/page-policy-nonce-only`) allows only with a nonce.
+**Reason:** a person who follows an `https` link expects the app to open without a second click, and a refresh does that with no script.
 
 **Tests:** `compliance/item-page.test.ts › answers a well-formed id with a page that links to marfa://<instance_id>/<id>`.
 
