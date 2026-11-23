@@ -152,13 +152,14 @@ async function authorizing(
   app: App,
   cookie: string,
   resource = `${origin}/mcp/admin`,
+  scope = SCOPE,
 ): Promise<{ landed: URL | undefined; verifier: string }> {
   const proof = pkce();
   const landed = await sentTo(
     server,
     await authorize(
       server,
-      authorizeQuery(app.clientId, SCOPE, proof, { resource }),
+      authorizeQuery(app.clientId, scope, proof, { resource }),
       cookie,
     ),
   );
@@ -166,8 +167,13 @@ async function authorizing(
 }
 
 /** Tokens for `app` from the browser `cookie`, through consent if none covers it. */
-async function connectTokens(app: App, cookie: string): Promise<Tokens> {
-  let { landed, verifier } = await authorizing(app, cookie);
+async function connectTokens(
+  app: App,
+  cookie: string,
+  resource = `${origin}/mcp/admin`,
+  scope = SCOPE,
+): Promise<Tokens> {
+  let { landed, verifier } = await authorizing(app, cookie, resource, scope);
   if (landed !== undefined && !landed.href.startsWith(CALLBACK)) {
     landed = await decide(
       server,
@@ -175,7 +181,7 @@ async function connectTokens(app: App, cookie: string): Promise<Tokens> {
       cookie,
       landed,
       true,
-      SCOPE.split(" "),
+      scope.split(" "),
     );
   }
   const code = landed?.searchParams.get("code");
@@ -603,5 +609,147 @@ describe("renewing the sign-in the settings tool asked for", () => {
     toolResult(await settingsCall(renewed, { [SWITCH]: true }));
     expect((await stored())[SWITCH]).toBe(true);
     toolResult(await settingsCall(renewed, { [SWITCH]: false }));
+  });
+});
+
+describe("guidance through marfa_save_type", () => {
+  const TYPES = "user.*:write metadata.types:write schema.write offline_access";
+  const SCHEMA = () => `${origin}/mcp/schema`;
+
+  async function schemaToken(app: App, cookie: string): Promise<string> {
+    return (await connectTokens(app, cookie, SCHEMA(), TYPES)).access;
+  }
+
+  async function saveType(
+    access: string,
+    args: Record<string, unknown>,
+  ): Promise<ToolAnswer> {
+    const connection = await connectMcp(
+      server.apiUrl,
+      access,
+      "2026-07-28",
+      "/mcp/schema",
+    );
+    try {
+      return await callTool(connection, "marfa_save_type", args);
+    } finally {
+      await connection.close();
+    }
+  }
+
+  async function guidanceOf(id: string): Promise<unknown> {
+    const read = await call(server.workingKey, "GET", `/types/${id}`);
+    expect(read.status, JSON.stringify(read.body)).toBe(200);
+    return read.body.guidance;
+  }
+
+  function newType(): string {
+    return `user.mcp-guided-${String(Date.now())}-${String(++addresses)}`;
+  }
+
+  it("saves guidance through marfa_save_type for an app whose owner signed in within the recent sign-in window", async () => {
+    const access = await schemaToken(
+      await registerApp(server, TYPES),
+      await signIn(),
+    );
+    const id = newType();
+    toolResult(
+      await saveType(access, {
+        action: "register",
+        id,
+        guidance: "One.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    expect(await guidanceOf(id)).toBe("One.");
+    toolResult(
+      await saveType(access, { action: "change", id, guidance: "Two." }),
+    );
+    expect(await guidanceOf(id)).toBe("Two.");
+  });
+
+  it("refuses guidance through marfa_save_type to an app whose owner signed in longer ago than the recent sign-in window with insufficient_user_authentication and max_age, and keeps the type", async () => {
+    const access = await schemaToken(
+      await registerApp(server, TYPES),
+      await signIn(),
+    );
+    const id = newType();
+    // The witness: within the window the same token saves guidance.
+    toolResult(
+      await saveType(access, {
+        action: "register",
+        id,
+        guidance: "Kept.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    await server.advanceClock(PAST_RECENT);
+    expectRenewalAsked(
+      await saveType(access, { action: "change", id, guidance: "Changed." }),
+    );
+    expectRenewalAsked(
+      await saveType(access, { action: "change", id, guidance: "" }),
+    );
+    const other = newType();
+    expectRenewalAsked(
+      await saveType(access, {
+        action: "register",
+        id: other,
+        guidance: "New.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    expect(await guidanceOf(id)).toBe("Kept.");
+    expect(
+      (await call(server.workingKey, "GET", `/types/${other}`)).status,
+    ).toBe(404);
+    // A change that leaves the guidance as stored is not refused.
+    toolResult(
+      await saveType(access, { action: "change", id, label: "Relabeled" }),
+    );
+  });
+
+  it("sends the browser to sign in again when an app refused guidance reconnects, and the token it then gets saves the guidance", async () => {
+    const app = await registerApp(server, TYPES);
+    const stale = await signIn();
+    const access = await schemaToken(app, stale);
+    await server.advanceClock(PAST_RECENT);
+    // The witness: before the refusal, the older browser gets a code at once.
+    expectCodeAtOnce(
+      (await authorizing(app, stale, SCHEMA(), TYPES)).landed,
+      "before",
+    );
+    const id = newType();
+    expectRenewalAsked(
+      await saveType(access, {
+        action: "register",
+        id,
+        guidance: "Asked.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    const { landed, verifier } = await authorizing(app, stale, SCHEMA(), TYPES);
+    const back = expectSignInAsked(landed, "after the refusal");
+    const signedIn = await sentTo(
+      server,
+      await fetch(new URL(back, server.apiUrl), {
+        redirect: "manual",
+        headers: { cookie: await signIn() },
+      }),
+    );
+    const renewed = await exchange(
+      app,
+      expectCodeAtOnce(signedIn, "after the sign-in"),
+      verifier,
+    );
+    toolResult(
+      await saveType(renewed, {
+        action: "register",
+        id,
+        guidance: "Asked.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    expect(await guidanceOf(id)).toBe("Asked.");
   });
 });

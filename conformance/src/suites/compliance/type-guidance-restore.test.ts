@@ -307,29 +307,21 @@ describe("an app restoring an archive that carries guidance", () => {
     expect(refused.error?.error.details?.changes).toEqual(["guidance"]);
   });
 
-  it("answers 403 forbidden naming guidance to an app holding backups.manage and schema.write, and registers none of its types", async () => {
+  it("stores an archive's guidance for an app holding backups.manage and schema.write whose owner signed in just now", async () => {
     const app = await appToken("backups.manage schema.write");
-    const fields = { title: { type: "string" } };
     const guided = {
-      id: "user.guided-app-holding",
+      id: `user.guided-app-holding-${uuidv7().slice(-8)}`,
       guidance: "Use it.",
-      fields,
+      fields: { title: { type: "string" } },
     };
-    const refused = await app.restoreArchive(itemsArchive([], [], [guided]));
-    expect(refused.status, JSON.stringify(refused.error)).toBe(403);
-    expect(refused.error?.error.code).toBe("forbidden");
-    expect(refused.error?.error.details?.changes).toEqual(["guidance"]);
-    expect(refused.error?.error.details?.required_scope).toBeUndefined();
     const reader = new MarfaClient({
       baseUrl: keyed.apiUrl,
       apiKey: keyed.workingKey,
     });
     expect((await reader.getType(guided.id)).status).toBe(404);
-    // The witness: the same app restores the same type without guidance.
-    const plain = { id: "user.plain-app-holding", fields };
-    const restored = await app.restoreArchive(itemsArchive([], [], [plain]));
+    const restored = await app.restoreArchive(itemsArchive([], [], [guided]));
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-    expect((await reader.getType(plain.id)).status).toBe(200);
+    expect((await reader.getType(guided.id)).data.guidance).toBe("Use it.");
   });
 
   it("writes no type of an archive that carries guidance for an app without schema.write, though the owner restores it", async () => {
