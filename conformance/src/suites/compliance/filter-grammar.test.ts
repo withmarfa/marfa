@@ -728,9 +728,9 @@ describe("a property holding a list", () => {
       [],
     );
     expect(await among('properties.words eq "pantry"', group)).toEqual([mixed]);
-    // A range and a number still select no list.
+    // A range still selects no list. A number reads the member `3`.
     expect(await among('properties.words gt "a"', group)).toEqual([scalar]);
-    expect(await among("properties.words eq 3", group)).toEqual([]);
+    expect(await among("properties.words eq 3", group)).toEqual([mixed]);
     expect(await among('properties.words contains "kit"', group)).toEqual(
       sorted(kitchen, split, scalar),
     );
@@ -769,6 +769,164 @@ describe("a property holding a list", () => {
     );
     expect(await among('properties.words neq "pantry"', group)).toEqual(
       sorted(split, scalar, entries, empty),
+    );
+  });
+});
+
+describe("a property holding a list of numbers or booleans", () => {
+  /** One batch per call, so the witness is this group with the marks comparison removed. */
+  async function marksGroup(): Promise<{
+    batch: string;
+    group: string[];
+    ids: Record<string, string>;
+  }> {
+    const batch = `marks-${marker}-${crypto.randomUUID()}`;
+    const make = (marks?: unknown) =>
+      seed({
+        batch,
+        ...(marks === undefined ? {} : { marks }),
+      });
+    const ids = {
+      fifteen: await make([15]),
+      five: await make([5]),
+      both: await make([1, 5]),
+      textFive: await make(["5"]),
+      flag: await make([true]),
+      one: await make([1]),
+      fraction: await make([5.5]),
+      nested: await make([[5]]),
+      object: await make([{ n: 5 }]),
+      empty: await make([]),
+      blank: await make([null]),
+      falseList: await make([false]),
+      absent: await make(),
+      scalarFive: await make(5),
+      scalarFifteen: await make(15),
+      scalarFraction: await make(5.5),
+      scalarText: await make("15"),
+      scalarTrue: await make(true),
+      scalarFalse: await make(false),
+      textTrue: await make("true"),
+    };
+    return { batch, group: Object.values(ids), ids };
+  }
+
+  async function picked(
+    batch: string,
+    condition: string,
+    group: string[],
+  ): Promise<string[]> {
+    const filter = `properties.batch eq "${batch}" AND ${condition}`;
+    const fromList = await among(filter, group);
+    const fromSearch = (await searched(filter)).filter((id) =>
+      group.includes(id),
+    );
+    expect(fromSearch, filter).toEqual(fromList);
+    return fromList;
+  }
+
+  it("compares a list's scalar members with a number or a boolean", async () => {
+    const { batch, group, ids } = await marksGroup();
+    const narrow = `properties.batch eq "${batch}"`;
+    // The witness: the same items, with the marks comparison removed.
+    expect(await among(narrow, group)).toEqual(sorted(...group));
+
+    const equalToFive = sorted(ids.five, ids.both, ids.scalarFive);
+    expect(await picked(batch, "properties.marks eq 5", group)).toEqual(
+      equalToFive,
+    );
+    // 5.0 in a filter is the number 5. The server stores that value as 5.
+    expect(await picked(batch, "properties.marks eq 5.0", group)).toEqual(
+      equalToFive,
+    );
+    // A scalar 15 still matches contains 5. The list [15] does not.
+    expect(await picked(batch, "properties.marks contains 5", group)).toEqual(
+      sorted(
+        ids.five,
+        ids.both,
+        ids.scalarFive,
+        ids.scalarFifteen,
+        ids.scalarFraction,
+        ids.scalarText,
+      ),
+    );
+    expect(await picked(batch, "properties.marks eq 15", group)).toEqual(
+      sorted(ids.fifteen, ids.scalarFifteen),
+    );
+
+    const equalToTrue = sorted(ids.flag, ids.one, ids.both, ids.scalarTrue);
+    expect(await picked(batch, "properties.marks eq true", group)).toEqual(
+      equalToTrue,
+    );
+    expect(await picked(batch, "properties.marks eq 1", group)).toEqual(
+      equalToTrue,
+    );
+    // contains true matches the text "true", not the boolean true.
+    expect(
+      await picked(batch, "properties.marks contains true", group),
+    ).toEqual(sorted(ids.flag, ids.one, ids.both, ids.textTrue));
+    expect(await picked(batch, "properties.marks contains 1", group)).toEqual(
+      sorted(
+        ids.flag,
+        ids.one,
+        ids.both,
+        ids.scalarTrue,
+        ids.scalarFifteen,
+        ids.scalarText,
+      ),
+    );
+
+    expect(await picked(batch, "properties.marks eq false", group)).toEqual(
+      sorted(ids.falseList, ids.scalarFalse),
+    );
+    expect(await picked(batch, "properties.marks eq 0", group)).toEqual(
+      sorted(ids.falseList, ids.scalarFalse),
+    );
+    expect(
+      await picked(batch, "properties.marks contains false", group),
+    ).toEqual([ids.falseList]);
+    expect(await picked(batch, "properties.marks contains 0", group)).toEqual(
+      sorted(ids.falseList, ids.scalarFalse),
+    );
+
+    expect(await picked(batch, "properties.marks eq 5.5", group)).toEqual(
+      sorted(ids.fraction, ids.scalarFraction),
+    );
+    // A range selects the scalar numbers and no list. The wider bound is the witness.
+    expect(await picked(batch, "properties.marks gt 4", group)).toEqual(
+      sorted(ids.scalarFive, ids.scalarFifteen, ids.scalarFraction),
+    );
+    expect(await picked(batch, "properties.marks lt 5", group)).toEqual([]);
+    expect(await picked(batch, "properties.marks gte 5", group)).toEqual(
+      sorted(ids.scalarFive, ids.scalarFifteen, ids.scalarFraction),
+    );
+  });
+
+  it("selects by neq a list that holds no member equal to a number or a boolean", async () => {
+    const { batch, group, ids } = await marksGroup();
+    const narrow = `properties.batch eq "${batch}"`;
+    expect(await among(narrow, group)).toEqual(sorted(...group));
+
+    const equalToFive = [ids.five, ids.both, ids.scalarFive];
+    const equalToTrue = [ids.flag, ids.one, ids.both, ids.scalarTrue];
+    const holders = group.filter((id) => id !== ids.absent);
+    const except = (drop: string[]) =>
+      sorted(...holders.filter((id) => !drop.includes(id)));
+
+    expect(await picked(batch, "properties.marks neq 5", group)).toEqual(
+      except(equalToFive),
+    );
+    expect(await picked(batch, "properties.marks eq 5", group)).toEqual(
+      sorted(...equalToFive),
+    );
+    expect(await picked(batch, "properties.marks eq true", group)).toEqual(
+      sorted(...equalToTrue),
+    );
+    expect(await picked(batch, "properties.marks neq true", group)).toEqual(
+      except(equalToTrue),
+    );
+    expect(await picked(batch, "properties.marks neq 1", group)).toEqual(
+      except(equalToTrue),
     );
   });
 });

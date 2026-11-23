@@ -216,7 +216,13 @@ fn json_path<S: Sink>(out: &mut S, name: &str) {
     out.bind(Bind::Text(format!("$.{name}")));
 }
 
-/// A condition on member `name` of the item's `properties`. Against a text literal, a list is judged by its scalar members, each as a whole value, and `neq` holds when none is equal; any other comparison reads the whole value.
+/// A condition on member `name` of the item's `properties`.
+///
+/// A list is judged by its scalar members when the literal is text, or when it
+/// is a number or a boolean compared with `eq`, `neq` or `contains`. `neq`
+/// holds when no member is equal. `contains` with a number or a boolean uses
+/// that equality: a text search would still match the digits of another number.
+/// Any other comparison reads the whole value.
 fn property<S: Sink>(out: &mut S, items: &Items, name: &str, op: Op, value: &Literal) {
     let source = items.properties();
     items.guarded(out, |out| {
@@ -238,14 +244,19 @@ fn property<S: Sink>(out: &mut S, items: &Items, name: &str, op: Op, value: &Lit
                 ),
                 Literal::Text(_),
             ) => compare,
+            (
+                Op::Compare(compare @ (Compare::Eq | Compare::Neq | Compare::Contains)),
+                Literal::Number(_) | Literal::Bool(_),
+            ) => compare,
             _ => return held_property(out, held, kind, op, value, Texts::Instants),
         };
         out.push("CASE WHEN ");
         kind(out);
         out.push(" = 'array' THEN ");
-        let (negated, compare) = match compare {
-            Compare::Neq => (true, Compare::Eq),
-            other => (false, other),
+        let (negated, compare) = match (compare, value) {
+            (Compare::Neq, _) => (true, Compare::Eq),
+            (Compare::Contains, Literal::Number(_) | Literal::Bool(_)) => (false, Compare::Eq),
+            (other, _) => (false, other),
         };
         if negated {
             out.push("NOT ");

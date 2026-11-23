@@ -760,6 +760,111 @@ mod tests {
     }
 
     #[test]
+    fn a_number_or_boolean_filter_reads_a_lists_scalar_members() {
+        let conn = conn();
+        for (id, properties) in [
+            ("fifteen", json!({"marks": [15]})),
+            ("five", json!({"marks": [5]})),
+            ("both", json!({"marks": [1, 5]})),
+            ("text", json!({"marks": ["5"]})),
+            ("flag", json!({"marks": [true]})),
+            ("one", json!({"marks": [1]})),
+            ("whole", json!({"marks": [5.0]})),
+            ("fraction", json!({"marks": [5.5]})),
+            ("nested", json!({"marks": [[5]]})),
+            ("object", json!({"marks": [{"n": 5}]})),
+            ("empty", json!({"marks": []})),
+            ("blank", json!({"marks": [null]})),
+            ("absent", json!({})),
+            ("scalar-five", json!({"marks": 5})),
+            ("scalar-fifteen", json!({"marks": 15})),
+            ("scalar-text", json!({"marks": "15"})),
+            ("scalar-true", json!({"marks": true})),
+        ] {
+            store::upsert_item(
+                &conn,
+                &wire_item(
+                    id,
+                    "core.note",
+                    "active",
+                    "2026-01-01T00:00:00Z",
+                    properties,
+                ),
+                None,
+                &Indexing::default(),
+            )
+            .unwrap();
+        }
+        let filtered = |filter: &str| ids(&conn, Some(filter), None);
+        assert_eq!(
+            filtered("properties.marks eq 5"),
+            ["both", "five", "scalar-five", "whole"]
+        );
+        // The scalar 15 is the witness that contains still searches text there.
+        assert_eq!(
+            filtered("properties.marks contains 5"),
+            [
+                "both",
+                "five",
+                "scalar-fifteen",
+                "scalar-five",
+                "scalar-text",
+                "whole",
+            ]
+        );
+        assert_eq!(
+            filtered("properties.marks eq 15"),
+            ["fifteen", "scalar-fifteen"]
+        );
+        assert_eq!(
+            filtered("properties.marks eq true"),
+            ["both", "flag", "one", "scalar-true"]
+        );
+        assert_eq!(
+            filtered("properties.marks contains true"),
+            ["both", "flag", "one"]
+        );
+        assert_eq!(
+            filtered("properties.marks neq 5"),
+            [
+                "blank",
+                "empty",
+                "fifteen",
+                "flag",
+                "fraction",
+                "nested",
+                "object",
+                "one",
+                "scalar-fifteen",
+                "scalar-text",
+                "scalar-true",
+                "text",
+            ]
+        );
+        assert_eq!(
+            filtered("properties.marks neq 1"),
+            [
+                "blank",
+                "empty",
+                "fifteen",
+                "five",
+                "fraction",
+                "nested",
+                "object",
+                "scalar-fifteen",
+                "scalar-five",
+                "scalar-text",
+                "text",
+                "whole",
+            ]
+        );
+        assert_eq!(
+            filtered("properties.marks gt 4"),
+            ["scalar-fifteen", "scalar-five"]
+        );
+    }
+
+    #[test]
     fn answers_a_backref_on_an_edge_type_the_copy_holds_whole() {
         let conn = family();
         let held = |filter: &str| ids_whole(&conn, Some(filter), None, &["parent-of"]);
