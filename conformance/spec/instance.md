@@ -2316,6 +2316,82 @@ When the server answers with an HTML page, the server MUST carry in the page the
 
 **Tests:** `compliance/instance.test.ts › names in its policy the one nonce its page carries, a new one on each answer at one address`.
 
+## The page that opens an item in an app
+
+`GET /i/{id}` is the address an item's `https` link names. The page it answers hands the browser over to the item's `marfa://` link, and it is the same page for every item, so it shows nothing of the item, not even whether the item exists. In this section an item's id is well formed when it is a lowercase UUIDv7, the form `GET /items/{id}` accepts, and the item's `marfa://` link is `marfa://<instance_id>/<id>`, where `<instance_id>` is the `instance_id` the description at `GET /` answers.
+
+### `instance/item-page-link`
+
+When `GET /i/{id}` names a well-formed id, the server MUST answer `200` with an HTML page that carries a link to the item's `marfa://` link.
+
+**Reason:** an item's `https` link opens in whichever app the owner chose for `marfa://` links, and a page is how a browser hands a link over to an app.
+
+**Tests:** `compliance/item-page.test.ts › answers a well-formed id with a page that links to marfa://<instance_id>/<id>`.
+
+### `instance/item-page-opens-at-once`
+
+When `GET /i/{id}` names a well-formed id, the server MUST put in the page a refresh with no delay to the item's `marfa://` link.
+
+**Reason:** a person who follows an `https` link expects the app to open without a second click. A refresh needs no script, which the page's policy (`instance/page-policy-nonce-only`) allows only with a nonce.
+
+**Tests:** `compliance/item-page.test.ts › answers a well-formed id with a page that links to marfa://<instance_id>/<id>`.
+
+### `instance/item-page-no-app`
+
+When `GET /i/{id}` names a well-formed id, the server MUST put in the page a line that says what it means when nothing opens: that no app on the device opens Marfa links.
+
+**Reason:** a browser that has no app for `marfa://` shows nothing, and the page is the only place to say why.
+
+**Tests:** `compliance/item-page.test.ts › answers a well-formed id with a page that links to marfa://<instance_id>/<id>`.
+
+### `instance/item-page-same-answer`
+
+When `GET /i/{id}` names a well-formed id, the server MUST answer the same status, headers and page for an item that exists, one in the trash, one that was purged and an id no item has had, apart from the id, the nonce, the request id and the date.
+
+**Reason:** a stranger who can open the address must learn nothing of what the instance holds. The server answers from the text of the address alone and never reads the item.
+
+**Tests:** `compliance/item-page.test.ts › answers an item that exists, a trashed one, a purged one and an id never used with one page`.
+
+### `instance/item-page-same-signed-in`
+
+When `GET /i/{id}` names a well-formed id, the server MUST answer a request that carries the owner's live browser session as it answers one that carries none, apart from the id, the nonce, the request id and the date.
+
+**Reason:** the page shows nothing of the item to anyone, the owner included, because Marfa has no web view of an item and a page that read the session would be one more path to what the instance holds.
+
+**Tests:** `compliance/item-page.test.ts › answers a signed-in browser as it answers a stranger`.
+
+### `instance/item-page-malformed`
+
+If `GET /i/{text}` names text that is not a well-formed id, a trailing slash, another path segment, a percent-encoded id, no id and a very long one included, then the server MUST answer `404` with an HTML page.
+
+**Reason:** the answer is decided by the text alone, so the server never looks anything up for it.
+
+**Tests:** `compliance/item-page.test.ts › answers text that is not a well-formed id with a 404 page`.
+
+### `instance/item-page-malformed-unechoed`
+
+If `GET /i/{text}` names text that is not a well-formed id, then the server MUST NOT put any of the text in the page.
+
+**Reason:** a page that echoed text from an address would let anyone who can share a link write on it.
+
+**Tests:** `compliance/item-page.test.ts › answers text that is not a well-formed id with a 404 page`.
+
+### `instance/item-page-headers`
+
+When the server answers `GET /i/{text}`, a malformed id included, the server MUST send `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`.
+
+**Reason:** an item's id is in the address, so the page is kept out of caches and search indexes, and a link on it leaves no referrer.
+
+**Tests:** `compliance/item-page.test.ts › answers a well-formed id with a page that links to marfa://<instance_id>/<id>`, `› answers text that is not a well-formed id with a 404 page`.
+
+### `instance/item-page-query-unread`
+
+When `GET /i/{id}` carries a query string, the server MUST answer as it answers the same address without one, apart from the nonce, the request id and the date.
+
+**Reason:** a query is the one part of an address a sender can fill with anything, and the page reads nothing from it.
+
+**Tests:** `compliance/item-page.test.ts › ignores a query string`.
+
 ## An unfinished database
 
 A database file can be left unfinished when a first start stops partway: it holds part of what a first start makes, differs from the server's structure in nothing else, and holds no data.
