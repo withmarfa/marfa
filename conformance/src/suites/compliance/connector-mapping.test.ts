@@ -1042,7 +1042,10 @@ describe("a mapping in an archive", () => {
           expect(back.status, JSON.stringify(back.error)).toBe(200);
           expect(back.data.item.type).toBe(plugin.issue);
         }
-        for (const number of [carried.data.rewrites[0]!.number, again.data.number]) {
+        for (const number of [
+          carried.data.rewrites[0]!.number,
+          again.data.number,
+        ]) {
           const done = await key.client.finishConnectorRewrite(plugin.name, {
             number,
           });
