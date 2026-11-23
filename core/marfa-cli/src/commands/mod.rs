@@ -50,6 +50,21 @@ use serde_json::{Map, Value};
 
 use crate::error::CliError;
 
+/// Hands `link` to the system's opener and says whether it took it.
+pub(crate) fn open_link(link: &str) -> bool {
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(opener)
+        .arg(link)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum TierFilter {
     Library,

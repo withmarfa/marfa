@@ -338,6 +338,11 @@ fn given(words: &[String]) -> Vec<(String, Option<String>)> {
             "<HOST>".into(),
             Some("0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b".into()),
         )],
+        // An item id that is not a lowercase UUIDv7 is refused before any request.
+        ["items", "link"] => vec![(
+            "<ID>".into(),
+            Some("01a1011e-87bd-7ab7-bbab-538453d75381".into()),
+        )],
         // A secret is otherwise read from standard input.
         ["plugins", "secret"] => vec![("--clear".into(), None)],
         _ => Vec::new(),

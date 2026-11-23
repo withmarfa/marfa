@@ -47,19 +47,8 @@ pub fn run(command: PasskeysCommand, remote: &Remote, out: &Printer) -> Result<(
             let link = answer.get("url").and_then(Value::as_str).ok_or_else(|| {
                 CliError::Invalid("server returned no passkey sign-in URL".into())
             })?;
-            if !no_browser {
-                let command = if cfg!(target_os = "macos") {
-                    "open"
-                } else {
-                    "xdg-open"
-                };
-                if !std::process::Command::new(command)
-                    .arg(link)
-                    .status()
-                    .is_ok_and(|s| s.success())
-                {
-                    crate::errln!("Could not open a browser; use the sign-in URL below.");
-                }
+            if !no_browser && !super::open_link(link) {
+                crate::errln!("Could not open a browser; use the sign-in URL below.");
             }
             out.report(&answer, |_| link.to_string())
         }
