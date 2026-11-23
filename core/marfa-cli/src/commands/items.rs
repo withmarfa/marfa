@@ -1363,9 +1363,12 @@ fn item_link(item: &Value, name: &str, schemes: &[&str]) -> Result<String, CliEr
     if plain {
         Ok(link.to_string())
     } else {
+        let expected = match schemes {
+            ["marfa"] => "a marfa address",
+            _ => "an http or https address",
+        };
         Err(CliError::Invalid(format!(
-            "the server gave {name} as something other than a {} address",
-            schemes.join(" or ")
+            "the server gave {name} as something other than {expected}"
         )))
     }
 }
