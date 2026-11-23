@@ -1,0 +1,23 @@
+{# The parts every page is built from. README.md names them and says when to use each. #}
+
+{# One field: the input, then its label, which the stylesheet lifts when the field is focused or filled. #}
+{% macro field(id, label, name="", kind="text", value="", autocomplete="off", capitalize="", mono=false, required=true, invalid=false, note="", described=true, minlength=0, maxlength=0, readonly=false) %}<div class="field"><input id="{{ id }}" class="in{% if mono %} mono{% endif %}" type="{{ kind }}"{% if !name.is_empty() %} name="{{ name }}"{% endif %} placeholder=" "{% if !value.is_empty() %} value="{{ value }}"{% endif %} autocomplete="{{ autocomplete }}"{% if !capitalize.is_empty() %} autocapitalize="{{ capitalize }}" autocorrect="off" spellcheck="false"{% endif %}{% if minlength != 0 %} minlength="{{ minlength }}"{% endif %}{% if maxlength != 0 %} maxlength="{{ maxlength }}"{% endif %}{% if required %} required{% endif %}{% if readonly %} readonly{% endif %}{% if invalid %} aria-invalid="true"{% endif %}{% if described && !note.is_empty() %} aria-describedby="{{ note }}"{% endif %}><label for="{{ id }}">{{ label }}</label></div>{% endmacro %}
+
+{# Fields that answer one question together share a box. Under it: one hint or one problem, which takes the hint's place, then a link.
+   `note` is the id of the line under the box, which each field in it names in aria-describedby. #}
+{% macro group(title="", note="", hint="", problem="", link_href="", link_label="") %}<div>{% if !title.is_empty() %}<h2 class="gh">{{ title }}</h2>{% endif %}<div class="group">{{ caller() }}</div>{% if !problem.is_empty() || !hint.is_empty() || !link_href.is_empty() %}<div class="under">{% if !problem.is_empty() %}<p class="err" id="{{ note }}" role="alert">{{ problem }}</p>{% else if !hint.is_empty() %}<p class="hint" id="{{ note }}">{{ hint }}</p>{% endif %}{% if !link_href.is_empty() %}<p><a href="{{ link_href }}">{{ link_label }}</a></p>{% endif %}</div>{% endif %}</div>{% endmacro %}
+
+{# A title and at most one line under it. #}
+{% macro head(title, lede="") %}<div class="head"><h1>{{ title }}</h1>{% if !lede.is_empty() %}<p class="lede">{{ lede }}</p>{% endif %}</div>{% endmacro %}
+
+{# Buttons, at the trailing edge, the main action last. #}
+{% macro actions() %}<div class="actions">{{ caller() }}</div>{% endmacro %}
+
+{# A box of rows. Each row is an `li` with a `t` span for the words and at most one control after it. #}
+{% macro box_of_rows() %}<ul class="box">{{ caller() }}</ul>{% endmacro %}
+
+{# A choice between levels, grey with no outline. It is a real select, so the browser draws its menu. #}
+{% macro pop(id, name, label, described="", switches=false) %}<span class="pop"><select id="{{ id }}" name="{{ name }}" aria-label="{{ label }}"{% if !described.is_empty() %} aria-describedby="{{ described }}"{% endif %}{% if switches %} data-types-switch{% endif %}>{{ caller() }}</select></span>{% endmacro %}
+
+{# A dialog over the page, drawn as a sheet on a phone. #}
+{% macro dialog(id, title, text_id="") %}<dialog id="{{ id }}" aria-labelledby="{{ id }}-title"{% if !text_id.is_empty() %} aria-describedby="{{ text_id }}"{% endif %}><form method="dialog"><h2 id="{{ id }}-title">{{ title }}</h2>{{ caller() }}</form></dialog>{% endmacro %}

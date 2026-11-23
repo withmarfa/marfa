@@ -14,7 +14,6 @@ pub struct OwnerPasskey {
 
 #[derive(Debug, Clone)]
 pub struct OwnerPasskeys {
-    pub instance_name: String,
     /// For a password manager to file the new password under.
     pub username: String,
     pub rows: Vec<OwnerPasskey>,
@@ -34,7 +33,6 @@ pub fn owner_passkeys(view: &OwnerPasskeys) -> Result<Page> {
     })?;
     document(
         "Passkeys and password",
-        &view.instance_name,
         &body,
         Needs {
             connect: true,

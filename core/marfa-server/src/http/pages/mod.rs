@@ -92,7 +92,6 @@ pub struct Needs {
 #[template(path = "base.html")]
 struct Base<'a> {
     title: &'a str,
-    instance_name: &'a str,
     nonce: &'a str,
     style: &'static str,
     script: &'static str,
@@ -107,23 +106,16 @@ fn new_nonce() -> Result<String> {
     Ok(hex::encode(bytes))
 }
 
-fn document(title: &str, instance_name: &str, body: &str, needs: Needs) -> Result<Page> {
-    document_opening(title, instance_name, body, needs, None)
+fn document(title: &str, body: &str, needs: Needs) -> Result<Page> {
+    document_opening(title, body, needs, None)
 }
 
 /// `opens` is an address the browser goes to as soon as the page loads, by a refresh the policy allows.
-fn document_opening(
-    title: &str,
-    instance_name: &str,
-    body: &str,
-    needs: Needs,
-    opens: Option<&str>,
-) -> Result<Page> {
+fn document_opening(title: &str, body: &str, needs: Needs, opens: Option<&str>) -> Result<Page> {
     let nonce = new_nonce()?;
     let connect = needs.connect || needs.confirm_dialog;
     let html = Base {
         title,
-        instance_name,
         nonce: &nonce,
         style: STYLE,
         script: SCRIPT,

@@ -43,7 +43,6 @@ impl SignInProblem {
 
 #[derive(Debug, Clone)]
 pub struct SignIn {
-    pub instance_name: String,
     pub username: String,
     /// A path on the instance. The caller has already replaced anything else.
     pub return_to: String,
@@ -69,7 +68,6 @@ pub fn sign_in(view: &SignIn) -> Result<Page> {
     })?;
     document(
         "Sign in",
-        &view.instance_name,
         &body,
         Needs {
             connect: true,
@@ -80,7 +78,6 @@ pub fn sign_in(view: &SignIn) -> Result<Page> {
 
 #[derive(Debug, Clone)]
 pub struct SignedIn {
-    pub instance_name: String,
     pub username: String,
     /// Where Continue goes. Anything but a path on the instance becomes `/`.
     pub continue_to: String,
@@ -108,7 +105,6 @@ pub fn signed_in(view: &SignedIn) -> Result<Page> {
     let body = render_body(&SignedInBody { view: &view })?;
     document(
         "You're signed in",
-        &view.instance_name,
         &body,
         Needs {
             connect: true,
@@ -119,7 +115,6 @@ pub fn signed_in(view: &SignedIn) -> Result<Page> {
 
 #[derive(Debug, Clone)]
 pub struct Running {
-    pub instance_name: String,
     pub username: String,
 }
 
@@ -134,7 +129,6 @@ pub fn running(view: &Running) -> Result<Page> {
     let body = render_body(&RunningBody { view })?;
     document(
         "This Marfa is running",
-        &view.instance_name,
         &body,
         Needs {
             connect: true,

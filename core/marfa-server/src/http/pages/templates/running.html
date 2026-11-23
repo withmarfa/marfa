@@ -1,10 +1,10 @@
+<div class="head">
 <h1>This Marfa is running</h1>
 <p class="lede">Signed in as <bdi>{{ view.username }}</bdi>.</p>
-<p>Open an app that connects to it, or manage how you sign in.</p>
-<div class="actions">
-<a class="button primary" href="/auth/owner/passkeys">Passkeys and password</a>
-<form method="post" action="/auth/sign-out" data-change data-then="/">
-<button type="submit" class="button">Sign out</button>
-<p class="notice error" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
-</form>
 </div>
+<p>Open an app that connects to it, or manage how you sign in.</p>
+<form method="post" action="/auth/sign-out" data-change data-then="/">
+<p class="err" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
+{% import "partials/parts.html" as parts %}{% call parts::actions() %}<button type="submit" class="btn">Sign out</button>
+<a class="btn primary" href="/auth/owner/passkeys">Passkeys and password</a>{% endcall %}
+</form>

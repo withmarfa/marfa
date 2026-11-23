@@ -11,13 +11,13 @@ use super::sign_in::{done, refuse_elsewhere, require_own_page};
 use super::{
     cookies, redirect, require_safe_caller, require_safe_transport, text_field, with_cookie,
 };
+use crate::app::App;
 use crate::app::access::{Caller, Permission, unauthorized};
 use crate::app::auth::owner;
 use crate::app::auth::passkeys::{self, Adding, Assertion, Begun, Listed};
 use crate::app::auth::{Visit, own_origins};
 use crate::app::clock::Stamp;
 use crate::app::refusal::Refusal;
-use crate::app::{App, instance};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::JsonBody;
 use crate::http::caller::OnPage;
@@ -188,7 +188,6 @@ pub async fn page(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer
         .collect::<Result<_, Refusal>>()?;
     let owner = owner::find(&app).await?.ok_or_else(owner::not_found)?;
     let view = OwnerPasskeys {
-        instance_name: instance::name(&app).await?,
         username: owner.username,
         rows,
     };

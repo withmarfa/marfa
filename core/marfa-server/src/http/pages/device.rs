@@ -43,7 +43,6 @@ impl DeviceProblem {
 
 #[derive(Debug, Clone)]
 pub struct DeviceEntry {
-    pub instance_name: String,
     pub user_code: String,
     pub problem: Option<DeviceProblem>,
 }
@@ -53,28 +52,25 @@ pub struct DeviceEntry {
 struct DeviceBody<'a> {
     view: &'a DeviceEntry,
     problem_message: Option<String>,
-    has_problem: bool,
     invalid_code: bool,
-    show_lifetime: bool,
+    lifetime: &'static str,
 }
 
 pub fn device_entry(view: &DeviceEntry) -> Result<Page> {
     let body = render_body(&DeviceBody {
         view,
         problem_message: view.problem.map(DeviceProblem::message),
-        has_problem: view.problem.is_some(),
         invalid_code: matches!(
             view.problem,
             Some(DeviceProblem::InvalidCode | DeviceProblem::ExpiredCode)
         ),
         // A wait is already said in minutes, and a second figure beside it
         // reads as a second wait.
-        show_lifetime: !matches!(view.problem, Some(DeviceProblem::TooManyAttempts(_))),
+        lifetime: if matches!(view.problem, Some(DeviceProblem::TooManyAttempts(_))) {
+            ""
+        } else {
+            "Codes end after 10 minutes."
+        },
     })?;
-    document(
-        "Enter your code",
-        &view.instance_name,
-        &body,
-        Needs::default(),
-    )
+    document("Enter the code", &body, Needs::default())
 }

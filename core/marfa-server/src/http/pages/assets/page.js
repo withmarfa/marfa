@@ -25,6 +25,22 @@
     }
   }
 
+  // The control that opened the dialog. It may be disabled while its request is open, so focus
+  // goes back once it can take it.
+  let opener = null;
+
+  function giveFocusBack() {
+    if (!opener || !opener.isConnected || opener.disabled) return;
+    opener.focus();
+    opener = null;
+  }
+
+  /** Disables buttons while their request is open, and gives focus back when it ends. */
+  function setBusy(buttons, busy) {
+    for (const button of buttons) button.disabled = busy;
+    if (!busy) giveFocusBack();
+  }
+
   function reveal(selector, shown) {
     for (const element of document.querySelectorAll(selector)) {
       element.hidden = !shown;
@@ -63,8 +79,11 @@
 
   async function submitConfirmation(form) {
     const password = form.elements.namedItem("password");
+    const buttons = form.querySelectorAll("button[type=submit]");
     showConfirmError("none", 0);
+    setBusy(buttons, true);
     const answer = await postJson("/auth/confirm", { password: password.value });
+    setBusy(buttons, false);
     password.value = "";
     if (answer && answer.status === 200) dialog.close("confirmed");
     else if (answer && answer.status === 401) showConfirmError("password", 0);
@@ -77,9 +96,13 @@
   function confirmItsYou() {
     return new Promise((resolve) => {
       showConfirmError("none", 0);
+      opener = document.activeElement;
       dialog.addEventListener(
         "close",
-        () => resolve(dialog.returnValue === "confirmed"),
+        () => {
+          giveFocusBack();
+          resolve(dialog.returnValue === "confirmed");
+        },
         { once: true },
       );
       dialog.returnValue = "";
@@ -173,12 +196,44 @@
         event.preventDefault();
         const buttons = form.querySelectorAll("button[type=submit]");
         const sending = sendChange(form, event.submitter);
-        for (const button of buttons) button.disabled = true;
-        sending.finally(() => {
-          for (const button of buttons) button.disabled = false;
-        });
+        setBusy(buttons, true);
+        sending.finally(() => setBusy(buttons, false));
       });
     }
+  }
+
+  // A form the browser sends itself leaves the page, so its buttons stay disabled until the
+  // answer arrives, and come back if the browser shows this page again from its cache.
+  function watchForms() {
+    for (const form of document.querySelectorAll("form:not([data-change], [method=dialog])")) {
+      if (form.dataset.passkeyRenameForm) continue;
+      form.addEventListener("submit", (event) => {
+        if (event.defaultPrevented) return;
+        const buttons = form.querySelectorAll("button[type=submit]");
+        // The browser reads the form after this event, so a submitter disabled now would not be sent.
+        setTimeout(() => setBusy(buttons, true));
+      });
+    }
+    addEventListener("pageshow", (event) => {
+      if (!event.persisted) return;
+      for (const button of document.querySelectorAll("button[type=submit]")) {
+        button.disabled = false;
+      }
+    });
+  }
+
+  // A computer puts the cursor in the first field to fill. A phone waits for a tap, because
+  // focus would raise the keyboard over the page before it is read.
+  function focusFirstField() {
+    if (!matchMedia("(pointer: fine)").matches) return;
+    if (document.querySelector("dialog[open]")) return;
+    const fields = [...document.querySelectorAll("main .in")].filter(
+      (field) => !field.disabled && !field.readOnly && field.offsetParent !== null,
+    );
+    const target =
+      fields.find((field) => field.getAttribute("aria-invalid") === "true") ??
+      fields.find((field) => field.value === "");
+    target?.focus();
   }
 
   function watchDialog() {
@@ -329,7 +384,7 @@
 
   const webauthn = {
     async "sign-in"(button) {
-      button.disabled = true;
+      setBusy([button], true);
       try {
         const response = await askForAssertion();
         if (!response) return;
@@ -341,12 +396,12 @@
       } catch {
         goBackToSignIn();
       } finally {
-        button.disabled = false;
+        setBusy([button], false);
       }
     },
 
     async confirm(button) {
-      button.disabled = true;
+      setBusy([button], true);
       showConfirmError("none", 0);
       try {
         const passkey = await askForAssertion();
@@ -357,12 +412,12 @@
       } catch {
         showConfirmError("other", 0);
       } finally {
-        button.disabled = false;
+        setBusy([button], false);
       }
     },
 
     async add(button) {
-      button.disabled = true;
+      setBusy([button], true);
       showPasskeyError("");
       try {
         const asked = await withRecentSignIn(() =>
@@ -375,7 +430,7 @@
         }
         const response = await askForRegistration(asked.body);
         if (!response) return;
-        const field = document.querySelector("[data-passkey-name]");
+        const field = document.getElementById("passkey-name");
         const name = field.value.trim();
         const answer = await postJson("/auth/passkeys/registration", {
           ...(name ? { name } : {}),
@@ -392,7 +447,7 @@
             : SOMETHING_WENT_WRONG,
         );
       } finally {
-        button.disabled = false;
+        setBusy([button], false);
       }
     },
   };
@@ -415,7 +470,7 @@
   }
 
   async function removePasskey(button) {
-    button.disabled = true;
+    setBusy([button], true);
     showPasskeyError("");
     const path = "/owner/passkeys/" + button.dataset.passkeyRemove;
     const answer = await withRecentSignIn(async () => {
@@ -429,7 +484,7 @@
     });
     if (answer && answer.status === 200) location.reload();
     else if (answer !== null) showPasskeyError(SOMETHING_WENT_WRONG);
-    button.disabled = false;
+    setBusy([button], false);
   }
 
   function rowOf(element) {
@@ -461,7 +516,7 @@
       return;
     }
     const save = form.querySelector("button[type=submit]");
-    save.disabled = true;
+    setBusy([save], true);
     showPasskeyError("");
     const answer = await withRecentSignIn(async () => {
       const response = await fetch("/owner/passkeys/" + form.dataset.passkeyRenameForm, {
@@ -482,7 +537,7 @@
           : SOMETHING_WENT_WRONG,
       );
     }
-    save.disabled = false;
+    setBusy([save], false);
   }
 
   function watchPasskeyRenames() {
@@ -551,8 +606,10 @@
   watchChoices();
   watchPowers();
   watchChanges();
+  watchForms();
   watchDialog();
   watchPasskeys();
   watchPasskeyRemovals();
   watchPasskeyRenames();
+  focusFirstField();
 })();

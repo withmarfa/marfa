@@ -9,7 +9,7 @@ use marfa_rules::validation;
 
 use super::answer::Answer;
 use super::pages::{self, Notice};
-use crate::app::{App, instance};
+use crate::app::App;
 
 /// The raw path after `/i/`, which a percent-encoded id is not decoded out of.
 fn id_text(uri: &Uri) -> &str {
@@ -17,12 +17,11 @@ fn id_text(uri: &Uri) -> &str {
 }
 
 pub async fn open(State(app): State<Arc<App>>, uri: Uri) -> Answer {
-    let name = instance::name(&app).await?;
     let id = id_text(&uri);
     let notice = if validation::is_id(id) {
-        Notice::opening_item(&name, &format!("marfa://{}/{id}", app.instance_id))
+        Notice::opening_item(&format!("marfa://{}/{id}", app.instance_id))
     } else {
-        Notice::not_an_item_link(&name)
+        Notice::not_an_item_link()
     };
     let mut response = pages::notice(&notice)?.into_response();
     let headers = response.headers_mut();

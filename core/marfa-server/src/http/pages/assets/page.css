@@ -1,33 +1,77 @@
+/* Marfa's own pages: one stylesheet for every page, built from the parts below. The parts are described in README.md. */
+
 :root {
   color-scheme: light dark;
-  --page: #f5f5f7;
-  --surface: #ffffff;
-  --text: #1d1d1f;
-  --muted: #5b5b63;
-  --line: #c7c7cf;
-  --accent: #0a5fd1;
-  --on-accent: #ffffff;
-  --danger: #b3261e;
-  --danger-wash: #fdeceb;
+  --bg: #fff;
+  --t1: rgb(0 0 0 / 0.86);
+  --t2: rgb(0 0 0 / 0.57);
+  --t3: rgb(0 0 0 / 0.4);
+  --line: rgb(0 0 0 / 0.09);
+  --edge: rgb(0 0 0 / 0.17);
+  --focus: rgb(0 0 0 / 0.45);
+  --ring: rgb(0 0 0 / 0.07);
+  --fill: rgb(0 0 0 / 0.055);
+  --well: rgb(0 0 0 / 0.04);
+  --blue: #0088ff;
+  --on-blue: #fff;
+  --link: #06c;
+  --red: #c3161c;
+  --red-fill: rgb(255 56 60 / 0.1);
+  --red-ring: rgb(195 22 28 / 0.1);
   --caution: #7a4b00;
   --caution-wash: #fff4dc;
-  --focus: #0a5fd1;
+  --scrim: rgb(0 0 0 / 0.22);
+  --shadow: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 24px 64px rgb(0 0 0 / 0.22);
+
+  --control: 2rem;
+  --small: 1.75rem;
+  --field: 3.125rem;
+  --field-text: 0.9375rem;
+  --field-x: 0.875rem;
+  --field-up: 0.4375rem;
+  --field-down: 1.0625rem;
+  --field-r: 0.625rem;
+  --group-r: 0.75rem;
 }
 
+/* The dark palette is one value for each property above, so every pair keeps its contrast:
+   text 13:1 and above, secondary text 7:1, links 7.8:1, a problem 6:1 on its tint. */
 @media (prefers-color-scheme: dark) {
   :root {
-    --page: #111113;
-    --surface: #1e1e21;
-    --text: #f5f5f7;
-    --muted: #a6a6ae;
-    --line: #48484f;
-    --accent: #5aa2ff;
-    --on-accent: #001a38;
-    --danger: #ff9188;
-    --danger-wash: #3a1d1b;
+    --bg: #1c1c1e;
+    --t1: rgb(255 255 255 / 0.88);
+    --t2: rgb(255 255 255 / 0.62);
+    --t3: rgb(255 255 255 / 0.42);
+    --line: rgb(255 255 255 / 0.14);
+    --edge: rgb(255 255 255 / 0.25);
+    --focus: rgb(255 255 255 / 0.6);
+    --ring: rgb(255 255 255 / 0.12);
+    --fill: rgb(255 255 255 / 0.1);
+    --well: rgb(255 255 255 / 0.07);
+    --blue: #0a84ff;
+    --link: #6cb4ff;
+    --red: #ff8a84;
+    --red-fill: rgb(255 69 58 / 0.18);
+    --red-ring: rgb(255 138 132 / 0.25);
     --caution: #f4c76a;
     --caution-wash: #38290b;
-    --focus: #8fc0ff;
+    --scrim: rgb(0 0 0 / 0.5);
+    --shadow: 0 0 0 0.5px rgb(255 255 255 / 0.14), 0 24px 64px rgb(0 0 0 / 0.6);
+  }
+}
+
+/* On a phone: the same parts, with 44 px targets. */
+@media (max-width: 600px) {
+  :root {
+    --control: 2.75rem;
+    --small: 2.25rem;
+    --field: 3.5rem;
+    --field-text: 1.0625rem;
+    --field-x: 0.9375rem;
+    --field-up: 0.5625rem;
+    --field-down: 1.125rem;
+    --field-r: 0.75rem;
+    --group-r: 0.875rem;
   }
 }
 
@@ -39,188 +83,553 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+[hidden] {
+  display: none !important;
+}
+
+/* Page: one column, its content left-aligned. */
 body {
-  margin: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
   min-height: 100vh;
-  padding: 1.5rem 1rem 3rem;
-  background: var(--page);
-  color: var(--text);
-  font: 1rem/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  margin: 0;
+  padding: 7.5rem 1.5rem 4rem;
+  background: var(--bg);
+  color: var(--t1);
+  font: 0.9375rem/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
   overflow-wrap: anywhere;
 }
 
-body:has(.wide-page) {
-  --width: 38rem;
-}
-
-.brand {
-  max-width: var(--width, 26rem);
-  margin: 0 auto 1rem;
-  color: var(--muted);
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
-
-main {
-  max-width: var(--width, 26rem);
-  margin: 0 auto;
-  padding: 1.5rem;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 0.75rem;
-}
-
-@media (max-width: 30rem) {
+@media (max-width: 600px) {
   body {
-    padding: 1rem 0.75rem 2rem;
-  }
-
-  main {
-    padding: 1.25rem 1rem;
+    padding: 3.5rem 1.25rem 2.5rem;
   }
 }
 
-h1 {
-  margin: 0 0 0.5rem;
-  font-size: 1.5rem;
-  line-height: 1.25;
+.col {
+  flex: 0 1 23.75rem;
+  min-width: 0;
 }
 
-h2 {
-  margin: 0 0 0.5rem;
-  font-size: 1.1875rem;
-  line-height: 1.3;
+.col:has(.wide-page) {
+  flex-basis: 38rem;
 }
 
-p {
-  margin: 0 0 1rem;
+:where(p, h1, h2, h3, ul, fieldset) {
+  margin: 0;
+  padding: 0;
 }
 
-.lede {
-  color: var(--muted);
-}
-
-.small {
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-
-.stack > * + * {
-  margin-top: 1rem;
-}
-
-.stack > p {
-  margin-bottom: 0;
-}
-
-.field label {
-  display: block;
-  margin-bottom: 0.25rem;
-  font-weight: 600;
-}
-
-.field .hint,
-.field .error {
-  margin: 0.25rem 0 0;
-  font-size: 0.875rem;
-}
-
-.field .hint {
-  color: var(--muted);
-}
-
-.field .error {
-  color: var(--danger);
-}
-
-input[type="text"],
-input[type="email"],
-input[type="password"] {
-  display: block;
-  width: 100%;
-  min-height: 2.75rem;
-  padding: 0.5rem 0.75rem;
-  background: var(--surface);
-  color: inherit;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  font: inherit;
-}
-
-input[aria-invalid="true"] {
-  border-color: var(--danger);
-}
-
-.code {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  letter-spacing: 0.08em;
-}
-
-.button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 2.75rem;
-  padding: 0.5rem 1.25rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  background: transparent;
-  color: var(--accent);
-  font: inherit;
-  font-weight: 600;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-
-.button.wide {
-  display: flex;
-  width: 100%;
-}
-
-.button[hidden] {
-  display: none;
-}
-
-.button:disabled {
-  opacity: 0.6;
-  cursor: default;
+:where(ul) {
+  list-style: none;
 }
 
 a {
-  color: var(--accent);
+  color: var(--link);
+  text-decoration: none;
 }
 
 :focus-visible {
-  outline: 3px solid var(--focus);
+  outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
 
-.notice {
-  margin: 0 0 1rem;
-  padding: 0.75rem 1rem;
-  border-radius: 0.5rem;
+code {
+  padding: 0.1em 0.3em;
+  border-radius: 0.25rem;
+  background: var(--well);
+  font: 0.875em ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* Head: a title, and at most one line under it. */
+.head {
+  margin-bottom: 1.5rem;
+}
+
+.head h1 {
+  font-size: 1.5rem;
+  line-height: 1.875rem;
+  font-weight: 600;
+  letter-spacing: -0.017em;
+}
+
+.head .lede {
+  margin-top: 0.375rem;
+  color: var(--t2);
+}
+
+@media (max-width: 600px) {
+  .head h1 {
+    font-size: 1.625rem;
+    line-height: 2rem;
+  }
+}
+
+/* Buttons: filled capsules, since every button here stands on its own. Blue for the one main action. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-width: 4.75rem;
+  height: var(--control);
+  padding: 0 0.875rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--t1);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.btn.primary {
+  background: var(--blue);
+  color: var(--on-blue);
+}
+
+.btn.danger {
+  background: var(--red-fill);
+  color: var(--red);
+}
+
+.btn.small {
+  height: var(--small);
+  min-width: 0;
+  padding: 0 0.8125rem;
+}
+
+.btn:disabled {
+  opacity: 0.38;
+}
+
+@media (max-width: 600px) {
+  .btn {
+    min-width: 5.5rem;
+    padding: 0 1.125rem;
+    font-size: 1rem;
+  }
+
+  .btn.small {
+    padding: 0 0.875rem;
+    font-size: 0.875rem;
+  }
+}
+
+/* Actions: at the trailing edge, the main action last. One button may sit at the leading edge. */
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.75rem;
+}
+
+.actions .lead {
+  margin-right: auto;
+}
+
+.actions form {
+  display: contents;
+}
+
+/* Fields: the label sits in the box, where the text goes; when the field is focused or filled it moves to the top.
+   CSS only, so it works without JavaScript: the input comes before its label and has placeholder=" ". */
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.fields:has(.gh) {
+  gap: 1.5rem;
+}
+
+.field {
+  position: relative;
+}
+
+.field label {
+  position: absolute;
+  top: calc((var(--field) - 1.375rem) / 2);
+  right: calc(var(--field-x) + 1px);
+  left: calc(var(--field-x) + 1px);
+  overflow: hidden;
+  color: var(--t2);
+  font-size: var(--field-text);
+  line-height: 1.375rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  transition:
+    top 0.125s ease-in,
+    font-size 0.125s ease-in,
+    line-height 0.125s ease-in;
+}
+
+.field .in:focus ~ label,
+.field .in:not(:placeholder-shown) ~ label,
+.field .in:autofill ~ label {
+  top: var(--field-up);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+.in {
+  display: block;
+  width: 100%;
+  height: var(--field);
+  padding: var(--field-down) var(--field-x) 0;
+  border: 1px solid var(--edge);
+  border-radius: var(--field-r);
+  background: var(--bg);
+  color: var(--t1);
+  font: inherit;
+  font-size: var(--field-text);
+  outline: none;
+}
+
+.in[type="password"]:not(:placeholder-shown) {
+  letter-spacing: 0.14em;
+}
+
+.in:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.in.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.875rem;
+  letter-spacing: 0.06em;
+}
+
+@media (max-width: 600px) {
+  .in.mono {
+    font-size: 1rem;
+    letter-spacing: 0;
+  }
+}
+
+.in[aria-invalid="true"] {
+  border-color: var(--red);
+}
+
+.in[aria-invalid="true"] ~ label {
+  color: var(--red);
+}
+
+.in[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 3px var(--red-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .field label {
+    transition: none;
+  }
+}
+
+/* A group: fields that answer one question together share a box. A field on its own is a group of one.
+   A label goes over a group only when the page has two groups. */
+.group .field + .field {
+  margin-top: -1px;
+}
+
+.group .in {
+  border-radius: 0;
+}
+
+.group .field:first-child .in {
+  border-radius: var(--group-r) var(--group-r) 0 0;
+}
+
+.group .field:last-child .in {
+  border-radius: 0 0 var(--group-r) var(--group-r);
+}
+
+.group .field:only-child .in {
+  border-radius: var(--field-r);
+}
+
+.group .in:focus,
+.group .in[aria-invalid="true"] {
+  position: relative;
+  z-index: 1;
+}
+
+.group .in:focus ~ *,
+.group .in[aria-invalid="true"] ~ * {
+  z-index: 2;
+}
+
+.gh {
+  margin: 0 0 0.625rem;
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  font-weight: 600;
+  color: var(--t1);
+}
+
+/* Under a group: one hint or one problem, which takes the hint's place; then a link, if there is one. */
+.under {
+  margin-top: 0.5rem;
+  color: var(--t2);
+  font-size: 0.8125rem;
+}
+
+.under > * + * {
+  margin-top: 0.5rem;
+}
+
+.under a {
+  display: inline-flex;
+  align-items: center;
+}
+
+@media (max-width: 600px) {
+  .under a {
+    min-height: 2.75rem;
+    margin: -0.8125rem 0;
+  }
+}
+
+.hint {
+  color: var(--t2);
+  font-size: 0.8125rem;
+}
+
+/* A problem: the icon is drawn here, so text a script sets in place needs no markup. */
+.err {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+  color: var(--red);
+  font-size: 0.8125rem;
+}
+
+.err::before {
+  content: "";
+  flex: none;
+  width: 0.9375rem;
+  height: 0.9375rem;
+  margin-top: 0.0625rem;
+  background: currentcolor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 4.5 20.5 19h-17z'/%3E%3Cpath d='M12 10v4M12 16.6v.01'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+/* A note under a box. */
+.note {
+  margin-top: 0.875rem;
+  color: var(--t2);
+  font-size: 0.8125rem;
+}
+
+/* Box of rows: one line each (or two lines for every row in the box); the words, then one control at the end. */
+.box {
   border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--bg);
 }
 
-.notice > :last-child {
-  margin-bottom: 0;
+.box > li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 3rem;
+  padding: 0.375rem 0.875rem;
 }
 
-.notice.error {
-  background: var(--danger-wash);
-  border-color: var(--danger);
-  color: var(--danger);
+.box > li + li::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0.875rem;
+  left: 0.875rem;
+  height: 1px;
+  background: var(--line);
+}
+
+.box .t {
+  flex: 1;
+  min-width: 0;
+}
+
+.box > li.two {
+  min-height: 3.75rem;
+}
+
+.box > li.two .t {
+  display: flex;
+  flex-direction: column;
+}
+
+.box > li.two .m {
+  overflow: hidden;
+  color: var(--t2);
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.box > li.quiet {
+  color: var(--t2);
+}
+
+/* Pop-up: a choice between levels, grey with no outline. One width, so a column of them lines up.
+   It is a real select, so the browser draws its menu. */
+.pop {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  width: 8.5rem;
+  height: var(--small);
+}
+
+.pop select {
+  appearance: none;
+  width: 100%;
+  height: 100%;
+  padding: 0 1.75rem 0 0.625rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--t1);
+  font: inherit;
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.pop::after {
+  content: "";
+  position: absolute;
+  right: 0.375rem;
+  width: 0.875rem;
+  height: 0.875rem;
+  background: var(--t2);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8.5 9.5 12 6l3.5 3.5M8.5 14.5 12 18l3.5-3.5'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  pointer-events: none;
+}
+
+.pop select:disabled {
+  opacity: 0.38;
+}
+
+@media (max-width: 600px) {
+  .pop select {
+    font-size: 0.875rem;
+  }
+
+  .pop {
+    width: 8.25rem;
+  }
+}
+
+/* A dialog over the page: a sheet at the foot of the screen on a phone. */
+dialog {
+  inset-block: clamp(1rem, 20vh, 11.875rem) auto;
+  width: 26.25rem;
+  max-width: calc(100% - 3rem);
+  max-height: calc(100dvh - 2rem);
+  margin: 0 auto;
+  padding: 1.5rem;
+  overflow: auto;
+  border: 0;
+  border-radius: 0.875rem;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  color: var(--t1);
+}
+
+dialog::backdrop {
+  background: var(--scrim);
+}
+
+dialog h2 {
+  font-size: 1.125rem;
+  line-height: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+dialog .lede {
+  margin: 0.25rem 0 1.125rem;
+  color: var(--t2);
+}
+
+dialog .err + .fields,
+dialog .lede + .fields {
+  margin-top: 1.125rem;
+}
+
+dialog .err {
+  margin-bottom: 0.75rem;
+}
+
+dialog .actions {
+  margin-top: 1.5rem;
+}
+
+@media (max-width: 600px) {
+  dialog {
+    inset-block: auto 0;
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 1.5rem 1.25rem 2.25rem;
+    border-radius: 1.125rem 1.125rem 0 0;
+  }
+}
+
+/* Reading aids: what an owner may open, and inline code. */
+details {
+  font-size: 0.9375rem;
+}
+
+summary {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  color: var(--link);
+  cursor: default;
+}
+
+details > :not(summary) {
+  color: var(--t2);
+}
+
+details p + p {
+  margin-top: 0.5rem;
+}
+
+.fields + details,
+.head + details {
+  margin-top: 0.5rem;
+}
+
+/* Pages that are not yet redrawn keep what they need: a plain note, a list of rows and the choices on the allow page.
+   They read the same properties, so they follow the palette above. */
+.flow > * + * {
+  margin-top: 1rem;
+}
+
+.notice {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
 }
 
 .notice.caution {
-  background: var(--caution-wash);
   border-color: var(--caution);
+  background: var(--caution-wash);
   color: var(--caution);
 }
 
@@ -230,85 +639,27 @@ a {
   border-top: 1px solid var(--line);
 }
 
+.part h2,
+.wide-page h2,
+.wide-page h3 {
+  font-size: 1.0625rem;
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.part .lede {
+  color: var(--t2);
+}
+
 .app-name {
   font-weight: 600;
 }
 
 .or {
   margin: 1rem 0;
-  color: var(--muted);
+  color: var(--t2);
   text-align: center;
   font-size: 0.875rem;
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
-.actions > .button {
-  flex: 1 1 8rem;
-}
-
-details {
-  font-size: 0.9375rem;
-}
-
-summary {
-  cursor: pointer;
-  color: var(--accent);
-  min-height: 2.75rem;
-  display: flex;
-  align-items: center;
-}
-
-details > :not(summary) {
-  color: var(--muted);
-}
-
-.powers-each > .row {
-  color: inherit;
-}
-
-.powers-all {
-  border-top: 0;
-}
-
-code {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 0.9em;
-  padding: 0.1em 0.3em;
-  border-radius: 0.25rem;
-  background: var(--page);
-}
-
-dialog {
-  width: calc(100% - 2rem);
-  max-width: 24rem;
-  padding: 1.5rem;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 0.75rem;
-}
-
-dialog::backdrop {
-  background: rgb(0 0 0 / 0.5);
-}
-
-[hidden] {
-  display: none !important;
-}
-
-@media (forced-colors: active) {
-  .button.primary {
-    border-color: ButtonText;
-  }
-}
-
-.wide-page > h1 {
-  margin-bottom: 1rem;
 }
 
 .device-check {
@@ -316,7 +667,7 @@ dialog::backdrop {
   padding: 0.75rem 1rem;
   border: 1px solid var(--line);
   border-radius: 0.5rem;
-  background: var(--page);
+  background: var(--well);
 }
 
 .device-check h2 {
@@ -330,9 +681,8 @@ dialog::backdrop {
 
 .device-check .user-code {
   margin: 0.25rem 0 0.5rem;
-  font-size: 1.75rem;
-  font-weight: 700;
-  overflow-wrap: anywhere;
+  font: 700 1.75rem/1.3 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.08em;
 }
 
 .facts,
@@ -342,8 +692,13 @@ dialog::backdrop {
   padding-left: 1.25rem;
 }
 
+.facts,
+.gives {
+  list-style: disc;
+  color: var(--t2);
+}
+
 .facts {
-  color: var(--muted);
   font-size: 0.9375rem;
 }
 
@@ -361,8 +716,8 @@ dialog::backdrop {
 
 .held ul {
   margin: 0;
-  list-style: none;
   padding: 0;
+  list-style: none;
 }
 
 .held li {
@@ -372,21 +727,20 @@ dialog::backdrop {
 }
 
 .held .level {
-  color: var(--muted);
+  color: var(--t2);
   white-space: nowrap;
 }
 
 fieldset.access {
-  margin: 0 0 1rem;
-  padding: 0;
-  border: 0;
   min-width: 0;
+  margin: 0 0 1rem;
+  border: 0;
 }
 
 fieldset.access legend {
   margin-bottom: 0.5rem;
   padding: 0;
-  font-size: 1.1875rem;
+  font-size: 1.0625rem;
   font-weight: 600;
 }
 
@@ -394,13 +748,9 @@ fieldset.access > p {
   margin-bottom: 0.25rem;
 }
 
-.gives {
-  color: var(--muted);
-}
-
 .gives .danger,
 .line.danger {
-  color: var(--danger);
+  color: var(--red);
 }
 
 .choice {
@@ -410,28 +760,28 @@ fieldset.access > p {
   align-items: start;
   margin-top: 0.5rem;
   padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: 0.5rem;
-  cursor: pointer;
+  cursor: default;
 }
 
 .choice:has(input:checked) {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  border-color: var(--blue);
+  box-shadow: inset 0 0 0 1px var(--blue);
 }
 
 .choice:has(input:focus-visible) {
-  outline: 3px solid var(--focus);
+  outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
 
 .choice input {
   grid-column: 1;
   grid-row: 1 / span 2;
-  margin: 0.2rem 0 0;
   width: 1.125rem;
   height: 1.125rem;
-  accent-color: var(--accent);
+  margin: 0.2rem 0 0;
+  accent-color: var(--blue);
 }
 
 .choice .name {
@@ -441,7 +791,7 @@ fieldset.access > p {
 
 .choice .sub {
   grid-column: 2;
-  color: var(--muted);
+  color: var(--t2);
   font-size: 0.9375rem;
 }
 
@@ -461,8 +811,6 @@ fieldset.access > p {
 
 .choose .hint {
   margin: 0 0 0.5rem;
-  color: var(--muted);
-  font-size: 0.875rem;
 }
 
 .types {
@@ -495,7 +843,7 @@ fieldset.access > p {
 
 .row .line,
 .row .ident {
-  color: var(--muted);
+  color: var(--t2);
   font-size: 0.875rem;
 }
 
@@ -503,29 +851,17 @@ fieldset.access > p {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-.row select {
-  flex: none;
-  max-width: 11rem;
-  min-height: 2.75rem;
-  padding: 0.25rem 0.5rem;
-  background: var(--surface);
-  color: inherit;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  font: inherit;
-}
-
 .row input[type="checkbox"][role="switch"] {
   appearance: none;
-  flex: none;
   position: relative;
+  flex: none;
   width: 2.75rem;
   height: 1.625rem;
   margin: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: 1rem;
-  background: var(--page);
-  cursor: pointer;
+  background: var(--well);
+  cursor: default;
 }
 
 .row input[type="checkbox"][role="switch"]::after {
@@ -536,17 +872,17 @@ fieldset.access > p {
   width: 1.25rem;
   height: 1.25rem;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--t2);
   transition: transform 0.15s;
 }
 
 .row input[type="checkbox"][role="switch"]:checked {
-  background: var(--accent);
-  border-color: var(--accent);
+  border-color: var(--blue);
+  background: var(--blue);
 }
 
 .row input[type="checkbox"][role="switch"]:checked::after {
-  background: var(--on-accent);
+  background: var(--on-blue);
   transform: translateX(1.125rem);
 }
 
@@ -556,23 +892,43 @@ fieldset.access > p {
   }
 }
 
-@media (max-width: 30rem) {
+@media (max-width: 600px) {
   .row:not(.power) {
     flex-wrap: wrap;
   }
 
-  .row select {
-    max-width: 100%;
+  .row .pop {
     width: 100%;
   }
 }
 
 @media (forced-colors: active) {
+  .btn,
+  .pop select,
+  .in {
+    border: 1px solid ButtonText;
+  }
+
+  .btn:disabled {
+    border-color: GrayText;
+    color: GrayText;
+    opacity: 1;
+  }
+
+  .in:focus {
+    outline: 2px solid Highlight;
+  }
+
   .row input[type="checkbox"][role="switch"]:checked {
     background: Highlight;
   }
 
   .row input[type="checkbox"][role="switch"]::after {
     background: ButtonText;
+  }
+
+  .err::before,
+  .pop::after {
+    background: CanvasText;
   }
 }

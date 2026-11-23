@@ -1,11 +1,11 @@
-{% macro level(row) %}<div class="row">
+{% import "partials/parts.html" as parts %}{% macro level(row) %}<div class="row">
 <div class="text">
 <label class="title" for="{{ row.id }}">{{ row.title }}</label>
 {% for line in row.lines %}<div class="line">{{ line }}</div>
 {% endfor %}{% if let Some(ident) = row.ident %}<div class="ident" id="{{ ident.id }}">{{ ident.text }}</div>
 {% endif %}{% if let Some(now) = row.now %}<div class="line">Now: {{ now }}</div>
 {% endif %}</div>
-<select id="{{ row.id }}" name="{{ row.field }}" aria-label="{{ row.title }}"{% if let Some(ident) = row.ident %} aria-describedby="{{ ident.id }}"{% endif %}{% if row.switches_types %} data-types-switch{% endif %}>{% for option in row.options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.word }}</option>{% endfor %}</select>
+{% call parts::pop(row.id, row.field, row.title, described=row.described_by(), switches=row.switches_types) %}{% for option in row.options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.word }}</option>{% endfor %}{% endcall %}
 </div>
 {% endmacro %}
 {% macro power(power) %}<div class="row power">

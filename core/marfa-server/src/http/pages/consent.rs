@@ -16,7 +16,6 @@ pub enum Answering {
 
 #[derive(Debug, Clone)]
 pub struct Consent {
-    pub instance_name: String,
     pub offer: Offer,
     pub answering: Answering,
 }
@@ -41,6 +40,13 @@ struct Row {
     now: Option<&'static str>,
     options: Vec<Pick>,
     switches_types: bool,
+}
+
+impl Row {
+    /// The id of the line that tells two rows of the same name apart, which the select names in `aria-describedby`.
+    fn described_by(&self) -> &str {
+        self.ident.as_ref().map_or("", |ident| ident.id.as_str())
+    }
 }
 
 struct DataRow {
@@ -333,8 +339,7 @@ pub fn consent(view: &Consent) -> Result<Page> {
         powers_each: words::POWERS_EACH,
     })?;
     document(
-        "Allow access",
-        &view.instance_name,
+        &format!("Allow {}?", offer.app.name),
         &body,
         Needs {
             connect: true,

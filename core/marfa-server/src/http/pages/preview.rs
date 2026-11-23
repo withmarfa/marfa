@@ -104,7 +104,6 @@ const RIGHT_TO_LEFT: &str = "تطبيق الملاحظات";
 
 fn sign_in_view() -> SignIn {
     SignIn {
-        instance_name: "Castell Studio".into(),
         username: String::new(),
         return_to: "/".into(),
         authorization: None,
@@ -270,7 +269,6 @@ fn offer() -> Offer {
 
 fn consent_page(offer: Offer) -> Result<Page> {
     consent(&Consent {
-        instance_name: "Castell Studio".into(),
         offer,
         answering: Answering::Authorization("client_id=cardigan&state=1".into()),
     })
@@ -278,7 +276,6 @@ fn consent_page(offer: Offer) -> Result<Page> {
 
 fn device_consent_page(offer: Offer) -> Result<Page> {
     consent(&Consent {
-        instance_name: "Castell Studio".into(),
         offer,
         answering: Answering::Device("K7MP2XDV".into()),
     })
@@ -344,7 +341,6 @@ fn passkey(id: &str, name: &str, last_used: Option<&str>, made_for: Option<&str>
 
 fn passkeys_page(rows: Vec<OwnerPasskey>) -> Result<Page> {
     owner_passkeys(&OwnerPasskeys {
-        instance_name: "Castell Studio".into(),
         username: "mira".into(),
         rows,
     })
@@ -352,7 +348,6 @@ fn passkeys_page(rows: Vec<OwnerPasskey>) -> Result<Page> {
 
 fn claim_view() -> SetupCode {
     SetupCode {
-        instance_name: "Castell Studio".into(),
         problem: None,
         return_to: "/".into(),
         app: None,
@@ -372,7 +367,6 @@ fn claim_for_an_app() -> SetupCode {
 
 fn details_view() -> SetupDetails {
     SetupDetails {
-        instance_name: "Castell Studio".into(),
         name: String::new(),
         username: String::new(),
         email: String::new(),
@@ -384,7 +378,6 @@ fn details_view() -> SetupDetails {
 
 fn device_view(problem: Option<DeviceProblem>) -> DeviceEntry {
     DeviceEntry {
-        instance_name: "Castell Studio".into(),
         user_code: String::new(),
         problem,
     }
@@ -396,7 +389,6 @@ fn device_view(problem: Option<DeviceProblem>) -> DeviceEntry {
     reason = "one list of every state is easier to read than several"
 )]
 fn states() -> Vec<State> {
-    let name = "Castell Studio";
     let wait = Wait::from_query(Some("900"));
     let long_wait = Some(Wait::from_query(Some("61")).expect("a wait"));
     let mut states = vec![
@@ -474,7 +466,6 @@ fn states() -> Vec<State> {
             "signed-in",
             "Signed in already, or just after claiming",
             signed_in(&SignedIn {
-                instance_name: name.into(),
                 username: "mira".into(),
                 continue_to: "/".into(),
             }),
@@ -484,7 +475,6 @@ fn states() -> Vec<State> {
             "its-address-signed-in",
             "Its address in a browser, signed in",
             running(&Running {
-                instance_name: name.into(),
                 username: "mira".into(),
             }),
         ),
@@ -493,10 +483,7 @@ fn states() -> Vec<State> {
             Some("U26"),
             "recover-code",
             "Recover: the recovery code",
-            recovery_code(&RecoveryCode {
-                instance_name: name.into(),
-                problem: None,
-            }),
+            recovery_code(&RecoveryCode { problem: None }),
         )
         .after(&[OPEN_DETAILS]),
         State::new(
@@ -504,7 +491,6 @@ fn states() -> Vec<State> {
             "recover-code-wrong",
             "Recover: a wrong recovery code",
             recovery_code(&RecoveryCode {
-                instance_name: name.into(),
                 problem: Some(SetupCodeProblem::WrongCode),
             }),
         ),
@@ -513,7 +499,6 @@ fn states() -> Vec<State> {
             "recover-new-password",
             "Recover: a new password",
             recover_password(&RecoverPassword {
-                instance_name: name.into(),
                 error: None,
                 notice: None,
             }),
@@ -523,7 +508,6 @@ fn states() -> Vec<State> {
             "recover-new-password-short",
             "Recover: a password the server refuses",
             recover_password(&RecoverPassword {
-                instance_name: name.into(),
                 error: Some("Use at least 8 characters.".into()),
                 notice: None,
             }),
@@ -868,44 +852,43 @@ fn states() -> Vec<State> {
             board,
             "notice-running",
             "A running Marfa, signed out",
-            Notice::running(name),
+            Notice::running(),
         ),
         (
             board,
             "notice-device-not-connected",
             "A device that was not allowed",
-            Notice::device_denied(name),
+            Notice::device_denied(),
         ),
         (
             board,
             "notice-request-expired",
             "An app's request that expired",
-            Notice::expired_request(name),
+            Notice::expired_request(),
         ),
         (
             board,
             "notice-request-unverified",
             "An app's request that could not be checked",
-            Notice::unverified_request(name),
+            Notice::unverified_request(),
         ),
         (
             board,
             "notice-connector-signed-in",
             "A connector's sign-in that finished",
-            Notice::connector_signed_in(name),
+            Notice::connector_signed_in(),
         ),
         (
             board,
             "notice-sign-in-unfinished",
             "A connector's sign-in that did not finish",
-            Notice::connector_sign_in_unfinished(name, None),
+            Notice::connector_sign_in_unfinished(None),
         ),
         (
             board,
             "notice-opening-item",
             "An item link, opening in an app",
             Notice::opening_item(
-                name,
                 "marfa://0194f2a0-1111-7000-8000-000000000001/0194f2a0-2222-7000-8000-000000000002",
             ),
         ),
@@ -913,72 +896,67 @@ fn states() -> Vec<State> {
             board,
             "notice-not-an-item-link",
             "An item link that is not a Marfa link",
-            Notice::not_an_item_link(name),
+            Notice::not_an_item_link(),
         ),
         (
             board,
             "notice-signed-out",
             "Signed out",
-            Notice::signed_out(name),
+            Notice::signed_out(),
         ),
         (
             board,
             "notice-already-claimed",
             "A Marfa that already has an owner",
-            Notice::already_claimed(name, "/"),
+            Notice::already_claimed("/"),
         ),
         (
             board,
             "notice-nothing-here",
             "A page that does not exist",
-            Notice::refusal(name, StatusCode::NOT_FOUND, "No such page."),
+            Notice::refusal(StatusCode::NOT_FOUND, "No such page."),
         ),
         (
             board,
             "notice-something-went-wrong",
             "A server fault",
-            Notice::refusal(
-                name,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Something went wrong.",
-            ),
+            Notice::refusal(StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong."),
         ),
         (
             Some("U20"),
             "device-connected",
             "A device, connected",
-            Notice::device_approved(name),
+            Notice::device_approved(),
         ),
         (
             None,
             "notice-sign-in-failed",
             "A connector's sign-in the service refused",
-            Notice::connector_sign_in_failed(name, &Failure::TokenError("invalid_grant")),
+            Notice::connector_sign_in_failed(&Failure::TokenError("invalid_grant")),
         ),
         (
             None,
             "notice-sign-in-unfinished-reason",
             "A connector's sign-in that did not finish, with a reason",
-            Notice::connector_sign_in_unfinished(name, Some(&Failure::Timeout)),
+            Notice::connector_sign_in_unfinished(Some(&Failure::Timeout)),
         ),
         (
             None,
             "notice-sign-in-needed",
             "A refusal that needs a sign-in",
-            Notice::refusal(name, StatusCode::UNAUTHORIZED, "Sign in to continue."),
+            Notice::refusal(StatusCode::UNAUTHORIZED, "Sign in to continue."),
         ),
         (
             None,
             "notice-not-allowed",
             "A refusal, not allowed",
-            Notice::refusal(name, StatusCode::FORBIDDEN, "This key can't do that."),
+            Notice::refusal(StatusCode::FORBIDDEN, "This key can't do that."),
         ),
         (
             None,
             "notice-too-many-requests",
             "A refusal, too many requests",
             Notice::refusal(
-                name,
                 StatusCode::TOO_MANY_REQUESTS,
                 "Too many requests. Try again later.",
             ),
@@ -987,7 +965,7 @@ fn states() -> Vec<State> {
             None,
             "notice-not-accepted",
             "A refusal, request not accepted",
-            Notice::refusal(name, StatusCode::BAD_REQUEST, "The request wasn't valid."),
+            Notice::refusal(StatusCode::BAD_REQUEST, "The request wasn't valid."),
         ),
     ];
     for (board, slug, title, view) in notices {
@@ -1055,10 +1033,7 @@ fn states() -> Vec<State> {
             board,
             slug,
             title,
-            auth_error(&AuthError {
-                instance_name: name.into(),
-                code,
-            }),
+            auth_error(&AuthError { code }),
         ));
     }
     states
@@ -1137,7 +1112,7 @@ fn every_page_renders_in_every_state_and_is_written_when_asked() {
         assert!(seen.insert(state.file()), "{} is named twice", state.file());
         let html = state.page.html();
         assert!(html.starts_with("<!doctype html>"), "{}", state.file());
-        assert!(html.contains("<main>"), "{}", state.file());
+        assert!(html.contains("<main"), "{}", state.file());
     }
     if let Some(folder) = std::env::var_os(FOLDER_VARIABLE) {
         write_preview(Path::new(&folder), &states);
