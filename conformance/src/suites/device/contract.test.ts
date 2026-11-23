@@ -1052,6 +1052,7 @@ class PrivateSocket {
  * the scripted server answers every door alike.
  */
 const ID = "01JAAAAAAAAAAAAAAAAAAAAAAA";
+const ITEM_UUID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c";
 /** A connector host named by its ID, which the CLI sends without looking a name up first. */
 const HOST_ID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 const HASH = `sha256:${"a".repeat(64)}`;
@@ -1290,6 +1291,9 @@ function codeOf(stderr: string): string {
  */
 const beyondTheTable: Record<string, () => string[]> = {
   "views get": () => [ID],
+  // `items link` sends the read `items get` is the entry for, and refuses an
+  // id that is not a lowercase UUIDv7 before it sends anything.
+  "items link": () => [ITEM_UUID],
   // `sources clear` sends the update operation `sources update` is the entry for.
   "sources clear": () => ["--name", "github"],
   // `sign-ins end-all` sends the list and end operations `sign-ins list` and `sign-ins end` are the entries for.
@@ -1495,7 +1499,9 @@ const DESCRIBES = "status";
  * `login` needs a sign-in the door cannot complete, so its refusal is held
  * by its code alone; `views get` refuses an item that is not a view, and
  * `{}` names no type; `config set` finds no setting in a listing of `{}`;
- * `apps vendors data delete` reads no count in `{}`, so it stops unprinted.
+ * `apps vendors data delete` reads no count in `{}`, so it stops unprinted;
+ * `items link` finds no `web_url` in `{}`, so it says the server gives no
+ * links and prints nothing.
  */
 const SILENT_HERE = [
   "events",
@@ -1503,6 +1509,7 @@ const SILENT_HERE = [
   "views get",
   "config set",
   "apps vendors data delete",
+  "items link",
 ];
 
 describe("every command holds the server to the contract", () => {
