@@ -11,6 +11,8 @@ Every page is built from the parts below. A page names its parts and adds none o
 | Head | `parts::head(title, lede)` | The page's one `h1` and at most one line under it. |
 | Field | `parts::field(id, label, ...)` | One input with its label inside the box. |
 | Joined group | `parts::group(...)` | Fields that answer one question, in one box, with one hint or problem under it. |
+| Code field | `parts::code_field(id, name, label, ...)` | One input for a short code, with a cell drawn behind it for each character. Without JavaScript the input shows the code itself. |
+| Shown code | `parts::code_shown(code, said, ...)` | A code in cells to compare with another screen; a screen reader reads `said`. |
 | Actions | `parts::actions()` | Buttons at the trailing edge, the main action last. |
 | Box of rows | `parts::box_of_rows()` | A list of rows, each with words and at most one control. |
 | Pop-up | `parts::pop(id, name, label, ...)` | A choice between levels, as a real `select`. |

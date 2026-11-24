@@ -645,8 +645,27 @@ fn states() -> Vec<State> {
             "device-wrong-code",
             "A device, a wrong code",
             device_entry(&DeviceEntry {
-                user_code: "ABCD-2345".into(),
+                user_code: "WDJB-MJHX".into(),
                 ..device_view(Some(DeviceProblem::InvalidCode))
+            }),
+        ),
+        State::new(
+            None,
+            "device-code-without-javascript",
+            "A device, typing its code without JavaScript",
+            device_entry(&DeviceEntry {
+                user_code: "wdjb mjhx".into(),
+                ..device_view(Some(DeviceProblem::InvalidCode))
+            }),
+        )
+        .without_javascript(),
+        State::new(
+            Some("U17"),
+            "device-check-code",
+            "A device, checking its code",
+            device_check(&DeviceCheck {
+                user_code: "WDJBMJHT".into(),
+                typed: "WDJB-MJHT".into(),
             }),
         ),
         State::new(
