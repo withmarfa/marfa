@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::pem::PemObject;
 use rustls::server::ParsedCertificate;
@@ -438,7 +440,7 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             }
             match arg.and_then(one_certificate) {
                 Some(_) => Ok((None, None)),
-                None => Err("a trust fault takes one PEM X.509 certificate".to_string()),
+                None => Err("a trust fault takes one PEM certificate section and nothing else".to_string()),
             }
         }
         "limit" => {
@@ -556,15 +558,35 @@ fn normal(name: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// The DER of a PEM text that holds exactly one certificate, and that one X.509.
+const PEM_BEGIN: &str = "-----BEGIN CERTIFICATE-----";
+const PEM_END: &str = "-----END CERTIFICATE-----";
+
+/// The DER of a PEM text that is one X.509 certificate's section and nothing else but whitespace.
 fn one_certificate(pem: &str) -> Option<CertificateDer<'static>> {
-    let mut certificates = CertificateDer::pem_slice_iter(pem.as_bytes());
-    let certificate = certificates.next()?.ok()?;
-    if certificates.next().is_some() {
+    let text = pem.trim();
+    if !text.starts_with(PEM_BEGIN)
+        || !text.ends_with(PEM_END)
+        || text.matches("-----BEGIN ").count() != 1
+        || text.matches("-----END ").count() != 1
+    {
         return None;
     }
+    let certificate = CertificateDer::from_pem_slice(text.as_bytes()).ok()?;
     ParsedCertificate::try_from(&certificate).ok()?;
     Some(certificate)
+}
+
+/// The certificate alone, as PEM, so no other text the argument carried is kept or listed.
+fn certificate_pem(certificate: &CertificateDer<'_>) -> String {
+    let encoded = STANDARD.encode(certificate.as_ref());
+    let mut pem = format!("{PEM_BEGIN}\n");
+    for line in encoded.as_bytes().chunks(64) {
+        pem.push_str(&String::from_utf8_lossy(line));
+        pem.push('\n');
+    }
+    pem.push_str(PEM_END);
+    pem.push('\n');
+    pem
 }
 
 struct Waiting(Arc<AtomicU64>);
@@ -591,7 +613,12 @@ impl Faults {
         let name = normal(name);
         let name = name.as_ref();
         let mut armed = self.armed();
-        let arg = arg.map(str::to_string);
+        let arg = if name.starts_with(TRUST) {
+            arg.and_then(one_certificate)
+                .map(|certificate| certificate_pem(&certificate))
+        } else {
+            arg.map(str::to_string)
+        };
         if let Some(fault) = armed.iter_mut().find(|fault| fault.name == name) {
             fault.arg = arg;
             fault.aim = aim;
@@ -994,6 +1021,25 @@ mod tests {
             .pem();
         let two = format!("{one}{one}");
         assert!(refused("trust:a.test", Some(&two)));
+        let key = rcgen::KeyPair::generate().expect("a key").serialize_pem();
+        assert!(refused("trust:a.test", Some(&format!("{one}{key}"))));
+        assert!(refused("trust:a.test", Some(&format!("{key}{one}"))));
+        assert!(refused(
+            "trust:a.test",
+            Some(&format!("{one}trailing text"))
+        ));
+        assert!(refused(
+            "trust:a.test",
+            Some(&format!("leading text\n{one}"))
+        ));
+        let padded = Faults::default();
+        padded
+            .set("trust:a.test", Some(&format!("\n  {one}\n\n")))
+            .expect("a certificate with whitespace around it");
+        assert_eq!(
+            padded.list()[0].arg.as_deref(),
+            Some(one.replace("\r\n", "\n").as_str())
+        );
         let faults = Faults::default();
         faults
             .set("trust:Example.TEST", Some(&one))
