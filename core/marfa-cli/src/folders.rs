@@ -1457,10 +1457,6 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
             "item(s) whose file was moved to another directory on this machine, written here once that directory takes it",
         ),
         (
-            report.let_go,
-            "file(s) removed whose item another directory on this machine holds, with nothing trashed",
-        ),
-        (
             report.ended,
             "placement(s) ended, for files that left the directory for good",
         ),

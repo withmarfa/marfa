@@ -109,12 +109,6 @@ enum PlacementWrite {
     Refused,
 }
 
-enum LetGo {
-    Inapplicable,
-    Removed,
-    Retained,
-}
-
 enum TakeIn {
     Inapplicable,
     Taken,
@@ -163,7 +157,7 @@ pub struct PullReport {
     pub unsuited: usize,
     pub unplaced: usize,
     pub placed: usize,
-    /// Placements the pull ended, for the files it took away or let go.
+    /// Placements the pull ended, for the files it took away.
     pub ended: usize,
     pub removed: usize,
     /// Of `removed`, the files of items purged.
@@ -173,7 +167,6 @@ pub struct PullReport {
     pub unmatched: usize,
     pub taken: usize,
     pub elsewhere: usize,
-    pub let_go: usize,
     /// Documents whose body the pull rewrote so their links follow an item
     /// retitled since they were written. Each rewrite is queued, not yet
     /// answered.
@@ -210,7 +203,6 @@ impl PullReport {
         self.removed += other.removed;
         self.purged += other.purged;
         self.taken += other.taken;
-        self.let_go += other.let_go;
         self.relinked += other.relinked;
         self.unrelinked += other.unrelinked;
     }
@@ -495,22 +487,13 @@ impl Folder {
             .collect();
         let held = crate::store::items_by_ids(&*self.core.conn()?, &outside)?;
         let peers = Peers::of(self, None);
-        let mut retained = Vec::new();
-        // A folder that has never synced writes no file, so what a pass
-        // would let go of is not its to count.
+        // A folder that has never synced writes no file, so it keeps none
+        // unmatched either.
         let (files, documents): (Vec<Item>, Vec<Item>) = held
             .into_iter()
             .filter(|item| settings.holds_state(item.state) && planning.is_none())
             .partition(|item| bytes_of(item, &catalog).is_some());
-        // Documents first: one let go embeds and has attached nothing here.
-        self.let_go_outside(
-            documents,
-            &peers,
-            &context,
-            report,
-            &mut work,
-            &mut retained,
-        )?;
+        work.extend(documents.into_iter().map(|item| (item, true)));
         let (unread, pinned) =
             self.hold_edge_ends(&work, &edge_types, &catalog, narrow.is_none())?;
         // A narrow pull renders by the names it kept, which an end pinned
@@ -531,13 +514,7 @@ impl Folder {
         let hosts = self.document_hosts(&work, &withheld, &settings, &catalog, &renaming)?;
         let mut embedded = self.embedded(&hosts, &members, &catalog, renaming.lists)?;
         self.report_unread(&hosts, &unread, &mut embedded)?;
-        // A file a document here embeds or has attached is that document's,
-        // whatever other folder holds the item, so it is never let go.
-        let (shown, files): (Vec<Item>, Vec<Item>) = files
-            .into_iter()
-            .partition(|item| embedded.at.contains_key(&item.id));
-        work.extend(shown.into_iter().map(|item| (item, true)));
-        self.let_go_outside(files, &peers, &context, report, &mut work, &mut retained)?;
+        work.extend(files.into_iter().map(|item| (item, true)));
         report.embeds = embedded.reports;
         let missing: Vec<String> = embedded
             .at
@@ -613,7 +590,6 @@ impl Folder {
             .iter()
             .filter(|(_, unmatched)| *unmatched)
             .map(|(item, _)| item.id.clone())
-            .chain(retained)
             .collect();
         let new_outside = self.new_outside_state()?;
         unmatched_ids.extend(
@@ -1906,115 +1882,6 @@ impl Folder {
         let hosts = self.document_hosts(&work, &withheld, settings, &catalog, &renaming)?;
         let embedded = self.embedded(&hosts, members, &catalog, renaming.lists)?;
         Ok(embedded.at.into_keys().collect())
-    }
-
-    /// Lets go of each file of `items`, outside the query, that another
-    /// folder files; the rest stay to be kept current here, unmatched.
-    fn let_go_outside(
-        &self,
-        items: Vec<Item>,
-        peers: &Peers<'_>,
-        context: &crate::reach::Context,
-        report: &mut PullReport,
-        work: &mut Vec<(Item, bool)>,
-        retained: &mut Vec<String>,
-    ) -> Result<()> {
-        for item in items {
-            context.same_copy(&*self.core.conn()?)?;
-            match self.let_go(&item.id, peers, context, report)? {
-                LetGo::Inapplicable => work.push((item, true)),
-                LetGo::Retained => retained.push(item.id),
-                LetGo::Removed => {}
-            }
-        }
-        Ok(())
-    }
-
-    /// Trashes nothing. Answers whether it did.
-    fn let_go(
-        &self,
-        item_id: &str,
-        peers: &Peers<'_>,
-        context: &crate::reach::Context,
-        report: &mut PullReport,
-    ) -> Result<LetGo> {
-        let Some(bound) = state::bound_to_item(&*self.core.conn()?, item_id)? else {
-            return Ok(LetGo::Inapplicable);
-        };
-        let path = self.root.join(&bound.path);
-        let own = self
-            .read(&path)
-            .is_ok_and(|found| bound.written_hash.as_deref() == Some(state::hash(&found).as_str()));
-        if !own || !plainly_inside(&self.root_dir, &bound.path) || !peers.filed_elsewhere(item_id) {
-            return Ok(LetGo::Inapplicable);
-        }
-        let Ok((directory, name)) = self.location(&path, false) else {
-            return Ok(LetGo::Inapplicable);
-        };
-        let entry = transfer::Entry {
-            directory,
-            name: name.into(),
-            label: path.clone(),
-        };
-        let Ok(source) = transfer::Source::open_at(&entry, &bound) else {
-            return Ok(LetGo::Inapplicable);
-        };
-        // Checked again as it goes, so an edit saved meanwhile stays.
-        let conn = self.core.conn()?;
-        context.same_copy(&conn)?;
-        let dir = Path::new(&bound.path)
-            .parent()
-            .map(|parent| parent.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let removed = match self
-            .guarded_at(&conn, &entry, dir)
-            .map_err(landing::RemoveError::Remove)
-            .and_then(|place| {
-                landing::remove_checked_at(&place.directory, place.guard(), &entry.name, |found| {
-                    source.check().is_ok()
-                        && bound.written_hash.as_deref() == Some(state::hash(found).as_str())
-                })
-            }) {
-            Ok(removed) => removed,
-            Err(landing::RemoveError::Remove(error)) => {
-                if landing::is_busy(&error) {
-                    report.not_written(
-                        NotWritten::Busy,
-                        item_id,
-                        &bound.path,
-                        "a program has it open for writing, so Marfa lets it go to another folder once that program closes it",
-                    );
-                    return Ok(LetGo::Retained);
-                }
-                report.unwritten += 1;
-                report.flagged.push(Flagged {
-                    path: bound.path.clone(),
-                    flag: "retained",
-                    reason: format!("cannot let it go to another folder: {error}"),
-                    item: Some(item_id.to_string()),
-                });
-                return Ok(LetGo::Retained);
-            }
-            Err(landing::RemoveError::Read(error)) => {
-                return Err(CoreError::Store(format!(
-                    "cannot read {}: {error}",
-                    path.display()
-                )));
-            }
-        };
-        if !removed {
-            return Ok(LetGo::Inapplicable);
-        }
-        drop(conn);
-        // After the removal, which may be refused, and before the binding
-        // goes, so a failure leaves the binding for the scan to settle.
-        let ended = self.end_placement(item_id, &bound.path)?;
-        let conn = self.core.conn()?;
-        state::unbind(&conn, &bound.path)?;
-        state::journal_clear(&conn, &bound.path)?;
-        report.ended += ended;
-        report.let_go += 1;
-        Ok(LetGo::Removed)
     }
 
     fn remove_departed(

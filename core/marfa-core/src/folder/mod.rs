@@ -352,8 +352,7 @@ pub struct Flagged {
     pub path: String,
     pub flag: &'static str,
     pub reason: String,
-    /// The item whose file this is, where a pull did not write it or could
-    /// not let it go to another folder.
+    /// The item whose file this is, where a pull did not write it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub item: Option<String>,
 }

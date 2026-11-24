@@ -180,7 +180,6 @@ pub(super) fn keeps_the_files(pull: &PullReport) -> bool {
         + pull.removed
         + pull.purged
         + pull.taken
-        + pull.let_go
         + pull.beside
         + pull.relinked
         == 0
