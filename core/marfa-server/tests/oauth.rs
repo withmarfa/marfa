@@ -717,7 +717,10 @@ async fn a_failed_audit_undoes_the_whole_approval() {
     let link = instance.consent_link(&client, NOTES).await;
     let grants = "SELECT count(*) FROM items WHERE type = 'system.connection'";
     let consents = "SELECT count(*) FROM oauth_consents";
-    let events = "SELECT count(*) FROM event_log";
+    // The refused request is a fault the server met, which the attention check
+    // announces in an `attention.raised` event of its own some time later, so
+    // only the events of the grant the approval would write are counted.
+    let events = "SELECT count(*) FROM event_log WHERE type = 'system.connection'";
     let codes = "SELECT count(*) FROM oauth_codes";
     let events_before = instance.count(events).await;
 
@@ -726,6 +729,14 @@ async fn a_failed_audit_undoes_the_whole_approval() {
     let reply = instance.decide(&link, &[NOTES]).await;
     instance.app.faults.clear(None);
     assert!(reply.status.is_server_error(), "{}", reply.text);
+    // Announce the fault now, so the check's event is in the log, as the
+    // witness that it is not counted, whenever the scheduler would have run it.
+    let checked = housekeeping::run_now(&instance.app, &Caller::Server, "attention-check")
+        .await
+        .unwrap();
+    assert_eq!(checked.outcome, "succeeded", "{:?}", checked.error);
+    let raised = "SELECT count(*) FROM event_log WHERE event_type = 'attention.raised'";
+    assert!(instance.count(raised).await >= 1);
     assert_eq!(instance.count(grants).await, 0);
     assert_eq!(instance.count(consents).await, 0);
     assert_eq!(instance.count(codes).await, 0);
