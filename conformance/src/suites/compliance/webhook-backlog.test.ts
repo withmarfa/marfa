@@ -262,7 +262,10 @@ describe("a webhook whose receiver never answers", () => {
             const rows = withStatus(await deliveries(), "pending");
             const further =
               rows.length === LIMIT &&
-              rows.every((row) => row.attempt > (before.get(row.id) ?? 0));
+              rows.every((row) => {
+                const was = before.get(row.id);
+                return was !== undefined && row.attempt > was;
+              });
             return further
               ? new Map(rows.map((row) => [row.id, row.attempt]))
               : undefined;

@@ -180,7 +180,7 @@ While the server's clock is more than an hour earlier than the trusted time, the
 
 While every recorded attempt to deliver to an active webhook subscription since its last success, or since it was created, pointed at another URL or turned on, has failed, and the first of those failures was 24 hours ago or more, the server MUST answer `GET /attention` with a concern of kind `webhook` whose reference is the subscription's `id`.
 
-**Reason:** a day without a success spans several full retry cycles (`events/retry-schedule`). A subscription ID identifies the receiver without exposing a secret in its URL. A delivery sent from memory (`events/attention-memory-unlisted`) is not recorded, so its attempts neither start nor end the failure.
+**Reason:** a day without a success spans several full retry cycles (`events/retry-schedule`). A subscription ID identifies the receiver without exposing a secret in its URL. A delivery sent from memory (`events/attention-memory-unlisted`) is not recorded, so its attempts neither start nor end the failure. A database updated from a release that did not record failures starts each subscription with none, because expired deliveries cannot prove when a failure began.
 
 **Tests:** `compliance/webhook-backlog.test.ts › lists a webhook in attention once every recorded attempt has failed for a day`.
 

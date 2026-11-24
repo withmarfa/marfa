@@ -1,6 +1,7 @@
 -- Keep backlog checks independent of the number of deliveries already queued.
 ALTER TABLE webhooks ADD COLUMN pending INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE webhooks ADD COLUMN pending_bytes INTEGER NOT NULL DEFAULT 0;
+-- Starts empty: expired deliveries leave too little to prove when a failure began.
 ALTER TABLE webhooks ADD COLUMN failing_since TEXT;
 
 UPDATE webhooks SET
@@ -8,22 +9,6 @@ UPDATE webhooks SET
                WHERE d.webhook_id = webhooks.id AND d.status = 'pending'),
     pending_bytes = (SELECT COALESCE(SUM(octet_length(d.payload)), 0) FROM webhook_deliveries d
                      WHERE d.webhook_id = webhooks.id AND d.status = 'pending');
-
--- Failing only where a recorded failure is strictly after the last success and the last edit.
-WITH succeeded AS MATERIALIZED (
-    SELECT webhook_id, MAX(updated_at) AS at FROM webhook_deliveries
-    WHERE status = 'succeeded' GROUP BY webhook_id
-), first_failed AS (
-    SELECT d.webhook_id, MIN(d.updated_at) AS at
-    FROM webhook_deliveries d
-    JOIN webhooks w ON w.id = d.webhook_id
-    LEFT JOIN succeeded s ON s.webhook_id = d.webhook_id
-    WHERE w.active = 1 AND d.status IN ('pending', 'failed') AND d.cycle_attempt > 0
-      AND d.updated_at > w.updated_at AND (s.at IS NULL OR d.updated_at > s.at)
-    GROUP BY d.webhook_id
-)
-UPDATE webhooks SET failing_since = first_failed.at
-FROM first_failed WHERE first_failed.webhook_id = webhooks.id;
 
 CREATE TRIGGER IF NOT EXISTS webhook_pending_added AFTER INSERT ON webhook_deliveries
 WHEN new.status = 'pending' BEGIN

@@ -763,15 +763,6 @@ fn attempted(db: &rusqlite::Connection, first: i64, rows: &[(&str, &str, i64, &s
     }
 }
 
-#[cfg(test)]
-fn edited(db: &rusqlite::Connection, id: &str, at: &str) {
-    db.execute(
-        "UPDATE webhooks SET updated_at = ?2 WHERE id = ?1",
-        [id, at],
-    )
-    .unwrap();
-}
-
 #[test]
 fn an_upgrade_counts_the_backlog_each_subscription_already_holds() {
     let mut db = before_backlog();
@@ -792,75 +783,18 @@ fn an_upgrade_counts_the_backlog_each_subscription_already_holds() {
 }
 
 #[test]
-fn an_upgrade_fails_a_subscription_from_its_earliest_failure_since_its_last_success() {
+fn an_upgrade_starts_no_failure_and_the_next_recorded_failure_does() {
     let mut db = before_backlog();
-    db.execute_batch(&webhooks(&[
-        ("recovered", "k1", ""),
-        ("failing", "k1", ""),
-        ("never", "k1", ""),
-        ("redelivered", "k1", ""),
-        ("off", "k1", ""),
-        ("changed", "k1", ""),
-        ("tied", "k1", ""),
-    ]))
-    .unwrap();
-    db.execute("UPDATE webhooks SET active = 0 WHERE id = 'off'", [])
+    db.execute_batch(&webhooks(&[("failing", "k1", ""), ("recovered", "k1", "")]))
         .unwrap();
-    edited(&db, "changed", "2026-01-09T00:00:00.000Z");
+    // Expiry by creation time can keep a newer failure and drop an older success.
     attempted(
         &db,
         1,
         &[
-            ("recovered", "failed", 8, "2026-01-02T00:00:00.000Z"),
-            ("recovered", "succeeded", 1, "2026-01-03T00:00:00.000Z"),
             ("failing", "failed", 8, "2026-01-02T00:00:00.000Z"),
-            ("failing", "succeeded", 1, "2026-01-03T00:00:00.000Z"),
-            ("failing", "pending", 2, "2026-01-05T00:00:00.000Z"),
-            ("failing", "failed", 8, "2026-01-04T00:00:00.000Z"),
-            ("failing", "canceled", 3, "2026-01-03T12:00:00.000Z"),
-            ("never", "pending", 1, "2026-01-06T00:00:00.000Z"),
-            ("never", "failed", 8, "2026-01-07T00:00:00.000Z"),
-            ("redelivered", "pending", 0, "2026-01-04T00:00:00.000Z"),
-            ("off", "pending", 1, "2026-01-04T00:00:00.000Z"),
-            ("changed", "pending", 1, "2026-01-08T00:00:00.000Z"),
-            ("changed", "pending", 1, "2026-01-10T00:00:00.000Z"),
-            ("tied", "succeeded", 1, "2026-01-04T00:00:00.000Z"),
-            ("tied", "pending", 1, "2026-01-04T00:00:00.000Z"),
-        ],
-    );
-    upgraded(&mut db);
-    let tx = db.transaction().unwrap();
-    assert_eq!(
-        failing(&tx).unwrap(),
-        vec![
-            (
-                "failing".to_string(),
-                "2026-01-04T00:00:00.000Z".to_string()
-            ),
-            ("never".to_string(), "2026-01-06T00:00:00.000Z".to_string()),
-            (
-                "changed".to_string(),
-                "2026-01-10T00:00:00.000Z".to_string()
-            ),
-        ]
-    );
-}
-
-#[test]
-fn an_upgrade_leaves_unproven_failures_to_the_next_recorded_attempt() {
-    let mut db = before_backlog();
-    db.execute_batch(&webhooks(&[("edited", "k1", ""), ("repointed", "k1", "")]))
-        .unwrap();
-    // An events-only edit after the failure cannot be told from a repoint.
-    edited(&db, "edited", "2026-01-05T00:00:00.000Z");
-    // A repoint in the same millisecond as the old receiver's failure.
-    edited(&db, "repointed", "2026-01-04T00:00:00.000Z");
-    attempted(
-        &db,
-        1,
-        &[
-            ("edited", "pending", 1, "2026-01-04T00:00:00.000Z"),
-            ("repointed", "pending", 1, "2026-01-04T00:00:00.000Z"),
+            ("failing", "pending", 1, "2026-01-04T00:00:00.000Z"),
+            ("recovered", "failed", 8, "2026-01-03T00:00:00.000Z"),
         ],
     );
     upgraded(&mut db);
@@ -872,45 +806,13 @@ fn an_upgrade_leaves_unproven_failures_to_the_next_recorded_attempt() {
         error: Some("HTTP 503"),
         due_at: 0,
     };
-    record(&tx, "d1", &failed, "2026-01-06T00:00:00.000Z").unwrap();
+    record(&tx, "d2", &failed, "2026-01-06T00:00:00.000Z").unwrap();
     assert_eq!(
         failing(&tx).unwrap(),
-        vec![("edited".to_string(), "2026-01-06T00:00:00.000Z".to_string())]
-    );
-}
-
-#[test]
-fn an_upgrade_dates_a_long_failing_backlog_in_one_pass() {
-    const FAILED: i64 = 25_000;
-    let mut db = before_backlog();
-    db.execute_batch(&webhooks(&[("busy", "k1", "")])).unwrap();
-    attempted(
-        &db,
-        1,
-        &[("busy", "succeeded", 1, "2026-01-01T12:00:00.000Z")],
-    );
-    db.execute(
-        "WITH RECURSIVE n(seq) AS (SELECT 2 UNION ALL SELECT seq + 1 FROM n WHERE seq <= ?1) \
-         INSERT INTO webhook_deliveries (seq, id, webhook_id, event_id, event_type, type, \
-         source, payload, status, attempt, cycle_attempt, due_at, created_at, updated_at) \
-         SELECT seq, 'd' || seq, 'busy', seq, 'item.created', 'core.note', 'test', '{}', \
-         'failed', 8, 8, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', \
-         strftime('%Y-%m-%dT%H:%M:%fZ', '2026-01-02', '+' || seq || ' seconds') FROM n",
-        [FAILED],
-    )
-    .unwrap();
-    let started = std::time::Instant::now();
-    upgraded(&mut db);
-    let took = started.elapsed();
-    eprintln!("the upgrade over {FAILED} failed deliveries took {took:?}");
-    assert!(
-        took < std::time::Duration::from_secs(2),
-        "the upgrade took {took:?}"
-    );
-    let tx = db.transaction().unwrap();
-    assert_eq!(
-        failing(&tx).unwrap(),
-        vec![("busy".to_string(), "2026-01-02T00:00:02.000Z".to_string())]
+        vec![(
+            "failing".to_string(),
+            "2026-01-06T00:00:00.000Z".to_string()
+        )]
     );
 }
 
