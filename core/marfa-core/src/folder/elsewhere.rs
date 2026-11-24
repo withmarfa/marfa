@@ -212,6 +212,8 @@ impl Peer {
         })
     }
 
+    /// Whether its query holds a document the item is attached to, so its
+    /// file of the item is that document's attachment.
     fn holds_document_of(&self, item_id: &str) -> bool {
         let Some(folder) = &self.folder else {
             return false;
@@ -577,7 +579,8 @@ impl<'a> Peers<'a> {
         self.loaded().1.as_deref()
     }
 
-    /// Another directory of this folder can still have a file that is returning here.
+    /// A directory of this folder can keep a file of the item too, so only
+    /// another folder's file makes a returning file a copy.
     pub(super) fn carry(&self, item_id: &str) -> bool {
         self.other_folders().any(|peer| {
             peer.files()
