@@ -153,14 +153,18 @@ jobs:
 
       # Before the stop, because `marfa:down` clears the state directory and
       # the log is in it.
+      - name: Stage the server log without its setup proof
+        if: failure()
+        working-directory: conformance
+        run: pnpm marfa:stage-logs --state "$RUNNER_TEMP/marfa" --to "$RUNNER_TEMP/server-logs"
+
       - name: Keep the server log
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: marfa-server-log
           path: |
-            ${{ runner.temp }}/marfa/server.log
-            ${{ runner.temp }}/marfa/server.stderr
+            ${{ runner.temp }}/server-logs/
           if-no-files-found: ignore
 
       - name: Stop the server
@@ -353,14 +357,18 @@ jobs:
         working-directory: conformance
         run: pnpm scale judge
 
+      - name: Stage the server log without its setup proof
+        if: failure()
+        working-directory: conformance
+        run: pnpm marfa:stage-logs --state "$MARFA_SCALE_STATE" --to "$RUNNER_TEMP/server-logs"
+
       - name: Keep the server log
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: marfa-scale-server-log
           path: |
-            ${{ env.MARFA_SCALE_STATE }}/server.log
-            ${{ env.MARFA_SCALE_STATE }}/server.stderr
+            ${{ runner.temp }}/server-logs/
           if-no-files-found: ignore
 
       - name: Stop the server

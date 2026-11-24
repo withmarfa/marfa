@@ -3590,11 +3590,11 @@ If the sign-in form's attempt is refused by a sign-in limit, then the server MUS
 
 ### `keys-and-oauth/sign-in-lockout-page`
 
-While an instance has an owner, when `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after_seconds` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up, and says that a passkey signs in during the lock.
+While an instance has an owner, when `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after_seconds` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up.
 
-**Reason:** A fixed number of minutes would be wrong for one of the two limits, and the passkey is the way in that a password lock does not close (`authentication/passkey-password-lock`).
+**Reason:** A fixed number of minutes would be wrong for one of the two limits. Where the owner has a passkey, the page says it still signs in, because a password lock does not close it (`authentication/passkey-password-lock`, `authentication/passkey-wait-line`).
 
-**Tests:** `compliance/sign-in-surface.test.ts › tells a locked-out person how long to wait, in whole minutes rounded up, and that a passkey still signs in`.
+**Tests:** `compliance/sign-in-surface.test.ts › tells a locked-out person how long to wait, in whole minutes rounded up, and names no passkey when the owner has none`.
 
 ### `keys-and-oauth/sign-in-only-wrong-counted`
 
@@ -4008,13 +4008,13 @@ While an instance has an owner, when an authorization the instance signed, whose
 
 **Tests:** `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`.
 
-### `keys-and-oauth/sign-in-caution`
+### `keys-and-oauth/sign-in-unverified-mark`
 
-When the sign-in page names an app, the server MUST show the unverified-app caution beside it.
+When the sign-in page names an app, the server MUST mark the name unverified beside it.
 
-**Reason:** The name is as unvetted on the page before the sign-in as on the page after it.
+**Reason:** The name is as unvetted on the page before the sign-in as on the page after it, and the mark says so where the person reads the name.
 
-**Tests:** `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`, `compliance/unverified-apps.test.ts › is shown with the caution on the sign-in page`.
+**Tests:** `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`, `compliance/unverified-apps.test.ts › is marked unverified beside its name on the sign-in page`.
 
 ### `keys-and-oauth/sign-in-unsigned-no-app`
 
@@ -4029,6 +4029,92 @@ When the sign-in page is opened by a request that is not an authorization the in
 When a person who holds a session opens `GET /auth/sign-in` without `prompt=login` and no authorization sent them, the server MUST answer a page saying they are signed in, holding no sign-in form.
 
 **Tests:** `compliance/sign-in-surface.test.ts › tells a person who is signed in so, and shows the form to one an authorization sent to sign in again`.
+
+### `keys-and-oauth/forgot-password-page`
+
+When a browser opens `GET /auth/forgot-password`, with or without a session, the server MUST answer a page with `200` that names both ways to reset the owner's password: the `marfa owner recover` command, and `MARFA_OWNER_RECOVERY` set before a restart.
+
+**Reason:** A person who has lost the password cannot sign in, so the page they reach from the sign-in page cannot ask for one.
+
+**Tests:** `compliance/sign-in-surface.test.ts › answers a page that says how to reset the owner's password, without a sign-in and without printing the private socket's path`.
+
+### `keys-and-oauth/forgot-password-no-path`
+
+The server MUST NOT print the path of its private socket on `GET /auth/forgot-password`.
+
+**Reason:** The page is public, and the path says where on the machine the instance's private door is.
+
+**Tests:** `compliance/sign-in-surface.test.ts › answers a page that says how to reset the owner's password, without a sign-in and without printing the private socket's path`.
+
+### `keys-and-oauth/sign-in-recovered-notice`
+
+When `GET /auth/sign-in` carries the `marfa_recovered` cookie, holds no live session and sends no authorization, the server MUST say on the page that the password has been changed.
+
+**Reason:** The person came to the sign-in page from a recovery, and should know the new password is the one to use.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`.
+
+### `keys-and-oauth/sign-in-recovered-signed-in`
+
+When `GET /auth/sign-in` carries the `marfa_recovered` cookie and holds a live session, and sends no authorization, the server MUST answer the page that says the person is signed in, not the notice that the password has been changed.
+
+**Reason:** A person who is signed in has no password to sign in with, so the notice has nothing to tell them.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`.
+
+### `keys-and-oauth/sign-in-recovered-once`
+
+When `GET /auth/sign-in` carries the `marfa_recovered` cookie, the server MUST end that cookie in its answer, whatever page it answers.
+
+**Reason:** The notice tells of one recovery, once, so a later visit to the page does not repeat it.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`.
+
+### `keys-and-oauth/sign-in-recovered-no-query`
+
+If `GET /auth/sign-in` carries `recovered=true` in its query and no `marfa_recovered` cookie, then the server MUST NOT say on the page that the password has been changed.
+
+**Reason:** A link anyone can type must not tell a person their password was changed, as an instance that has never had a recovery would then say so.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`.
+
+### `keys-and-oauth/recovery-form-sign-in`
+
+When a browser's recovery form sets a new password, the server MUST answer `303` to `/auth/sign-in`.
+
+**Reason:** Every browser session ended with the old password, so the next step is to sign in.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`.
+
+### `keys-and-oauth/recovery-form-notice-cookie`
+
+When a browser's recovery form sets a new password, the server MUST set the `marfa_recovered` cookie in the same answer, as an `HttpOnly` cookie with `SameSite=Strict`, `Path=/auth/sign-in` and a `Max-Age` of no more than 120 seconds.
+
+**Reason:** The cookie is what lets the sign-in page tell of a recovery that has happened, and it lasts only as long as the redirect needs.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`.
+
+### `keys-and-oauth/recovery-no-notice-cookie`
+
+If a recovery is refused, or is sent as JSON, then the server MUST NOT set the `marfa_recovered` cookie.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a recovery form whose two passwords differ or are not repeated, with both password fields empty, and keeps the password and the setup session for another try`, `› leaves after a recovery by code the state the private socket's recovery leaves`.
+
+### `keys-and-oauth/code-forms-reach-server`
+
+The server MUST draw the sign-in form of `GET /auth/sign-in`, and the setup code form and the recovery code form of `GET /setup`, with `novalidate` and with each of their fields still `required`.
+
+**Reason:** A browser stops a form with an empty required field before it is sent, so the server's own line and its marks on the empty fields would never be seen.
+
+**Tests:** `compliance/sign-in-surface.test.ts › marks only the fields a sign-in form was sent without, and lets the form reach the server empty`, `compliance/remote-claim.test.ts › is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once`, `› recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`.
+
+### `keys-and-oauth/sign-in-missing-marked`
+
+If a form post to `POST /auth/sign-in` leaves the username empty after trimming, or leaves the password empty, then the server MUST answer `302` to a sign-in page that marks as invalid only the fields the form left empty.
+
+**Reason:** A person who typed a password and a blank username is told to fix the username, not to retype what they got right.
+
+**Tests:** `compliance/sign-in-surface.test.ts › marks only the fields a sign-in form was sent without, and lets the form reach the server empty`.
 
 ### `keys-and-oauth/signed-in-reauth`
 

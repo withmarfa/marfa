@@ -1,5 +1,9 @@
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
-import { pageField, visibleText } from "../../utils/page-html.js";
+import {
+  markedInvalid,
+  pageField,
+  visibleText,
+} from "../../utils/page-html.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { ErrorResponse } from "../../client/types.js";
 import {
@@ -498,7 +502,7 @@ describe("the pages a person reads at sign-in", () => {
     expect(page).not.toContain("not-the-password");
   });
 
-  it("tells a locked-out person how long to wait, in whole minutes rounded up, and that a passkey still signs in", async () => {
+  it("tells a locked-out person how long to wait, in whole minutes rounded up, and names no passkey when the owner has none", async () => {
     // The wait the page names is the one the real lock set: lock an address,
     // follow the form's redirect, and read the page it lands on.
     const guesser = "203.0.113.60";
@@ -520,11 +524,9 @@ describe("the pages a person reads at sign-in", () => {
     expect(real).toContain(
       `Try again in ${String(minutes)} ${minutes === 1 ? "minute" : "minutes"}`,
     );
-    // The sentence itself: every sign-in page holds the word "passkey" in the
-    // passkey button, so the word alone proves nothing.
-    expect(real).toMatch(
-      /Try again in \d+ minutes?, or sign in with a passkey/,
-    );
+    // This instance signs in at an address that cannot hold a passkey.
+    expect(real).toMatch(/Try again in \d+ minutes?\./);
+    expect(real.toLowerCase()).not.toContain("passkey");
 
     // Whole minutes, rounded up, for waits either side of a minute.
     for (const [retryAfter, said] of [
@@ -611,8 +613,8 @@ describe("the pages a person reads at sign-in", () => {
     expect(signInUrl.pathname).toBe("/auth/sign-in");
     const named = visibleText(await (await fetch(signInUrl)).text());
     expect(named).toContain("Conformance Notes");
-    // An app that registered itself is flagged as the consent page flags it.
-    expect(named).toContain("hasn't verified this app");
+    // An app that registered itself is marked unverified beside its name.
+    expect(named).toContain("(unverified");
 
     const edited = new URL(signInUrl);
     edited.searchParams.set("scope", "core.note:write");
@@ -645,6 +647,57 @@ describe("the pages a person reads at sign-in", () => {
         "password",
       ),
     ).toBeDefined();
+  });
+
+  it("marks only the fields a sign-in form was sent without, and lets the form reach the server empty", async () => {
+    const page = await (await fetch(`${server!.apiUrl}/auth/sign-in`)).text();
+    expect(/<form\b[^>]*\snovalidate[\s>]/i.test(page)).toBe(true);
+    expect(/<input id="username"[^>]*\srequired/i.test(page)).toBe(true);
+    expect(/<input id="password"[^>]*\srequired/i.test(page)).toBe(true);
+
+    const marked = async (username: string, password: string) => {
+      const sent = await postForm(
+        "/auth/sign-in",
+        { username, password, return_to: "/" },
+        { origin, [CLIENT_HEADER]: "192.0.2.61" },
+      );
+      expect(sent.status).toBe(302);
+      const landed = await (
+        await fetch(new URL(sent.headers.get("location")!, server!.apiUrl))
+      ).text();
+      expect(visibleText(landed)).toContain(
+        "Enter your username and your password.",
+      );
+      return ["username", "password"].filter((id) => markedInvalid(landed, id));
+    };
+    expect(await marked("   ", OWNER.password)).toEqual(["username"]);
+    expect(await marked(OWNER.username, "")).toEqual(["password"]);
+    expect(await marked("", "")).toEqual(["username", "password"]);
+  });
+
+  it("answers a page that says how to reset the owner's password, without a sign-in and without printing the private socket's path", async () => {
+    const reply = await fetch(`${server!.apiUrl}/auth/forgot-password`, {
+      headers: { accept: "text/html" },
+    });
+    expect(reply.status).toBe(200);
+    const text = visibleText(await reply.text());
+    expect(text).toContain("marfa --socket PATH owner recover");
+    expect(text).toContain("MARFA_OWNER_RECOVERY=true");
+    expect(text).toContain("Enter Recovery Code");
+    // The witness: the server has a private socket whose path a page could have
+    // printed, and which the page does not.
+    const socket = server!.controlSocket;
+    expect(socket).toContain("/");
+    expect(text).not.toContain(socket);
+    // A query on the address changes nothing, and nor does a session.
+    expect(
+      (await fetch(`${server!.apiUrl}/auth/forgot-password?stray=1`)).status,
+    ).toBe(200);
+    const signedIn = await fetch(`${server!.apiUrl}/auth/forgot-password`, {
+      headers: { cookie: await sessionCookie("192.0.2.55") },
+    });
+    expect(signedIn.status).toBe(200);
+    expect(visibleText(await signedIn.text())).toBe(text);
   });
 
   it("tells a link edited after it was signed that it is invalid, not that it has expired", async () => {

@@ -512,6 +512,18 @@ pub async fn confirm(
     .settled()
 }
 
+/// Whether the owner holds a passkey that signs in at the sign-in address.
+pub async fn signs_in_here(app: &App) -> Result<bool> {
+    let party = match Party::now(app) {
+        Ok(party) => party,
+        Err(refusal) if refusal.code == Code::Forbidden => return Ok(false),
+        Err(refusal) => return Err(refusal),
+    };
+    app.db
+        .read(move |tx| Ok(!store::credentials_of(tx, &party.host)?.is_empty()))
+        .await
+}
+
 pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Listed>> {
     caller.require_passkeys()?;
     app.db.read(store::all).await

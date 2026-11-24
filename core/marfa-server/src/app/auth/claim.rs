@@ -8,6 +8,7 @@ use std::sync::Arc;
 use rusqlite::{OptionalExtension, Transaction, params};
 use subtle::ConstantTimeEq;
 
+use super::carries_sessions;
 use super::limits::{self, spent};
 use super::owner::{self, Details, Owner};
 use super::{Note, Visit, note, password};
@@ -24,11 +25,13 @@ use crate::settings::registry::{SIGN_IN_ADDRESS, Value};
 const CODE: &str = "code";
 const TICKET: &str = "ticket";
 const SESSION: &str = "session";
-const CODE_BYTES: usize = 16;
 const TOKEN_BYTES: usize = 32;
 const CODE_GROUP: usize = 5;
+/// Five groups of five letters, five bits each: 125 bits.
+const CODE_LETTERS: usize = 25;
 const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-const TICKET_MS: i64 = 5 * 60_000;
+const TICKET_MINUTES: i64 = 5;
+const TICKET_MS: i64 = TICKET_MINUTES * 60_000;
 const SESSION_MS: i64 = 15 * 60_000;
 const CLAIMED: &str = "owner.claimed";
 /// The generation of a recovery code and its session, which no claim accepts.
@@ -61,20 +64,10 @@ fn random<const N: usize>() -> Result<[u8; N]> {
 }
 
 fn new_code() -> Result<String> {
-    let mut letters = Vec::new();
-    let (mut held, mut bits) = (0u32, 0u32);
-    for byte in random::<CODE_BYTES>()? {
-        held = (held << 8) | u32::from(byte);
-        bits += 8;
-        while bits >= 5 {
-            bits -= 5;
-            letters.push(BASE32[((held >> bits) & 31) as usize]);
-        }
-        held &= (1 << bits) - 1;
-    }
-    if bits > 0 {
-        letters.push(BASE32[((held << (5 - bits)) & 31) as usize]);
-    }
+    let letters: Vec<u8> = random::<CODE_LETTERS>()?
+        .iter()
+        .map(|byte| BASE32[usize::from(byte & 31)])
+        .collect();
     let groups: Vec<String> = letters
         .chunks(CODE_GROUP)
         .map(|group| String::from_utf8_lossy(group).into_owned())
@@ -180,6 +173,14 @@ fn add(
     Ok(())
 }
 
+/// The server's own start and the private local command may issue setup proof.
+fn require_issuer(caller: &Caller) -> Result<()> {
+    if matches!(caller, Caller::Server) {
+        return Ok(());
+    }
+    caller.require_local()
+}
+
 pub async fn issue_code(app: &App, caller: &Caller) -> Result<(String, String)> {
     let code = new_code()?;
     let digest = digest_of(&app.settings.start.key_salt, &normalized(&code))?;
@@ -187,9 +188,7 @@ pub async fn issue_code(app: &App, caller: &Caller) -> Result<(String, String)> 
     let instance_id = app.instance_id.clone();
     let issued = generation.clone();
     app.write(caller, "instance.setup_code.issued", move |unit| {
-        if !matches!(unit.caller, Caller::Server) {
-            unit.caller.require_local()?;
-        }
+        require_issuer(&unit.caller)?;
         require_unclaimed(unit.tx())?;
         unit.tx().execute("DELETE FROM setup_proof", [])?;
         add(unit.tx(), &digest, CODE, &issued, None)?;
@@ -207,6 +206,34 @@ fn setup_page(app: &App) -> String {
     }
 }
 
+/// The link that opens the setup page already holding a ticket, which works once.
+pub fn handoff_link(app: &App, ticket: &str) -> String {
+    format!(
+        "{}/setup#handoff={ticket}",
+        app.addresses().sign_in().origin()
+    )
+}
+
+pub async fn claim_notice(app: &App) -> Result<Option<String>> {
+    if status(app).await?.claimed {
+        return Ok(None);
+    }
+    let (code, _) = issue_code(app, &Caller::Server).await?;
+    let page = setup_page(app);
+    let sign_in = app.addresses().sign_in();
+    if app.bound().is_none() || sign_in.port() == 0 || !carries_sessions(&sign_in) {
+        return Ok(Some(format!(
+            "Claim this Marfa at {page} with setup code: {code}"
+        )));
+    }
+    let (ticket, _) = issue_ticket(app, &Caller::Server).await?;
+    Ok(Some(format!(
+        "Claim this Marfa at {page} with setup code: {code}. Or open this link, which works \
+         once, for {TICKET_MINUTES} minutes: {}",
+        handoff_link(app, &ticket)
+    )))
+}
+
 pub async fn announce_at_start(app: &Arc<App>) -> Result<()> {
     if let Some(address) = &app.settings.start.claim_address
         && config::adopt_sign_in_address(app, address).await? == Adopted::Owned
@@ -217,12 +244,8 @@ pub async fn announce_at_start(app: &Arc<App>) -> Result<()> {
              changes only through PATCH /config on the private socket"
         );
     }
-    if !status(app).await?.claimed {
-        let (code, _) = issue_code(app, &Caller::Server).await?;
-        log::local_only(&format!(
-            "Claim this Marfa at {} with setup code: {code}",
-            setup_page(app)
-        ));
+    if let Some(notice) = claim_notice(app).await? {
+        log::local_only(&notice);
     }
     if let Some(code) = offer_recovery(app).await? {
         log::local_only(&format!(
@@ -344,6 +367,7 @@ pub async fn recover(
     app: &App,
     proof: Presented,
     new_password: String,
+    confirmation: Option<&str>,
     visit: Visit,
 ) -> Result<()> {
     if !is_claimed(app).await? {
@@ -358,6 +382,7 @@ pub async fn recover(
     app.db
         .read(move |tx| proof_stands(tx, Purpose::Recovery, judged.as_ref(), clock.instant()))
         .await?;
+    require_repeated(&new_password, confirmation)?;
     password::check_new(&new_password, "password")?;
     let hash = app.passwords.hash(new_password).await?;
     let clock = app.clock.clone();
@@ -392,7 +417,7 @@ pub async fn issue_ticket(app: &App, caller: &Caller) -> Result<(String, Stamp)>
     let clock = app.clock.clone();
     let expires_at = app
         .write(caller, "instance.setup_ticket.issued", move |unit| {
-            unit.caller.require_local()?;
+            require_issuer(&unit.caller)?;
             require_unclaimed(unit.tx())?;
             let now = clock.instant();
             drop_expired(unit.tx(), now)?;
@@ -549,6 +574,16 @@ fn proof_stands(
     }
 }
 
+fn require_repeated(password: &str, confirmation: Option<&str>) -> Result<()> {
+    match confirmation {
+        Some(typed) if typed != password => Err(Refusal::invalid_at(
+            "password",
+            "The passwords don’t match.",
+        )),
+        _ => Ok(()),
+    }
+}
+
 pub async fn session_stands(app: &App, token: &str) -> Result<bool> {
     let digest = digest_of(&app.settings.start.key_salt, token)?;
     let clock = app.clock.clone();
@@ -563,7 +598,13 @@ pub async fn is_claimed(app: &App) -> Result<bool> {
 
 /// The proof is judged before the password's hash is paid for and again in the transaction,
 /// so only one of two claims at once gets through.
-pub async fn claim(app: &App, details: Details, proof: Proof, visit: Visit) -> Result<Owner> {
+pub async fn claim(
+    app: &App,
+    details: Details,
+    proof: Proof,
+    confirmation: Option<&str>,
+    visit: Visit,
+) -> Result<Owner> {
     if is_claimed(app).await? {
         return Err(already_claimed());
     }
@@ -579,6 +620,7 @@ pub async fn claim(app: &App, details: Details, proof: Proof, visit: Visit) -> R
     app.db
         .read(move |tx| proof_stands(tx, Purpose::Claim, judged.as_ref(), clock.instant()))
         .await?;
+    require_repeated(&details.password, confirmation)?;
     password::check_new(&details.password, "password")?;
     let hash = app.passwords.hash(details.password.clone()).await?;
     let clock = app.clock.clone();
@@ -626,6 +668,34 @@ mod tests {
         let db = Connection::open_in_memory().unwrap();
         crate::db::migrate::make_all(&db).unwrap();
         db
+    }
+
+    #[test]
+    fn a_new_code_is_five_groups_of_five_letters_and_reads_however_it_is_typed() {
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..200 {
+            let code = new_code().unwrap();
+            let groups: Vec<&str> = code.split('-').collect();
+            assert_eq!(groups.len(), 5, "{code}");
+            for group in &groups {
+                assert_eq!(group.len(), 5, "{code}");
+                assert!(
+                    group.bytes().all(|letter| BASE32.contains(&letter)),
+                    "{code}"
+                );
+            }
+            assert!(seen.insert(code.clone()), "{code} came twice");
+            let letters = code.replace('-', "");
+            assert_eq!(letters.len(), 25);
+            for untidy in [
+                code.to_lowercase(),
+                code.replace('-', " "),
+                format!("  {}\n", code.to_lowercase().replace('-', " ")),
+                letters.to_lowercase(),
+            ] {
+                assert_eq!(normalized(&untidy), letters, "{untidy:?}");
+            }
+        }
     }
 
     #[test]

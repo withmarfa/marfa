@@ -24,7 +24,7 @@ let origin: string;
 let cookie: string;
 
 const CALLBACK = "http://127.0.0.1:9/callback";
-const SIGN_IN_CAUTION = "hasn't verified this app";
+const SIGN_IN_CAUTION = "(unverified";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 beforeAll(async () => {
@@ -150,7 +150,7 @@ describe("an app a person approves", () => {
     expect(page).toMatch(/Consent App \(unverified[,)]/);
   });
 
-  it("is shown with the caution on the sign-in page", async () => {
+  it("is marked unverified beside its name on the sign-in page", async () => {
     const app = await register("Sign-In App", ["authorization_code"]);
     const page = visibleText(await signInPage(app.clientId));
     expect(page).toContain("Sign-In App");

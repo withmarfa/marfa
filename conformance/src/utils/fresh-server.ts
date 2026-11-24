@@ -1,11 +1,11 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -346,7 +346,10 @@ export function keepStatusLog(state: string): void {
   const log = join(state, "server.log");
   if (destination !== undefined && destination !== "" && existsSync(log)) {
     mkdirSync(destination, { recursive: true });
-    copyFileSync(log, join(destination, `${basename(state)}.log`));
+    writeFileSync(
+      join(destination, `${basename(state)}.log`),
+      redactSetupProof(readFileSync(log, "utf8")),
+    );
   }
 }
 

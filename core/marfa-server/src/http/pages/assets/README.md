@@ -15,7 +15,8 @@ Every page is built from the parts below. A page names its parts and adds none o
 | Shown code | `parts::code_shown(code, said, ...)` | A code in cells to compare with another screen; a screen reader reads `said`. |
 | Actions | `parts::actions()` | Buttons at the trailing edge, the main action last. |
 | Box of rows | `parts::box_of_rows(symbols)` | A list of rows, each with words and at most one control. `symbols` lines the dividers up with the words of rows that start with an icon. |
-| Icon | `parts::icon(name)` | The icon at the start of a row: `items`, `link`, `person` or `sliders`. |
+| Icon | `parts::icon(name)` | The icon at the start of a row or in a button: `items`, `link`, `person`, `sliders`, `key`, `plus`, `lock` or `more`. |
+| Section | `parts::section(id, title)` | A heading over a box, and the lines after it. No button sits in the heading. |
 | Pop-up | `parts::pop(id, name, label, ...)` | A choice between levels, as a real `select`. |
 | Dialog | `parts::dialog(id, title, ...)` | A window over the page, drawn as a sheet at the bottom on a phone. |
 

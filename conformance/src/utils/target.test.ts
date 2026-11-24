@@ -22,6 +22,13 @@ describe("redactSetupProof", () => {
     );
   });
 
+  it("removes the one-time setup link beside the code", () => {
+    const log = `Claim this Marfa at /setup with setup code: AAAAA-BBBBB-CCCCC-DDDDD-EEEEE. Or open this link, which works once, for 5 minutes: http://127.0.0.1:1/setup#handoff=0f9a`;
+    expect(redactSetupProof(log)).toBe(
+      "Claim this Marfa at /setup with setup code: [redacted]. Or open this link, which works once, for 5 minutes: http://127.0.0.1:1/setup#handoff=[redacted]",
+    );
+  });
+
   it("removes a recovery code and keeps the rest of its line", () => {
     const code = "AAAAA-BBBBB-CCCCC-DDDDD-EEEEEE";
     const log = `Recover this Marfa's owner at /setup with recovery code: ${code}. It works once, for 60 minutes.`;

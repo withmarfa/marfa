@@ -18,10 +18,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# A log is read by whoever reads the run, and holds proof that opens an unclaimed instance.
+redact_setup_proof() {
+  sed -E -e 's/(setup|recovery) code: [A-Z2-7-]+/\1 code: [redacted]/g' -e 's/(handoff=)[0-9A-Za-z_-]+/\1[redacted]/g'
+}
+
 fail() {
   echo "::error::$1"
   echo "--- the server's log"
-  tail -40 "$state/log" || true
+  tail -40 "$state/log" | redact_setup_proof || true
   exit 1
 }
 

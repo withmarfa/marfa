@@ -125,7 +125,7 @@ fail() {
   echo "server-up: $1" >&2
   echo "server-up: log follows" >&2
   # Setup proof belongs only to this process's private log.
-  sed -E 's/(setup|recovery) code: [A-Z2-7-]+/\1 code: [redacted]/g' "${log}" >&2 || true
+  sed -E -e 's/(setup|recovery) code: [A-Z2-7-]+/\1 code: [redacted]/g' -e 's/handoff=[0-9a-f]+/handoff=[redacted]/g' "${log}" >&2 || true
   "$(dirname "$0")/server-down.sh" "${env_file}" >/dev/null 2>&1 || true
   exit 1
 }

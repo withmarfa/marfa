@@ -1,17 +1,13 @@
-{% import "partials/parts.html" as parts %}<div class="head">
-<h1>Sign in</h1>
-{% if let Some(app) = view.app %}<p class="lede">Sign in to continue to <bdi class="app-name">{{ app }}</bdi>.</p>
-{% endif %}</div>
-{% if view.app.is_some() %}{% include "partials/app_caution.html" %}
-{% endif %}<form method="post" action="/auth/sign-in">
+{% import "partials/parts.html" as parts %}{% if let Some(app) = view.app %}{% call parts::head_with("Sign in") %}<bdi>{{ app }}</bdi> ({{ unverified }}) wants to connect to your Marfa.{% endcall %}{% else if view.recovered %}{% call parts::head("Sign in", "Your password has been changed.") %}{% endcall %}{% else %}{% call parts::head("Sign in") %}{% endcall %}{% endif %}
+<form method="post" action="/auth/sign-in" novalidate>
 <input type="hidden" name="return_to" value="{{ view.return_to }}">
 {% if let Some(authorization) = view.authorization %}<input type="hidden" name="authorization" value="{{ authorization }}">
 {% endif %}<div class="fields">
-{% call parts::group(note="sign-in-problem", problem=problem_message.as_deref().unwrap_or_default()) %}
-{% call parts::field("username", "Username", name="username", value=view.username.as_str(), autocomplete="username webauthn", capitalize="none", note="sign-in-problem", described=has_problem) %}{% endcall %}
-{% call parts::field("password", "Password", name="password", kind="password", autocomplete="current-password", note="sign-in-problem", described=has_problem) %}{% endcall %}
+{% call parts::group(note="sign-in-problem", problem=problem_message.as_deref().unwrap_or_default(), problem_end=".", advice=passkey_advice, link_href="/auth/forgot-password", link_label="Forgot password?") %}
+{% call parts::field("username", "Username", name="username", value=view.username.as_str(), autocomplete="username webauthn", capitalize="none", invalid=username_invalid, note="sign-in-problem", described=has_problem) %}{% endcall %}
+{% call parts::field("password", "Password", name="password", kind="password", autocomplete="current-password", invalid=password_invalid, note="sign-in-problem", described=has_problem) %}{% endcall %}
 {% endcall %}
 </div>
-{% call parts::actions() %}<button type="button" class="btn" data-passkey="sign-in" hidden>Sign in with a passkey</button>
-<button type="submit" class="btn primary">Sign in</button>{% endcall %}
+{% call parts::actions() %}{% if view.passkey %}<button type="button" class="btn" data-passkey="sign-in" hidden>{% call parts::icon("key") %}{% endcall %}<span>Use Passkey</span></button>
+{% endif %}<button type="submit" class="btn primary">Sign In</button>{% endcall %}
 </form>

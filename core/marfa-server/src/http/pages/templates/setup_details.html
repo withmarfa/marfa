@@ -1,21 +1,16 @@
-{% import "partials/parts.html" as parts %}{% call parts::head("Create your account", "You'll use these details to sign in to this Marfa.") %}{% endcall %}
-{% if connecting %}<p>Next, you choose what the app can access, or turn it down.</p>
-{% endif %}{% if let Some(message) = view.notice %}<p class="err" role="alert">{{ message }}</p>
-{% endif %}<form id="owner-form" method="post" action="/setup/claim">
+{% import "partials/parts.html" as parts %}{% call parts::head("Create your account") %}{% endcall %}
+<form id="owner-form" method="post" action="/setup/claim">
 <input type="hidden" name="return_to" value="{{ view.return_to }}">
 <div class="fields">
-{% call parts::group(note="name-note", problem=view.errors.name.as_deref().unwrap_or_default()) %}
-{% call parts::field("name", "Name", name="name", value=view.name.as_str(), autocomplete="name", required=false, invalid=view.errors.name.is_some(), note="name-note", described=view.errors.name.is_some()) %}{% endcall %}
+{% call parts::group(title="Profile", note="profile-note", hint="You sign in with your username.", problem=profile_problem.unwrap_or_default()) %}
+{% call parts::field("name", "Name (optional)", name="name", value=view.name.as_str(), autocomplete="name", required=false, invalid=view.errors.name.is_some(), note="profile-note", dir="auto") %}{% endcall %}
+{% call parts::field("username", "Username", name="username", value=view.username.as_str(), autocomplete="username", capitalize="none", invalid=view.errors.username.is_some(), note="profile-note") %}{% endcall %}
 {% endcall %}
-{% call parts::group(note="username-note", hint="Letters a to z, numbers, dots, dashes and underscores. You sign in with it.", problem=view.errors.username.as_deref().unwrap_or_default()) %}
-{% call parts::field("username", "Username", name="username", value=view.username.as_str(), autocomplete="username", capitalize="none", invalid=view.errors.username.is_some(), note="username-note") %}{% endcall %}
-{% endcall %}
-{% call parts::group(note="password-note", hint="Choose a password you don't use anywhere else.", problem=view.errors.password.as_deref().unwrap_or_default()) %}
+{% call parts::group(title="Password", note="password-note", hint="At least 8 characters.", problem=view.errors.password.as_deref().unwrap_or_default()) %}
 {% call parts::field("password", "Password", name="password", kind="password", autocomplete="new-password", invalid=view.errors.password.is_some(), note="password-note") %}{% endcall %}
-{% endcall %}
-{% call parts::group(note="email-note", problem=view.errors.email.as_deref().unwrap_or_default()) %}
-{% call parts::field("email", "Email (optional)", name="email", kind="email", value=view.email.as_str(), autocomplete="email", capitalize="none", required=false, invalid=view.errors.email.is_some(), note="email-note", described=view.errors.email.is_some()) %}{% endcall %}
+{% call parts::field("confirm-password", "Confirm password", name="confirm_password", kind="password", autocomplete="new-password", invalid=view.errors.password.is_some(), note="password-note") %}{% endcall %}
 {% endcall %}
 </div>
-{% call parts::actions() %}<button type="submit" class="btn primary">Create account</button>{% endcall %}
+{% if let Some(message) = view.notice %}<p class="err" role="alert">{{ message }}</p>
+{% endif %}{% call parts::actions() %}<button type="submit" class="btn primary">Create Account</button>{% endcall %}
 </form>

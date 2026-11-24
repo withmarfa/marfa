@@ -1715,6 +1715,7 @@ describe("what a job reads reaches it", () => {
     const files = closure([
       "conformance/scripts/mcp-conformance.ts",
       "conformance/scripts/marfa-server.ts",
+      "conformance/scripts/stage-logs.ts",
       ...harnessTests(),
       "conformance/vitest.config.ts",
     ]);
@@ -2018,6 +2019,7 @@ describe("what the jobs that run a script or a harness load from the helpers", (
     return {
       "mcp-conformance": closure([
         "conformance/scripts/mcp-conformance.ts",
+        "conformance/scripts/stage-logs.ts",
         ...boot.slice(0, 1),
         ...harnessTests(),
         "conformance/vitest.config.ts",
@@ -2033,6 +2035,7 @@ describe("what the jobs that run a script or a harness load from the helpers", (
         "conformance/vitest.config.ts",
         ...setup,
         ...boot.slice(0, 1),
+        "conformance/scripts/stage-logs.ts",
         "conformance/scripts/rust-score.ts",
       ]),
     };

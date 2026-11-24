@@ -59,7 +59,11 @@
         return;
       }
       reveal("[data-handoff-working]", false);
-      reveal("[data-handoff-failed]", true);
+      reveal("[data-hint]", false);
+      const late = document.querySelector("[data-late-problem]");
+      if (!late) return;
+      late.hidden = false;
+      document.getElementById("code")?.setAttribute("aria-describedby", late.id);
     });
   }
 
@@ -77,6 +81,39 @@
     if (seen.has(element)) return false;
     seen.add(element);
     return true;
+  }
+
+  const MISMATCH = "The passwords don’t match.";
+
+  // A form that asks for a password twice compares them as it is sent, so what was typed stays.
+  function watchRepeatedPasswords() {
+    for (const form of document.querySelectorAll("#owner-form, #recover-form")) {
+      if (!bindOnce("repeated", form)) continue;
+      const password = form.elements.namedItem("password");
+      const confirm = form.elements.namedItem("confirm_password");
+      const note = document.getElementById(password.getAttribute("aria-describedby"));
+      const before = { className: note.className, text: note.textContent };
+      const settle = () => {
+        if (confirm.getAttribute("aria-invalid") !== "true" || confirm.dataset.mismatch !== "true") return;
+        delete confirm.dataset.mismatch;
+        confirm.removeAttribute("aria-invalid");
+        note.className = before.className;
+        note.textContent = before.text;
+        note.removeAttribute("role");
+      };
+      password.addEventListener("input", settle);
+      confirm.addEventListener("input", settle);
+      form.addEventListener("submit", (event) => {
+        if (password.value === confirm.value) return;
+        event.preventDefault();
+        confirm.dataset.mismatch = "true";
+        confirm.setAttribute("aria-invalid", "true");
+        note.className = "err";
+        note.setAttribute("role", "alert");
+        note.textContent = MISMATCH;
+        confirm.focus();
+      });
+    }
   }
 
   function showConfirmError(kind, waitSeconds) {
@@ -638,6 +675,9 @@
         void webauthn[button.dataset.passkey](button);
       });
     }
+    for (const advice of document.querySelectorAll("[data-passkey-advice]")) {
+      advice.hidden = false;
+    }
   }
 
   async function removePasskey(button) {
@@ -768,6 +808,7 @@
     watchChoices();
     watchChoose();
     watchChanges();
+    watchRepeatedPasswords();
     watchForms();
     watchDialog();
     watchPasskeys();

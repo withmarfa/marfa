@@ -21,6 +21,11 @@ containers=()
 volume=marfa-check-data-$(openssl rand -hex 8)
 BUSYBOX=busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
 
+# A log is read by whoever reads the run, and holds proof that opens an unclaimed instance.
+redact_setup_proof() {
+  sed -E -e 's/(setup|recovery) code: [A-Z2-7-]+/\1 code: [redacted]/g' -e 's/(handoff=)[0-9A-Za-z_-]+/\1[redacted]/g'
+}
+
 cleanup() {
   local name
   for name in ${containers[@]+"${containers[@]}"}; do docker rm -f "$name" >/dev/null 2>&1 || true; done
@@ -33,7 +38,7 @@ fail() {
   local name
   for name in ${containers[@]+"${containers[@]}"}; do
     echo "--- log of $name"
-    docker logs "$name" 2>&1 | tail -40 || true
+    docker logs "$name" 2>&1 | tail -40 | redact_setup_proof || true
   done
   exit 1
 }
