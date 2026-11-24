@@ -111,6 +111,7 @@ pub fn doors() -> Routes {
     let open = Doors::new()
         .route("/auth/sign-in", get(pages::sign_in).post(sign_in::sign_in))
         .route("/auth/error", get(pages::error))
+        .route("/auth/forgot-password", get(pages::forgot_password))
         .route("/auth/device", get(pages::device))
         .route("/setup", get(pages::setup))
         .route(

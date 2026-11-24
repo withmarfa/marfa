@@ -1933,7 +1933,7 @@ fn hidden_field(page: &str, name: &str) -> Option<String> {
 }
 
 const APP_NAME: &str = "a fixture app";
-const CAUTION: &str = "hasn't verified this app";
+const CAUTION: &str = "(unverified";
 
 #[tokio::test]
 async fn the_sign_in_page_names_the_app_only_for_a_link_the_instance_signed() {

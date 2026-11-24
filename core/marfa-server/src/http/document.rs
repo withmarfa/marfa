@@ -104,6 +104,10 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "GET /auth/error",
         "the OAuth failure page a redirect lands on",
     ),
+    (
+        "GET /auth/forgot-password",
+        "how to reset the owner's password, for a person who cannot sign in",
+    ),
     ("GET /i/", "the page of an item's link with no id"),
     (
         "GET /i/{*id}",

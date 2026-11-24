@@ -13,7 +13,9 @@ fn sign_in_view() -> SignIn {
         return_to: "/".into(),
         authorization: None,
         app: None,
+        app_address: None,
         problem: None,
+        recovered: false,
         passkey: false,
     }
 }
@@ -123,7 +125,9 @@ fn a_hostile_value_is_text_in_text_and_in_an_attribute() {
         return_to: HOSTILE.into(),
         authorization: None,
         app: Some(HOSTILE.into()),
+        app_address: Some(HOSTILE.into()),
         problem: None,
+        recovered: false,
         passkey: false,
     })
     .unwrap();
@@ -132,7 +136,7 @@ fn a_hostile_value_is_text_in_text_and_in_an_attribute() {
     assert!(!html.contains(HOSTILE));
     let escaped = "&quot;&gt;&lt;img src=x onerror=alert(1)&gt; &amp; &#39;q&#39;";
     assert!(html.contains(&format!("value=\"{escaped}\"")));
-    assert!(html.contains(&format!("<bdi class=\"app-name\">{escaped}</bdi>")));
+    assert!(html.contains(&format!("<bdi>{escaped}</bdi> (unverified, {escaped})")));
 }
 
 #[test]
@@ -141,11 +145,9 @@ fn a_hostile_value_stays_text_on_every_other_page() {
         setup_details(&SetupDetails {
             name: HOSTILE.into(),
             username: HOSTILE.into(),
-            email: HOSTILE.into(),
             errors: SetupFieldErrors {
                 name: Some(HOSTILE.into()),
                 username: Some(HOSTILE.into()),
-                email: Some(HOSTILE.into()),
                 password: Some(HOSTILE.into()),
             },
             notice: Some(HOSTILE.into()),
@@ -425,17 +427,17 @@ fn code_page(return_to: &str, app: Option<AskingApp>) -> String {
 #[test]
 fn the_setup_code_page_says_where_the_code_is_and_carries_return_to() {
     let plain = code_page("/", None);
-    assert!(plain.contains("in its terminal, or in its host&#39;s log"));
+    assert!(plain.contains("It’s in Marfa’s terminal, or its host’s log."));
     assert!(plain.contains("<input type=\"hidden\" name=\"return_to\" value=\"/\">"));
-    assert!(!plain.contains("choose what the app can access"));
+    assert!(!plain.contains("can connect"));
     let asked = code_page("/oauth/authorize?client_id=a", None);
     assert!(asked.contains("value=\"/oauth/authorize?client_id=a\""));
-    assert!(asked.contains("you choose what the app can access"));
-    assert!(!asked.contains("is asking to connect"));
+    assert!(asked.contains("Then the app can connect."));
+    assert!(!asked.contains("unverified"));
     let device = code_page("/auth/device/consent?user_code=ABCD-EFGH", None);
-    assert!(device.contains("you choose what the app can access"));
+    assert!(device.contains("Then the app can connect."));
     let elsewhere = code_page("/oauth/authorized", None);
-    assert!(!elsewhere.contains("choose what the app can access"));
+    assert!(!elsewhere.contains("can connect"));
 }
 
 #[test]
@@ -447,8 +449,8 @@ fn the_setup_code_page_names_an_app_only_beside_its_host() {
             host: "notes.example".into(),
         }),
     );
-    assert!(named.contains("Notes</bdi> at <bdi>notes.example</bdi> is asking to connect"));
-    assert!(named.contains("Marfa hasn't verified this app."));
+    assert!(named.contains("Then <bdi>Notes</bdi> (unverified, notes.example) can connect."));
+    assert!(!named.contains("hasn't verified"));
 }
 
 #[test]
@@ -465,7 +467,6 @@ fn the_details_page_carries_return_to() {
     let details = setup_details(&SetupDetails {
         name: String::new(),
         username: String::new(),
-        email: String::new(),
         errors: SetupFieldErrors::default(),
         notice: None,
         return_to: "/auth/device/consent?user_code=ABCD-EFGH".into(),
@@ -473,7 +474,127 @@ fn the_details_page_carries_return_to() {
     .unwrap()
     .html;
     assert!(details.contains("value=\"/auth/device/consent?user_code=ABCD-EFGH\""));
-    assert!(details.contains("Next, you choose what the app can access"));
+}
+
+fn details_page(errors: SetupFieldErrors) -> String {
+    without_code(
+        &setup_details(&SetupDetails {
+            name: "Mira".into(),
+            username: "mira".into(),
+            errors,
+            notice: None,
+            return_to: "/".into(),
+        })
+        .unwrap(),
+    )
+}
+
+/// The input tag of the field with this id.
+fn input<'a>(html: &'a str, id: &str) -> &'a str {
+    let start = html.find(&format!("<input id=\"{id}\"")).unwrap();
+    &html[start..start + html[start..].find('>').unwrap()]
+}
+
+#[test]
+fn the_details_page_has_two_groups_and_no_email_field() {
+    let html = details_page(SetupFieldErrors::default());
+    assert!(html.contains("<legend class=\"gh\">Profile</legend>"));
+    assert!(html.contains("<legend class=\"gh\">Password</legend>"));
+    assert!(html.contains("Name (optional)"));
+    assert!(html.contains("You sign in with your username."));
+    assert!(html.contains("At least 8 characters."));
+    assert!(html.contains("name=\"confirm_password\""));
+    assert!(!html.to_lowercase().contains("email"));
+    for id in ["name", "username"] {
+        assert!(input(&html, id).contains("aria-describedby=\"profile-note\""));
+        assert!(!input(&html, id).contains("aria-invalid"));
+    }
+    for id in ["password", "confirm-password"] {
+        assert!(input(&html, id).contains("aria-describedby=\"password-note\""));
+    }
+}
+
+#[test]
+fn a_problem_takes_the_hint_s_place_under_its_own_group_and_marks_its_own_field() {
+    let username = details_page(SetupFieldErrors {
+        username: Some("Use letters.".into()),
+        ..SetupFieldErrors::default()
+    });
+    assert!(username.contains(
+        "<p class=\"err\" id=\"profile-note\" role=\"alert\"><span>Use letters.</span></p>"
+    ));
+    assert!(!username.contains("You sign in with your username."));
+    assert!(input(&username, "username").contains("aria-invalid=\"true\""));
+    assert!(!input(&username, "name").contains("aria-invalid"));
+    assert!(username.contains("At least 8 characters."));
+
+    let passwords = details_page(SetupFieldErrors {
+        password: Some("The passwords don’t match.".into()),
+        ..SetupFieldErrors::default()
+    });
+    assert!(passwords.contains(
+        "id=\"password-note\" role=\"alert\"><span>The passwords don’t match.</span></p>"
+    ));
+    assert!(!passwords.contains("At least 8 characters."));
+    assert!(passwords.contains("You sign in with your username."));
+    for id in ["password", "confirm-password"] {
+        assert!(input(&passwords, id).contains("aria-invalid=\"true\""));
+        assert!(
+            !input(&passwords, id).contains("value="),
+            "{id} comes back empty"
+        );
+    }
+}
+
+#[test]
+fn a_wrong_password_marks_the_password_alone_and_keeps_the_username() {
+    let page = |problem, username: &str| {
+        without_code(
+            &sign_in(&SignIn {
+                username: username.into(),
+                problem: SignInProblem::from_query(Some(problem), None),
+                ..sign_in_view()
+            })
+            .unwrap(),
+        )
+    };
+    let wrong = page("invalid_credentials", "mira");
+    assert!(input(&wrong, "password").contains("aria-invalid=\"true\""));
+    assert!(input(&wrong, "password").contains("aria-describedby=\"sign-in-problem\""));
+    assert!(!input(&wrong, "username").contains("aria-invalid"));
+    assert!(input(&wrong, "username").contains("value=\"mira\""));
+    assert!(wrong.contains("That username or password isn’t right."));
+    assert!(wrong.contains("href=\"/auth/forgot-password\">Forgot password?</a>"));
+
+    for problem in ["too_many_attempts", "anything else"] {
+        let line_only = page(problem, "mira");
+        assert!(!line_only.contains("aria-invalid"), "{problem}");
+        assert!(line_only.contains("class=\"btn primary\">Sign In</button>"));
+        assert!(!line_only.contains("disabled"));
+    }
+
+    let both = page("missing_field", "");
+    assert!(input(&both, "username").contains("aria-invalid=\"true\""));
+    assert!(input(&both, "password").contains("aria-invalid=\"true\""));
+    assert!(both.contains("Enter your username and your password."));
+    let password_only = page("missing_field", "mira");
+    assert!(!input(&password_only, "username").contains("aria-invalid"));
+    assert!(input(&password_only, "password").contains("aria-invalid=\"true\""));
+}
+
+#[test]
+fn the_forgot_password_page_names_both_ways_and_never_prints_a_path() {
+    let page = forgot_password().unwrap();
+    let html = without_code(&page);
+    assert!(html.contains("marfa --socket PATH owner recover"));
+    assert!(html.contains("MARFA_OWNER_RECOVERY=true"));
+    assert!(html.contains("href=\"/setup\">Enter Recovery Code</a>"));
+    assert!(!html.contains(".sock"));
+    assert!(!html.contains("/run/"));
+    assert_eq!(
+        directive(page.policy().to_str().unwrap(), "connect-src"),
+        None
+    );
 }
 
 mod consent_pages {

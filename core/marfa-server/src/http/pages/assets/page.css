@@ -450,6 +450,10 @@ code {
   .box > li {
     padding-block: 0.125rem;
   }
+
+  .box > li > .t {
+    padding-block: 0.25rem;
+  }
 }
 
 .box > li + li::before {
@@ -595,6 +599,106 @@ dialog .actions {
   }
 }
 
+/* Icons in rows and buttons, and sections: a heading over a box, and the line after it. */
+.box > li > .ic,
+.btn .ic {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.box > li > .ic {
+  color: var(--t2);
+}
+
+.btn .ic {
+  width: 1rem;
+  height: 1rem;
+}
+
+.box.sym > li + li::before {
+  left: 2.75rem;
+}
+
+.sec + .sec {
+  margin-top: 1.5rem;
+}
+
+.sec > h2 {
+  display: flex;
+  align-items: center;
+  min-height: 1.75rem;
+  margin-bottom: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--t1);
+}
+
+.after {
+  margin-top: 0.5rem;
+  color: var(--t2);
+  font-size: 0.8125rem;
+}
+
+/* A command on a row's second line. */
+.box > li.two .m code {
+  padding: 0;
+  background: none;
+  color: var(--t1);
+  font-size: 0.78125rem;
+  line-height: 1.4;
+}
+
+/* A row that is a link: the whole row is the link, and a chevron says it goes to another page. */
+.box > li.link {
+  padding: 0;
+}
+
+.row-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  align-self: stretch;
+  min-height: 3rem;
+  padding: 0.375rem 0.875rem;
+  border-radius: 0.6875rem;
+  color: inherit;
+}
+
+.row-link:focus-visible {
+  outline-offset: -2px;
+}
+
+.row-link > .ic {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  color: var(--t2);
+}
+
+.row-link::after {
+  content: "";
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  background: var(--t2);
+  opacity: 0.7;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 6l6 6-6 6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+/* "Can't find it?" opens in place: the steps are a box, and the line after it comes from the page. */
+details .box {
+  margin-top: 0.75rem;
+  color: var(--t1);
+  font-size: 0.9375rem;
+}
+
+details .box + .hint {
+  margin-top: 0.5rem;
+}
+
 /* Reading aids: what an owner may open, and inline code. */
 details {
   font-size: 0.9375rem;
@@ -619,6 +723,41 @@ details p + p {
 .fields + details,
 .head + details {
   margin-top: 0.5rem;
+}
+
+/* "Can't find it?" sits under the field like a link under a group. */
+.fields + details {
+  font-size: 0.8125rem;
+}
+
+.fields + details > summary {
+  min-height: 1.125rem;
+}
+
+@media (max-width: 600px) {
+  .fields + details > summary {
+    min-height: 2.75rem;
+    margin: -0.8125rem 0;
+  }
+}
+
+.fields + .err,
+.box + .err,
+.fields + .note {
+  margin-top: 0.75rem;
+}
+
+.note + form {
+  margin-top: 1.25rem;
+}
+
+fieldset {
+  min-inline-size: 0;
+  border: 0;
+}
+
+legend {
+  padding: 0;
 }
 
 /* Parts the allow and passkeys pages still draw their own way. */

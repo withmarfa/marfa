@@ -27,9 +27,7 @@ impl SignInProblem {
     /// The sentence without its closing full stop, which the page sets after any advice.
     fn message(self) -> String {
         match self {
-            SignInProblem::InvalidCredentials => {
-                "That username or password isn't right. Check them and try again".into()
-            }
+            SignInProblem::InvalidCredentials => "That username or password isn’t right".into(),
             SignInProblem::MissingField => "Enter your username and your password".into(),
             SignInProblem::TooManyAttempts(Some(wait)) => {
                 format!("Too many attempts. Try again in {wait}")
@@ -43,6 +41,24 @@ impl SignInProblem {
     fn names_a_passkey(self) -> bool {
         matches!(self, SignInProblem::TooManyAttempts(_))
     }
+
+    /// Which fields are drawn red. A wrong pair marks the password alone, and an empty field is marked
+    /// where the page can tell: the password never comes back, so it is always empty.
+    fn marks(self, username: &str) -> (bool, bool) {
+        match self {
+            SignInProblem::InvalidCredentials => (false, true),
+            SignInProblem::MissingField => (username.is_empty(), true),
+            SignInProblem::TooManyAttempts(_) | SignInProblem::Other => (false, false),
+        }
+    }
+}
+
+/// What an app's name is set beside: it is unverified, and a web app also names where it is.
+pub(super) fn unverified(address: Option<&str>) -> String {
+    match address {
+        Some(address) => format!("unverified, {address}"),
+        None => "unverified".to_owned(),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +69,11 @@ pub struct SignIn {
     /// A refused form comes back with it so the page still names the app.
     pub authorization: Option<String>,
     pub app: Option<String>,
+    /// Where a web app sends the person back to. A loopback app has none.
+    pub app_address: Option<String>,
     pub problem: Option<SignInProblem>,
+    /// The owner's password has just been changed.
+    pub recovered: bool,
     /// Whether the owner holds a passkey that signs in here, which decides if the page offers one.
     pub passkey: bool,
 }
@@ -62,17 +82,26 @@ pub struct SignIn {
 #[template(path = "sign_in.html")]
 struct SignInBody<'a> {
     view: &'a SignIn,
+    unverified: String,
     problem_message: Option<String>,
     has_problem: bool,
+    username_invalid: bool,
+    password_invalid: bool,
     /// Whether the lockout line adds "or use a passkey", which the page shows with the button.
     passkey_advice: bool,
 }
 
 pub fn sign_in(view: &SignIn) -> Result<Page> {
+    let (username_invalid, password_invalid) = view
+        .problem
+        .map_or((false, false), |problem| problem.marks(&view.username));
     let body = render_body(&SignInBody {
         view,
+        unverified: unverified(view.app_address.as_deref()),
         problem_message: view.problem.map(SignInProblem::message),
         has_problem: view.problem.is_some(),
+        username_invalid,
+        password_invalid,
         passkey_advice: view.passkey && view.problem.is_some_and(SignInProblem::names_a_passkey),
     })?;
     document(
@@ -144,4 +173,14 @@ pub fn running(view: &Running) -> Result<Page> {
             confirm_dialog: false,
         },
     )
+}
+
+#[derive(Template)]
+#[template(path = "forgot_password.html")]
+struct ForgotPasswordBody;
+
+/// How to reset the owner's password, for a person who cannot sign in.
+pub fn forgot_password() -> Result<Page> {
+    let body = render_body(&ForgotPasswordBody)?;
+    document("Forgot your password?", &body, Needs::default())
 }

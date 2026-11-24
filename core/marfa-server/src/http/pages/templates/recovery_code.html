@@ -1,14 +1,10 @@
-{% import "partials/parts.html" as parts %}{% call parts::head("Recover your account", "Enter the recovery code to choose a new password for this Marfa's owner.") %}{% endcall %}
+{% import "partials/parts.html" as parts %}{% call parts::head("Recover your account", "Enter the recovery code from Marfa’s log.") %}{% endcall %}
 <form method="post" action="/setup/exchange">
 <input type="hidden" name="purpose" value="recovery">
 <div class="fields">
-{% call parts::group(note="code-note", problem=problem_message.as_deref().unwrap_or_default()) %}
-{% call parts::field("code", "Recovery code", name="code", capitalize="characters", mono=true, invalid=has_problem, note="code-note", described=has_problem) %}{% endcall %}
+{% call parts::group(note="code-note", hint="A code works once, for an hour.", problem=problem_message.as_deref().unwrap_or_default()) %}
+{% call parts::field("code", "Recovery code", name="code", capitalize="characters", mono=true, invalid=code_invalid, note="code-note") %}{% endcall %}
 {% endcall %}
 </div>
-<details>
-<summary>Where's my recovery code?</summary>
-<p>Marfa prints a recovery code in its log each time it starts with owner recovery turned on. A code works once, for an hour, and the next start replaces it.</p>
-</details>
 {% call parts::actions() %}<button type="submit" class="btn primary">Continue</button>{% endcall %}
 </form>

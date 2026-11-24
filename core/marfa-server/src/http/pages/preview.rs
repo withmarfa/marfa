@@ -21,8 +21,8 @@ const SHOW_WRONG_PASSWORD: &str =
     r#"document.querySelector('[data-confirm-error="password"]').hidden = false;"#;
 const OPEN_DETAILS: &str =
     r#"for (const details of document.querySelectorAll("details")) details.open = true;"#;
-const SHOW_HANDOFF_FAILED: &str =
-    r#"document.querySelector("[data-handoff-failed]").hidden = false;"#;
+const SHOW_HANDOFF_FAILED: &str = r#"document.querySelector("[data-hint]").hidden = true; document.querySelector("[data-late-problem]").hidden = false;"#;
+const MISMATCH_BY_SCRIPT: &str = r#"const form = document.querySelector("form[id$=-form]"); form.elements.namedItem("password").value = "harbour-kitchen-lewes"; form.elements.namedItem("confirm_password").value = "harbour-kitchen-leeds"; form.dispatchEvent(new Event("submit", { cancelable: true }));"#;
 const SHOW_HANDOFF_WORKING: &str =
     r#"document.querySelector("[data-handoff-working]").hidden = false;"#;
 const SHOW_PASSKEY_ERROR: &str = r#"const error = document.querySelector("[data-passkey-error]"); error.textContent = "Something went wrong. Try again."; error.hidden = false;"#;
@@ -108,7 +108,10 @@ fn sign_in_view() -> SignIn {
         return_to: "/".into(),
         authorization: None,
         app: None,
+        app_address: None,
         problem: None,
+        recovered: false,
+        passkey: true,
     }
 }
 
@@ -369,7 +372,6 @@ fn details_view() -> SetupDetails {
     SetupDetails {
         name: String::new(),
         username: String::new(),
-        email: String::new(),
         errors: SetupFieldErrors::default(),
         notice: None,
         return_to: "/".into(),
@@ -399,7 +401,19 @@ fn states() -> Vec<State> {
             "sign-in-for-an-app",
             "Sign in, on the way to an app",
             sign_in(&SignIn {
+                app: Some("Marfa for Mac".into()),
+                authorization: Some("client_id=marfa-for-mac&state=1".into()),
+                return_to: "/oauth/authorize?client_id=marfa-for-mac".into(),
+                ..sign_in_view()
+            }),
+        ),
+        State::new(
+            None,
+            "sign-in-for-a-web-app",
+            "Sign in, on the way to a web app, which names where it is",
+            sign_in(&SignIn {
                 app: Some("Cardigan".into()),
+                app_address: Some("cardigan.example".into()),
                 authorization: Some("client_id=cardigan&state=1".into()),
                 return_to: "/oauth/authorize?client_id=cardigan".into(),
                 ..sign_in_view()
@@ -415,6 +429,52 @@ fn states() -> Vec<State> {
             }),
         ),
         State::new(
+            Some("U32"),
+            "sign-in-recovered",
+            "Sign in, after recovering",
+            sign_in(&SignIn {
+                recovered: true,
+                ..sign_in_view()
+            }),
+        ),
+        State::new(
+            None,
+            "sign-in-no-passkey",
+            "Sign in, an owner with no passkey that signs in here",
+            sign_in(&SignIn {
+                passkey: false,
+                ..sign_in_view()
+            }),
+        ),
+        State::new(
+            None,
+            "sign-in-without-javascript",
+            "Sign in, without JavaScript, where a passkey button stays hidden",
+            sign_in(&sign_in_view()),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "sign-in-wrong-without-javascript",
+            "Sign in, a wrong password, without JavaScript",
+            sign_in(&SignIn {
+                username: "mira".into(),
+                problem: Some(SignInProblem::InvalidCredentials),
+                ..sign_in_view()
+            }),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "sign-in-too-many-without-javascript",
+            "Sign in, too many attempts, without JavaScript",
+            sign_in(&SignIn {
+                problem: Some(SignInProblem::TooManyAttempts(wait)),
+                ..sign_in_view()
+            }),
+        )
+        .without_javascript(),
+        State::new(
             Some("U31"),
             "sign-in-wrong",
             "Sign in, a wrong password",
@@ -429,6 +489,16 @@ fn states() -> Vec<State> {
             "sign-in-empty-field",
             "Sign in, a field left empty",
             sign_in(&SignIn {
+                problem: Some(SignInProblem::MissingField),
+                ..sign_in_view()
+            }),
+        ),
+        State::new(
+            None,
+            "sign-in-empty-password",
+            "Sign in, a password left empty",
+            sign_in(&SignIn {
+                username: "mira".into(),
                 problem: Some(SignInProblem::MissingField),
                 ..sign_in_view()
             }),
@@ -462,6 +532,24 @@ fn states() -> Vec<State> {
             }),
         ),
         State::new(
+            Some("U5"),
+            "forgot-password",
+            "Forgot your password?",
+            forgot_password(),
+        ),
+        State::new(
+            None,
+            "sign-in-wrong-long-username",
+            "Sign in, a wrong password for a long username",
+            sign_in(&SignIn {
+                username:
+                    "a-very-long-username-that-keeps-going-past-what-one-line-can-hold-1234567890"
+                        .into(),
+                problem: Some(SignInProblem::InvalidCredentials),
+                ..sign_in_view()
+            }),
+        ),
+        State::new(
             Some("U4"),
             "signed-in",
             "Signed in already, or just after claiming",
@@ -478,14 +566,34 @@ fn states() -> Vec<State> {
                 username: "mira".into(),
             }),
         ),
+        State::new(
+            None,
+            "signed-in-long-username",
+            "Signed in as a long, right-to-left username",
+            signed_in(&SignedIn {
+                username: format!(
+                    "{RIGHT_TO_LEFT} {RIGHT_TO_LEFT} {RIGHT_TO_LEFT} {RIGHT_TO_LEFT}"
+                ),
+                continue_to: "/".into(),
+            }),
+        ),
+        State::new(
+            None,
+            "its-address-long-username",
+            "Its address in a browser, signed in as a long, right-to-left username",
+            running(&Running {
+                username: format!(
+                    "{RIGHT_TO_LEFT} {RIGHT_TO_LEFT} {RIGHT_TO_LEFT} {RIGHT_TO_LEFT}"
+                ),
+            }),
+        ),
         // Recovery
         State::new(
             Some("U26"),
             "recover-code",
             "Recover: the recovery code",
             recovery_code(&RecoveryCode { problem: None }),
-        )
-        .after(&[OPEN_DETAILS]),
+        ),
         State::new(
             None,
             "recover-code-wrong",
@@ -495,12 +603,72 @@ fn states() -> Vec<State> {
             }),
         ),
         State::new(
-            Some("U27"),
-            "recover-new-password",
-            "Recover: a new password",
+            None,
+            "recover-code-none",
+            "Recover: nothing typed",
+            recovery_code(&RecoveryCode {
+                problem: Some(SetupCodeProblem::MissingCode),
+            }),
+        ),
+        State::new(
+            None,
+            "recover-code-session-ended",
+            "Recover: the session ended",
+            recovery_code(&RecoveryCode {
+                problem: Some(SetupCodeProblem::SessionEnded),
+            }),
+        ),
+        State::new(
+            None,
+            "recover-code-too-many",
+            "Recover: too many attempts",
+            recovery_code(&RecoveryCode {
+                problem: Some(SetupCodeProblem::TooManyAttempts(wait)),
+            }),
+        ),
+        State::new(
+            None,
+            "recover-code-without-javascript",
+            "Recover: the recovery code, without JavaScript",
+            recovery_code(&RecoveryCode { problem: None }),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "recover-new-password-hint",
+            "Recover: a new password, nothing typed",
             recover_password(&RecoverPassword {
                 error: None,
                 notice: None,
+            }),
+        ),
+        State::new(
+            Some("U27"),
+            "recover-new-password",
+            "Recover: a new password, and the two don't match",
+            recover_password(&RecoverPassword {
+                error: None,
+                notice: None,
+            }),
+        )
+        .after(&[MISMATCH_BY_SCRIPT]),
+        State::new(
+            None,
+            "recover-new-password-mismatch-without-javascript",
+            "Recover: the two passwords don't match, as the server answers, both empty",
+            recover_password(&RecoverPassword {
+                error: Some("The passwords don’t match.".into()),
+                notice: None,
+            }),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "recover-new-password-failed",
+            "Recover: something went wrong",
+            recover_password(&RecoverPassword {
+                error: None,
+                notice: Some("Something went wrong. Try again.".into()),
             }),
         ),
         State::new(
@@ -537,10 +705,37 @@ fn states() -> Vec<State> {
         State::new(
             Some("U34"),
             "claim-help",
-            "Claim, Can't find it? opened",
+            "Claim, Can’t find it? opened",
             setup_code(&claim_view()),
         )
         .after(&[OPEN_DETAILS]),
+        State::new(
+            None,
+            "claim-help-without-javascript",
+            "Claim, Can’t find it? opened by the browser alone",
+            setup_code(&claim_view()),
+        )
+        .after(&[OPEN_DETAILS])
+        .without_javascript(),
+        State::new(
+            None,
+            "claim-without-javascript",
+            "Claim, the setup code, without JavaScript",
+            setup_code(&claim_view()),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "claim-for-an-app-long-names",
+            "Claim, on the way to an app with a long, right-to-left name",
+            setup_code(&SetupCode {
+                app: Some(AskingApp {
+                    name: format!("{LONG_NAME} {RIGHT_TO_LEFT}"),
+                    host: "cardigan.example".into(),
+                }),
+                ..claim_for_an_app()
+            }),
+        ),
         State::new(
             Some("U35"),
             "claim-link-expired",
@@ -590,10 +785,66 @@ fn states() -> Vec<State> {
         ),
         State::new(
             None,
-            "create-account-for-an-app",
-            "Create your account, on the way to an app",
+            "create-account-without-javascript",
+            "Create your account, without JavaScript",
+            setup_details(&details_view()),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "create-account-passwords-differ",
+            "Create your account, the two passwords differ (checked by the page)",
             setup_details(&SetupDetails {
-                return_to: "/oauth/authorize?client_id=cardigan".into(),
+                name: "Mira Castell".into(),
+                username: "mira".into(),
+                ..details_view()
+            }),
+        )
+        .after(&[MISMATCH_BY_SCRIPT]),
+        State::new(
+            None,
+            "create-account-mismatch-without-javascript",
+            "Create your account, the two passwords differ, as the server answers, both empty",
+            setup_details(&SetupDetails {
+                name: "Mira Castell".into(),
+                username: "mira".into(),
+                errors: SetupFieldErrors {
+                    password: Some("The passwords don’t match.".into()),
+                    ..SetupFieldErrors::default()
+                },
+                ..details_view()
+            }),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "create-account-long-names",
+            "Create your account, a long, right-to-left name and a long username problem",
+            setup_details(&SetupDetails {
+                name: format!("{RIGHT_TO_LEFT} {RIGHT_TO_LEFT} {RIGHT_TO_LEFT} {RIGHT_TO_LEFT}"),
+                username:
+                    "a-very-long-username-that-keeps-going-past-what-one-line-can-hold-1234567890"
+                        .into(),
+                errors: SetupFieldErrors {
+                    username: Some(
+                        "Use 1 to 64 letters a to z, numbers, dots, dashes and underscores.".into(),
+                    ),
+                    ..SetupFieldErrors::default()
+                },
+                ..details_view()
+            }),
+        ),
+        State::new(
+            None,
+            "create-account-password-problem",
+            "Create your account, a password the server refuses",
+            setup_details(&SetupDetails {
+                name: "Mira Castell".into(),
+                username: "mira".into(),
+                errors: SetupFieldErrors {
+                    password: Some("Password must be at least 8 characters.".into()),
+                    ..SetupFieldErrors::default()
+                },
                 ..details_view()
             }),
         ),
@@ -606,7 +857,7 @@ fn states() -> Vec<State> {
                 username: "mira castell".into(),
                 errors: SetupFieldErrors {
                     username: Some(
-                        "Use letters a to z, numbers, dots, dashes and underscores.".into(),
+                        "Use 1 to 64 letters a to z, numbers, dots, dashes and underscores.".into(),
                     ),
                     ..SetupFieldErrors::default()
                 },
@@ -616,17 +867,15 @@ fn states() -> Vec<State> {
         State::new(
             None,
             "create-account-every-problem",
-            "Create your account, a problem in every field and a notice",
+            "Create your account, a problem in every group and a notice",
             setup_details(&SetupDetails {
                 name: "Mira".into(),
                 username: "mira castell".into(),
-                email: "not an address".into(),
                 errors: SetupFieldErrors {
                     name: Some("That name is too long.".into()),
                     username: Some(
                         "Use letters a to z, numbers, dots, dashes and underscores.".into(),
                     ),
-                    email: Some("That doesn't look like an email address.".into()),
                     password: Some("Use at least 8 characters.".into()),
                 },
                 notice: Some("Something went wrong. Try again.".into()),

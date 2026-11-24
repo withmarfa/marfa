@@ -105,15 +105,20 @@ pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
             return Ok(pages::signed_in(&view)?.into_response());
         }
     }
-    let app_name = match &sent {
-        Some(link) => app_named(&app, link).await?,
-        None => None,
+    let (app_name, app_address) = match &sent {
+        Some(link) => (
+            app_named(&app, link).await?,
+            link.get("redirect_uri").and_then(shown_destination),
+        ),
+        None => (None, None),
     };
     let view = SignIn {
         username: shown(field("username")),
         return_to,
         authorization: sent.map(|_| link),
         app: app_name,
+        app_address,
+        recovered: field("recovered") == Some("true"),
         problem: SignInProblem::from_query(field("error"), field("retry_after_seconds")),
         passkey: passkeys::signs_in_here(&app).await?,
     };
@@ -139,7 +144,6 @@ pub async fn setup(State(app): State<Arc<App>>, headers: HeaderMap, uri: Uri) ->
         pages::setup_details(&SetupDetails {
             name: String::new(),
             username: String::new(),
-            email: String::new(),
             errors: SetupFieldErrors::default(),
             notice: None,
             return_to,
@@ -170,6 +174,10 @@ async fn recovery_page(app: &App, headers: &HeaderMap) -> Result<pages::Page> {
         return pages::recovery_code(&RecoveryCode { problem: None });
     }
     pages::notice(&Notice::already_claimed(HOME))
+}
+
+pub async fn forgot_password() -> Answer {
+    Ok(pages::forgot_password()?.into_response())
 }
 
 pub async fn error(uri: Uri) -> Answer {
@@ -261,7 +269,6 @@ pub async fn exchange_refused(app: &App, refusal: &Refusal, form: &CodeForm) -> 
 pub struct Typed {
     pub name: String,
     pub username: String,
-    pub email: String,
 }
 
 impl Typed {
@@ -270,7 +277,6 @@ impl Typed {
         Typed {
             name: text("name"),
             username: text("username"),
-            email: text("email"),
         }
     }
 }
@@ -283,7 +289,6 @@ fn field_errors(refusal: &Refusal) -> Option<SetupFieldErrors> {
         match error.get("path")?.as_str()? {
             "name" => found.name = Some(message),
             "username" => found.username = Some(message),
-            "email" => found.email = Some(message),
             "password" => found.password = Some(message),
             _ => return None,
         }
@@ -318,7 +323,6 @@ fn details_page(refusal: &Refusal, typed: Typed, return_to: String) -> Result<Op
     let view = SetupDetails {
         name: typed.name,
         username: typed.username,
-        email: typed.email,
         errors,
         notice,
         return_to,
@@ -391,10 +395,10 @@ mod tests {
     fn a_refusal_names_the_fields_it_found_wrong() {
         let refusal = Refusal::validation("Invalid owner details.").with_detail(
             "errors",
-            serde_json::json!([{ "path": "email", "message": "Enter a valid email address." }]),
+            serde_json::json!([{ "path": "username", "message": "Use 1 to 64 letters." }]),
         );
         let found = field_errors(&refusal).unwrap();
-        assert_eq!(found.email.as_deref(), Some("Enter a valid email address."));
+        assert_eq!(found.username.as_deref(), Some("Use 1 to 64 letters."));
         assert!(found.name.is_none() && found.password.is_none());
         let unknown = Refusal::validation("x").with_detail(
             "errors",

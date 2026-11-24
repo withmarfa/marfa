@@ -26,7 +26,9 @@ pub use setup::{
     AskingApp, RecoverPassword, RecoveryCode, SetupCode, SetupCodeProblem, SetupDetails,
     SetupFieldErrors, recover_password, recovery_code, setup_code, setup_details,
 };
-pub use sign_in::{Running, SignIn, SignInProblem, SignedIn, running, sign_in, signed_in};
+pub use sign_in::{
+    Running, SignIn, SignInProblem, SignedIn, forgot_password, running, sign_in, signed_in,
+};
 pub use wait::Wait;
 
 const STYLE: &str = include_str!("assets/page.css");

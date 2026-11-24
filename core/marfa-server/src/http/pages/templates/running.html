@@ -1,10 +1,6 @@
-<div class="head">
-<h1>This Marfa is running</h1>
-<p class="lede">Signed in as <bdi>{{ view.username }}</bdi>.</p>
-</div>
-<p>Open an app that connects to it, or manage how you sign in.</p>
+{% import "partials/parts.html" as parts %}{% call parts::head("This Marfa is running", "Apps connect to this address.") %}{% endcall %}
 <form method="post" action="/auth/sign-out" data-change data-then="/">
+{% call parts::box_of_rows(true) %}<li class="link"><a class="row-link" href="/auth/owner/passkeys">{% call parts::icon("key") %}{% endcall %}<span class="t">Passkeys and password</span></a></li>
+<li>{% call parts::icon("person") %}{% endcall %}<span class="t">Signed in as <bdi>{{ view.username }}</bdi></span><button type="submit" class="btn small">Sign Out</button></li>{% endcall %}
 <p class="err" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
-{% import "partials/parts.html" as parts %}{% call parts::actions() %}<button type="submit" class="btn">Sign out</button>
-<a class="btn primary" href="/auth/owner/passkeys">Passkeys and password</a>{% endcall %}
 </form>

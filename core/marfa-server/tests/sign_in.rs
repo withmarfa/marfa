@@ -774,7 +774,7 @@ async fn setup_session(router: &Router, private: &Router) -> String {
     exchanged.cookie().unwrap()
 }
 
-const MISMATCH: &str = "The passwords don&#39;t match.";
+const MISMATCH: &str = "The passwords don’t match.";
 
 #[tokio::test]
 async fn a_claim_form_whose_passwords_differ_is_refused_and_claims_nothing() {
@@ -812,6 +812,46 @@ async fn a_claim_form_whose_passwords_differ_is_refused_and_claims_nothing() {
         .unwrap()
         .unwrap();
     assert_eq!(owner.name, USERNAME);
+}
+
+#[tokio::test]
+async fn the_forgot_password_page_answers_to_anyone_and_prints_no_path() {
+    let instance = Instance::claimed().await;
+    let socket = instance.dir.path().join("s.sock");
+    let get = |path: &str, cookie: Option<&str>| {
+        let mut request = Request::builder().uri(path);
+        if let Some(cookie) = cookie {
+            request = request.header(header::COOKIE, cookie);
+        }
+        request.body(Body::empty()).unwrap()
+    };
+
+    let (status, page) = page_of(instance.public.clone(), get("/auth/forgot-password", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("owner recover"), "{page}");
+    assert!(page.contains("MARFA_OWNER_RECOVERY=true"), "{page}");
+    assert!(!page.contains(socket.to_str().unwrap()), "{page}");
+    assert!(
+        !page.contains(instance.dir.path().to_str().unwrap()),
+        "{page}"
+    );
+    // The witness: the page names the socket by a word, and the sign-in page links here.
+    assert!(page.contains("socket PATH"), "{page}");
+    let (_, sign_in) = page_of(instance.public.clone(), get("/auth/sign-in", None)).await;
+    assert!(
+        sign_in.contains("href=\"/auth/forgot-password\""),
+        "{sign_in}"
+    );
+
+    // A signed-in person is answered the same page.
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let (status, again) = page_of(
+        instance.public.clone(),
+        get("/auth/forgot-password", Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(again.contains("owner recover"), "{again}");
 }
 
 #[tokio::test]

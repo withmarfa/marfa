@@ -582,7 +582,7 @@ fn require_repeated(password: &str, confirmation: Option<&str>) -> Result<()> {
     match confirmation {
         Some(typed) if typed != password => Err(Refusal::invalid_at(
             "password",
-            "The passwords don't match.",
+            "The passwords don’t match.",
         )),
         _ => Ok(()),
     }

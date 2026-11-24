@@ -1,20 +1,32 @@
 {# The parts every page is built from. README.md names them and says when to use each. #}
 
 {# One field: the input, then its label, which the stylesheet lifts when the field is focused or filled. #}
-{% macro field(id, label, name="", kind="text", value="", autocomplete="off", capitalize="", mono=false, required=true, invalid=false, note="", described=true, minlength=0, maxlength=0, readonly=false) %}<div class="field"><input id="{{ id }}" class="in{% if mono %} mono{% endif %}" type="{{ kind }}"{% if !name.is_empty() %} name="{{ name }}"{% endif %} placeholder=" "{% if !value.is_empty() %} value="{{ value }}"{% endif %} autocomplete="{{ autocomplete }}"{% if !capitalize.is_empty() %} autocapitalize="{{ capitalize }}" autocorrect="off" spellcheck="false"{% endif %}{% if minlength != 0 %} minlength="{{ minlength }}"{% endif %}{% if maxlength != 0 %} maxlength="{{ maxlength }}"{% endif %}{% if required %} required{% endif %}{% if readonly %} readonly{% endif %}{% if invalid %} aria-invalid="true"{% endif %}{% if described && !note.is_empty() %} aria-describedby="{{ note }}"{% endif %}><label for="{{ id }}">{{ label }}</label></div>{% endmacro %}
+{% macro field(id, label, name="", kind="text", value="", autocomplete="off", capitalize="", mono=false, required=true, invalid=false, note="", described=true, minlength=0, maxlength=0, readonly=false, dir="") %}<div class="field"><input id="{{ id }}" class="in{% if mono %} mono{% endif %}" type="{{ kind }}"{% if !name.is_empty() %} name="{{ name }}"{% endif %} placeholder=" "{% if !value.is_empty() %} value="{{ value }}"{% endif %} autocomplete="{{ autocomplete }}"{% if !capitalize.is_empty() %} autocapitalize="{{ capitalize }}" autocorrect="off" spellcheck="false"{% endif %}{% if minlength != 0 %} minlength="{{ minlength }}"{% endif %}{% if maxlength != 0 %} maxlength="{{ maxlength }}"{% endif %}{% if required %} required{% endif %}{% if readonly %} readonly{% endif %}{% if !dir.is_empty() %} dir="{{ dir }}"{% endif %}{% if invalid %} aria-invalid="true"{% endif %}{% if described && !note.is_empty() %} aria-describedby="{{ note }}"{% endif %}><label for="{{ id }}">{{ label }}</label></div>{% endmacro %}
 
-{# Fields that answer one question together share a box. Under it: one hint or one problem, which takes the hint's place, then a link. #}
-{# Use the note ID in the field’s aria-describedby. #}
-{% macro group(title="", note="", hint="", problem="", link_href="", link_label="") %}<div>{% if !title.is_empty() %}<h2 class="gh">{{ title }}</h2>{% endif %}<div class="group">{{ caller() }}</div>{% if !problem.is_empty() || !hint.is_empty() || !link_href.is_empty() %}<div class="under">{% if !problem.is_empty() %}<p class="err" id="{{ note }}" role="alert">{{ problem }}</p>{% else if !hint.is_empty() %}<p class="hint" id="{{ note }}">{{ hint }}</p>{% endif %}{% if !link_href.is_empty() %}<p><a href="{{ link_href }}">{{ link_label }}</a></p>{% endif %}</div>{% endif %}</div>{% endmacro %}
+{# Fields that answer one question together share a box. Under it: one hint or one problem, which takes the hint's place, then a link.
+   `note` is the id of the line under the box, which each field in it names in aria-describedby.
+   A `title` makes the group a fieldset with a legend. `advice` adds ", or use a passkey" before `problem_end`, shown only where a
+   passkey can sign in. `late_problem` is a problem a script may show in the hint's place. #}
+{% macro group(title="", note="", hint="", problem="", link_href="", link_label="", advice=false, problem_end="", late_problem="") %}{% if !title.is_empty() %}<fieldset><legend class="gh">{{ title }}</legend>{% else %}<div>{% endif %}<div class="group">{{ caller() }}</div>{% if !problem.is_empty() || !hint.is_empty() || !link_href.is_empty() %}<div class="under">{% if !problem.is_empty() %}<p class="err" id="{{ note }}" role="alert"><span>{{ problem }}{% if advice %}<span data-passkey-advice hidden>, or use a passkey</span>{% endif %}{{ problem_end }}</span></p>{% else if !hint.is_empty() %}<p class="hint" id="{{ note }}"{% if !late_problem.is_empty() %} data-hint{% endif %}>{{ hint }}</p>{% if !late_problem.is_empty() %}<p class="err" id="{{ note }}-late" role="alert" data-late-problem hidden>{{ late_problem }}</p>{% endif %}{% endif %}{% if !link_href.is_empty() %}<p><a href="{{ link_href }}">{{ link_label }}</a></p>{% endif %}</div>{% endif %}{% if !title.is_empty() %}</fieldset>{% else %}</div>{% endif %}{% endmacro %}
 
 {# A title and at most one line under it. #}
 {% macro head(title, lede="") %}<div class="head"><h1>{{ title }}</h1>{% if !lede.is_empty() %}<p class="lede">{{ lede }}</p>{% endif %}</div>{% endmacro %}
 
+{# A head whose line holds markup, such as an app's name set apart for right-to-left text. #}
+{% macro head_with(title) %}<div class="head"><h1>{{ title }}</h1><p class="lede">{{ caller() }}</p></div>{% endmacro %}
+
 {# Buttons, at the trailing edge, the main action last. #}
 {% macro actions() %}<div class="actions">{{ caller() }}</div>{% endmacro %}
 
-{# A box of rows. Each row is an `li` with a `t` span for the words and at most one control after it. #}
-{% macro box_of_rows() %}<ul class="box">{{ caller() }}</ul>{% endmacro %}
+{# A box of rows. Each row is an `li` with a `t` span for the words and at most one control after it. A row that starts with an icon is a
+   box with `symbols`, which lines the dividers up with the words. #}
+{% macro box_of_rows(symbols=false) %}<ul class="box{% if symbols %} sym{% endif %}">{{ caller() }}</ul>{% endmacro %}
+
+{# An icon in a row or a button: key, plus, lock, person or more. #}
+{% macro icon(name) %}<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{% if name == "key" %}<circle cx="8" cy="12" r="3.6"/><path d="M11.6 12H20M17 12v3M20 12v2.4"/>{% else if name == "plus" %}<path d="M12 5.5v13M5.5 12h13"/>{% else if name == "lock" %}<rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>{% else if name == "person" %}<circle cx="12" cy="8.5" r="3.5"/><path d="M5 19.5c1.2-3.2 3.9-5 7-5s5.8 1.8 7 5"/>{% else if name == "more" %}<circle cx="7" cy="12" r=".9" fill="currentColor"/><circle cx="12" cy="12" r=".9" fill="currentColor"/><circle cx="17" cy="12" r=".9" fill="currentColor"/>{% endif %}</svg>{% endmacro %}
+
+{# A heading over a box, and the lines after it. No button sits in the heading: adding is the box's last row. #}
+{% macro section(id, title) %}<section class="sec" aria-labelledby="{{ id }}"><h2 id="{{ id }}">{{ title }}</h2>{{ caller() }}</section>{% endmacro %}
 
 {# A choice between levels, grey with no outline. It is a real select, so the browser draws its menu. #}
 {% macro pop(id, name, label, described="", switches=false) %}<span class="pop"><select id="{{ id }}" name="{{ name }}" aria-label="{{ label }}"{% if !described.is_empty() %} aria-describedby="{{ described }}"{% endif %}{% if switches %} data-types-switch{% endif %}>{{ caller() }}</select></span>{% endmacro %}
