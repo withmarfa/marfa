@@ -392,7 +392,11 @@ impl Instance {
             ))
             .await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
-        assert!(reply.text.contains("Your device is connected"), "{}", reply.text);
+        assert!(
+            reply.text.contains("Your device is connected"),
+            "{}",
+            reply.text
+        );
         text_at(&asked, "device_code").to_string()
     }
 
