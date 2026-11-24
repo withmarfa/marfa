@@ -3080,6 +3080,79 @@ async fn a_check_carries_over_when_the_owner_confirms_it_is_them() {
     assert_eq!(shown.status, StatusCode::OK, "{}", shown.text);
 }
 
+const CHECKED_CODES: &str = "SELECT count(*) FROM oauth_device_codes WHERE checked_by IS NOT NULL";
+
+#[tokio::test]
+async fn a_check_waiting_behind_a_sign_out_asks_the_browser_to_sign_in() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register_device(NOTES).await;
+    let asked = instance.device_asked(&client, NOTES).await;
+    let user_code = text_at(&asked, "user_code");
+    let leaving = instance.sign_in_again().await;
+    let witness = instance.device_checked(user_code, &leaving).await;
+    assert_eq!(witness.status, StatusCode::FOUND, "{}", witness.text);
+    assert_eq!(instance.count(CHECKED_CODES).await, 1);
+    instance.stage("UPDATE oauth_device_codes SET checked_by = NULL").await;
+
+    let held = Some("auth.device_code.checked");
+    instance.app.faults.set("hold:write", held).unwrap();
+    let check = instance.device_checked(user_code, &leaving);
+    let sign_out = async {
+        instance.when_held().await;
+        let left = instance
+            .send(post_form("/auth/sign-out", Some(&leaving), &[]))
+            .await;
+        instance.app.faults.clear(None);
+        left
+    };
+    let (checked, left) = tokio::join!(check, sign_out);
+    assert!(left.status.is_success(), "{}", left.text);
+    assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
+    let sent = checked.location().unwrap();
+    assert_eq!(sent.path(), "/auth/sign-in", "{sent}");
+    let check = format!("/auth/device/check?user_code={}", encoded_code(user_code));
+    assert!(
+        sent.query_pairs()
+            .any(|(name, value)| name == "return_to" && value == check.as_str()),
+        "{sent}"
+    );
+    assert_eq!(instance.count(CHECKED_CODES).await, 0);
+}
+
+#[tokio::test]
+async fn a_code_expiring_while_its_check_waits_reads_as_expired_and_stays_unchecked() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register_device(NOTES).await;
+    let asked = instance.device_asked(&client, NOTES).await;
+    let user_code = text_at(&asked, "user_code");
+    let witness = instance.device_asked(&client, NOTES).await;
+    let checked = instance
+        .device_checked(text_at(&witness, "user_code"), &instance.cookie)
+        .await;
+    assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
+    assert_eq!(instance.count(CHECKED_CODES).await, 1);
+    instance.stage("UPDATE oauth_device_codes SET checked_by = NULL").await;
+
+    let held = Some("auth.device_code.checked");
+    instance.app.faults.set("hold:write", held).unwrap();
+    let check = instance.device_checked(user_code, &instance.cookie);
+    let expire = async {
+        instance.when_held().await;
+        instance.app.clock.advance(11 * 60_000).unwrap();
+        instance.app.faults.clear(None);
+    };
+    let (checked, ()) = tokio::join!(check, expire);
+    assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
+    let sent = checked.location().unwrap();
+    assert_eq!(sent.path(), "/auth/device", "{sent}");
+    assert!(
+        sent.query_pairs()
+            .any(|(name, value)| name == "error" && value == "expired_code"),
+        "{sent}"
+    );
+    assert_eq!(instance.count(CHECKED_CODES).await, 0);
+}
+
 #[tokio::test]
 async fn a_link_carrying_the_code_lands_on_the_check_step() {
     let instance = Instance::signed_in().await;

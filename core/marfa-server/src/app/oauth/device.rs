@@ -23,7 +23,7 @@ use crate::app::auth::limits::{
     admit, device_code_lanes, device_lookup_lanes, device_owner_lanes, hold_to,
 };
 use crate::app::auth::return_to::encoded;
-use crate::app::auth::session::Session;
+use crate::app::auth::session::{self, Session};
 use crate::app::catalog::{self, Snapshot};
 use crate::app::clock::Stamp;
 use crate::app::faults::DEVICE_OWNER_INSTANCE_LANE;
@@ -32,6 +32,7 @@ use crate::app::refusal::{Code as RefusalCode, Refusal, Result};
 use crate::db::Write;
 
 const CODE_WRITE: &str = "auth.device_code.issued";
+const CHECK_WRITE: &str = "auth.device_code.checked";
 pub const CONSENT_PATH: &str = "/auth/device/consent";
 pub const CHECK_PATH: &str = "/auth/device/check";
 
@@ -203,16 +204,10 @@ fn browser_session(owner: &Caller) -> Result<Session> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NotOpen {
     Code(Lookup),
+    /// The code's `max_age` asks for a browser session begun since.
     SignInAgain,
-}
-
-impl From<NotOpen> for Blocked {
-    fn from(not_open: NotOpen) -> Self {
-        match not_open {
-            NotOpen::Code(lookup) => Blocked::Code(lookup),
-            NotOpen::SignInAgain => Blocked::SignInAgain,
-        }
-    }
+    /// The browser's session ended while the request waited.
+    SignedOut,
 }
 
 /// The pending code, if this session began recently enough for `max_age` and `prompt=login`.
@@ -249,9 +244,10 @@ pub async fn to_check(
 ) -> Result<std::result::Result<(), NotOpen>> {
     let digest = digest_of_typed(app, typed)?;
     let session = browser_session(owner)?;
-    let now = app.clock.instant();
+    let clock = app.clock.clone();
     app.db
         .read(move |tx| {
+            let now = clock.instant();
             let found = store::device_code_by_user_code(tx, &digest)?;
             Ok(pending_for(tx, found, &session, now)?.map(|_| ()))
         })
@@ -265,10 +261,14 @@ pub async fn check(
     owner: &Caller,
 ) -> Result<std::result::Result<(), NotOpen>> {
     let digest = digest_of_typed(app, typed)?;
-    let session = browser_session(owner)?;
-    let now = app.clock.instant();
+    let held = browser_session(owner)?;
+    let clock = app.clock.clone();
     app.db
-        .write(Write::own(), move |tx| {
+        .write(Write::caller(CHECK_WRITE), move |tx| {
+            let now = clock.instant();
+            let Some(session) = session::live_by_id(tx, &held.id, now)? else {
+                return Ok(Err(NotOpen::SignedOut));
+            };
             let found = store::device_code_by_user_code(tx, &digest)?;
             let code = match pending_for(tx, found, &session, now)? {
                 Ok(code) => code,
@@ -286,19 +286,23 @@ pub async fn screen(
     owner: &Caller,
 ) -> Result<std::result::Result<Box<Offer>, Blocked>> {
     let digest = digest_of_typed(app, typed)?;
-    let session = browser_session(owner)?;
-    let owner_id = session.owner_id.clone();
+    let held = browser_session(owner)?;
     let cache = app.catalog_handle();
-    let now = app.clock.instant();
+    let clock = app.clock.clone();
     app.db
         .write(Write::own(), move |tx| {
+            let now = clock.instant();
+            let Some(session) = session::live_by_id(tx, &held.id, now)? else {
+                return Ok(Err(Blocked::Closed(NotOpen::SignedOut)));
+            };
+            let owner_id = session.owner_id.clone();
             let found = store::device_code_by_user_code(tx, &digest)?;
             let Some(found) = checked_here(found, &session) else {
                 return Ok(Err(Blocked::Unchecked));
             };
             let code = match pending_for(tx, Some(found), &session, now)? {
                 Ok(code) => code,
-                Err(not_open) => return Ok(Err(not_open.into())),
+                Err(not_open) => return Ok(Err(Blocked::Closed(not_open))),
             };
             let Some(client) = store::client(tx, &code.client_id)? else {
                 return Ok(Err(Blocked::ClientGone));
@@ -323,10 +327,8 @@ pub async fn screen(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Blocked {
-    Code(Lookup),
+    Closed(NotOpen),
     ClientGone,
-    /// The code's `max_age` asks for a browser session begun since.
-    SignInAgain,
     /// This browser session has not confirmed the code matches the device's.
     Unchecked,
 }
@@ -335,8 +337,7 @@ pub enum Blocked {
 pub enum Answer {
     Approved,
     Denied,
-    Code(Lookup),
-    SignInAgain,
+    Closed(NotOpen),
     Unchecked,
 }
 
@@ -361,8 +362,7 @@ pub async fn answer(
         };
         let code = match pending_for(tx, Some(found), &session, now)? {
             Ok(code) => code,
-            Err(NotOpen::Code(lookup)) => return Ok(Answer::Code(lookup)),
-            Err(NotOpen::SignInAgain) => return Ok(Answer::SignInAgain),
+            Err(not_open) => return Ok(Answer::Closed(not_open)),
         };
         let (owner_id, signed_in) = (session.owner_id.clone(), session.created_at);
         let deny = |scopes: &ScopeSet| {
@@ -400,7 +400,7 @@ pub async fn answer(
             }
         };
         if destinations_digest(&shared, &client)? != code.destinations {
-            return Ok(Answer::Code(Lookup::Expired));
+            return Ok(Answer::Closed(NotOpen::Code(Lookup::Expired)));
         }
         if needs_recent_sign_in(&approved, &held) {
             unit.caller.require_recent(&unit.at)?;

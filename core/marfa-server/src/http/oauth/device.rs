@@ -113,6 +113,7 @@ fn not_open(app: &App, not_open: NotOpen, typed: &str) -> Answer {
     match not_open {
         NotOpen::Code(lookup) => blocked(lookup, typed),
         NotOpen::SignInAgain => to_sign_in_again(app, typed),
+        NotOpen::SignedOut => to_sign_in(app, Some(typed)),
     }
 }
 
@@ -199,8 +200,7 @@ pub async fn screen(State(app): State<Arc<App>>, Browser(owner): Browser, uri: U
             Ok(pages::consent(&view)?.into_response())
         }
         Err(Blocked::Unchecked) => to_check(&typed),
-        Err(Blocked::Code(lookup)) => blocked(lookup, &typed),
-        Err(Blocked::SignInAgain) => to_sign_in_again(&app, &typed),
+        Err(Blocked::Closed(closed)) => not_open(&app, closed, &typed),
         Err(Blocked::ClientGone) => {
             Err(Refusal::new(Code::InvalidClient, "This app is gone.").into())
         }
@@ -230,7 +230,6 @@ pub async fn answer(
         Answered::Approved => Ok(pages::notice(&Notice::device_approved())?.into_response()),
         Answered::Denied => Ok(pages::notice(&Notice::device_denied())?.into_response()),
         Answered::Unchecked => to_check(typed),
-        Answered::Code(lookup) => blocked(lookup, typed),
-        Answered::SignInAgain => to_sign_in_again(&app, typed),
+        Answered::Closed(closed) => not_open(&app, closed, typed),
     }
 }
