@@ -651,7 +651,7 @@ describe("return_to through setup", () => {
           return {
             status: answer.status,
             carried: carried(html),
-            problem: /id="setup-problem"[^>]*>([^<]*)</.exec(html)?.[1],
+            says: visibleText(html).includes(WRONG_CODE),
           };
         };
         const replaced = await instance.code();
@@ -660,9 +660,10 @@ describe("return_to through setup", () => {
         expect(wrong).toEqual({
           status: 401,
           carried: [AUTHORIZE],
-          problem: expect.any(String) as string,
+          says: true,
         });
-        expect(visibleText(wrong.problem!)).toBe(WRONG_CODE);
+        // The witness: the page before a wrong code does not say it.
+        expect(visibleText(codeHtml)).not.toContain(WRONG_CODE);
         expect(await refusal(replaced)).toEqual(wrong);
 
         // The setup session the code opens ends after fifteen minutes.
@@ -940,7 +941,7 @@ describe("a claim another tab or a refused sign-in finished", () => {
         // recovery page then offers.
         await instance.restart();
         const recoveryHtml = await (await stale.get("/setup")).text();
-        expect(visibleText(recoveryHtml)).toContain("Recover the owner");
+        expect(visibleText(recoveryHtml)).toContain("Recover your account");
         const recoveryForm = hiddenFields(recoveryHtml);
 
         // The setup code form as the page sent it, then ten with no hidden

@@ -233,10 +233,6 @@ code {
   margin-right: auto;
 }
 
-.actions form {
-  display: contents;
-}
-
 /* Fields: the label sits in the box, where the text goes; when the field is focused or filled it moves to the top.
    CSS only, so it works without JavaScript: the input comes before its label and has placeholder=" ". */
 .fields {
@@ -615,10 +611,14 @@ details p + p {
   margin-top: 0.5rem;
 }
 
-/* Pages that are not yet redrawn keep what they need: a plain note, a list of rows and the choices on the allow page.
+/* Parts the allow page and the passkeys page still draw their own way: a plain note, a list of rows and the choices.
    They read the same properties, so they follow the palette above. */
 .flow > * + * {
   margin-top: 1rem;
+}
+
+.notice + :not(.notice) {
+  margin-top: 0.75rem;
 }
 
 .notice {
@@ -653,13 +653,6 @@ details p + p {
 
 .app-name {
   font-weight: 600;
-}
-
-.or {
-  margin: 1rem 0;
-  color: var(--t2);
-  text-align: center;
-  font-size: 0.875rem;
 }
 
 .device-check {

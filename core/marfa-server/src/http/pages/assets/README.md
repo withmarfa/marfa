@@ -2,6 +2,38 @@
 
 The pages the server draws itself (sign in, claiming, recovery, allowing an app or a device, passkeys and password, notices) share one stylesheet, `page.css`, and one script, `page.js`. The templates are in `../templates`.
 
+## Parts
+
+Every page is built from the parts below. A page names its parts and adds none of its own styling. The macros are in `../templates/partials/parts.html`; a template that uses them starts with `{% import "partials/parts.html" as parts %}`, and a macro that wraps content ends with `{% endcall %}`.
+
+| Part | Macro | What it is for |
+| --- | --- | --- |
+| Head | `parts::head(title, lede)` | The page's one `h1` and at most one line under it. |
+| Field | `parts::field(id, label, ...)` | One input with its label inside the box. |
+| Joined group | `parts::group(...)` | Fields that answer one question, in one box, with one hint or problem under it. |
+| Actions | `parts::actions()` | Buttons at the trailing edge, the main action last. |
+| Box of rows | `parts::box_of_rows()` | A list of rows, each with words and at most one control. |
+| Pop-up | `parts::pop(id, name, label, ...)` | A choice between levels, as a real `select`. |
+| Dialog | `parts::dialog(id, title, ...)` | A window over the page, drawn as a sheet at the bottom on a phone. |
+
+To add a part, write its macro in `parts.html` and its rules in `page.css`, and add a state that shows it to `preview.rs`. Name the part for what it is, not for a page that uses it.
+
+## Every page
+
+These hold for every page, so a new page gets them by using the parts.
+
+- **No name for the Marfa.** A page never shows the instance's name, and the tab title is the page's own title.
+- **The label sits in the box.** The input comes before its label in the markup, `placeholder=" "` lets the stylesheet tell a filled field from an empty one, and the label lifts when the field is focused, filled or autofilled. Under reduced motion it moves without animation. Every label is a real `label for`.
+- **A problem replaces the hint.** A group shows one line under its box: its hint, or the problem, never both. A problem line starts with an icon the stylesheet draws, so it does not rest on color alone, and the field it names carries `aria-invalid="true"`.
+- **Focus.** A page puts the cursor in the first empty field, or the first field with a problem, only when the device has a fine pointer, such as a mouse. A phone waits for a tap so the keyboard does not cover the page.
+- **Buttons wait while a form sends.** A form's buttons are disabled until the answer arrives, and come back if the browser shows the page again from its cache.
+- **A dialog returns focus** to the control that opened it.
+- **Sizes are in `rem`.** Controls are 2 rem tall, and 2.75 rem on a phone (600 px wide or less).
+- **A palette for light and dark.** Colors are the properties at the top of `page.css`, with one value for each in the dark block. Check the contrast of a new pair in both.
+- **States are styled by what they are.** `:focus`, `:disabled`, `:autofill` and `[aria-invalid="true"]`, not by a class a script adds.
+- **Reduced motion and forced colors** are handled in the stylesheet: no animation under `prefers-reduced-motion`, and system colors under `forced-colors`.
+- **Nothing depends on JavaScript to be readable.** A page without its script shows the same words and fields; the script only adds the checks and passkey steps.
+
 ## Preview
 
 The preview draws every page in every state its view can take, on made-up data, through the real page functions. It is built only for tests and is never part of a release.

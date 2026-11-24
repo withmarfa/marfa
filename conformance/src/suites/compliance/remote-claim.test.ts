@@ -443,11 +443,13 @@ describe("owner recovery", () => {
         /Recover this Marfa's owner at \/setup with recovery code: [A-Z2-7-]+\. It works once, for 60 minutes\./,
       );
       const code = await lastRecoveryCode(server);
-      expect(await pageText(server.apiUrl)).toContain("Recover the owner");
+      expect(await pageText(server.apiUrl)).toContain("Recover your account");
 
       await server.restart({ env: { MARFA_OWNER_RECOVERY: "false" } });
       expect(codesIn(await server.output(), "recovery")).toHaveLength(1);
-      expect(await pageText(server.apiUrl)).not.toContain("Recover the owner");
+      expect(await pageText(server.apiUrl)).not.toContain(
+        "Recover your account",
+      );
       const origin = new URL(server.apiUrl).origin;
       expect(
         await answer(
@@ -537,9 +539,11 @@ describe("owner recovery", () => {
       const code = await lastRecoveryCode(server);
       await server.advanceClock(HOUR_MS - 60_000);
       // The witness: a minute before the hour is out, the code is offered.
-      expect(await pageText(server.apiUrl)).toContain("Recover the owner");
+      expect(await pageText(server.apiUrl)).toContain("Recover your account");
       await server.advanceClock(2 * 60_000);
-      expect(await pageText(server.apiUrl)).not.toContain("Recover the owner");
+      expect(await pageText(server.apiUrl)).not.toContain(
+        "Recover your account",
+      );
       expect(
         await answer(
           await post(
@@ -641,7 +645,7 @@ describe("owner recovery", () => {
       const origin = new URL(server.apiUrl).origin;
 
       const first = await pageText(server.apiUrl);
-      expect(first).toContain("Recover the owner");
+      expect(first).toContain("Recover your account");
       expect(first).toContain('action="/setup/exchange"');
       // The form as the page sends it: its hidden fields and the code.
       const hidden = readControls(first)
