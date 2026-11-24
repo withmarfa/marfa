@@ -1290,7 +1290,11 @@ impl Http {
             }
             let page: crate::wire::WirePage<Left> =
                 self.get_json(&["items", id, "versions"], &params)?;
-            history.extend(page.data.into_iter().map(|left| (left.version, left.created_at)));
+            history.extend(
+                page.data
+                    .into_iter()
+                    .map(|left| (left.version, left.created_at)),
+            );
             match page.next_cursor {
                 Some(next) => cursor = Some(next),
                 None => return Ok(history),

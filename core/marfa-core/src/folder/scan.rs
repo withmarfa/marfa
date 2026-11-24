@@ -1403,8 +1403,7 @@ impl Folder {
                     )? {
                         report.updated += 1;
                         if let Some(
-                            removed_record::Basis::Exact(base)
-                            | removed_record::Basis::Merge(base),
+                            removed_record::Basis::Exact(base) | removed_record::Basis::Merge(base),
                         ) = &basis
                         {
                             report.restored.push(removed_record::SentByRecord {
@@ -1598,7 +1597,8 @@ impl Folder {
             && whole_pass
             && !record_waits
         {
-            let carried: HashSet<&str> = files.iter().filter_map(|file| file.id.as_deref()).collect();
+            let carried: HashSet<&str> =
+                files.iter().filter_map(|file| file.id.as_deref()).collect();
             let conn = self.core.conn()?;
             let mut settled = true;
             for item in evidence.items() {

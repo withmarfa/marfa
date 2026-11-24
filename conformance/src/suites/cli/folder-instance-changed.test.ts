@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -225,6 +226,10 @@ describe("a directory added back in place after its server was restored into ano
         held: 1,
         sent: 4,
       });
+      expect(added.restore.files).toContainEqual({
+        path: "Dropped.md",
+        outcome: "gone",
+      });
       const pushed = await cli.run(["folders", "push", dir]);
       expect(pushed.code, pushed.stderr).toBe(0);
       expect(pushed.stdout).toContain(
@@ -286,6 +291,7 @@ describe("a directory added back in place after its server was restored into ano
         ]);
         await edits(first, dir, "Equal.md", ["origin 2"]);
         await edits(first, dir, "Raced.md", ["origin 2"]);
+        writeFileSync(join(dir, "Fresh.md"), note("Fresh", "after the backup"));
         writeFileSync(join(dir, "tool.sh"), changedScript);
         expect((await first.run(["folders", "push", dir])).code).toBe(0);
       },
@@ -309,7 +315,13 @@ describe("a directory added back in place after its server was restored into ano
       expect(readFileSync(join(dir, "Equal.md"), "utf8")).toContain(
         "marfa_version: 2",
       );
-      expect((await cli.run(["folders", "remove", dir])).code).toBe(0);
+      // No push since the restore: the removal asks the server itself.
+      const removed = await cli.json<{ instance_changed: boolean }>([
+        "folders",
+        "remove",
+        dir,
+      ]);
+      expect(removed.instance_changed).toBe(true);
 
       const added = await cli.json<Added>([
         "folders",
@@ -318,6 +330,10 @@ describe("a directory added back in place after its server was restored into ano
         "--folder",
         folder,
       ]);
+      expect(added.restore.files).toContainEqual({
+        path: "Fresh.md",
+        outcome: "absent",
+      });
       expect(added.restore.files).toContainEqual({
         path: "Clash.md",
         outcome: "both",
@@ -350,11 +366,13 @@ describe("a directory added back in place after its server was restored into ano
       ]);
       expect((await cli.run(["folders", "confirm", dir])).code).toBe(0);
       await cli.run(["folders", "push", dir]);
-      await cli.run(["folders", "push", dir]);
+      const second = await cli.run(["folders", "push", dir]);
+      expect(second.stdout).toContain("Fresh.md waits:");
 
       const items = await notes(cli);
       const titled = (title: string) =>
         items.filter((item) => item.properties.title === title);
+      expect(titled("Fresh")).toEqual([]);
       expect(
         titled("Raced").map((item) => item.properties.body?.trim()),
       ).toEqual(["edited after the add"]);
@@ -407,6 +425,15 @@ describe("a directory added back in place after its server was restored into ano
       await cli.json(["folders", "add", dir, "--folder", folder, "--yes"]);
       writeFileSync(join(dir, "Kept.md"), note("Kept", "first"));
       expect((await cli.run(["folders", "push", dir])).code).toBe(0);
+      // A record that cannot be written refuses the removal, which then
+      // clears nothing.
+      const blocker = join(dir, ".marfa", "removed.json");
+      mkdirSync(join(blocker, "inside"), { recursive: true });
+      const refused = await cli.run(["folders", "remove", dir]);
+      expect(refused.code).not.toBe(0);
+      expect(refused.stderr).toContain("cannot write the removal record");
+      expect(existsSync(join(dir, ".marfa", "core.sqlite"))).toBe(true);
+      rmSync(blocker, { recursive: true });
       expect((await cli.run(["folders", "remove", dir])).code).toBe(0);
       // Edited while no directory follows the folder: sent as an edit of
       // the version its line names, as any re-add sends it.

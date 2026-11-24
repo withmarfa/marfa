@@ -1092,13 +1092,13 @@ If a confirmed folder that has unanswered or blocked queued writes is removed wh
 
 When a device removes a folder under `folder-setup/remove-instance-changed`, a device MUST answer the folder's ID, how many writes were not sent, and each file holding a change the server never received, by its path and whether it is changed, new, moved from another path, which it names, or deleted.
 
-**Reason:** a deletion or a move is in no file, and the removal deletes the queue that held them, so this answer is the only record of what to do again; copying back only the files it names keeps another computer's edits to the others. The answer names only what the folder could not send: a change it sent after the backup the other instance was restored from was made is in no queue, and the record the removal leaves names it instead (`folder-setup/remove-records-sent`, `folder-setup/add-from-older-named`).
+**Reason:** a deletion or a move is in no file, and the removal deletes the queue that held them, so this answer is the only record of a deletion to make again. A change the folder sent after the backup the other instance was restored from was made is in no queue, and the record the removal leaves holds it instead (`folder-setup/remove-records-sent`).
 
 **Tests:** `device/folders.test.ts › removes a folder whose server answers as another instance while writes wait, and answers the folder's ID, how many writes were not sent and each file holding a change by kind`, `› names no move its server took, removing a folder whose server answers as another instance, though a later edit to the moved file waits`, `› names a file moved again after its server took its first move, removing a folder whose server answers as another instance, as moved from where the server last held it`, `› names, removing a folder whose server answers as another instance, a file made while no write reached the server as new wherever it moved, and none made and deleted`.
 
 ### `folder-setup/remove-instance-changed-said`
 
-When `folders remove` removes a folder under `folder-setup/remove-instance-changed`, the CLI MUST report how many writes were not sent, each file `folder-setup/remove-instance-changed-files` names with its kind, that the changes to changed, new and moved files stay in the files in the directory, and that the directory is pushed until `folders status` shows nothing waiting.
+When `folders remove` removes a folder under `folder-setup/remove-instance-changed`, the CLI MUST report how many writes were not sent, each file `folder-setup/remove-instance-changed-files` names with its kind, the `folders add` command that names the same directory and the folder's ID, that each file named deleted is deleted again, and that the directory is pushed until `folders status` shows nothing waiting.
 
 **Tests:** `device/folders.test.ts › says, removing a folder whose server answers as another instance, how many writes were not sent, each file holding a change by kind, and the folders add command with the directory and folder ID`, `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`.
 
@@ -1110,73 +1110,99 @@ When `folders remove` removes a folder's state, the CLI MUST report the ID of th
 
 **Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `device/folders.test.ts › says, removing a folder whose server answers as another instance, how many writes were not sent, each file holding a change by kind, and the folders add command with the directory and folder ID`.
 
-### `folder-setup/remove-another-instance-route`
-
-When `folders remove` removes a folder whose server answers as another Marfa instance, the CLI MUST report the `folders add` command that names the directory, the folder's ID and, with `--from`, the directory moved aside, and the `folders push` command with `--send-newer`.
-
-**Reason:** a change the folder sent after the backup the other instance was restored from was made is in no queue, so the route is printed whether or not writes waited.
-
-**Tests:** `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`, `› sends no file whose item the instance changed after the add or holds at the same or a newer version, and names one it lacks or that is gone`, `device/folders.test.ts › says, removing a folder whose server answers as another instance, how many writes were not sent, each file holding a change by kind, and the folders add command with the directory and folder ID`.
-
 ### `folder-setup/remove-records-sent`
 
-When a device removes the state of a folder whose first sync was confirmed, a device MUST leave in the directory's `.marfa` a record of each bound file's path, its item, the version of the item its copy last held from the server and the file's content hash as last agreed.
+When a device removes the state of a folder whose first sync was confirmed, a device MUST leave in the directory's `.marfa` a record naming the folder, the instance its copy followed and, for each bound file, its path, its item and the version of the item the server last acknowledged.
 
-**Reason:** the removal deletes the copy that held these, and a directory added in its place reads them to tell which files the instance holds at an older version than the folder sent. The record sits in the directory, so it moves with it.
-
-**Tests:** `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`.
-
-### `folder-setup/add-from-older-named`
-
-When `folders add` is given `--from` a directory whose removal record names the folder being added, a device MUST name each file of that directory whose item the instance holds at a version below the one the record names, with both versions.
-
-**Reason:** a lower version identifies a file to compare after a restore. The restored instance can also have edits of its own at that lower version.
-
-**Tests:** `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`, `› sends no file whose item the instance changed after the add or holds at the same or a newer version, and names one it lacks or that is gone`, `› names no file a folder added back on the instance it was removed from sent, and says nothing is known of a directory with no record or one it cannot read`.
-
-### `folder-setup/add-from-absent-named`
-
-When `folders add` is given `--from` a directory whose removal record names the folder being added, a device MUST name apart each file of that directory whose item the folder on the instance does not hold.
-
-**Reason:** the item may be missing from the backup or may have left the folder there, so the person decides whether the file becomes a new item; `folders push --send-newer` sends none of them.
-
-**Tests:** `cli/folder-instance-changed.test.ts › sends no file whose item the instance changed after the add or holds at the same or a newer version, and names one it lacks or that is gone`.
-
-### `folder-setup/add-from-gone-named`
-
-When `folders add` is given `--from` a directory whose removal record names a file that is no longer in that directory, a device MUST name the file apart from the files it sends.
-
-**Tests:** `cli/folder-instance-changed.test.ts › sends no file whose item the instance changed after the add or holds at the same or a newer version, and names one it lacks or that is gone`.
-
-### `folder-setup/add-from-unknown`
-
-If `folders add` is given `--from` a directory that holds no removal record, or one it cannot read, then the CLI MUST add the folder and report that nothing is known of what that directory sent.
-
-**Reason:** a directory removed by an earlier build has no record, and a record that cannot be read is no reason to refuse the add.
-
-**Tests:** `cli/folder-instance-changed.test.ts › names no file a folder added back on the instance it was removed from sent, and says nothing is known of a directory with no record or one it cannot read`.
-
-### `folder-setup/add-from-same-refused`
-
-If `folders add` is given `--from` the directory it adds, then the CLI MUST refuse the add with a usage error.
-
-**Reason:** a first sync of a directory that already holds the files sends them by the versions their own lines name, which a restored instance may have given to other changes, so the files are moved aside and compared from there.
-
-**Tests:** `cli/folder-instance-changed.test.ts › names no file a folder added back on the instance it was removed from sent, and says nothing is known of a directory with no record or one it cannot read`.
-
-### `folder-setup/send-newer-sends`
-
-When `folders push --send-newer` runs on a directory whose add named older files under `folder-setup/add-from-older-named`, a device MUST send each such file as it is in the moved directory then, as an edit of the item at the version the add read.
+**Reason:** the removal deletes the copy that held these, and the same directory added again reads them to tell which version it and a restored instance both hold.
 
 **Tests:** `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`.
 
-### `folder-setup/send-newer-changed-refused`
+### `folder-setup/remove-records-agreed-hash`
 
-If the instance holds an item that `folder-setup/add-from-older-named` named older at a version other than the one the add read when `folders push --send-newer` runs, then a device MUST leave the item as the instance holds it and name the file as not sent.
+When a device writes a removal record, a device MUST record a file's content hash only where no change to the file waits unanswered.
 
-**Reason:** a change made on the instance after the add is newer than anything the add compared, so sending over it would lose it.
+**Reason:** a change the server never acknowledged is not what the folder last agreed with it.
 
-**Tests:** `cli/folder-instance-changed.test.ts › sends no file whose item the instance changed after the add or holds at the same or a newer version, and names one it lacks or that is gone`.
+**Tests:** `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`.
+
+### `folder-setup/remove-record-first`
+
+If a device cannot write a removal record and flush it to the disk, then a device MUST refuse to remove the folder's state.
+
+**Reason:** the record is written before anything is cleared, so a removal that fails part way leaves either the folder or its record.
+
+**Tests:** `cli/folder-instance-changed.test.ts › flags nothing in a directory added back on the instance it was removed from, and says nothing is known of a record it cannot read`.
+
+### `folder-setup/remove-asks-instance`
+
+When a device removes a folder's state while the folder's server answers, a device MUST judge whether another instance answers there by that answer.
+
+**Reason:** a restored instance can take the address after the copy last asked, and the removal then names what that instance never received.
+
+**Tests:** `cli/folder-instance-changed.test.ts › keeps both where the instance changed a file's item since the restore, and sends nothing over a change made after the add`.
+
+## Adding a directory back after a restore
+
+A removal record names another instance where the instance at the folder's server answers with another `instance_id` than the one the record names. The time an instance was made is the time its `instance_id` names, a UUIDv7 made when its database first started (`instance/id-at-root`, `instance/id-per-instance`). A version's time is its item's `updated_at` for the current version, and otherwise the `created_at` of the snapshot of the version before it.
+
+### `folder-setup/readd-before-made-sent`
+
+Where a directory's removal record names the folder added to it and another instance, when its first sync reads a file whose `marfa_id` names an item the record names and the instance holds that item at a version whose time is before the instance was made and that is no newer than both the file's version line and the record's version, a device MUST send the file as an edit of that version under `version_match: exact`.
+
+**Reason:** a version written before the instance existed came from the restore and is one the directory's own history holds, so the file is newer; the exact match leaves a change made on the instance after the read refused (`versions/exact-match`), never overwritten.
+
+**Tests:** `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`, `cli/folder-instance-changed.test.ts › keeps both where the instance changed a file's item since the restore, and sends nothing over a change made after the add`.
+
+### `folder-setup/readd-changed-merged`
+
+Where a directory's removal record names the folder added to it and another instance, when its first sync reads a file whose `marfa_id` names an item the record names, that differs from the item, and whose item the instance holds at a version written after the instance was made, a device MUST send the file as an edit of the newest version written before the instance was made, no newer than the file's version line and the record's version, without `version_match`.
+
+**Reason:** that version is the last one both histories hold, so the server merges from it and keeps both edits of a clashing body (`versions/auto-keep-both`).
+
+**Tests:** `cli/folder-instance-changed.test.ts › keeps both where the instance changed a file's item since the restore, and sends nothing over a change made after the add`.
+
+### `folder-setup/readd-line-not-trusted`
+
+Where a directory's removal record names the folder added to it and another instance, a device MUST NOT send a file whose item the record names as an edit of a version the instance wrote after it was made.
+
+**Reason:** a restored instance numbers its own edits from the backup's versions, so the number on a file's version line can name another edit there.
+
+**Tests:** `cli/folder-instance-changed.test.ts › keeps both where the instance changed a file's item since the restore, and sends nothing over a change made after the add`.
+
+### `folder-setup/readd-absent-held`
+
+Where a directory's removal record names the folder added to it and another instance, if a file's `marfa_id` names an item the record names and the folder on the instance does not hold, then a device MUST send nothing for the file and flag it as waiting.
+
+**Reason:** the item may be missing from the backup or may have left the folder there; taking out the file's `marfa_id` line sends it as a new item.
+
+**Tests:** `cli/folder-instance-changed.test.ts › keeps both where the instance changed a file's item since the restore, and sends nothing over a change made after the add`.
+
+### `folder-setup/readd-foresight`
+
+When `folders add` adds a folder to a directory whose removal record names that folder and another instance, the CLI MUST report each file the record names that the first sync sends under `folder-setup/readd-before-made-sent` or `folder-setup/readd-changed-merged`, holds under `folder-setup/readd-absent-held`, or cannot find or read.
+
+**Tests:** `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`, `cli/folder-instance-changed.test.ts › keeps both where the instance changed a file's item since the restore, and sends nothing over a change made after the add`.
+
+### `folder-setup/readd-unknown-said`
+
+If `folders add` adds a folder to a directory whose removal record is not a regular file, cannot be read, or names another folder, then the CLI MUST add the folder and report that nothing is known of what the directory last synced.
+
+**Reason:** a record that cannot be trusted is no reason to refuse the add, and the first sync then sends each file by its version line.
+
+**Tests:** `cli/folder-instance-changed.test.ts › flags nothing in a directory added back on the instance it was removed from, and says nothing is known of a record it cannot read`.
+
+### `folder-setup/readd-same-instance`
+
+Where a directory's removal record names the folder added to it and the instance at the folder's server, a device MUST send each file as an edit of the version its version line names.
+
+**Tests:** `cli/folder-instance-changed.test.ts › flags nothing in a directory added back on the instance it was removed from, and says nothing is known of a record it cannot read`.
+
+### `folder-setup/readd-record-retired`
+
+When a whole scan of the directory leaves no file whose item its removal record names unbound, a device MUST delete the record.
+
+**Tests:** `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`.
 
 ### `folder-setup/registry-one-directory`
 

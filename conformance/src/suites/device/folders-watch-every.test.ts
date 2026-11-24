@@ -857,15 +857,11 @@ describe("a watch of every folder", () => {
         expect(stopped[0].reason).toContain("another Marfa instance");
         expect(stopped[0].reason).toContain("marfa folders remove");
         expect(stopped[0].reason).toContain("marfa folders add");
-        expect(stopped[0].reason).toContain("move the directory aside");
+        expect(stopped[0].reason).toContain("add the same directory again");
         expect(stopped[0].reason).toContain("`--folder` with the folder's ID");
         expect(stopped[0].reason).toContain(
-          "redo there the changes `marfa folders remove` names",
+          "delete again each file `marfa folders remove` names as deleted",
         );
-        expect(stopped[0].reason).toContain(
-          "`--from` with the moved directory",
-        );
-        expect(stopped[0].reason).toContain("marfa folders push --send-newer");
         expect(stopped[0].reason).toContain(
           "push again until `marfa folders status` shows nothing waiting",
         );

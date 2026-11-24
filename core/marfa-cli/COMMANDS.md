@@ -4981,7 +4981,7 @@ marfa folders [OPTIONS] <COMMAND>
 
 ### marfa folders add
 
-Make a directory follow a folder, the `system.folder` that `folders create` makes. Needs read on `system.folder`. Warns on standard error, once, and goes on, if the directory is in iCloud Drive, a cloud service's synced location or a network file system, or if git tracks it.
+Make a directory follow a folder, the `system.folder` that `folders create` makes. Needs read on `system.folder`. Warns on standard error, once, and goes on, if the directory is in iCloud Drive, a cloud service's synced location or a network file system, or if git tracks it. Where the directory holds the record `folders remove` left of a sync with another instance, the add says, for each file it names, what the first sync will do: a file whose item the instance holds as a restored backup left it is sent as an edit of that version; one whose item the instance changed since is merged from the last version both held, keeping both edits; and one whose item the instance lacks, or whose shared version cannot be told, is not sent and waits.
 
 ```text
 marfa folders add [OPTIONS] --folder <ID_OR_TITLE> <DIR>
@@ -4995,7 +4995,6 @@ marfa folders add [OPTIONS] --folder <ID_OR_TITLE> <DIR>
 | --- | --- |
 | `--folder <ID_OR_TITLE>` | The folder to follow, by its `system.folder` ID, or by its title where exactly one folder the credential can read has that title. A value that is an ID is taken as one. |
 | `--yes` | Confirm the first sync without asking, for scripts. Without it, the add says what the first sync will do and waits for a go-ahead. |
-| `--from <DIR>` | Read the removal record from a directory you moved aside. Lists files whose items have lower versions on this instance, files missing from the moved directory, and files with no item in the folder on this instance. If the record is missing or unreadable, the add continues and reports why it could not compare the files. The moved directory must differ from the directory being added and must no longer follow a folder. |
 
 ### marfa folders list
 
@@ -5021,7 +5020,7 @@ marfa folders inventory [OPTIONS]
 
 ### marfa folders remove
 
-Stop following a folder and keep its files. If the first sync was confirmed, the command writes a record under `.marfa` for `folders add --from`. Empty administrative directories remain. Refused while writes wait, except for a first sync still waiting to be confirmed, which this cancels, and except where another Marfa instance answers at the folder's server, which none of them can reach: the command then names each file holding a change the folder could not send, and how to send the changes there. Follows no symbolic link, and takes a path through one only where it is the path `folders list` shows. Where that path is gone, passes through a link, or holds state the registry does not show to be the directory's own, the directory is only taken off the list and nothing is deleted.
+Make a directory stop following its folder: its own state under `.marfa` goes, and its files stay as plain files. Empty administrative directories remain. Where the first sync was confirmed, `.marfa/removed.json` stays, recording the version and content each file last synced, written before anything is removed; the command is refused where it cannot be written. Refused while writes wait, except for a first sync still waiting to be confirmed, which this cancels, and except where another Marfa instance answers at the folder's server, which none of them can reach: the command then names each file holding a change the folder could not send, and how to send the changes there. Follows no symbolic link, and takes a path through one only where it is the path `folders list` shows. Where that path is gone, passes through a link, or holds state the registry does not show to be the directory's own, the directory is only taken off the list and nothing is deleted.
 
 ```text
 marfa folders remove [OPTIONS] <DIR>
@@ -5155,7 +5154,6 @@ marfa folders push [OPTIONS] <DIR>
 | --- | --- |
 | `--send-only` | Send what the directory holds and go no further: scan and drain, catch up with nothing and pull nothing, so no item's file is written into the directory or removed from it. A copy never hydrated hydrates first, which writes only the directory's store. A later push without this pulls what the server holds. Refused while the first sync waits to be confirmed. |
 | `--confirm-additions` | Send every new file this push finds, however many, in place of holding a drop of more than the folder's `addition_threshold` for `folders confirm`. For a script that no one is at; the decision is the script's. |
-| `--send-newer` | Copy the files that `folders add --from` listed as older on the instance into this directory, then push. Reports files it skips because the item's version changed, the local file changed, or the moved directory no longer holds the file. |
 
 ### marfa folders unmatched
 

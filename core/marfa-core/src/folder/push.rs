@@ -533,14 +533,14 @@ impl Folder {
             (Some(removed_record::Basis::Exact(_)), _) => Standing::Current,
             (Some(removed_record::Basis::Merge(base)), _) => Standing::Behind(*base),
             (_, line) => match line {
-            _ if untaken.is_some() => Standing::Spent,
-            Some(line) if line == held.version || current_but_line => Standing::Current,
-            // Behind only by the file's own edit, which it holds.
-            Some(line) if line < held.version && spent.is_some_and(|spent| line <= spent) => {
-                Standing::Spent
-            }
-            Some(line) if line < held.version => Standing::Behind(line),
-            _ => Standing::Lineless,
+                _ if untaken.is_some() => Standing::Spent,
+                Some(line) if line == held.version || current_but_line => Standing::Current,
+                // Behind only by the file's own edit, which it holds.
+                Some(line) if line < held.version && spent.is_some_and(|spent| line <= spent) => {
+                    Standing::Spent
+                }
+                Some(line) if line < held.version => Standing::Behind(line),
+                _ => Standing::Lineless,
             },
         };
         let whole = standing == Standing::Current;
@@ -741,12 +741,8 @@ impl Folder {
                         crate::Body::Folder,
                     )
                 } else if matches!(basis, Some(removed_record::Basis::Exact(_))) {
-                    self.core.write_update(
-                        item_id,
-                        &edit,
-                        crate::Based::Exact,
-                        crate::Body::Folder,
-                    )
+                    self.core
+                        .write_update(item_id, &edit, crate::Based::Exact, crate::Body::Folder)
                 } else {
                     self.core.write_update(
                         item_id,

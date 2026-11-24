@@ -6508,15 +6508,10 @@ describe("a folder whose server answers as another instance", () => {
       "Same.md",
     );
     expect(said).toContain(
-      `The changes to changed, new and moved files stay in the files in ${harness.dir}`,
-    );
-    expect(said).toContain(
       `marfa folders add ${harness.dir} --folder ${harness.settings.id}`,
     );
-    expect(said).toContain("delete each deleted file again");
-    expect(said).toContain("move each moved file again");
-    expect(said).toContain(`--from ${harness.dir}.before-restore`);
-    expect(said).toContain(`marfa folders push ${harness.dir} --send-newer`);
+    expect(said).toContain("on this same directory");
+    expect(said).toContain("Delete again each file named deleted above");
     expect(said).toContain(
       `until \`marfa folders status ${harness.dir}\` shows nothing waiting`,
     );

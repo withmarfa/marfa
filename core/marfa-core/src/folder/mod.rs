@@ -866,9 +866,7 @@ impl Folder {
                 crate::store::meta_get(&conn, crate::store::META_SERVER_ORIGIN)?,
             )
         };
-        let Some(http) = origin
-            .and_then(|origin| crate::http::Http::new(&origin, "").ok())
-        else {
+        let Some(http) = origin.and_then(|origin| crate::http::Http::new(&origin, "").ok()) else {
             return Ok(recorded);
         };
         Ok(

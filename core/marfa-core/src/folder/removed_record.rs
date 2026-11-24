@@ -74,16 +74,26 @@ pub enum Known {
 pub enum Foreseen {
     /// The instance holds the item as the restore left it, an earlier
     /// version than the folder sent: the file is sent as an edit of it.
-    Send { held: i64, sent: i64 },
+    Send {
+        held: i64,
+        sent: i64,
+    },
     /// The instance changed the item since the restore: a file that differs
     /// is merged from the last version both hold, keeping both edits.
-    Both { held: i64, shared: i64 },
+    Both {
+        held: i64,
+        shared: i64,
+    },
     /// The folder on the instance holds no item for the file.
     Absent,
     /// The record cannot tell which version both hold.
-    Unsure { reason: String },
+    Unsure {
+        reason: String,
+    },
     Gone,
-    Unreadable { reason: String },
+    Unreadable {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -153,8 +163,7 @@ impl Folder {
         let mut files = Vec::new();
         for row in bound {
             // Version 0 is a create the server never answered.
-            let Some(&version) = versions.get(&row.item_id).filter(|version| **version > 0)
-            else {
+            let Some(&version) = versions.get(&row.item_id).filter(|version| **version > 0) else {
                 continue;
             };
             let hash = (!store::item_waits(&conn, &row.item_id)?).then_some(row.content_hash);
@@ -354,9 +363,7 @@ impl Folder {
                 });
                 continue;
             };
-            let line = std::str::from_utf8(&bytes)
-                .ok()
-                .and_then(|text| version_in(text));
+            let line = std::str::from_utf8(&bytes).ok().and_then(version_in);
             let outcome = match self.restored_basis(&evidence, item, line) {
                 Some(Basis::Exact(held))
                     if held == sent.version
@@ -405,7 +412,10 @@ fn durable_write(dir: &Directory, bytes: &[u8]) -> std::io::Result<()> {
 fn read(dir: &Directory) -> std::result::Result<Option<Record>, String> {
     let shown = Path::new(super::STATE_DIR).join(RECORD);
     let unreadable = |error: &dyn std::fmt::Display| {
-        format!("its removal record {} cannot be read: {error}", shown.display())
+        format!(
+            "its removal record {} cannot be read: {error}",
+            shown.display()
+        )
     };
     let file = match dir.open_file(Path::new(RECORD), OFlags::RDONLY, Mode::empty()) {
         Ok(file) => file,
@@ -483,6 +493,6 @@ mod tests {
             .as_millis() as i64;
         let born = born_ms(&id).unwrap();
         assert!((now - born).abs() < 5_000, "{born} against {now}");
-        assert_eq!(born_ms(&uuid::Uuid::new_v4().to_string()), None);
+        assert_eq!(born_ms("01234567-89ab-4def-8123-456789abcdef"), None);
     }
 }
