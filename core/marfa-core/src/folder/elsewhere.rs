@@ -175,7 +175,7 @@ impl Peer {
     }
 
     /// Whether the item left this folder by its state or the bin, whose file
-    /// that folder takes away, or pauses, rather than lets go.
+    /// that folder takes away, or pauses, rather than keeps for a take-in.
     fn left_by_state(&self, item_id: &str) -> bool {
         let Some(folder) = &self.folder else {
             return true;
@@ -199,20 +199,6 @@ impl Peer {
                 edge.edge_type == super::embeds::ATTACHMENT_EDGE
                     && self.bound_to(&edge.to_id).is_some()
                     && !(taking.contains(&edge.to_id) && self.holds(&edge.to_id) == Some(false))
-            })
-        })
-    }
-
-    /// Whether its query holds a document the item is attached to, so its
-    /// file of the item is that document's attachment.
-    fn holds_document_of(&self, item_id: &str) -> bool {
-        let Some(folder) = &self.folder else {
-            return false;
-        };
-        folder.core.edges_from(item_id).is_ok_and(|edges| {
-            edges.iter().any(|edge| {
-                edge.edge_type == super::embeds::ATTACHMENT_EDGE
-                    && self.holds(&edge.to_id) == Some(true)
             })
         })
     }
@@ -736,19 +722,8 @@ impl<'a> Peers<'a> {
         }
     }
 
-    /// Whether another folder holds the item, or a document it is attached
-    /// to, with a file of it already.
-    pub(super) fn filed_elsewhere(&self, item_id: &str) -> bool {
-        self.other_folders().any(|peer| {
-            (peer.holds(item_id) == Some(true) || peer.holds_document_of(item_id))
-                && peer
-                    .bound_to(item_id)
-                    .is_some_and(|bound| peer.present(&bound.path))
-        })
-    }
-
-    /// A file another folder let go of, holding the bytes it wrote, to take
-    /// in to the folder whose members are `taking`.
+    /// A file another folder keeps unmatched, holding the bytes it wrote, to
+    /// take in to the folder whose members are `taking`.
     pub(super) fn let_go(
         &self,
         item_id: &str,

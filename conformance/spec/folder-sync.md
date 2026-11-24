@@ -560,9 +560,9 @@ When the working copy changes under a pull, a device MUST restart the pull from 
 
 ### `folder-sync/pull-retry-counts`
 
-When a pull restarts after its working copy changes, a device MUST include completed file writes, rewrites, moves, revivals, placements, placement ends, removals, purged-file removals, transfers in and transfers out from earlier attempts in its final report.
+When a pull restarts after its working copy changes, a device MUST include completed file writes, rewrites, moves, revivals, placements, placement ends, removals, purged-file removals and transfers in from earlier attempts in its final report.
 
-**Tests:** `device/folders-identity.test.ts › counts what an attempt wrote before the copy changed under it`, `device/folders-contract-c.test.ts › counts files and placements from before a restarted pull exactly once`, `device/folders-contract-c-retry.test.ts › retains rewrite and move counts across a restart`, `device/folders-contract-c-retry.test.ts › retains revival counts across a restart`, `device/folders-contract-c-retry.test.ts › retains removal, purge and placement-end counts across a restart`, `device/folders-contract-c-retry.test.ts › retains transfer-%s counts across a restart`.
+**Tests:** `device/folders-identity.test.ts › counts what an attempt wrote before the copy changed under it`, `device/folders-contract-c.test.ts › counts files and placements from before a restarted pull exactly once`, `device/folders-contract-c-retry.test.ts › retains rewrite and move counts across a restart`, `device/folders-contract-c-retry.test.ts › retains revival counts across a restart`, `device/folders-contract-c-retry.test.ts › retains removal, purge and placement-end counts across a restart`, `device/folders-contract-c-retry.test.ts › retains the transfer-in count across a restart`.
 
 ### `folder-sync/watch-copy-change-notice`
 
@@ -596,7 +596,7 @@ If another program's writes to a directory's store keep a folder watch from writ
 
 ### `folder-sync/pull-flagged-items`
 
-When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a device MUST include the item's ID, intended path or retained file path, flag and reason in the pull report's `flagged` entries, using `retained` as the flag for a file it could not let go to another directory.
+When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a device MUST include the item's ID, intended path, flag and reason in the pull report's `flagged` entries.
 
 **Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folders.test.ts › refuses to write a file outside the folder`, `device/folders.test.ts › does not write over a file it never wrote`, `device/folders-placement.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`, `device/folders-placement.test.ts › writes no file where its placement would make it another kind of file`, `device/folders-placement.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 

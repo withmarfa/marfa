@@ -1526,8 +1526,7 @@ export interface StatusReport {
  *  (`folder-files/walk-directory-gone`). A pull names an item whose file it did not write as
  *  `unwritten`, `outside`, `unsuited` or `absent`, the count it is in
  *  (`folder-sync/pull-flagged-items`), one a program holds open for writing as `busy`
- *  (`folder-files/write-open-writer-kept`), and one it could not let go to another folder as
- *  `retained` (`folder-files/retained-source-reported`). A pull names a document as
+ *  (`folder-files/write-open-writer-kept`). A pull names a document as
  *  `attachment` where its attached file is written in another directory
  *  (`folder-documents/attachment-written-once-report`) or could not be read
  *  (`folder-documents/attachment-unread-reported`). A scan or a pull names a person's
@@ -1550,13 +1549,11 @@ export interface FlaggedFile {
     | "outside"
     | "unsuited"
     | "absent"
-    | "retained"
     | "attachment"
     | "busy"
     | "kept";
   reason: string;
-  /** The item whose file a pull did not write (`folder-sync/pull-flagged-items`), or could
-   *  not let go to another folder (`folder-files/retained-source-reported`). */
+  /** The item whose file a pull did not write (`folder-sync/pull-flagged-items`). */
   item?: string;
 }
 
@@ -1607,9 +1604,6 @@ export interface PullReport {
   /** Items whose file was moved to another directory on the machine, so none
    *  is written here (`folder-files/moved-awaiting-peer`). */
   elsewhere: number;
-  /** Files of items another directory on the machine holds with a file of its
-   *  own, taken away with nothing trashed (`folder-files/let-go-existing-peer`). */
-  let_go: number;
   /** Placements deleted because their file left the folder for good
    *  (`folder-files/placement-end-count`). */
   ended: number;
