@@ -240,6 +240,21 @@
     return kept;
   }
 
+  /** The offset in `text` just after its `count`th letter or digit. */
+  function offsetAfterCodeCharacters(text, count) {
+    if (count <= 0) return 0;
+    let seen = 0;
+    let offset = 0;
+    for (const character of text) {
+      offset += character.length;
+      if (isCodeCharacter(character)) {
+        seen += 1;
+        if (seen === count) return offset;
+      }
+    }
+    return text.length;
+  }
+
   // Each code input's drawing, for the selection changes the document hears.
   const codeDrawings = new WeakMap();
   document.addEventListener("selectionchange", () => {
@@ -247,10 +262,15 @@
   });
 
   // Draws a code field's input in its cells as the server reads it, and takes no more
-  // letters or digits than it has cells, so what is drawn is what is sent.
+  // letters or digits than it has cells, so what is drawn is what is sent. A value that
+  // arrives with more than the cells hold stays as it is, in the plain input.
   function watchCodes(root = document) {
     for (const input of root.querySelectorAll(".code > .in")) {
       const cells = [...input.parentElement.querySelectorAll(".cell")];
+      if (codeCharactersIn(input.value) > cells.length) {
+        input.parentElement.classList.add("plain");
+        continue;
+      }
       const fit = () => {
         if (codeCharactersIn(input.value) <= cells.length) return;
         const caret = input.selectionEnd ?? input.value.length;
@@ -291,8 +311,45 @@
       for (const kind of ["focus", "blur", "select", "selectionchange"]) {
         input.addEventListener(kind, draw);
       }
+      // The input's own text does not sit where the cells do, so the pointer chooses a place
+      // between the cells, and a drag extends from there.
+      const placeAt = (clientX) => {
+        const typed = codeCharactersIn(input.value);
+        let place = 0;
+        for (const cell of cells) {
+          const box = cell.getBoundingClientRect();
+          if (clientX > box.left + box.width / 2) place += 1;
+        }
+        return offsetAfterCodeCharacters(input.value, Math.min(place, typed));
+      };
+      input.addEventListener("mousedown", (event) => {
+        if (event.button !== 0 || input.disabled) return;
+        event.preventDefault();
+        input.focus();
+        if (event.detail >= 2) {
+          input.select();
+          return;
+        }
+        const anchor = placeAt(event.clientX);
+        input.setSelectionRange(anchor, anchor);
+        draw();
+        const drag = (move) => {
+          const head = placeAt(move.clientX);
+          input.setSelectionRange(
+            Math.min(anchor, head),
+            Math.max(anchor, head),
+            head < anchor ? "backward" : "forward",
+          );
+          draw();
+        };
+        const drop = () => {
+          document.removeEventListener("mousemove", drag);
+          document.removeEventListener("mouseup", drop);
+        };
+        document.addEventListener("mousemove", drag);
+        document.addEventListener("mouseup", drop);
+      });
       codeDrawings.set(input, draw);
-      fit();
       draw();
     }
   }

@@ -3328,13 +3328,13 @@ When `GET /auth/device` carries a `user_code` and no `error`, the server MUST re
 
 ### `keys-and-oauth/device-check-page`
 
-While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), when a signed-in owner whose browser session meets the code's `max_age` (`keys-and-oauth/device-max-age-sign-in`) opens `/auth/device/check` with the `user_code` of a pending device code, the server MUST answer `200` with a page that shows the code and asks the owner to confirm it matches the code on the device.
+While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), when a signed-in owner whose browser session meets the code's `max_age` (`keys-and-oauth/device-max-age-sign-in`) and its app's renewal (`mcp/settings-step-up-renewal`) opens `/auth/device/check` with the `user_code` of a pending device code, the server MUST answer `200` with a page that shows the code and asks the owner to confirm it matches the code on the device.
 
 **Tests:** `compliance/device-grant.test.ts › sends a link carrying the code to the check step, which shows the code to compare`.
 
 ### `keys-and-oauth/device-check-confirm`
 
-While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), when a signed-in owner whose browser session meets the code's `max_age` (`keys-and-oauth/device-max-age-sign-in`) posts `POST /auth/device/check` with the `user_code` of a pending device code, the server MUST redirect the browser to `/auth/device/consent` with the same `user_code`.
+While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), when a signed-in owner whose browser session meets the code's `max_age` (`keys-and-oauth/device-max-age-sign-in`) and its app's renewal (`mcp/settings-step-up-renewal`) posts `POST /auth/device/check` with the `user_code` of a pending device code, the server MUST redirect the browser to `/auth/device/consent` with the same `user_code`.
 
 **Tests:** `compliance/device-grant.test.ts › opens the approval page only for the code the owner confirmed, in the browser that confirmed it`.
 
@@ -3352,13 +3352,13 @@ When a browser with no owner session opens `/auth/device/check`, the server MUST
 
 ### `keys-and-oauth/device-check-unknown`
 
-If a signed-in owner opens or posts `/auth/device/check` with a `user_code` the server never issued or has removed, then the server MUST redirect the browser to `/auth/device` with `error=invalid_code`.
+While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), if a signed-in owner opens or posts `/auth/device/check` with a `user_code` the server never issued or has removed, then the server MUST redirect the browser to `/auth/device` with `error=invalid_code`.
 
 **Tests:** `compliance/device-grant.test.ts › sends a code it does not know back to the entry page as wrong, and a code it holds as expired as expired`.
 
 ### `keys-and-oauth/device-check-expired`
 
-If a signed-in owner opens or posts `/auth/device/check` with the `user_code` of a device code the server holds as expired, then the server MUST redirect the browser to `/auth/device` with `error=expired_code`.
+While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), if a signed-in owner opens or posts `/auth/device/check` with the `user_code` of a device code the server holds as expired, then the server MUST redirect the browser to `/auth/device` with `error=expired_code`.
 
 **Tests:** `compliance/device-grant.test.ts › sends a code it does not know back to the entry page as wrong, and a code it holds as expired as expired`.
 
@@ -3402,7 +3402,7 @@ When the owner confirms it's them in a browser session that has confirmed a devi
 
 ### `keys-and-oauth/device-max-age-sign-in`
 
-Where a device code was requested with `max_age`, if a browser session that began more than `max_age` seconds before the code was requested opens `/auth/device/check` for the code or posts to it, then the server MUST send the browser to `/auth/sign-in` with `prompt=login` and a `return_to` of the code's check page.
+While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), where a device code was requested with `max_age`, if a browser session that began more than `max_age` seconds before the code was requested opens `/auth/device/check` for the pending code or posts to it, then the server MUST send the browser to `/auth/sign-in` with `prompt=login` and a `return_to` of the code's check page.
 
 **Reason:** OpenID Connect Core section 3.1.2.1 and RFC 9470 section 4, with the device authorization request as the authorization request: a device asks for a fresh sign-in this way to meet `keys-and-oauth/step-up-challenge`. `max_age=0` asks for a sign-in made after the code was requested. Such a session cannot confirm the code, so the approval page sends it to the check page (`keys-and-oauth/device-consent-unchecked`).
 

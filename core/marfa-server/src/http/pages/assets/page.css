@@ -490,11 +490,11 @@ code {
 }
 
 @media (forced-colors: none) {
-  .js .code .in ~ .cells {
+  .js .code:not(.plain) .in ~ .cells {
     display: flex;
   }
 
-  .js .code .in {
+  .js .code:not(.plain) .in {
     position: absolute;
     inset: 0;
     z-index: 1;
@@ -506,11 +506,11 @@ code {
     caret-color: transparent;
   }
 
-  .js .code .in::selection {
+  .js .code:not(.plain) .in::selection {
     background: transparent;
   }
 
-  .js .code .in:focus-visible {
+  .js .code:not(.plain) .in:focus-visible {
     outline: none;
   }
 }
