@@ -506,8 +506,7 @@
     }
   }
 
-  // A part marked data-shown-by shows while the control it names is at data-shown-at; without
-  // scripts every part shows and the server reads only what the control's value counts.
+  // Without scripts every part shows, and the server reads only what the control's value counts.
   function watchChoices() {
     const choose = document.querySelector("[data-needs-choice]");
     const radios = document.querySelectorAll("input[name=access]");

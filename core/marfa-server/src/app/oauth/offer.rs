@@ -540,8 +540,7 @@ fn distinct(values: &[String]) -> Vec<&str> {
     seen
 }
 
-/// The powers the admin level grants, or `None` where the post names a level or a power the
-/// request did not. Rows count only under Custom, since a page without scripts posts every row.
+/// A page without scripts posts every row, so rows count only under Custom.
 fn admin_chosen(post: &Post, named: &ScopeSet) -> Option<Vec<Permission>> {
     let Some(word) = post.admin.as_deref() else {
         return Some(Vec::new());
