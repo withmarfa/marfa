@@ -53,10 +53,6 @@ impl Faults {
         None
     }
 
-    pub fn trusted_certificate(&self, _host: &str) -> Option<String> {
-        None
-    }
-
     pub fn stall(&self, _host: &str) -> Option<Duration> {
         None
     }

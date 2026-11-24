@@ -3,6 +3,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use rustls::pki_types::CertificateDer;
+use rustls::pki_types::pem::PemObject;
+use rustls::server::ParsedCertificate;
 use serde::Serialize;
 use tokio::sync::watch;
 
@@ -433,11 +436,9 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             {
                 return Err("a trust fault is named for a host name".to_string());
             }
-            match arg {
-                Some(pem) if ureq::tls::Certificate::from_pem(pem.as_bytes()).is_ok() => {
-                    Ok((None, None))
-                }
-                _ => Err("a trust fault takes the PEM certificate the host is trusted by".to_string()),
+            match arg.and_then(one_certificate) {
+                Some(_) => Ok((None, None)),
+                None => Err("a trust fault takes one PEM X.509 certificate".to_string()),
             }
         }
         "limit" => {
@@ -546,6 +547,26 @@ fn answers(arg: &str) -> Result<Vec<Resolved>, String> {
         .collect()
 }
 
+/// Host names are matched without regard to case, so a fault is stored under one spelling.
+fn normal(name: &str) -> std::borrow::Cow<'_, str> {
+    if name.starts_with(RESOLVE) || name.starts_with(TRUST) {
+        name.to_ascii_lowercase().into()
+    } else {
+        name.into()
+    }
+}
+
+/// The DER of a PEM text that holds exactly one certificate, and that one X.509.
+fn one_certificate(pem: &str) -> Option<CertificateDer<'static>> {
+    let mut certificates = CertificateDer::pem_slice_iter(pem.as_bytes());
+    let certificate = certificates.next()?.ok()?;
+    if certificates.next().is_some() {
+        return None;
+    }
+    ParsedCertificate::try_from(&certificate).ok()?;
+    Some(certificate)
+}
+
 struct Waiting(Arc<AtomicU64>);
 
 impl Drop for Waiting {
@@ -567,13 +588,8 @@ impl Faults {
             let (aim, number) = judge(name, arg)?;
             (aim, number, HashSet::new())
         };
-        let lowered;
-        let name = if name.starts_with(RESOLVE) || name.starts_with(TRUST) {
-            lowered = name.to_ascii_lowercase();
-            lowered.as_str()
-        } else {
-            name
-        };
+        let name = normal(name);
+        let name = name.as_ref();
         let mut armed = self.armed();
         let arg = arg.map(str::to_string);
         if let Some(fault) = armed.iter_mut().find(|fault| fault.name == name) {
@@ -602,8 +618,9 @@ impl Faults {
     }
 
     pub fn clear(&self, name: Option<&str>) {
+        let name = name.map(normal);
         self.armed().retain(|fault| {
-            let keep = name.is_some_and(|name| fault.name != name);
+            let keep = name.as_deref().is_some_and(|name| fault.name != name);
             if !keep {
                 fault.gate.send_replace(true);
             }
@@ -757,13 +774,14 @@ impl Faults {
         lookups.into_iter().nth(at)
     }
 
-    /// The one certificate a metadata document fetch trusts for `host`, in PEM.
-    pub fn trusted_certificate(&self, host: &str) -> Option<String> {
+    /// The one certificate a metadata document fetch from `host` accepts, byte for byte.
+    pub fn trusted_certificate(&self, host: &str) -> Option<CertificateDer<'static>> {
         let name = format!("{TRUST}{}", host.to_ascii_lowercase());
         let mut armed = self.armed();
         let fault = armed.iter_mut().find(|fault| fault.name == name)?;
+        let certificate = fault.arg.as_deref().and_then(one_certificate)?;
         fault.fired += 1;
-        fault.arg.clone()
+        Some(certificate)
     }
 
     /// How long a lookup of `host` takes before it answers, when a fault stalls it.
@@ -969,6 +987,29 @@ mod tests {
     }
 
     #[test]
+    fn a_trust_fault_holds_one_x509_certificate_and_clears_in_any_case() {
+        let one = rcgen::generate_simple_self_signed(vec!["a.test".to_string()])
+            .expect("a certificate")
+            .cert
+            .pem();
+        let two = format!("{one}{one}");
+        assert!(refused("trust:a.test", Some(&two)));
+        let faults = Faults::default();
+        faults
+            .set("trust:Example.TEST", Some(&one))
+            .expect("a trust fault");
+        assert!(faults.trusted_certificate("example.test").is_some());
+        faults.clear(Some("trust:Example.TEST"));
+        assert!(faults.list().is_empty());
+        assert!(faults.trusted_certificate("example.test").is_none());
+        faults
+            .set("resolve:Example.TEST", Some("8.8.8.8"))
+            .expect("a resolve fault");
+        faults.clear(Some("resolve:EXAMPLE.test"));
+        assert!(faults.list().is_empty());
+    }
+
+    #[test]
     fn refuses_what_is_not_registered_and_arms_nothing() {
         assert!(refused("hold:nowhere", None));
         assert!(refused("fail:nowhere", None));
@@ -1159,6 +1200,10 @@ mod tests {
         assert!(refused("trust:", Some("-----BEGIN CERTIFICATE-----")));
         assert!(refused("trust:a.test", None));
         assert!(refused("trust:a.test", Some("not a certificate")));
+        assert!(refused(
+            "trust:a.test",
+            Some("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")
+        ));
         assert!(refused("resolve:", Some("127.0.0.1")));
         assert!(refused("resolve:a.test", None));
         assert!(refused("resolve:a.test", Some("not-an-address")));

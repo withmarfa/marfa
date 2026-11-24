@@ -12,12 +12,15 @@ use serde_json::Value;
 use tokio::runtime::Handle;
 use ureq::Agent;
 use ureq::http::header;
-use ureq::tls::{Certificate, RootCerts, TlsConfig};
+use ureq::tls::TlsConfig;
 use ureq::unversioned::transport::DefaultConnector;
 use url::{Host, Url};
 
 use super::client::{self, Registration, RegistrationError, Source};
 use super::redirect;
+
+#[cfg(feature = "test-hooks")]
+mod trust;
 
 /// The draft's recommended limit.
 const MAX_DOCUMENT_BYTES: u64 = 5 * 1024;
@@ -142,10 +145,22 @@ impl Fetcher {
             .http_status_as_error(false)
             .timeout_global(Some(self.limit))
             .max_response_header_size(MAX_HEADER_BYTES)
-            .tls_config(self.tls_for(&url))
+            .tls_config(self.tls.clone())
             .user_agent("marfa-server")
             .build();
+        #[cfg(feature = "test-hooks")]
+        if let Some(certificate) = url
+            .host_str()
+            .and_then(|host| self.faults.trusted_certificate(host))
+        {
+            let agent = Agent::with_parts(config, trust::connector(certificate), Pinned(addresses));
+            return Self::read(&agent, &url);
+        }
         let agent = Agent::with_parts(config, DefaultConnector::default(), Pinned(addresses));
+        Self::read(&agent, &url)
+    }
+
+    fn read(agent: &Agent, url: &Url) -> Result<Vec<u8>, Failure> {
         let mut response = agent
             .get(url.as_str())
             .header(header::ACCEPT, "application/json")
@@ -193,20 +208,6 @@ impl Fetcher {
             ));
         }
         Ok(document)
-    }
-
-    /// The default roots, or under a test fault the one certificate trusted for this host alone.
-    fn tls_for(&self, url: &Url) -> TlsConfig {
-        let pinned = url
-            .host_str()
-            .and_then(|host| self.faults.trusted_certificate(host))
-            .and_then(|pem| Certificate::from_pem(pem.as_bytes()).ok());
-        match pinned {
-            Some(certificate) => TlsConfig::builder()
-                .root_certs(RootCerts::new_with_certs(&[certificate]))
-                .build(),
-            None => self.tls.clone(),
-        }
     }
 
     /// Resolved once by the outbound path, which judges every answer: a name that also answers an
@@ -344,6 +345,7 @@ mod tests {
     use proptest::prelude::*;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
     use serde_json::json;
+    use ureq::tls::{Certificate, RootCerts};
 
     use super::super::client::{GrantType, ResponseType};
     use super::super::redirect::AppKind;
@@ -362,16 +364,30 @@ mod tests {
     fn listen(cert_name: &str, response: Vec<u8>) -> Listener {
         let certified =
             rcgen::generate_simple_self_signed(vec![cert_name.to_string()]).expect("a certificate");
-        let certificate = certified.cert.der().to_vec();
-        let pem = certified.cert.pem();
         let key = PrivateKeyDer::try_from(certified.signing_key.serialize_der()).expect("a key");
+        serve(
+            vec![certified.cert.der().clone()],
+            certified.cert.pem(),
+            key,
+            response,
+        )
+    }
+
+    /// Presents `chain`, whose first certificate, `pem`, is the server's own.
+    fn serve(
+        chain: Vec<CertificateDer<'static>>,
+        pem: String,
+        key: PrivateKeyDer<'static>,
+        response: Vec<u8>,
+    ) -> Listener {
+        let certificate = chain[0].to_vec();
         let config = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
         .expect("protocol versions")
         .with_no_client_auth()
-        .with_single_cert(vec![CertificateDer::from(certificate.clone())], key)
+        .with_single_cert(chain, key)
         .expect("a server config");
         let config = Arc::new(config);
         let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
@@ -551,19 +567,21 @@ mod tests {
         assert_eq!(live.accepted.load(Ordering::SeqCst), 0);
     }
 
+    /// A fetcher whose default roots trust nothing here, with a trust fault for `host`.
+    fn trusting(host: &str, pem: &str) -> Fetcher {
+        let faults = scripted("8.8.8.8>127.0.0.1");
+        faults
+            .set(&format!("trust:{host}"), Some(pem))
+            .expect("a trust fault");
+        Fetcher {
+            tls: TlsConfig::default(),
+            ..fetcher(faults, &[])
+        }
+    }
+
     #[test]
     fn a_trust_fault_trusts_one_certificate_for_its_own_host_alone() {
         let listener = listen(NAME, reply("200 OK", "application/json", b"{}"));
-        let trusting = |host: &str, pem: &str| {
-            let faults = scripted("8.8.8.8>127.0.0.1");
-            faults
-                .set(&format!("trust:{host}"), Some(pem))
-                .expect("a trust fault");
-            Fetcher {
-                tls: TlsConfig::default(),
-                ..fetcher(faults, &[])
-            }
-        };
         assert_eq!(
             trusting(NAME, &listener.pem)
                 .fetch(&id_at(&listener))
@@ -583,6 +601,43 @@ mod tests {
             Faults::default()
                 .set(&format!("trust:{NAME}"), Some("nope"))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn a_trust_fault_refuses_a_certificate_its_trusted_one_signed() {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).expect("params");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let authority =
+            rcgen::CertifiedIssuer::self_signed(params, rcgen::KeyPair::generate().expect("a key"))
+                .expect("an authority");
+        let key = rcgen::KeyPair::generate().expect("a key");
+        let leaf = rcgen::CertificateParams::new(vec![NAME.to_string()])
+            .expect("params")
+            .signed_by(&key, &*authority)
+            .expect("a leaf");
+        let listener = serve(
+            vec![leaf.der().clone(), authority.der().clone()],
+            leaf.pem(),
+            PrivateKeyDer::try_from(key.serialize_der()).expect("a key"),
+            reply("200 OK", "application/json", b"{}"),
+        );
+        // The witness: trusted as a root, the authority vouches for its leaf.
+        assert_eq!(
+            fetcher(scripted("8.8.8.8>127.0.0.1"), authority.der())
+                .fetch(&id_at(&listener))
+                .expect("a document under root trust"),
+            b"{}"
+        );
+        assert!(matches!(
+            trusting(NAME, &authority.pem()).fetch(&id_at(&listener)),
+            Err(Failure::Unavailable(_))
+        ));
+        assert_eq!(
+            trusting(NAME, &listener.pem)
+                .fetch(&id_at(&listener))
+                .expect("the leaf itself"),
+            b"{}"
         );
     }
 
