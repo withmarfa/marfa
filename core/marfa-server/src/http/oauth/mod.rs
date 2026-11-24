@@ -13,7 +13,7 @@ use axum::middleware::from_fn;
 use axum::response::IntoResponse;
 
 use super::Routes;
-use super::answer::{Answer, Stopped, json_answer};
+use super::answer::{Answer, Stopped, json_answer, names};
 use super::auth::origin::{self, Source};
 use super::caller::browser_owner;
 use super::cors;
@@ -61,7 +61,7 @@ fn drawn_again(view: &Consent, headers: &HeaderMap) -> Answer {
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
-    if accept.contains("application/json") && !accept.contains("text/html") {
+    if names(accept, "application/json") && !names(accept, "text/html") {
         return Err(Refusal::new(
             Code::Conflict,
             "This app's access changed after this page opened. Check what to allow, then try again.",
