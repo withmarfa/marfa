@@ -44,8 +44,7 @@ fn handshake(certificate: CertificateDer<'static>) -> Result<Handshake, ureq::Er
     Ok(Handshake(Arc::new(config)))
 }
 
-/// The pinned certificate stands in for the chain to a root; everything production checks of the
-/// end entity itself still holds.
+/// The certificate pin replaces the chain to a trusted root.
 #[derive(Debug)]
 struct Exactly {
     certificate: CertificateDer<'static>,
@@ -94,8 +93,6 @@ impl ServerCertVerifier for Exactly {
     }
 }
 
-/// The end-entity checks webpki makes before it looks for an issuer: the validity period, no CA
-/// flag, and server authentication among the extended key usages when they are listed.
 fn serves_now(end_entity: &CertificateDer<'_>, now: UnixTime) -> Result<(), CertificateError> {
     let (_, certificate) = X509Certificate::from_der(end_entity.as_ref())
         .map_err(|_| CertificateError::BadEncoding)?;
