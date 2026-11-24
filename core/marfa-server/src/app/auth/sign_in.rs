@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use rusqlite::Transaction;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::allowance::{self, CHANGE_REFUSED, CONFIRM_REFUSED, Door, SIGN_IN_REFUSED};
 use super::device::{Holder, Known};
@@ -26,6 +26,7 @@ pub(super) const SIGN_IN_FAILED: &str = "auth.sign_in.failed";
 const PASSWORD_CHANGED: &str = "owner.password.changed";
 const INVALID: &str = "invalid_credentials";
 const TOO_MANY: &str = "too_many_attempts";
+const CURRENT_PASSWORD: &str = "current_password";
 
 fn wrong_credentials() -> Refusal {
     Refusal::new(Code::Unauthorized, "Invalid username or password.")
@@ -489,8 +490,9 @@ pub async fn confirm(
     }
 }
 
+// The field tells it apart from an ended session, which is also 401.
 fn not_right() -> Refusal {
-    Refusal::new(Code::Unauthorized, "That password is not right.")
+    Refusal::new(Code::Unauthorized, "That password is not right.").with_detail("field", "password")
 }
 
 async fn reopen(
@@ -646,8 +648,20 @@ pub async fn change_password(
     }
 }
 
+// The field tells it apart from an ended session, which is also 401.
 fn current_not_right() -> Refusal {
     Refusal::new(Code::Unauthorized, "Your current password isn't right.")
+        .with_detail("field", CURRENT_PASSWORD)
+}
+
+pub fn is_current_not_right(refusal: &Refusal) -> bool {
+    refusal.code == Code::Unauthorized
+        && refusal
+            .details
+            .as_ref()
+            .and_then(|details| details.get("field"))
+            .and_then(Value::as_str)
+            == Some(CURRENT_PASSWORD)
 }
 
 async fn replace(

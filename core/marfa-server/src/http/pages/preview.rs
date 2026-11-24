@@ -19,15 +19,33 @@ use crate::app::oauth::offer::{
 const FOLDER_VARIABLE: &str = "MARFA_WRITE_PAGE_PREVIEW";
 
 const OPEN_CONFIRM_DIALOG: &str = r#"document.getElementById("confirm-dialog").showModal();"#;
-const SHOW_WRONG_PASSWORD: &str =
-    r#"document.querySelector('[data-confirm-error="password"]').hidden = false;"#;
 const OPEN_DETAILS: &str =
     r#"for (const details of document.querySelectorAll("details")) details.open = true;"#;
 const SHOW_HANDOFF_FAILED: &str = r#"document.querySelector("[data-hint]").hidden = true; document.querySelector("[data-late-problem]").hidden = false;"#;
 const MISMATCH_BY_SCRIPT: &str = r#"const form = document.querySelector("form[id$=-form]"); form.elements.namedItem("password").value = "harbour-kitchen-lewes"; form.elements.namedItem("confirm_password").value = "harbour-kitchen-leeds"; form.dispatchEvent(new Event("submit", { cancelable: true }));"#;
 const SHOW_HANDOFF_WORKING: &str =
     r#"document.querySelector("[data-handoff-working]").hidden = false;"#;
-const SHOW_PASSKEY_ERROR: &str = r#"const error = document.querySelector("[data-passkey-error]"); error.textContent = "Something went wrong. Try again."; error.hidden = false;"#;
+const OPEN_FIRST_MENU: &str = r#"requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById("more-a1").showPopover()));"#;
+const OPEN_CHANGE: &str = r#"document.querySelector("[data-change-password]").click();"#;
+const OPEN_ADD: &str = r#"document.querySelector('[data-passkey="add"]').click();"#;
+const OPEN_RENAME: &str =
+    r#"document.querySelector('[data-passkey-row="a2"] [data-passkey-rename]').click();"#;
+const OPEN_REMOVE: &str =
+    r#"document.querySelector('[data-passkey-row="a2"] [data-passkey-remove]').click();"#;
+const ASK_PASSWORD_TO_REMOVE: &str = r#"document.querySelector("[data-confirm-fields]").hidden = false; document.getElementById("confirm-password").disabled = false; document.getElementById("confirm-text").textContent = "Enter your password to confirm it’s you."; if (matchMedia("(pointer: fine)").matches) document.getElementById("confirm-password").focus(); else { const title = document.getElementById("confirm-dialog-title"); title.tabIndex = -1; title.focus(); }"#;
+const REMOVE_FAILED: &str = r#"const lede = document.getElementById("confirm-text"); lede.textContent = "Something went wrong. Try again."; lede.classList.add("err");"#;
+const WRONG_PASSWORD: &str = r#"const note = document.getElementById("confirm-note"); note.className = "err"; note.textContent = "That password isn’t right."; const field = document.getElementById("confirm-password"); field.setAttribute("aria-invalid", "true"); field.setAttribute("aria-describedby", "confirm-note");"#;
+const FILL_NEW_PASSWORDS: &str = r#"for (const id of ["new-password", "new-password-again"]) document.getElementById(id).value = "allotment-lewes";"#;
+const WRONG_CURRENT_PASSWORD: &str = r#"const note = document.getElementById("current-note"); note.className = "err"; note.textContent = "That password isn’t right."; document.getElementById("current-password").setAttribute("aria-invalid", "true");"#;
+const PASSWORDS_DIFFER: &str = r#"document.getElementById("new-password").value = "allotment-lewes"; document.getElementById("new-password-again").value = "allotment-lewis"; const note = document.getElementById("new-note"); note.className = "err"; note.textContent = "The passwords don’t match."; for (const id of ["new-password", "new-password-again"]) document.getElementById(id).setAttribute("aria-invalid", "true");"#;
+const NEW_PASSWORD_TOO_SHORT: &str = r#"for (const id of ["new-password", "new-password-again"]) { const field = document.getElementById(id); field.value = "lewes"; field.setAttribute("aria-invalid", "true"); } const note = document.getElementById("new-note"); note.className = "err"; note.textContent = "Use at least 8 characters.";"#;
+const TOO_MANY_PASSWORD_ATTEMPTS: &str = r#"const note = document.getElementById("new-note"); note.className = "err"; note.textContent = "Too many attempts. Try again in 2 minutes.";"#;
+const DEVICE_HAS_PASSKEY: &str = r#"const note = document.getElementById("add-note"); note.className = "err"; note.textContent = "This device already has a passkey here."; document.getElementById("passkey-name").setAttribute("aria-invalid", "true");"#;
+const NAME_THE_PASSKEY: &str = r#"const note = document.getElementById("rename-note"); note.className = "err"; note.textContent = "Enter a name for the passkey."; const field = document.getElementById("rename-passkey"); field.value = ""; field.setAttribute("aria-invalid", "true");"#;
+const NO_PASSKEY_SUPPORT: &str =
+    r#"Object.defineProperty(window, "PublicKeyCredential", { value: undefined });"#;
+const NOT_A_SECURE_ADDRESS: &str =
+    r#"Object.defineProperty(window, "isSecureContext", { value: false });"#;
 const SHOW_PASSKEY_LINK: &str =
     r#"document.querySelector('[data-passkey="confirm"]').hidden = false;"#;
 const OPEN_CHOOSE: &str = r#"document.querySelector("details.choose").open = true;"#;
@@ -81,6 +99,8 @@ struct State {
     slug: &'static str,
     title: &'static str,
     page: Page,
+    /// Runs before the page's own script, for a state that needs the browser to lack something.
+    before: &'static [&'static str],
     /// Runs after the page's own script, for a state that needs a click: a dialog open, a detail opened.
     after: &'static [&'static str],
     without_javascript: bool,
@@ -100,10 +120,16 @@ impl State {
             slug,
             title,
             page: page.expect("a preview state did not render"),
+            before: &[],
             after: &[],
             without_javascript: false,
             choose_open: false,
         }
+    }
+
+    fn before(mut self, scripts: &'static [&'static str]) -> State {
+        self.before = scripts;
+        self
     }
 
     fn after(mut self, scripts: &'static [&'static str]) -> State {
@@ -149,10 +175,19 @@ impl State {
             {
                 html.replace_range(start..start + length + "</script>".len(), "");
             }
-        } else if !self.after.is_empty() {
-            let script = format!("<script>{}</script>\n", self.after.join("\n"));
-            if let Some(at) = html.rfind("</body>") {
-                html.insert_str(at, &script);
+        } else {
+            if !self.before.is_empty()
+                && let Some(at) = html.find("<script nonce=")
+            {
+                html.insert_str(
+                    at,
+                    &format!("<script>{}</script>\n", self.before.join("\n")),
+                );
+            }
+            if !self.after.is_empty()
+                && let Some(at) = html.rfind("</body>")
+            {
+                html.insert_str(at, &format!("<script>{}</script>\n", self.after.join("\n")));
             }
         }
         html
@@ -543,21 +578,78 @@ fn nothing_new() -> Offer {
     }
 }
 
-fn passkey(id: &str, name: &str, last_used: Option<&str>, made_for: Option<&str>) -> OwnerPasskey {
+fn passkey(
+    id: &str,
+    name: &str,
+    added: &str,
+    last_used: Option<&str>,
+    made_for: Option<&str>,
+) -> OwnerPasskey {
     OwnerPasskey {
         id: id.into(),
         name: name.into(),
-        added: "12 Nov 2026".into(),
+        added: added.into(),
         last_used: last_used.map(str::to_owned),
         made_for: made_for.map(str::to_owned),
     }
 }
 
-fn passkeys_page(rows: Vec<OwnerPasskey>) -> Result<Page> {
-    owner_passkeys(&OwnerPasskeys {
+/// The two passkeys drawn on the boards.
+fn passkey_rows() -> Vec<OwnerPasskey> {
+    vec![
+        passkey(
+            "a1",
+            "iCloud Keychain",
+            "Sep 3, 2026",
+            Some("Nov 21, 2026"),
+            None,
+        ),
+        passkey("a2", "YubiKey 5C NFC", "Oct 21, 2026", None, None),
+    ]
+}
+
+fn other_address_row() -> OwnerPasskey {
+    passkey(
+        "a3",
+        "Old MacBook",
+        "Aug 9, 2026",
+        None,
+        Some("castell.local"),
+    )
+}
+
+fn passkeys_view(rows: Vec<OwnerPasskey>) -> OwnerPasskeys {
+    OwnerPasskeys {
         username: "mira".into(),
         rows,
+        changed: false,
+        problem: None,
+    }
+}
+
+fn passkeys_page(rows: Vec<OwnerPasskey>) -> Result<Page> {
+    owner_passkeys(&passkeys_view(rows))
+}
+
+fn password_problem_page(problem: PasswordProblem) -> Result<Page> {
+    owner_passkeys(&OwnerPasskeys {
+        problem: Some(problem),
+        ..passkeys_view(passkey_rows())
     })
+}
+
+fn many_passkeys() -> Vec<OwnerPasskey> {
+    (1..=8)
+        .map(|number| {
+            passkey(
+                &format!("m{number}"),
+                &format!("Passkey {number}"),
+                "Oct 21, 2026",
+                (number % 2 == 0).then_some("Nov 21, 2026"),
+                None,
+            )
+        })
+        .collect()
 }
 
 fn claim_view() -> SetupCode {
@@ -1205,7 +1297,7 @@ fn states() -> Vec<State> {
                 ..offer()
             }),
         )
-        .after(&[OPEN_CONFIRM_DIALOG, SHOW_WRONG_PASSWORD, SHOW_PASSKEY_LINK]),
+        .after(&[OPEN_CONFIRM_DIALOG, WRONG_PASSWORD, SHOW_PASSKEY_LINK]),
         State::new(
             Some("U42"),
             "allow-addresses",
@@ -1344,55 +1436,234 @@ fn states() -> Vec<State> {
             passkeys_page(Vec::new()),
         ),
         State::new(
-            Some("U22"),
-            "passkeys-menu",
-            "Passkeys and password, with a passkey made for another address",
-            passkeys_page(vec![
-                passkey("a1", "YubiKey 5C NFC", Some("Today"), None),
-                passkey("a2", "MacBook Pro", None, None),
-                passkey(
-                    "a3",
-                    "Old phone",
-                    Some("2 Nov 2026"),
-                    Some("marfa.old.example"),
-                ),
-            ]),
+            None,
+            "passkeys-list",
+            "Passkeys and password, two passkeys",
+            passkeys_page(passkey_rows()),
         ),
         State::new(
+            Some("U22"),
+            "passkeys-menu",
+            "Passkeys and password, a passkey's menu and one made for another address",
+            passkeys_page({
+                let mut rows = passkey_rows();
+                rows.push(other_address_row());
+                rows
+            }),
+        )
+        .after(&[OPEN_FIRST_MENU]),
+        State::new(
             None,
-            "passkeys-error",
-            "Passkeys and password, a passkey problem",
-            passkeys_page(vec![passkey("a1", "YubiKey 5C NFC", Some("Today"), None)]),
-        )
-        .after(&[SHOW_PASSKEY_ERROR]),
-        State::new(
-            Some("U23"),
-            "change-password",
-            "Changing the password: the confirm dialog",
-            passkeys_page(vec![passkey("a1", "YubiKey 5C NFC", Some("Today"), None)]),
-        )
-        .after(&[OPEN_CONFIRM_DIALOG]),
-        State::new(
-            Some("U24"),
-            "remove-passkey-wrong-password",
-            "Confirming it's you, a wrong password",
-            passkeys_page(vec![passkey("a1", "YubiKey 5C NFC", Some("Today"), None)]),
-        )
-        .after(&[OPEN_CONFIRM_DIALOG, SHOW_WRONG_PASSWORD]),
+            "passkeys-many",
+            "Passkeys and password, eight passkeys",
+            passkeys_page(many_passkeys()),
+        ),
         State::new(
             None,
             "passkeys-long-names",
             "Passkeys and password, a 100-character name and a right-to-left one",
             passkeys_page(vec![
-                passkey("a1", LONG_NAME, Some("Today"), None),
-                passkey("a2", RIGHT_TO_LEFT, None, None),
+                passkey("a1", LONG_NAME, "Oct 21, 2026", Some("Nov 21, 2026"), None),
+                passkey("a2", RIGHT_TO_LEFT, "Oct 21, 2026", None, None),
             ]),
         ),
         State::new(
             None,
+            "passkeys-long-name-menu",
+            "Passkeys and password, a long name's menu",
+            passkeys_page(vec![
+                passkey("a1", LONG_NAME, "Oct 21, 2026", Some("Nov 21, 2026"), None),
+                passkey("a2", RIGHT_TO_LEFT, "Oct 21, 2026", None, None),
+            ]),
+        )
+        .after(&[OPEN_FIRST_MENU]),
+        State::new(
+            Some("U37"),
+            "passkeys-address",
+            "Passkeys and password, where passkeys don't work",
+            passkeys_page(passkey_rows()),
+        )
+        .before(&[NOT_A_SECURE_ADDRESS]),
+        State::new(
+            None,
+            "passkeys-no-browser-support",
+            "Passkeys and password, a browser that can't make passkeys",
+            passkeys_page(passkey_rows()),
+        )
+        .before(&[NO_PASSKEY_SUPPORT]),
+        State::new(
+            None,
+            "passkeys-none-address",
+            "Passkeys and password, no passkey where passkeys don't work",
+            passkeys_page(Vec::new()),
+        )
+        .before(&[NOT_A_SECURE_ADDRESS]),
+        State::new(
+            Some("U23"),
+            "change-password",
+            "Changing the password",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_CHANGE]),
+        State::new(
+            Some("U41"),
+            "change-password-wrong",
+            "Changing the password, the current one isn't right",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_CHANGE, FILL_NEW_PASSWORDS, WRONG_CURRENT_PASSWORD]),
+        State::new(
+            None,
+            "change-password-differ",
+            "Changing the password, the two new ones differ",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_CHANGE, PASSWORDS_DIFFER]),
+        State::new(
+            None,
+            "change-password-short",
+            "Changing the password, the new one is too short",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_CHANGE, NEW_PASSWORD_TOO_SHORT]),
+        State::new(
+            None,
+            "change-password-too-many",
+            "Changing the password, too many attempts",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_CHANGE, FILL_NEW_PASSWORDS, TOO_MANY_PASSWORD_ATTEMPTS]),
+        State::new(
+            Some("U43"),
+            "password-changed",
+            "The password, changed",
+            owner_passkeys(&OwnerPasskeys {
+                changed: true,
+                ..passkeys_view(passkey_rows())
+            }),
+        ),
+        State::new(
+            Some("U38"),
+            "passkey-add",
+            "Adding a passkey, before the browser asks",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_ADD]),
+        State::new(
+            None,
+            "passkey-add-device-has-one",
+            "Adding a passkey, this device already has one",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_ADD, DEVICE_HAS_PASSKEY]),
+        State::new(
+            Some("U39"),
+            "passkey-rename",
+            "Renaming a passkey",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_RENAME]),
+        State::new(
+            None,
+            "passkey-rename-empty",
+            "Renaming a passkey, no name",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_RENAME, NAME_THE_PASSKEY]),
+        State::new(
+            None,
+            "passkey-rename-long-name",
+            "Renaming a passkey with a 100-character name",
+            passkeys_page(vec![passkey("a2", LONG_NAME, "Oct 21, 2026", None, None)]),
+        )
+        .after(&[OPEN_RENAME]),
+        State::new(
+            Some("U40"),
+            "passkey-remove-recent",
+            "Removing a passkey within 15 minutes of signing in",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_REMOVE]),
+        State::new(
+            None,
+            "passkey-remove-long-name",
+            "Removing a passkey with a 100-character name",
+            passkeys_page(vec![passkey("a2", LONG_NAME, "Oct 21, 2026", None, None)]),
+        )
+        .after(&[OPEN_REMOVE]),
+        State::new(
+            None,
+            "passkey-remove-failed",
+            "Removing a passkey, something went wrong",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_REMOVE, REMOVE_FAILED]),
+        State::new(
+            Some("U24"),
+            "passkey-remove",
+            "Removing a passkey, confirm it's you",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_REMOVE, ASK_PASSWORD_TO_REMOVE]),
+        State::new(
+            None,
+            "passkey-remove-wrong-password",
+            "Removing a passkey, a wrong password",
+            passkeys_page(passkey_rows()),
+        )
+        .after(&[OPEN_REMOVE, ASK_PASSWORD_TO_REMOVE, WRONG_PASSWORD]),
+        State::new(
+            None,
             "passkeys-without-javascript",
             "Passkeys and password, without JavaScript",
-            passkeys_page(vec![passkey("a1", "YubiKey 5C NFC", Some("Today"), None)]),
+            passkeys_page(passkey_rows()),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "passkeys-none-without-javascript",
+            "Passkeys and password, no passkey, without JavaScript",
+            passkeys_page(Vec::new()),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "password-changed-without-javascript",
+            "The password, changed, without JavaScript",
+            owner_passkeys(&OwnerPasskeys {
+                changed: true,
+                ..passkeys_view(passkey_rows())
+            }),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "password-wrong-without-javascript",
+            "Changing the password, the current one isn't right, without JavaScript",
+            password_problem_page(PasswordProblem::CurrentNotRight),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "password-short-without-javascript",
+            "Changing the password, the new one is too short, without JavaScript",
+            password_problem_page(PasswordProblem::NewTooShort),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "password-differ-without-javascript",
+            "Changing the password, the two new ones differ, without JavaScript",
+            password_problem_page(PasswordProblem::NotTheSame),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "password-too-many-without-javascript",
+            "Changing the password, too many attempts, without JavaScript",
+            password_problem_page(PasswordProblem::TooManyAttempts(Wait::from_query(Some(
+                "120",
+            )))),
         )
         .without_javascript(),
     ];

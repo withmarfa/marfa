@@ -1,18 +1,16 @@
 {% import "partials/parts.html" as parts %}{% call parts::dialog("confirm-dialog", "Confirm it's you", text_id="confirm-text") %}
 <p id="confirm-text" class="lede">{{ line }}</p>
-<div class="fields">
+<div class="fields" data-confirm-fields>
 <div>
 <div class="group">
 {% call parts::field("confirm-password", "Password", name="password", kind="password", autocomplete="current-password") %}{% endcall %}
 </div>
 <div class="under">
-<p class="err" id="confirm-note" role="alert" data-confirm-error="password" hidden>That password isn't right.</p>
-<p class="err" role="alert" data-confirm-error="locked" hidden>Too many attempts. Try again in <span data-wait></span>.</p>
-<p class="err" role="alert" data-confirm-error="other" hidden>Something went wrong. Try again.</p>
-<button type="button" class="link" data-passkey="confirm" hidden>Use a passkey</button>
+<p class="hint" id="confirm-note" aria-live="polite" data-note data-hint=""></p>
+<p><button type="button" class="link" data-passkey="confirm" hidden>Use a passkey</button></p>
 </div>
 </div>
 </div>
-{% call parts::actions() %}<button type="button" class="btn" data-confirm-cancel>Cancel</button>
-<button type="submit" class="btn primary">Confirm</button>{% endcall %}
+{% call parts::actions() %}<button type="button" class="btn" data-dialog-cancel>Cancel</button>
+<button type="submit" class="btn primary" data-confirm-submit>Confirm</button>{% endcall %}
 {% endcall %}

@@ -197,8 +197,17 @@ describe("owner passkeys", () => {
     });
     const html = await page.text();
     expect(html).toContain("HTTPS");
-    for (const id of [firstId, secondId]) {
-      expect(html).toContain(`data-passkey-rename="${id}"`);
+    // Each row carries its passkey's ID and name, which its Rename and Remove act on.
+    for (const [id, name] of [
+      [firstId, "First"],
+      [secondId, "Second"],
+    ] as const) {
+      const opens = `data-passkey-row="${id}" data-name="${name}">`;
+      expect(html).toContain(opens);
+      const row = html.split(opens)[1]!.split("</li>")[0]!;
+      expect(row).toContain(`aria-label="More for ${name}"`);
+      expect(row).toContain("data-passkey-rename");
+      expect(row).toContain("data-passkey-remove");
     }
     const signed = await signIn(first, 1);
     expect(signed.status).toBe(200);

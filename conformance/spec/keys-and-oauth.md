@@ -3934,9 +3934,17 @@ If `POST /auth/sign-in` or `POST /auth/passkeys/sign-in` carries neither `Origin
 
 ### `keys-and-oauth/sign-out-answer`
 
-When `POST /auth/sign-out` ends the browser session, the server MUST answer `200` with only `{"ok": true}`.
+When `POST /auth/sign-out` ends the browser session for a request with no `Accept` that names `text/html` ahead of any `application/json`, the server MUST answer `200` with only `{"ok": true}`.
 
 **Tests:** `compliance/sign-in-surface.test.ts › answers a sign-out with only ok, and ends the session cookie`.
+
+### `keys-and-oauth/sign-out-page`
+
+When `POST /auth/sign-out` ends the browser session for a request whose `Accept` names `text/html` and does not name `application/json` before it, the server MUST answer `200` with an HTML page that says the owner is signed out and links to `/auth/sign-in`.
+
+**Reason:** The sign-out button is a form that works without script, and a browser shows what the form is answered with.
+
+**Tests:** `compliance/sign-in-surface.test.ts › answers a sign-out from a page with a page that says so, and ends the session cookie`.
 
 ### `keys-and-oauth/library-origin`
 

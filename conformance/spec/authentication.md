@@ -244,6 +244,14 @@ If the password sent to `POST /auth/confirm` is wrong, then the server MUST answ
 
 **Tests:** `compliance/confirm-sign-in.test.ts › answers a wrong password 401 and leaves the session as it was`.
 
+### `authentication/confirm-wrong-password-field`
+
+If the server judges the password sent to `POST /auth/confirm` and finds it wrong, then the server MUST answer with a JSON error envelope whose `details.field` is `password`.
+
+**Reason:** A page tells a wrong password apart from an ended session, which is also `401 unauthorized`, and asks for the password again only for the first.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › answers a wrong password 401 and leaves the session as it was`.
+
 ### `authentication/confirm-lanes`
 
 When a request to `POST /auth/confirm` carries a password, the server MUST count it against the attempt windows of a password sign-in to the owner's account from the same address.
@@ -334,7 +342,7 @@ If a passkey assertion sent to `POST /auth/confirm` is not for a passkey registe
 
 ### `authentication/confirm-needs-session`
 
-If a request to `POST /auth/confirm` carries no live owner browser session, whatever its body or origin, or carries a bearer key, then the server MUST answer `401 unauthorized` without making a session.
+If a request to `POST /auth/confirm` carries no live owner browser session, whatever its body or origin, or carries a bearer key, then the server MUST answer `401 unauthorized` with no `details.field` and without making a session.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › is refused with no cookie, with an ended session, and with a key`.
 
@@ -352,19 +360,43 @@ If a browser session created more than fifteen minutes ago asks for passkey regi
 
 ## Changing the password
 
-The passkeys page changes the owner's password through `POST /auth/owner/password`, which takes the current password and the new one. The account is the signed-in session's owner. A wrong current password is a password attempt like any other.
+The passkeys page changes the owner's password through `POST /auth/owner/password`, which takes the current password and the new one. The account is the signed-in session's owner. A wrong current password is a password attempt like any other. The page's form, sent without script, asks for HTML and is sent back to the page with what happened.
 
 ### `authentication/password-change`
 
-When a signed-in owner's browser session sends `POST /auth/owner/password` with the owner's current password as `current_password` and a new password as `new_password`, the server MUST answer `200` and from then on accept the new password and refuse the replaced one at password sign-in.
+When the server changes the owner's password through `POST /auth/owner/password`, the server MUST from then on accept the new password and refuse the replaced one at password sign-in.
+
+**Tests:** `compliance/owner-pages.test.ts › changes the password, so the new one signs in and the old one does not`, `› sends the page's form back to the page, saying the password changed or what was wrong`.
+
+### `authentication/password-change-json-status`
+
+While the attempt windows `authentication/password-change-lanes` names have room, when a signed-in owner's browser session sends `POST /auth/owner/password` with no `Accept` that names `text/html` ahead of any `application/json`, with the owner's current password as `current_password` and a new password of 8 to 128 characters as `new_password`, the server MUST answer `200`.
+
+**Reason:** The page's form, sent without script, asks for HTML and is answered `303` (`authentication/password-change-page`).
 
 **Tests:** `compliance/owner-pages.test.ts › changes the password, so the new one signs in and the old one does not`.
 
 ### `authentication/password-change-form`
 
-When the passkeys page's form sends `POST /auth/owner/password` as `application/x-www-form-urlencoded` with the fields `current_password` and `new_password`, the server MUST change the password as it does for the same fields sent as JSON.
+When a request to `POST /auth/owner/password` sends the fields `current_password` and `new_password` as `application/x-www-form-urlencoded`, with no `Accept` that names `text/html` ahead of any `application/json`, the server MUST answer it as it answers the same fields sent as JSON.
 
 **Tests:** `compliance/owner-pages.test.ts › changes the password, so the new one signs in and the old one does not`.
+
+### `authentication/password-change-page`
+
+When a request to `POST /auth/owner/password` sends `current_password`, `new_password` and `confirm_password` as `application/x-www-form-urlencoded`, with an `Accept` that names `text/html` and does not name `application/json` before it, and the server changes the password, the server MUST answer `303` with `Location` `/auth/owner/passkeys?changed=1`.
+
+**Reason:** A browser without script follows the redirect back to the passkeys page, which says the password changed.
+
+**Tests:** `compliance/owner-pages.test.ts › sends the page's form back to the page, saying the password changed or what was wrong`.
+
+### `authentication/password-change-page-problem`
+
+If a request to `POST /auth/owner/password` sends no field but `current_password`, `new_password` and `confirm_password`, as `application/x-www-form-urlencoded`, with an `Accept` that names `text/html` and does not name `application/json` before it, carries a live owner browser session from the instance's origin, and has one of six problems, then the server MUST answer `303` with a `Location` of `/auth/owner/passkeys` whose `problem` names the first of them in this order: `current_missing` for an empty current password or one longer than 1024 characters, `new_too_short` for a new password shorter than 8 characters, `new_too_long` for one longer than 128, `not_the_same` for a `confirm_password` that differs from `new_password`, `too_many_attempts`, with the wait in seconds as `retry_after_seconds`, for spent attempt windows, and `current_not_right` for a wrong current password.
+
+**Reason:** The page names the problem under the field it is about, and a browser without script has no other way to be told.
+
+**Tests:** `compliance/owner-pages.test.ts › sends the page's form back to the page, saying the password changed or what was wrong`.
 
 ### `authentication/password-change-keeps-session`
 
@@ -390,7 +422,7 @@ When the server changes the owner's password through `POST /auth/owner/password`
 
 ### `authentication/password-change-rules`
 
-If the new password sent to `POST /auth/owner/password` is shorter than 8 or longer than 128 characters, then the server MUST answer `400 validation_error` and keep the current password.
+If the new password sent to `POST /auth/owner/password` by a request with no `Accept` that names `text/html` ahead of any `application/json` is shorter than 8 or longer than 128 characters, then the server MUST answer `400 validation_error` and keep the current password.
 
 **Reason:** A changed password is held to the rule the claim and the recovery hold a new password to.
 
@@ -398,9 +430,25 @@ If the new password sent to `POST /auth/owner/password` is shorter than 8 or lon
 
 ### `authentication/password-change-wrong`
 
-If the current password sent to `POST /auth/owner/password` is wrong, then the server MUST answer `401 unauthorized` and keep the current password.
+If the current password sent to `POST /auth/owner/password` by a request with no `Accept` that names `text/html` ahead of any `application/json` is wrong, then the server MUST answer `401 unauthorized` and keep the current password.
 
 **Tests:** `compliance/owner-pages.test.ts › answers a wrong current password 401 and changes nothing`.
+
+### `authentication/password-change-wrong-field`
+
+If the server judges the current password sent to `POST /auth/owner/password` by a request with no `Accept` that names `text/html` ahead of any `application/json` and finds it wrong, then the server MUST answer with a JSON error envelope whose `details.field` is `current_password`.
+
+**Reason:** A page tells a wrong current password apart from an ended session, which is also `401 unauthorized`, and asks for the current password again only for the first.
+
+**Tests:** `compliance/owner-pages.test.ts › answers a wrong current password 401 and changes nothing`.
+
+### `authentication/password-change-current-cap`
+
+If the current password sent to `POST /auth/owner/password` is empty or longer than 1024 characters, then the server MUST NOT count it against the attempt windows of a password sign-in.
+
+**Reason:** No password the server sets is that long, so judging one would spend an attempt, and the work of hashing it, on a guess that cannot be right.
+
+**Tests:** `compliance/owner-pages.test.ts › refuses an empty current password and one longer than any the server sets without counting either, as JSON and from the page's form`.
 
 ### `authentication/password-change-wrong-audit`
 
@@ -412,7 +460,7 @@ When the server refuses `POST /auth/owner/password` because the current password
 
 ### `authentication/password-change-lanes`
 
-When a request to `POST /auth/owner/password` carries a current password, the server MUST count it against the attempt windows of a password sign-in to the owner's account from the same address.
+When the server judges the current password a request to `POST /auth/owner/password` carries, the server MUST count it against the attempt windows of a password sign-in to the owner's account from the same address.
 
 **Reason:** The form would otherwise be a way round the lockout, with a stolen browser session to guess from.
 
@@ -420,7 +468,7 @@ When a request to `POST /auth/owner/password` carries a current password, the se
 
 ### `authentication/password-change-locked`
 
-If the attempt windows `authentication/password-change-lanes` names are spent, then the server MUST answer `429 rate_limited` with the `Retry-After` a password sign-in would be given, without judging the current password or changing the password.
+If the attempt windows `authentication/password-change-lanes` names are spent, then the server MUST answer a request to `POST /auth/owner/password` with no `Accept` that names `text/html` ahead of any `application/json` with `429 rate_limited` and the `Retry-After` a password sign-in would be given, without judging the current password or changing the password.
 
 **Tests:** `compliance/owner-pages.test.ts › counts a wrong current password where a password sign-in counts, and refuses a locked owner with the wait`.
 
@@ -446,7 +494,7 @@ When `POST /auth/owner/password` answers `200`, the server MUST already hold an 
 
 ### `authentication/password-change-needs-session`
 
-If a request to `POST /auth/owner/password` carries no live owner browser session, whatever its body or origin, or carries a bearer key, then the server MUST answer `401 unauthorized` and keep the current password.
+If a request to `POST /auth/owner/password` carries no live owner browser session, whatever its body or origin, or carries a bearer key, then the server MUST answer `401 unauthorized` with no `details.field` and keep the current password.
 
 **Tests:** `compliance/owner-pages.test.ts › refuses a change with no session, an ended session and a key, 401`.
 

@@ -253,7 +253,7 @@ fn a_lockout_names_the_wait_only_when_it_was_given_one() {
             .contains("Try again in 2 minutes.")
     );
     let none = locked(None);
-    assert!(none.html().contains("Too many attempts."));
+    assert!(without_code(&none).contains("Too many attempts."));
     assert!(!without_code(&none).contains("minutes"));
     assert!(!without_code(&locked(Some("0"))).contains("minute"));
 }
@@ -316,7 +316,7 @@ fn the_device_page_says_why_a_code_failed_and_how_long_codes_last() {
             .html()
             .contains("That code has expired. Start again on your device.")
     );
-    assert!(!expired.html().contains("isn’t right"));
+    assert!(!without_code(&expired).contains("isn’t right"));
     let locked = page(DeviceProblem::from_query(
         Some("too_many_attempts"),
         Some("61"),

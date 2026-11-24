@@ -10,15 +10,16 @@ Every page is built from the parts below. A page names its parts and adds none o
 | --- | --- | --- |
 | Head | `parts::head(title, lede)` | The page's one `h1` and at most one line under it. |
 | Field | `parts::field(id, label, ...)` | One input with its label inside the box. |
-| Joined group | `parts::group(...)` | Fields that answer one question, in one box, with one hint or problem under it. |
+| Joined group | `parts::group(...)` | Fields that answer one question, in one box, with one hint or problem under it. With `live`, the line under the box is for a dialog the script fills in. |
 | Code field | `parts::code_field(id, name, label, ...)` | One input for a short code, with a cell drawn behind it for each character. It takes no more letters and digits than it has cells, and a click or a drag chooses a place between the cells. Without JavaScript, in forced colors, or when the page returns a value with more letters and digits than the cells hold, the input shows the code itself and changes nothing in it. |
 | Shown code | `parts::code_shown(code, said, ...)` | A code in cells to compare with another screen; a screen reader reads `said`. |
 | Actions | `parts::actions()` | Buttons at the trailing edge, the main action last. |
 | Box of rows | `parts::box_of_rows(symbols)` | A list of rows, each with words and at most one control. `symbols` lines the dividers up with the words of rows that start with an icon. |
 | Icon | `parts::icon(name)` | The icon at the start of a row or in a button: `items`, `link`, `person`, `sliders`, `key`, `plus`, `lock` or `more`. |
-| Section | `parts::section(id, title)` | A heading over a box, and the lines after it. No button sits in the heading. |
+| Section | `parts::section(id, title)` | A heading over a box, and the lines after it. No button sits in the heading: adding is the box's last row. |
+| Row menu | `parts::menu(id, label)` | A round "…" button and the `popover` it opens, named for its row. The caller writes the items as buttons. Without JavaScript it stays hidden. |
 | Pop-up | `parts::pop(id, name, label, ...)` | A choice between levels, as a real `select`. |
-| Dialog | `parts::dialog(id, title, ...)` | A window over the page, drawn as a sheet at the bottom on a phone. |
+| Dialog | `parts::dialog(id, title, ...)` | A window over the page, drawn as a sheet at the bottom on a phone. With `inline`, a browser without JavaScript shows it under the page, so its form still works. |
 
 The rows of the allow page are macros of their own in `../templates/partials/rows.html`: `rows::level` is a row with a pop-up of levels, and `rows::power` is a row of the admin powers with Allow or Don't Allow.
 
@@ -83,6 +84,6 @@ Open `preview.rs`, in the folder above this one, and add a `State::new(board, sl
 - `slug` is the file's name after the board. Every file name is unique, and the test fails if one repeats.
 - `page` is the result of the page function for a view you build on made-up data.
 
-A state that needs a click, such as a dialog open or a detail opened, takes `.after(&[...])` with preview-only scripts: the generator adds them after the page's own script, in the file only. `OPEN_CONFIRM_DIALOG` and `OPEN_DETAILS` are examples. `.choose_open()` opens the allow page's Choose… in the file, and `PICK` is a helper for picking a level in a row by its title. `.without_javascript()` writes the page with its script removed, to check what a reader sees with JavaScript off.
+A state that needs a click, such as a dialog open or a detail opened, takes `.after(&[...])` with preview-only scripts: the generator adds them after the page's own script, in the file only. `OPEN_CONFIRM_DIALOG` and `OPEN_DETAILS` are examples. `.choose_open()` opens the allow page's Choose… in the file, and `PICK` is a helper for picking a level in a row by its title. A state that needs the browser to lack something, such as passkey support, takes `.before(&[...])`, which runs ahead of the page's own script (`NO_PASSKEY_SUPPORT`). `.without_javascript()` writes the page with its script removed, to check what a reader sees with JavaScript off.
 
 A new view gets a state for each thing it can show: its plain page, each problem it can name, and a long or right-to-left name where one is shown.

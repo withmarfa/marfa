@@ -179,6 +179,14 @@ async function code(response: Response): Promise<string> {
   return body.error.code;
 }
 
+/** The field a refusal names, if any. */
+async function field(response: Response): Promise<unknown> {
+  const body = (await response.json()) as {
+    error: { details?: { field?: unknown } | null };
+  };
+  return body.error.details?.field;
+}
+
 describe("confirming with the password", () => {
   it("replaces a stale session with a new one, so the change that was refused runs", async () => {
     const stale = await signIn();
@@ -258,7 +266,8 @@ describe("confirming with the password", () => {
     await server.advanceClock(PAST_RECENT);
     const wrong = await confirm({ password: "not the password" }, stale);
     expect(wrong.status).toBe(401);
-    expect(await code(wrong)).toBe("unauthorized");
+    expect(await code(wrong.clone())).toBe("unauthorized");
+    expect(await field(wrong)).toBe("password");
     expect(sendsNoOtherSession(wrong, stale)).toBe(true);
     // The session lives, is still stale, and a right password renews it.
     expect((await get("/owner/passkeys", stale)).status).toBe(200);
@@ -747,6 +756,8 @@ describe("a confirmation without a signed-in owner session", () => {
     const afterEnd = await confirm({ password: TEST_OWNER.password }, ended);
     expect(afterEnd.status).toBe(401);
     expect(afterEnd.headers.get("set-cookie")).toBeNull();
+    expect(await code(afterEnd.clone())).toBe("unauthorized");
+    expect(await field(afterEnd)).toBeUndefined();
 
     const withKey = await confirm(
       { password: TEST_OWNER.password },

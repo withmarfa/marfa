@@ -629,15 +629,20 @@ async fn a_passkey_of_another_host_cannot_sign_in_and_stays_listed() {
     assert!(!listed[0].as_object().unwrap().contains_key("host"));
     let page = instance.get("/auth/owner/passkeys", &instance.owner).await;
     assert_eq!(page.status, StatusCode::OK);
-    assert!(page.text.contains("data-passkey-remove"));
-    assert!(
-        page.text
-            .contains(&format!("data-passkey-rename-form=\"{id}\"")),
-        "{}",
-        page.text
-    );
     let name = listed[0]["name"].as_str().unwrap();
-    assert!(page.text.contains(&format!("value=\"{name}\"")));
+    let opens = format!("<li class=\"two\" data-passkey-row=\"{id}\" data-name=\"{name}\">");
+    let row = page
+        .text
+        .split_once(&opens)
+        .and_then(|(_, rest)| rest.split_once("</li>"))
+        .map(|(row, _)| row)
+        .unwrap_or_else(|| panic!("no row for {id} named {name}: {}", page.text));
+    assert!(
+        row.contains(&format!("aria-label=\"More for {name}\"")),
+        "{row}"
+    );
+    assert!(row.contains("data-passkey-rename"), "{row}");
+    assert!(row.contains("data-passkey-remove"), "{row}");
     let removed = instance
         .delete(&format!("/owner/passkeys/{id}"), &instance.owner)
         .await;
@@ -657,7 +662,7 @@ async fn the_sign_in_page_offers_a_passkey_only_to_an_owner_who_has_one_for_this
             .get(locked, "")
             .await
             .text
-            .contains("or use a passkey")
+            .contains("<span data-passkey-advice hidden>, or use a passkey")
     );
 
     instance.add(&Device::new()).await;
@@ -667,7 +672,7 @@ async fn the_sign_in_page_offers_a_passkey_only_to_an_owner_who_has_one_for_this
             .get(locked, "")
             .await
             .text
-            .contains("or use a passkey")
+            .contains("<span data-passkey-advice hidden>, or use a passkey")
     );
 
     instance.move_to("https://marfa.example");
@@ -679,7 +684,7 @@ async fn the_sign_in_page_offers_a_passkey_only_to_an_owner_who_has_one_for_this
             .get(locked, "")
             .await
             .text
-            .contains("or use a passkey")
+            .contains("<span data-passkey-advice hidden>, or use a passkey")
     );
 }
 

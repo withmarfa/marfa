@@ -19,8 +19,8 @@ const AT_ONCE: usize = 2;
 const OPEN_AT_ONCE: usize = 1;
 const OPEN_PLACES: usize = 8;
 const OPEN_WAIT_MS: i64 = 1_000;
-const MIN_LENGTH: usize = 8;
-const MAX_LENGTH: usize = 128;
+pub const MIN_LENGTH: usize = 8;
+pub const MAX_LENGTH: usize = 128;
 
 /// `field` names where the password came in, in the refusal.
 pub fn check_new(password: &str, field: &str) -> Result<()> {
