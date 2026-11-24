@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use axum::extract::{Request, State};
 use axum::http::header::ACCEPT;
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, Uri};
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 
-use super::{cookies, require_safe_transport};
+use super::{cookies, require_safe_transport, with_cookie};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::auth::claim;
@@ -77,26 +78,39 @@ fn return_to_in(app: &App, pairs: &[(String, String)]) -> String {
 pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
     require_safe_transport(&app)?;
     let (parts, _) = request.into_parts();
+    let recovered = cookies::holds_recovered(&parts.headers);
+    let page = sign_in_page(&app, &parts, recovered).await?;
+    if !recovered {
+        return Ok(page);
+    }
+    // A completed recovery is told once, whatever the page that answers.
+    Ok(with_cookie(
+        page,
+        cookies::recovered_ended(&app.addresses().sign_in())?,
+    ))
+}
+
+async fn sign_in_page(app: &Arc<App>, parts: &Parts, recovered: bool) -> Result<Response> {
     let pairs = query::pairs(&parts.uri)?;
     let field = |name: &str| first(&pairs, name);
-    let return_to = return_to_in(&app, &pairs);
+    let return_to = return_to_in(app, &pairs);
     let link = field("authorization")
         .or(parts.uri.query())
         .unwrap_or_default()
         .to_string();
-    let sent = authorization(&app, &link);
-    if !claim::is_claimed(&app).await? {
+    let sent = authorization(app, &link);
+    if !claim::is_claimed(app).await? {
         let view = SetupCode {
             problem: None,
-            app: asking_app(&app, sent.as_ref()).await?,
+            app: asking_app(app, sent.as_ref()).await?,
             return_to,
         };
         return Ok(pages::setup_code(&view)?.into_response());
     }
     if field("prompt") != Some("login") && sent.is_none() {
-        let caller = browser_owner(&parts, &app).await?;
+        let caller = browser_owner(parts, app).await?;
         if caller.as_ref().and_then(Caller::session).is_some()
-            && let Some(found) = owner::find(&app).await?
+            && let Some(found) = owner::find(app).await?
         {
             let view = SignedIn {
                 username: found.username,
@@ -107,7 +121,7 @@ pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
     }
     let (app_name, app_address) = match &sent {
         Some(link) => (
-            app_named(&app, link).await?,
+            app_named(app, link).await?,
             link.get("redirect_uri").and_then(shown_destination),
         ),
         None => (None, None),
@@ -118,9 +132,17 @@ pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
         authorization: sent.map(|_| link),
         app: app_name,
         app_address,
-        recovered: field("recovered") == Some("true"),
-        problem: SignInProblem::from_query(field("error"), field("retry_after_seconds")),
-        passkey: passkeys::signs_in_here(&app).await?,
+        recovered,
+        problem: SignInProblem::from_query(
+            field("error"),
+            field("retry_after_seconds"),
+            &pairs
+                .iter()
+                .filter(|(name, _)| name == "missing")
+                .map(|(_, value)| value.as_str())
+                .collect::<Vec<_>>(),
+        ),
+        passkey: passkeys::signs_in_here(app).await?,
     };
     Ok(pages::sign_in(&view)?.into_response())
 }

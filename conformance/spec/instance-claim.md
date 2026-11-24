@@ -114,6 +114,14 @@ If a JSON claim through `POST /owner`, `POST /setup/claim` or the private contro
 
 **Tests:** `compliance/owner.test.ts › refuses an empty email, and an email that is not a string or null, naming email on every claim route without consuming valid setup proof`.
 
+### `instance-claim/claim-form-email-refused`
+
+If a form post to `POST /setup/claim` sends `email` as an empty string, then the server MUST refuse it with `400 validation_error` and `email` as `details.errors[0].path`, without consuming the proof.
+
+**Reason:** The page asks for no email, so a form that sends one sends it on purpose, and an empty string is no address (`instance-claim/owner-email-invalid`).
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a claim form that sends an empty email, naming email, and the same setup code still claims afterwards`.
+
 ### `instance-claim/owner-name-default`
 
 When valid setup proof claims an unclaimed instance with no `name` or a blank one, the server MUST give the owner their username as `name`.

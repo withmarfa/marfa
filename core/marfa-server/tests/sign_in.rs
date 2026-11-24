@@ -1069,3 +1069,44 @@ async fn a_start_offers_its_link_only_where_the_setup_page_can_take_it() {
     );
     assert_eq!(tickets, 0);
 }
+
+#[tokio::test]
+async fn a_form_sign_in_with_a_field_empty_names_only_that_field() {
+    let instance = Instance::claimed().await;
+    let sent = |username: &str, password: &str| {
+        let fields = form_urlencoded::Serializer::new(String::new())
+            .append_pair("username", username)
+            .append_pair("password", password)
+            .finish();
+        Request::builder()
+            .method(Method::POST)
+            .uri("/auth/sign-in")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(header::ORIGIN, ORIGIN)
+            .body(Body::from(fields))
+            .unwrap()
+    };
+    let missing = |reply: &Reply| {
+        assert_eq!(reply.status, StatusCode::FOUND);
+        let location = reply.headers[header::LOCATION].to_str().unwrap();
+        let (_, query) = location.split_once('?').unwrap();
+        let pairs: Vec<(String, String)> = form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
+        assert!(pairs.contains(&("error".into(), "missing_field".into())));
+        pairs
+            .into_iter()
+            .filter(|(name, _)| name == "missing")
+            .map(|(_, value)| value)
+            .collect::<Vec<_>>()
+    };
+    for (username, password, named) in [
+        ("   ", PASSWORD, vec!["username"]),
+        ("", PASSWORD, vec!["username"]),
+        (USERNAME, "", vec!["password"]),
+        ("  ", "", vec!["username", "password"]),
+    ] {
+        let reply = send(instance.public.clone(), sent(username, password)).await;
+        assert_eq!(missing(&reply), named, "{username:?} {password:?}");
+    }
+}

@@ -1,5 +1,9 @@
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
-import { pageField, visibleText } from "../../utils/page-html.js";
+import {
+  markedInvalid,
+  pageField,
+  visibleText,
+} from "../../utils/page-html.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { ErrorResponse } from "../../client/types.js";
 import {
@@ -633,6 +637,32 @@ describe("the pages a person reads at sign-in", () => {
         "password",
       ),
     ).toBeDefined();
+  });
+
+  it("marks only the fields a sign-in form was sent without, and lets the form reach the server empty", async () => {
+    const page = await (await fetch(`${server!.apiUrl}/auth/sign-in`)).text();
+    expect(/<form\b[^>]*\snovalidate[\s>]/i.test(page)).toBe(true);
+    expect(/<input id="username"[^>]*\srequired/i.test(page)).toBe(true);
+    expect(/<input id="password"[^>]*\srequired/i.test(page)).toBe(true);
+
+    const marked = async (username: string, password: string) => {
+      const sent = await postForm(
+        "/auth/sign-in",
+        { username, password, return_to: "/" },
+        { origin, [CLIENT_HEADER]: "192.0.2.61" },
+      );
+      expect(sent.status).toBe(302);
+      const landed = await (
+        await fetch(new URL(sent.headers.get("location")!, server!.apiUrl))
+      ).text();
+      expect(visibleText(landed)).toContain(
+        "Enter your username and your password.",
+      );
+      return ["username", "password"].filter((id) => markedInvalid(landed, id));
+    };
+    expect(await marked("   ", OWNER.password)).toEqual(["username"]);
+    expect(await marked(OWNER.username, "")).toEqual(["password"]);
+    expect(await marked("", "")).toEqual(["username", "password"]);
   });
 
   it("answers a page that says how to reset the owner's password, without a sign-in and without printing the private socket's path", async () => {

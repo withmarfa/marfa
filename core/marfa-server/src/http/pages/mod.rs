@@ -27,7 +27,7 @@ pub use setup::{
     SetupFieldErrors, recover_password, recovery_code, setup_code, setup_details,
 };
 pub use sign_in::{
-    Running, SignIn, SignInProblem, SignedIn, forgot_password, running, sign_in, signed_in,
+    Missing, Running, SignIn, SignInProblem, SignedIn, forgot_password, running, sign_in, signed_in,
 };
 pub use wait::Wait;
 

@@ -25,8 +25,8 @@ const RECOVER_FORM_FIELDS: [&str; 3] = ["password", "code", CONFIRM];
 /// A page's second password field. A script's body has none, so it is never asked for one.
 const CONFIRM: &str = "confirm_password";
 const AFTER_CLAIM: &str = "/auth/sign-in";
-/// Where the browser goes once the password is recovered; the sign-in page says so.
-const AFTER_RECOVERY: &str = "/auth/sign-in?recovered=true";
+/// Where the browser goes once the password is recovered; a cookie tells the page to say so.
+const AFTER_RECOVERY: &str = "/auth/sign-in";
 /// Where the browser goes once the instance is claimed. Only the setup pages' forms carry it.
 const RETURN_TO: &str = "return_to";
 /// Only the recovery code form carries it, so a form without it holds a setup code.
@@ -274,13 +274,14 @@ pub async fn recover(
         }
         recovered => recovered?,
     }
+    let address = app.addresses().sign_in();
     let answer = if browser {
-        redirect(StatusCode::SEE_OTHER, AFTER_RECOVERY)?
+        with_cookie(
+            redirect(StatusCode::SEE_OTHER, AFTER_RECOVERY)?,
+            cookies::recovered(&address)?,
+        )
     } else {
         json_answer(StatusCode::OK, &json!({ "recovered": true }))
     };
-    Ok(with_cookie(
-        answer,
-        cookies::setup_ended(&app.addresses().sign_in())?,
-    ))
+    Ok(with_cookie(answer, cookies::setup_ended(&address)?))
 }

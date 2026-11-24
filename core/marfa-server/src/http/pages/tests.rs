@@ -242,7 +242,7 @@ fn a_wait_is_whole_minutes_rounded_up() {
 fn a_lockout_names_the_wait_only_when_it_was_given_one() {
     let locked = |retry_after| {
         sign_in(&SignIn {
-            problem: SignInProblem::from_query(Some("too_many_attempts"), retry_after),
+            problem: SignInProblem::from_query(Some("too_many_attempts"), retry_after, &[]),
             ..sign_in_view()
         })
         .unwrap()
@@ -262,7 +262,7 @@ fn a_lockout_names_the_wait_only_when_it_was_given_one() {
 fn a_passkey_is_offered_and_named_in_a_lockout_only_to_an_owner_who_has_one() {
     let page = |passkey, problem| {
         sign_in(&SignIn {
-            problem: SignInProblem::from_query(problem, Some("61")),
+            problem: SignInProblem::from_query(problem, Some("61"), &[]),
             passkey,
             ..sign_in_view()
         })
@@ -326,14 +326,14 @@ fn the_device_page_says_why_a_code_failed_and_how_long_codes_last() {
 #[test]
 fn an_error_code_the_page_does_not_know_is_never_shown() {
     let page = sign_in(&SignIn {
-        problem: SignInProblem::from_query(Some("<script>x</script>"), None),
+        problem: SignInProblem::from_query(Some("<script>x</script>"), None, &[]),
         ..sign_in_view()
     })
     .unwrap();
     assert!(page.html().contains("Something went wrong."));
     assert!(!page.html().contains("<script>x"));
-    assert_eq!(SignInProblem::from_query(None, None), None);
-    assert_eq!(SignInProblem::from_query(Some(""), None), None);
+    assert_eq!(SignInProblem::from_query(None, None, &[]), None);
+    assert_eq!(SignInProblem::from_query(Some(""), None, &[]), None);
 }
 
 #[test]
@@ -548,17 +548,17 @@ fn a_problem_takes_the_hint_s_place_under_its_own_group_and_marks_its_own_field(
 
 #[test]
 fn a_wrong_password_marks_the_password_alone_and_keeps_the_username() {
-    let page = |problem, username: &str| {
+    let page = |problem, username: &str, missing: &[&str]| {
         without_code(
             &sign_in(&SignIn {
                 username: username.into(),
-                problem: SignInProblem::from_query(Some(problem), None),
+                problem: SignInProblem::from_query(Some(problem), None, missing),
                 ..sign_in_view()
             })
             .unwrap(),
         )
     };
-    let wrong = page("invalid_credentials", "mira");
+    let wrong = page("invalid_credentials", "mira", &[]);
     assert!(input(&wrong, "password").contains("aria-invalid=\"true\""));
     assert!(input(&wrong, "password").contains("aria-describedby=\"sign-in-problem\""));
     assert!(!input(&wrong, "username").contains("aria-invalid"));
@@ -567,19 +567,66 @@ fn a_wrong_password_marks_the_password_alone_and_keeps_the_username() {
     assert!(wrong.contains("href=\"/auth/forgot-password\">Forgot password?</a>"));
 
     for problem in ["too_many_attempts", "anything else"] {
-        let line_only = page(problem, "mira");
+        let line_only = page(problem, "mira", &[]);
         assert!(!line_only.contains("aria-invalid"), "{problem}");
         assert!(line_only.contains("class=\"btn primary\">Sign In</button>"));
         assert!(!line_only.contains("disabled"));
     }
 
-    let both = page("missing_field", "");
+    let both = page("missing_field", "", &["username", "password"]);
     assert!(input(&both, "username").contains("aria-invalid=\"true\""));
     assert!(input(&both, "password").contains("aria-invalid=\"true\""));
     assert!(both.contains("Enter your username and your password."));
-    let password_only = page("missing_field", "mira");
+    let password_only = page("missing_field", "mira", &["password"]);
     assert!(!input(&password_only, "username").contains("aria-invalid"));
     assert!(input(&password_only, "password").contains("aria-invalid=\"true\""));
+    let username_only = page("missing_field", "", &["username"]);
+    assert!(input(&username_only, "username").contains("aria-invalid=\"true\""));
+    assert!(!input(&username_only, "password").contains("aria-invalid"));
+    let unnamed = page("missing_field", "", &[]);
+    assert!(!unnamed.contains("aria-invalid"));
+    assert!(unnamed.contains("Enter your username and your password."));
+}
+
+#[test]
+fn a_form_that_may_be_sent_empty_is_never_stopped_by_the_browser() {
+    let sign_in = without_code(&sign_in(&sign_in_view()).unwrap());
+    let setup = without_code(
+        &setup_code(&SetupCode {
+            problem: None,
+            return_to: "/".into(),
+            app: None,
+        })
+        .unwrap(),
+    );
+    let recovery = without_code(&recovery_code(&RecoveryCode { problem: None }).unwrap());
+    for (page, field) in [(sign_in, "username"), (setup, "code"), (recovery, "code")] {
+        let form = &page[page.find("<form").unwrap()..];
+        let tag = &form[..form.find('>').unwrap()];
+        assert!(tag.contains(" novalidate"), "{tag}");
+        assert!(
+            input(&page, field).contains(" required"),
+            "{field} keeps its attribute"
+        );
+    }
+}
+
+#[test]
+fn a_wrong_recovery_code_may_have_been_used_or_have_expired() {
+    let recovery = recovery_code(&RecoveryCode {
+        problem: Some(SetupCodeProblem::WrongCode),
+    })
+    .unwrap()
+    .html;
+    assert!(recovery.contains("That code isn’t right, or it was used or has expired."));
+    let setup = setup_code(&SetupCode {
+        problem: Some(SetupCodeProblem::WrongCode),
+        return_to: "/".into(),
+        app: None,
+    })
+    .unwrap()
+    .html;
+    assert!(setup.contains("That code isn’t right. Use the newest code Marfa printed."));
 }
 
 #[test]

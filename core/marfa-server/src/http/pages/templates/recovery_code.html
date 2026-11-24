@@ -1,5 +1,5 @@
 {% import "partials/parts.html" as parts %}{% call parts::head("Recover your account", "Enter the recovery code from Marfa’s log.") %}{% endcall %}
-<form method="post" action="/setup/exchange">
+<form method="post" action="/setup/exchange" novalidate>
 <input type="hidden" name="purpose" value="recovery">
 <div class="fields">
 {% call parts::group(note="code-note", hint="A code works once, for an hour.", problem=problem_message.as_deref().unwrap_or_default()) %}

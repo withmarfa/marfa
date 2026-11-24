@@ -489,7 +489,10 @@ fn states() -> Vec<State> {
             "sign-in-empty-field",
             "Sign in, a field left empty",
             sign_in(&SignIn {
-                problem: Some(SignInProblem::MissingField),
+                problem: Some(SignInProblem::MissingField(Missing {
+                    username: true,
+                    password: true,
+                })),
                 ..sign_in_view()
             }),
         ),
@@ -499,7 +502,10 @@ fn states() -> Vec<State> {
             "Sign in, a password left empty",
             sign_in(&SignIn {
                 username: "mira".into(),
-                problem: Some(SignInProblem::MissingField),
+                problem: Some(SignInProblem::MissingField(Missing {
+                    username: false,
+                    password: true,
+                })),
                 ..sign_in_view()
             }),
         ),
@@ -711,16 +717,8 @@ fn states() -> Vec<State> {
         .after(&[OPEN_DETAILS]),
         State::new(
             None,
-            "claim-help-without-javascript",
-            "Claim, Can’t find it? opened by the browser alone",
-            setup_code(&claim_view()),
-        )
-        .after(&[OPEN_DETAILS])
-        .without_javascript(),
-        State::new(
-            None,
             "claim-without-javascript",
-            "Claim, the setup code, without JavaScript",
+            "Claim without JavaScript. Open Can’t find it?",
             setup_code(&claim_view()),
         )
         .without_javascript(),

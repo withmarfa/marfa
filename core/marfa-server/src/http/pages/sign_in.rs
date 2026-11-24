@@ -4,21 +4,41 @@ use super::wait::Wait;
 use super::{Needs, Page, document, render_body};
 use crate::app::refusal::Result;
 
+/// Which of the two fields a form was sent without, as the sign-in address names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Missing {
+    pub username: bool,
+    pub password: bool,
+}
+
+impl Missing {
+    fn named(names: &[&str]) -> Missing {
+        Missing {
+            username: names.contains(&"username"),
+            password: names.contains(&"password"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignInProblem {
     InvalidCredentials,
-    MissingField,
+    MissingField(Missing),
     TooManyAttempts(Option<Wait>),
     Other,
 }
 
 impl SignInProblem {
     /// No error names no problem; a code the page was not built to know is never repeated.
-    pub fn from_query(error: Option<&str>, retry_after: Option<&str>) -> Option<SignInProblem> {
+    pub fn from_query(
+        error: Option<&str>,
+        retry_after: Option<&str>,
+        missing: &[&str],
+    ) -> Option<SignInProblem> {
         Some(match error? {
             "" => return None,
             "invalid_credentials" => SignInProblem::InvalidCredentials,
-            "missing_field" => SignInProblem::MissingField,
+            "missing_field" => SignInProblem::MissingField(Missing::named(missing)),
             "too_many_attempts" => SignInProblem::TooManyAttempts(Wait::from_query(retry_after)),
             _ => SignInProblem::Other,
         })
@@ -28,7 +48,7 @@ impl SignInProblem {
     fn message(self) -> String {
         match self {
             SignInProblem::InvalidCredentials => "That username or password isn’t right".into(),
-            SignInProblem::MissingField => "Enter your username and your password".into(),
+            SignInProblem::MissingField(_) => "Enter your username and your password".into(),
             SignInProblem::TooManyAttempts(Some(wait)) => {
                 format!("Too many attempts. Try again in {wait}")
             }
@@ -42,12 +62,12 @@ impl SignInProblem {
         matches!(self, SignInProblem::TooManyAttempts(_))
     }
 
-    /// Which fields are drawn red. A wrong pair marks the password alone, and an empty field is marked
-    /// where the page can tell: the password never comes back, so it is always empty.
-    fn marks(self, username: &str) -> (bool, bool) {
+    /// Which fields are drawn red. A wrong pair marks the password alone, and a missing field is
+    /// marked only if the form was sent without it.
+    fn marks(self) -> (bool, bool) {
         match self {
             SignInProblem::InvalidCredentials => (false, true),
-            SignInProblem::MissingField => (username.is_empty(), true),
+            SignInProblem::MissingField(missing) => (missing.username, missing.password),
             SignInProblem::TooManyAttempts(_) | SignInProblem::Other => (false, false),
         }
     }
@@ -92,9 +112,8 @@ struct SignInBody<'a> {
 }
 
 pub fn sign_in(view: &SignIn) -> Result<Page> {
-    let (username_invalid, password_invalid) = view
-        .problem
-        .map_or((false, false), |problem| problem.marks(&view.username));
+    let (username_invalid, password_invalid) =
+        view.problem.map_or((false, false), SignInProblem::marks);
     let body = render_body(&SignInBody {
         view,
         unverified: unverified(view.app_address.as_deref()),

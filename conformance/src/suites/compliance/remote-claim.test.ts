@@ -132,6 +132,26 @@ async function pageText(url: string, cookie?: string): Promise<string> {
   return page.text();
 }
 
+/** Whether a page's form can be sent empty, so the server and not the browser answers it. */
+function formReachesServerEmpty(html: string, field: string): boolean {
+  return (
+    /<form\b[^>]*\snovalidate[\s>]/i.test(html) &&
+    new RegExp(`<input id="${field}"[^>]*\\srequired`, "i").test(html)
+  );
+}
+
+/** The `Set-Cookie` line of the cookie a response sets under `name`. */
+function setCookieNamed(response: Response, name: string): string | undefined {
+  return response.headers
+    .getSetCookie()
+    .find((line) => line.startsWith(`${name}=`));
+}
+
+/** Whether a response ends the cookie `name`. */
+function endsCookie(response: Response, name: string): boolean {
+  return /;\s*Max-Age=0\b/i.test(setCookieNamed(response, name) ?? "");
+}
+
 /** Whether a password sign-in with `password` gives the owner a session. */
 async function signsIn(server: FreshServer, password: string) {
   return signInOwnerWithPassword(server.apiUrl, new URL(server.apiUrl).origin, {
@@ -264,6 +284,9 @@ describe("the setup code", () => {
       const line = log.split("\n").find((one) => one.includes("setup code:"))!;
       const ticket = /\/setup#handoff=([0-9a-f]+)/.exec(line)?.[1];
       expect(ticket).toBeDefined();
+      expect(formReachesServerEmpty(await pageText(server.url), "code")).toBe(
+        true,
+      );
       const origin = new URL(server.url).origin;
       const exchange = () =>
         post(server.url, "/setup/exchange", { ticket }, { origin });
@@ -455,6 +478,52 @@ describe("the setup code", () => {
           ),
         ),
       ).toEqual({ status: 409, code: "owner_exists" });
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a claim form that sends an empty email, naming email, and the same setup code still claims afterwards",
+    async () => {
+      const server = await bootUnclaimed("claim-form-email");
+      const [code] = codesIn(serverOutput(server.state), "setup");
+      const claimed = async () =>
+        (await controlRequest(server.controlSocket, "/_control/setup/status"))
+          .body.claimed;
+      const fields = {
+        username: TEST_OWNER.username,
+        name: "",
+        password: TEST_OWNER.password,
+        confirm_password: TEST_OWNER.password,
+        code: code!,
+      };
+
+      for (const headers of [{ accept: "application/json" }, {}]) {
+        const refused = await formPost(
+          server.url,
+          "/setup/claim",
+          { ...fields, email: "" },
+          headers,
+        );
+        expect(refused.status, JSON.stringify(headers)).toBe(400);
+        if ("accept" in headers) {
+          const { error } = (await refused.json()) as {
+            error: { code: string; details: { errors: unknown[] } };
+          };
+          expect(error.code).toBe("validation_error");
+          expect(error.details.errors).toEqual([
+            { path: "email", message: "Enter a valid email address." },
+          ]);
+        } else {
+          await refused.body?.cancel();
+        }
+        expect(await claimed()).toBe(false);
+      }
+
+      // The witness: the form without the email claims with the code the refusals left standing.
+      const matched = await formPost(server.url, "/setup/claim", fields);
+      expect(matched.status).toBe(303);
+      expect(await claimed()).toBe(true);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -907,6 +976,16 @@ describe("owner recovery", () => {
       const first = await pageText(server.apiUrl);
       expect(first).toContain("Recover your account");
       expect(first).toContain('action="/setup/exchange"');
+      expect(formReachesServerEmpty(first, "code")).toBe(true);
+      // A code that is not the one printed says it may have been used or have expired.
+      const wrongCode = await formPost(server.apiUrl, "/setup/exchange", {
+        code: "AAAAA-AAAAA-AAAAA-AAAAA-AAAAA",
+        purpose: "recovery",
+      });
+      expect(wrongCode.status).toBe(401);
+      expect(visibleText(await wrongCode.text())).toContain(
+        "That code isn’t right, or it was used or has expired.",
+      );
       // The form as the page sends it: its hidden fields and the code.
       const hidden = readControls(first)
         .filter((control) => control.type === "hidden")
@@ -947,17 +1026,40 @@ describe("owner recovery", () => {
       await sent.body?.cancel();
       expect(sent.status).toBe(303);
       const landing = sent.headers.get("location") ?? "";
-      expect(landing).toBe("/auth/sign-in?recovered=true");
-      const recovered = visibleText(
-        await (await fetch(`${server.apiUrl}${landing}`)).text(),
-      );
-      expect(recovered).toContain("Your password has been changed.");
-      // The witness: the sign-in page says nothing of the kind without the flag.
+      expect(landing).toBe("/auth/sign-in");
+      const flag = setCookieNamed(sent, "marfa_recovered");
+      expect(flag).toMatch(/;\s*HttpOnly/i);
+      expect(flag).toMatch(/;\s*SameSite=Strict/i);
+      expect(flag).toMatch(/;\s*Path=\/auth\/sign-in(;|$)/i);
       expect(
-        visibleText(
-          await (await fetch(`${server.apiUrl}/auth/sign-in`)).text(),
-        ),
-      ).not.toContain("Your password has been changed.");
+        Number(/;\s*Max-Age=(\d+)/i.exec(flag ?? "")?.[1]),
+      ).toBeLessThanOrEqual(120);
+      const told = "Your password has been changed.";
+      const signInPage = (headers: Record<string, string> = {}) =>
+        fetch(`${server.apiUrl}${landing}`, { headers });
+      // The witness: nothing but the cookie makes the page say so, not the query a link may carry.
+      expect(visibleText(await (await signInPage()).text())).not.toContain(
+        told,
+      );
+      const flagged = await fetch(`${server.apiUrl}${landing}?recovered=true`);
+      expect(visibleText(await flagged.text())).not.toContain(told);
+      // The cookie makes it say so, once.
+      const cookie = { cookie: "marfa_recovered=1" };
+      const shown = await signInPage(cookie);
+      expect(visibleText(await shown.text())).toContain(told);
+      expect(endsCookie(shown, "marfa_recovered")).toBe(true);
+      // A person already signed in is told so, and the cookie still ends.
+      const session = await signInOwnerWithPassword(server.apiUrl, origin, {
+        username: TEST_OWNER.username,
+        password: NEW_PASSWORD,
+      });
+      const signedIn = await signInPage({
+        cookie: `${session}; marfa_recovered=1`,
+      });
+      const signedInText = visibleText(await signedIn.text());
+      expect(signedInText).toContain("You’re signed in");
+      expect(signedInText).not.toContain(told);
+      expect(endsCookie(signedIn, "marfa_recovered")).toBe(true);
       expect(await afterRecovery(server, before)).toEqual({
         sameOwner: true,
         oldPassword: false,
@@ -1011,6 +1113,7 @@ describe("owner recovery", () => {
       for (const more of unmatched) {
         const refused = await recover(more);
         expect(refused.status).toBe(400);
+        expect(setCookieNamed(refused, "marfa_recovered")).toBeUndefined();
         const html = await refused.text();
         expect(visibleText(html)).toContain(MISMATCH);
         expect(html).toContain('id="recover-form"');
@@ -1121,6 +1224,7 @@ describe("owner recovery", () => {
       });
       expect(recovered.status).toBe(200);
       expect(await recovered.json()).toEqual({ recovered: true });
+      expect(setCookieNamed(recovered, "marfa_recovered")).toBeUndefined();
       const local = await controlRequest(
         bySocket.controlSocket,
         "/_control/owner/recover",

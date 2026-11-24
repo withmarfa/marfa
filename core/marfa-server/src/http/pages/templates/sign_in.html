@@ -1,5 +1,5 @@
 {% import "partials/parts.html" as parts %}{% if let Some(app) = view.app %}{% call parts::head_with("Sign in") %}<bdi>{{ app }}</bdi> ({{ unverified }}) wants to connect to your Marfa.{% endcall %}{% else if view.recovered %}{% call parts::head("Sign in", "Your password has been changed.") %}{% endcall %}{% else %}{% call parts::head("Sign in") %}{% endcall %}{% endif %}
-<form method="post" action="/auth/sign-in">
+<form method="post" action="/auth/sign-in" novalidate>
 <input type="hidden" name="return_to" value="{{ view.return_to }}">
 {% if let Some(authorization) = view.authorization %}<input type="hidden" name="authorization" value="{{ authorization }}">
 {% endif %}<div class="fields">

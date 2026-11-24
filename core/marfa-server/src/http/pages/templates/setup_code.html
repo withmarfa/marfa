@@ -1,6 +1,6 @@
 {% import "partials/parts.html" as parts %}{% if let Some(app) = app %}{% call parts::head_with("Claim this Marfa") %}Enter the setup code to become its owner. Then <bdi>{{ app.name }}</bdi> ({{ unverified }}) can connect.{% endcall %}{% else if connecting %}{% call parts::head("Claim this Marfa", "Enter the setup code to become its owner. Then the app can connect.") %}{% endcall %}{% else %}{% call parts::head("Claim this Marfa", "Enter the setup code to become its owner.") %}{% endcall %}{% endif %}
 <p class="note" role="status" data-handoff-working hidden>Checking your setup link.</p>
-<form method="post" action="/setup/exchange">
+<form method="post" action="/setup/exchange" novalidate>
 <input type="hidden" name="return_to" value="{{ return_to }}">
 <div class="fields">
 {% call parts::group(note="code-note", hint="It’s in Marfa’s terminal, or its host’s log.", problem=problem_message.as_deref().unwrap_or_default(), late_problem="That setup link has expired or was already used. Enter the setup code.") %}

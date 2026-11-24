@@ -799,10 +799,6 @@ legend {
   color: var(--t2);
 }
 
-.app-name {
-  font-weight: 600;
-}
-
 .device-check {
   margin: 1.25rem 0 1rem;
   padding: 0.75rem 1rem;

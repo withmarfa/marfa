@@ -25,8 +25,7 @@ impl SetupCodeProblem {
                 "That code isn’t right. Use the newest code Marfa printed.".into()
             }
             (SetupCodeProblem::WrongCode, true) => {
-                "That code isn’t right, or it has expired. Use the newest code in Marfa’s log."
-                    .into()
+                "That code isn’t right, or it was used or has expired.".into()
             }
             (SetupCodeProblem::SessionEnded, false) => {
                 "Your setup session ended. Enter the setup code again.".into()
