@@ -135,6 +135,7 @@ pub async fn screen(
                 instance_name: instance::name(&app).await?,
                 offer: *offer,
                 answering: Answering::Device(typed),
+                changed: false,
             };
             Ok(pages::consent(&view)?.into_response())
         }
@@ -178,5 +179,14 @@ pub async fn answer(
         }
         Answered::Code(lookup) => blocked(lookup, typed),
         Answered::SignInAgain => to_sign_in_again(&app, typed),
+        Answered::Changed(offer) => {
+            let view = Consent {
+                instance_name: name,
+                offer: *offer,
+                answering: Answering::Device(typed.to_string()),
+                changed: true,
+            };
+            Ok(pages::consent(&view)?.into_response())
+        }
     }
 }

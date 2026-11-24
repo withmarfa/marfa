@@ -480,7 +480,8 @@ mod consent_pages {
                 destinations: vec![HOSTILE.into()],
                 web_origins: vec![format!("https://{HOSTILE}")],
             },
-            full_access_choice: true,
+            asks_new: true,
+            fingerprint: "seen".into(),
             data: vec![
                 row(
                     Reach::Type,
@@ -507,7 +508,6 @@ mod consent_pages {
             admin: Some(Admin {
                 powers: vec![Permission::ItemsPurge, Permission::KeysMint],
                 levels: vec![AdminLevel::Full, AdminLevel::None, AdminLevel::Custom],
-                selected: AdminLevel::Full,
             }),
             held: vec![Held {
                 reach: Reach::Type,
@@ -528,8 +528,30 @@ mod consent_pages {
             instance_name: HOSTILE.into(),
             offer,
             answering,
+            changed: false,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn the_form_posts_the_held_access_it_was_drawn_on() {
+        let html = without_code(&page_of(Answering::Device("q".into()), offer()));
+        assert!(html.contains("<input type=\"hidden\" name=\"held\" value=\"seen\">"));
+    }
+
+    #[test]
+    fn a_page_drawn_again_after_access_changed_says_so() {
+        let line = "This app's access changed after this page opened.";
+        let quiet = without_code(&page_of(Answering::Authorization("q".into()), offer()));
+        assert!(!quiet.contains(line));
+        let changed = consent(&Consent {
+            instance_name: HOSTILE.into(),
+            offer: offer(),
+            answering: Answering::Authorization("q".into()),
+            changed: true,
+        })
+        .unwrap();
+        assert!(without_code(&changed).contains(line));
     }
 
     #[test]
@@ -602,8 +624,11 @@ mod consent_pages {
     fn admin_is_one_level_starting_at_full_access_with_custom_rows_at_allow() {
         let html = without_code(&page_of(Answering::Authorization("q".into()), offer()))
             .replace("&#39;", "'");
-        assert!(html.contains("name=\"access\" value=\"full\" checked"));
-        assert!(html.contains("name=\"access\" value=\"choose\">"));
+        let choose = html
+            .find("<details class=\"choose\">\n<summary>Choose…</summary>")
+            .unwrap();
+        assert!(html[choose..].contains("name=\"admin\""));
+        assert!(!html.contains("name=\"access\""));
         assert_eq!(
             options_of(&html, "admin"),
             ["<option value=\"full\" selected>Full access</option>\
@@ -663,12 +688,14 @@ mod consent_pages {
     #[test]
     fn a_page_with_nothing_to_choose_offers_no_choice_of_access() {
         let mut view = offer();
-        view.full_access_choice = false;
+        let witness = without_code(&page_of(Answering::Authorization("q".into()), offer()));
+        assert!(witness.contains("<summary>Choose…</summary>"));
+        view.asks_new = false;
         view.admin = None;
         view.confirm = false;
         let html = without_code(&page_of(Answering::Authorization("q".into()), view));
-        assert!(!html.contains("name=\"access\""));
-        assert!(!html.contains("Choose access"));
+        assert!(!html.contains("<summary>Choose…</summary>"));
+        assert!(!html.contains("name=\"admin\""));
         assert!(!html.contains("Confirm it's you"));
         assert!(!html.contains("15 minutes"));
     }

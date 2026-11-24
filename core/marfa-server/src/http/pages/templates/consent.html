@@ -3,6 +3,7 @@
 {% if device_code.is_some() %}<p class="lede">An app showing the code below is asking to connect to Marfa. Check that the code matches the one the app shows.</p>
 {% endif %}<p class="lede"><bdi>{{ view.offer.app.name }}</bdi> {{ app_bracket }} wants to connect to your Marfa.</p>
 {% if let Some(line) = app_line %}<p class="facts">{{ line }}</p>
+{% endif %}{% if view.changed %}<p class="notice caution" role="status">This app's access changed after this page opened. Check what to allow, then try again.</p>
 {% endif %}{% if !held.is_empty() %}<section class="held" aria-labelledby="held-title">
 <h2 id="held-title">Already allowed</h2>
 <ul>
@@ -11,26 +12,17 @@
 </section>
 {% endif %}<form method="post" action="{{ action }}" class="stack" data-change>
 <input type="hidden" name="{{ link_field }}" value="{{ link_value }}">
+<input type="hidden" name="held" value="{{ view.offer.fingerprint }}">
 {% for literal in view.offer.mechanisms %}<input type="hidden" name="scopes" value="{{ literal }}">
-{% endfor %}{% if view.offer.full_access_choice %}<fieldset class="access">
-<legend>{{ legend }}</legend>
-<p>Full access gives this app everything it asks for{% if view.offer.returning %} here{% endif %}.</p>
+{% endfor %}{% if view.offer.asks_new %}<section class="asks" aria-labelledby="asks-title">
+<h2 id="asks-title">{{ legend }}</h2>
 <ul class="gives">
 {% for line in gives %}<li>{{ line.text }}</li>
 {% endfor %}</ul>
-<label class="choice">
-<span class="name">Full access</span>
-<span class="sub">Allow all of it.</span>
-<input type="radio" name="access" value="{{ full_access }}" checked>
-</label>
-<label class="choice">
-<span class="name">Choose access</span>
-<span class="sub">Pick what to allow.{% if view.offer.offers_edit %} {{ edit_line }}{% endif %}</span>
-<input type="radio" name="access" value="choose">
-</label>
-</fieldset>
-{% endif %}<div class="choose"{% if view.offer.full_access_choice %} data-needs-choice{% endif %}>
-{% if !view.offer.full_access_choice && view.offer.offers_edit %}<p class="hint">{{ edit_line }}</p>
+</section>
+<details class="choose">
+<summary>Choose…</summary>
+{% if view.offer.offers_edit %}<p class="hint">{{ edit_line }}</p>
 {% endif %}{% for item in data %}{% call rows::level(item.row) %}{% endcall %}{% if !item.types.is_empty() %}<div class="types" data-shown-by="{{ item.row.id }}" data-shown-at="{{ choose_types }}">
 <p class="hint">Choose which types to allow. A type left at No access is not included.</p>
 {% for one in item.types %}{% call rows::level(one) %}{% endcall %}{% endfor %}</div>
@@ -45,8 +37,8 @@
 <div class="types" data-shown-by="admin-level" data-shown-at="{{ custom }}">
 <p class="hint">With Custom, choose which to allow.</p>
 {% for power in admin.powers %}{% call rows::power(power) %}{% endcall %}{% endfor %}</div>
-{% endif %}</div>
-<p class="notice error" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
+{% endif %}</details>
+{% endif %}<p class="notice error" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
 {% if view.offer.confirm %}<p class="hint">Changes like this need a sign-in from the last 15 minutes.</p>
 {% endif %}{% if let Some(code) = device_code %}<section class="device-check" aria-labelledby="device-check-title">
 <h2 id="device-check-title">Check the code</h2>

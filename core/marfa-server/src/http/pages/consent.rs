@@ -4,7 +4,7 @@ use super::words;
 use super::{Needs, Page, document, render_body};
 use crate::app::access::{Level, Permission};
 use crate::app::oauth::offer::{
-    Admin, AdminLevel, CHOOSE_TYPES, Choice, FULL_ACCESS, Held, LevelRow, Offer, Reach,
+    Admin, AdminLevel, CHOOSE_TYPES, Choice, Held, LevelRow, Offer, Reach,
 };
 use crate::app::refusal::Result;
 
@@ -19,6 +19,8 @@ pub struct Consent {
     pub instance_name: String,
     pub offer: Offer,
     pub answering: Answering,
+    /// An approval was posted from a page built on access the app no longer holds as it did.
+    pub changed: bool,
 }
 
 struct Pick {
@@ -169,19 +171,19 @@ fn power_row(index: usize, power: Permission) -> PowerRow {
     }
 }
 
-/// Custom's rows start at Allow, as the offer's Custom holds every power asked.
 fn admin_row(admin: &Admin) -> AdminRow {
-    let mut ordered = admin.holds(AdminLevel::Custom);
+    let mut ordered = admin.powers.clone();
     ordered.sort_by_key(|power| words::power_rank(power.word()));
     AdminRow {
         title: words::ADMIN_TITLE,
         options: admin
             .levels
             .iter()
-            .map(|level| Pick {
+            .enumerate()
+            .map(|(at, level)| Pick {
                 value: level.word().to_string(),
                 word: words::admin_level(*level),
-                selected: *level == admin.selected,
+                selected: at == 0,
             })
             .collect(),
         powers: ordered
@@ -238,7 +240,6 @@ struct ConsentBody<'a> {
     device_code: Option<String>,
     app_bracket: String,
     app_line: Option<String>,
-    full_access: &'static str,
     edit_line: &'static str,
     legend: &'static str,
     held: Vec<HeldRow>,
@@ -320,7 +321,6 @@ pub fn consent(view: &Consent) -> Result<Page> {
         device_code,
         app_bracket: words::app_bracket(&offer.app),
         app_line: words::app_line(&offer.app),
-        full_access: FULL_ACCESS,
         edit_line: words::EDIT_LINE,
         legend: if offer.returning {
             "New in this request"

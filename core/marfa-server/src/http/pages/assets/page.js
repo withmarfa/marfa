@@ -163,11 +163,13 @@
     const title = next.content.querySelector("title");
     if (title) document.title = title.textContent;
     main.replaceChildren(...incoming.childNodes);
+    watchChoices(main);
+    watchChanges(main);
     window.scrollTo(0, 0);
   }
 
-  function watchChanges() {
-    for (const form of document.querySelectorAll("form[data-change]")) {
+  function watchChanges(root = document) {
+    for (const form of root.querySelectorAll("form[data-change]")) {
       form.addEventListener("submit", (event) => {
         if (event.defaultPrevented) return;
         event.preventDefault();
@@ -507,21 +509,14 @@
   }
 
   // Without scripts every part shows, and the server reads only what the control's value counts.
-  function watchChoices() {
-    const choose = document.querySelector("[data-needs-choice]");
-    const radios = document.querySelectorAll("input[name=access]");
-    const parts = [...document.querySelectorAll("[data-shown-by]")];
+  function watchChoices(root = document) {
+    const parts = [...root.querySelectorAll("[data-shown-by]")];
     const sync = () => {
-      if (choose) {
-        const picked = document.querySelector("input[name=access]:checked");
-        choose.classList.toggle("open", picked?.value === "choose");
-      }
       for (const part of parts) {
         const control = document.getElementById(part.dataset.shownBy);
         part.classList.toggle("open", control?.value === part.dataset.shownAt);
       }
     };
-    for (const radio of radios) radio.addEventListener("change", sync);
     for (const part of parts) {
       document.getElementById(part.dataset.shownBy)?.addEventListener("change", sync);
     }

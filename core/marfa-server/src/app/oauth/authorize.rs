@@ -570,6 +570,8 @@ pub enum Decided {
     Expired,
     SignIn(String),
     Answered(String),
+    /// The page was built on access the app no longer holds as it did; this is the page now.
+    Changed(Box<Offer>),
 }
 
 /// The whole approval is one write, so nothing of it stands unless all of it does.
@@ -615,7 +617,8 @@ pub async fn decide(
         if signed_in_before_asked(unit, &client.id)? {
             return Ok(Decided::SignIn(again));
         }
-        let registries = registries_in(unit, &cache)?;
+        let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
+        let registries = Registries::of(&catalog);
         let named = narrow(&linked.scope, &registries.allowed()).kept;
         let owner_id = user_of(unit)?;
         let held = store::held_scopes(unit.tx(), &client.id, &owner_id)?;
@@ -632,6 +635,11 @@ pub async fn decide(
                 return Err(Refusal::validation(
                     "This post chooses what the request did not offer.",
                 ));
+            }
+            Decision::Changed => {
+                store::note_offered(unit.tx(), &client.id, unit.instant)?;
+                let offer = offer::build(&client, &request).named(&catalog);
+                return Ok(Decided::Changed(Box::new(offer)));
             }
         };
         let listed = destinations_digest(&shared, &client)?;

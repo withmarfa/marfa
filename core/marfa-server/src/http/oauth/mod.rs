@@ -73,7 +73,7 @@ impl Fields {
 
     fn post(&self) -> Post {
         Post {
-            access: self.get("access").map(str::to_string),
+            held: self.get("held").unwrap_or_default().to_string(),
             scopes: self.all("scopes"),
             types: self.all("types"),
             admin: self.get("admin").map(str::to_string),

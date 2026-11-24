@@ -55,6 +55,7 @@ pub async fn screen(
                 instance_name: instance::name(&app).await?,
                 offer: *offer,
                 answering: Answering::Authorization(query),
+                changed: false,
             };
             Ok(pages::consent(&view)?.into_response())
         }
@@ -91,5 +92,14 @@ pub async fn decide(
             Ok(json_answer(StatusCode::OK, &json!({ "url": url })))
         }
         Decided::Answered(location) => redirect(StatusCode::FOUND, &location),
+        Decided::Changed(offer) => {
+            let view = Consent {
+                instance_name: instance::name(&app).await?,
+                offer: *offer,
+                answering: Answering::Authorization(link.to_string()),
+                changed: true,
+            };
+            Ok(pages::consent(&view)?.into_response())
+        }
     }
 }

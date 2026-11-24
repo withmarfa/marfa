@@ -1,6 +1,9 @@
 //! Approval-page offers and the meaning of a post. Every value a control posts is a literal the
 //! request named, except chosen types, which a named all-data or content literal covers.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use sha2::{Digest, Sha256};
 use url::Url;
 
 use super::metadata_document::is_url;
@@ -15,7 +18,6 @@ use crate::app::access::{Level, Permission};
 use crate::app::catalog::Catalog;
 
 pub const CHOOSE_TYPES: &str = "choose-types";
-pub const FULL_ACCESS: &str = "full";
 
 /// None of these decides who gets in, sends data out or deletes for good.
 const LIMITED: [Permission; 3] = [
@@ -99,32 +101,42 @@ impl AdminLevel {
     }
 }
 
-/// The powers a request names that the app does not hold.
+/// The powers a request names that the app does not hold. Full Access comes first and is chosen.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Admin {
     /// In the request's order. Custom shows one row for each, starting at Allow.
     pub powers: Vec<Permission>,
     pub levels: Vec<AdminLevel>,
-    pub selected: AdminLevel,
 }
 
-impl Admin {
-    /// For Custom, the rows as they start.
-    pub fn holds(&self, level: AdminLevel) -> Vec<Permission> {
-        match level {
-            AdminLevel::Full | AdminLevel::Custom => self.powers.clone(),
-            AdminLevel::Limited => within_limited(&self.powers),
-            AdminLevel::None => Vec::new(),
+/// What `level` grants of the powers `asked`, with Custom's `rows` as posted. `None` where a row
+/// names a power not asked.
+fn powers_at(level: AdminLevel, asked: &[Permission], rows: &[String]) -> Option<Vec<Permission>> {
+    match level {
+        AdminLevel::Full => Some(asked.to_vec()),
+        AdminLevel::Limited => Some(
+            asked
+                .iter()
+                .copied()
+                .filter(|power| LIMITED.contains(power))
+                .collect(),
+        ),
+        AdminLevel::None => Some(Vec::new()),
+        AdminLevel::Custom => {
+            let mut chosen = Vec::new();
+            for row in rows.iter().filter(|row| !row.is_empty()) {
+                match Scope::parse(row) {
+                    Some(Scope::Permission(power)) if asked.contains(&power) => {
+                        if !chosen.contains(&power) {
+                            chosen.push(power);
+                        }
+                    }
+                    _ => return None,
+                }
+            }
+            Some(chosen)
         }
     }
-}
-
-fn within_limited(powers: &[Permission]) -> Vec<Permission> {
-    powers
-        .iter()
-        .copied()
-        .filter(|power| LIMITED.contains(power))
-        .collect()
 }
 
 fn powers_named(named: &ScopeSet) -> Vec<Permission> {
@@ -147,17 +159,24 @@ fn admin_offer(named: &ScopeSet, held: &ScopeSet) -> Option<Admin> {
     if powers.is_empty() {
         return None;
     }
-    let limited = within_limited(&powers);
+    let limited = powers_at(AdminLevel::Limited, &powers, &[]).unwrap_or_default();
     let mut levels = vec![AdminLevel::Full];
     if !limited.is_empty() && limited.len() < powers.len() {
         levels.push(AdminLevel::Limited);
     }
     levels.extend([AdminLevel::None, AdminLevel::Custom]);
-    Some(Admin {
-        powers,
-        levels,
-        selected: AdminLevel::Full,
-    })
+    Some(Admin { powers, levels })
+}
+
+/// What a page posts as `held`, so an approval is read only against the access it showed.
+/// Empty where the app holds nothing, as a post without the field reads.
+pub fn fingerprint(held: &ScopeSet) -> String {
+    let mut literals: Vec<&str> = held.literals().iter().map(String::as_str).collect();
+    if literals.is_empty() {
+        return String::new();
+    }
+    literals.sort_unstable();
+    URL_SAFE_NO_PAD.encode(Sha256::digest(literals.join(" ").as_bytes()))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -181,7 +200,8 @@ pub struct AppShown {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Offer {
     pub app: AppShown,
-    pub full_access_choice: bool,
+    /// The request names something the app does not hold, so the page offers choices.
+    pub asks_new: bool,
     pub data: Vec<LevelRow>,
     pub profile: Vec<LevelRow>,
     pub admin: Option<Admin>,
@@ -189,6 +209,7 @@ pub struct Offer {
     pub held_powers: Vec<Permission>,
     pub mechanisms: Vec<String>,
     pub confirm: bool,
+    pub fingerprint: String,
     /// A control offers editing items, which the page must say adds and deletes them.
     pub offers_edit: bool,
     pub returning: bool,
@@ -489,7 +510,7 @@ pub fn build(client: &Client, request: &Request<'_>) -> Offer {
     let (held_things, held_powers) = held_shown(held);
     Offer {
         app: app_shown(client),
-        full_access_choice: named
+        asks_new: named
             .literals()
             .iter()
             .any(|literal| !carried(literal, held)),
@@ -509,13 +530,15 @@ pub fn build(client: &Client, request: &Request<'_>) -> Offer {
             .cloned()
             .collect(),
         confirm: needs_recent_sign_in(named, held),
+        fingerprint: fingerprint(held),
         offers_edit,
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Post {
-    pub access: Option<String>,
+    /// The [`fingerprint`] the page was built on.
+    pub held: String,
     pub scopes: Vec<String>,
     pub types: Vec<String>,
     pub admin: Option<String>,
@@ -528,6 +551,8 @@ pub enum Decision {
     Denied,
     /// Names what the request did not, so nothing from the post counts.
     Beyond,
+    /// The page was built on access the app no longer holds as it did, so it must be shown again.
+    Changed,
 }
 
 fn distinct(values: &[String]) -> Vec<&str> {
@@ -550,46 +575,29 @@ fn admin_chosen(post: &Post, named: &ScopeSet) -> Option<Vec<Permission>> {
     if asked.is_empty() {
         return None;
     }
-    if level != AdminLevel::Custom {
-        return Some(match level {
-            AdminLevel::Full => asked,
-            AdminLevel::Limited => within_limited(&asked),
-            AdminLevel::None | AdminLevel::Custom => Vec::new(),
-        });
-    }
-    let mut chosen = Vec::new();
-    for value in post.powers.iter().filter(|value| !value.is_empty()) {
-        match Scope::parse(value) {
-            Some(Scope::Permission(power)) if asked.contains(&power) => {
-                if !chosen.contains(&power) {
-                    chosen.push(power);
-                }
-            }
-            _ => return None,
-        }
-    }
-    Some(chosen)
+    powers_at(level, &asked, &post.powers)
 }
 
 /// A held scope comes from `held`, never the post, so a page left open while the app was
 /// disconnected gives nothing back. Scopes are compared by what they reach, never merged as text.
 pub fn read_decision(request: &Request<'_>, post: &Post) -> Decision {
     let (named, held) = (request.named, request.held);
-    let full = post.access.as_deref() == Some(FULL_ACCESS);
-    let submitted: &[String] = if full { named.literals() } else { &post.scopes };
-    let choosing = !full && post.scopes.iter().any(|value| value == CHOOSE_TYPES);
-    let mut picked = distinct(submitted);
-    if picked.iter().any(|literal| !named.contains(literal)) {
+    if post.held != fingerprint(held) {
+        return Decision::Changed;
+    }
+    let choosing = post.scopes.iter().any(|value| value == CHOOSE_TYPES);
+    let mut picked = distinct(&post.scopes);
+    if picked.iter().any(|literal| {
+        !named.contains(literal) || matches!(Scope::parse(literal), Some(Scope::Permission(_)))
+    }) {
         return Decision::Beyond;
     }
-    if !full {
-        let Some(powers) = admin_chosen(post, named) else {
-            return Decision::Beyond;
-        };
-        for power in powers {
-            if !picked.contains(&power.word()) {
-                picked.push(power.word());
-            }
+    let Some(powers) = admin_chosen(post, named) else {
+        return Decision::Beyond;
+    };
+    for power in powers {
+        if !picked.contains(&power.word()) {
+            picked.push(power.word());
         }
     }
     let chosen_types: Vec<&str> = if choosing {
@@ -754,15 +762,56 @@ mod tests {
         }
     }
 
+    /// A post from a page built on what is held now.
     fn decide(named: &str, held: &str, post: &Post) -> Decision {
+        decide_on(named, held, held, post)
+    }
+
+    fn decide_on(named: &str, shown: &str, held: &str, post: &Post) -> Decision {
         read_decision(
             &Request {
                 named: &set(named),
                 held: &set(held),
                 choosable: &CHOOSABLE,
             },
-            post,
+            &Post {
+                held: fingerprint(&set(shown)),
+                ..post.clone()
+            },
         )
+    }
+
+    /// What a browser posts from the page as drawn, with no choice changed.
+    fn as_drawn(offered: &Offer) -> Post {
+        let mut scopes: Vec<String> = offered.mechanisms.clone();
+        scopes.extend(
+            offered
+                .data
+                .iter()
+                .chain(&offered.profile)
+                .map(|row| row.selected.clone()),
+        );
+        Post {
+            held: offered.fingerprint.clone(),
+            scopes,
+            types: offered
+                .data
+                .iter()
+                .flat_map(|row| &row.types)
+                .map(|row| row.selected.clone())
+                .collect(),
+            admin: offered
+                .admin
+                .as_ref()
+                .and_then(|admin| admin.levels.first())
+                .map(|level| level.word().to_string()),
+            powers: offered
+                .admin
+                .iter()
+                .flat_map(|admin| &admin.powers)
+                .map(|power| power.word().to_string())
+                .collect(),
+        }
     }
 
     fn approved(text: &str) -> Decision {
@@ -784,7 +833,7 @@ mod tests {
         assert_eq!(values(row), ["", "core.note:read", "core.note:write"]);
         assert_eq!(row.selected, "core.note:write");
         assert!(offered.offers_edit);
-        assert!(offered.full_access_choice);
+        assert!(offered.asks_new);
     }
 
     #[test]
@@ -870,7 +919,6 @@ mod tests {
     fn admin_starts_at_full_access_and_lists_only_the_powers_asked() {
         let offered = offer("items.purge keys.mint", "");
         let admin = offered.admin.unwrap();
-        assert_eq!(admin.selected, AdminLevel::Full);
         assert_eq!(admin.powers, [Permission::ItemsPurge, Permission::KeysMint]);
         assert_eq!(
             admin.levels,
@@ -879,21 +927,21 @@ mod tests {
     }
 
     #[test]
-    fn each_admin_level_holds_exactly_its_powers() {
-        let offered = offer(EVERY_POWER, "");
-        let admin = offered.admin.unwrap();
-        assert_eq!(admin.holds(AdminLevel::Full), admin.powers);
-        assert_eq!(admin.powers.len(), 14);
+    fn each_admin_level_grants_exactly_its_powers() {
+        let named = format!("core.note:read {EVERY_POWER}");
+        let grants = |level: &str, rows: &[&str]| decide(&named, "", &admin_post(level, rows));
+        assert_eq!(grants("full", &[]), approved(&named));
         assert_eq!(
-            admin.holds(AdminLevel::Limited),
-            [
-                Permission::InstanceRead,
-                Permission::BlobsManage,
-                Permission::AuditRead
-            ]
+            grants("limited", &[]),
+            approved("core.note:read instance.read blobs.manage audit.read")
         );
-        assert!(admin.holds(AdminLevel::None).is_empty());
-        assert_eq!(admin.holds(AdminLevel::Custom), admin.powers);
+        assert_eq!(grants("none", &[]), approved("core.note:read"));
+        let every: Vec<&str> = EVERY_POWER.split_whitespace().collect();
+        assert_eq!(grants("custom", &every), approved(&named));
+        assert_eq!(
+            grants("custom", &["", "webhooks.manage", ""]),
+            approved("core.note:read webhooks.manage")
+        );
     }
 
     #[test]
@@ -922,7 +970,7 @@ mod tests {
         assert!(offered.held.is_empty());
         assert_eq!(offered.held_powers, [Permission::ItemsPurge]);
         assert!(offered.returning);
-        assert!(!offered.full_access_choice);
+        assert!(!offered.asks_new);
         let more = offer("items.purge keys.mint", "items.purge");
         assert_eq!(more.admin.unwrap().powers, [Permission::KeysMint]);
     }
@@ -947,7 +995,7 @@ mod tests {
         assert!(offered.data.is_empty());
         assert!(offered.profile.is_empty());
         assert!(offered.admin.is_none());
-        assert!(!offered.full_access_choice);
+        assert!(!offered.asks_new);
         assert_eq!(offered.held.len(), 2);
         assert_eq!(offered.held_powers, [Permission::KeysMint]);
     }
@@ -962,7 +1010,7 @@ mod tests {
         assert_eq!(offered.data[0].selected, "core.note:write");
         let admin = offered.admin.unwrap();
         assert_eq!(admin.powers, [Permission::KeysMint]);
-        assert_eq!(admin.selected, AdminLevel::Full);
+        assert_eq!(admin.levels.first(), Some(&AdminLevel::Full));
     }
 
     #[test]
@@ -1101,15 +1149,67 @@ mod tests {
     }
 
     #[test]
-    fn full_access_reads_no_admin_level() {
-        let taken = Post {
-            access: Some("full".to_string()),
-            ..admin_post("everything", &["items.purge"])
-        };
+    fn a_permission_posted_as_a_scope_is_beyond() {
+        let named = "core.note:read keys.mint";
+        let mut taken = admin_post("none", &[]);
+        taken.scopes.push("keys.mint".to_string());
+        assert_eq!(decide(named, "", &taken), Decision::Beyond);
         assert_eq!(
-            decide("core.note:read keys.mint", "", &taken),
-            approved("core.note:read keys.mint")
+            decide(named, "", &post(&["core.note:read", "keys.mint"])),
+            Decision::Beyond
         );
+        assert_eq!(
+            decide(named, "", &admin_post("none", &[])),
+            approved("core.note:read")
+        );
+    }
+
+    #[test]
+    fn a_page_built_on_other_held_access_grants_nothing() {
+        let named = "core.note:read keys.mint items.purge";
+        let shown = build(
+            &native(),
+            &Request {
+                named: &set(named),
+                held: &set("keys.mint"),
+                choosable: &CHOOSABLE,
+            },
+        );
+        for level in ["full", "limited"] {
+            let mut taken = as_drawn(&shown);
+            taken.admin = Some(level.to_string());
+            let on = |held: &str| {
+                read_decision(
+                    &Request {
+                        named: &set(named),
+                        held: &set(held),
+                        choosable: &CHOOSABLE,
+                    },
+                    &taken,
+                )
+            };
+            assert_eq!(on(""), Decision::Changed, "{level}");
+            assert_eq!(on("keys.mint items.purge"), Decision::Changed, "{level}");
+            assert!(matches!(on("keys.mint"), Decision::Approved(_)), "{level}");
+        }
+        assert_eq!(
+            decide_on(named, "", "keys.mint", &admin_post("none", &[])),
+            Decision::Changed
+        );
+    }
+
+    #[test]
+    fn the_fingerprint_is_the_held_access_in_any_order_and_empty_for_none() {
+        assert_eq!(fingerprint(&ScopeSet::default()), "");
+        assert_eq!(
+            fingerprint(&set("keys.mint core.note:read")),
+            fingerprint(&set("core.note:read keys.mint"))
+        );
+        assert_ne!(
+            fingerprint(&set("core.note:read keys.mint")),
+            fingerprint(&set("core.note:read"))
+        );
+        assert_ne!(fingerprint(&set("core.note:read")), "");
     }
 
     #[test]
@@ -1154,7 +1254,7 @@ mod tests {
     fn a_mechanism_rides_along_and_offers_no_choice() {
         let offered = offer("offline_access", "");
         assert_eq!(offered.mechanisms, ["offline_access"]);
-        assert!(!offered.full_access_choice);
+        assert!(!offered.asks_new);
         assert!(!offered.returning);
     }
 
@@ -1229,18 +1329,28 @@ mod tests {
     }
 
     #[test]
-    fn full_access_is_the_request_whatever_the_form_carries() {
-        let taken = Post {
-            access: Some("full".to_string()),
-            ..with_types(
-                &["core.bookmark:read", "system.key:read"],
-                &["system.key:read"],
-            )
-        };
-        assert_eq!(
-            decide("core.note:read offline_access", "", &taken),
-            approved("core.note:read offline_access")
-        );
+    fn the_page_as_drawn_grants_the_whole_request() {
+        for (named, held) in [
+            ("core.note:read core.note:write offline_access", ""),
+            ("*:read *:write profile:read instance.read keys.mint", ""),
+            ("content:read edge.*:read items.purge audit.read", ""),
+            (
+                "core.note:read core.note:write keys.mint items.purge",
+                "core.note:read keys.mint",
+            ),
+            ("core.note:read keys.mint", "core.note:read keys.mint"),
+        ] {
+            let request = Request {
+                named: &set(named),
+                held: &set(held),
+                choosable: &CHOOSABLE,
+            };
+            assert_eq!(
+                read_decision(&request, &as_drawn(&build(&native(), &request))),
+                approved(named),
+                "{named}"
+            );
+        }
     }
 
     #[test]
@@ -1273,10 +1383,10 @@ mod tests {
     fn a_request_that_names_nothing_is_denied_and_never_read_as_every_scope() {
         assert_eq!(decide("", "core.note:read", &post(&[])), Decision::Denied);
         let full = Post {
-            access: Some("full".to_string()),
+            admin: Some("full".to_string()),
             ..Post::default()
         };
-        assert_eq!(decide("", "", &full), Decision::Denied);
+        assert_eq!(decide("", "", &full), Decision::Beyond);
     }
 
     #[test]
