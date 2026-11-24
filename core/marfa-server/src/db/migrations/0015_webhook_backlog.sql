@@ -9,6 +9,16 @@ UPDATE webhooks SET
     pending_bytes = (SELECT COALESCE(SUM(octet_length(d.payload)), 0) FROM webhook_deliveries d
                      WHERE d.webhook_id = webhooks.id AND d.status = 'pending');
 
+-- A row keeps only its last attempt's time, so the earliest failure kept since the last
+-- success, and since the subscription last changed, stands for the first.
+UPDATE webhooks SET failing_since = (
+    SELECT MIN(d.updated_at) FROM webhook_deliveries d
+    WHERE d.webhook_id = webhooks.id AND d.status IN ('pending', 'failed')
+      AND d.cycle_attempt > 0 AND d.updated_at >= webhooks.updated_at
+      AND d.updated_at > COALESCE((SELECT MAX(s.updated_at) FROM webhook_deliveries s
+                                   WHERE s.webhook_id = webhooks.id AND s.status = 'succeeded'), '')
+) WHERE active = 1;
+
 CREATE TRIGGER IF NOT EXISTS webhook_pending_added AFTER INSERT ON webhook_deliveries
 WHEN new.status = 'pending' BEGIN
     UPDATE webhooks SET pending = pending + 1,

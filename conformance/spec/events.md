@@ -1358,7 +1358,7 @@ When the grant of an app that registered a subscription is revoked, the server M
 
 ### `events/delivery-matches`
 
-When an event that fans out is one an active subscription names, and the subscription's `type_filter` and credential admit it, the server MUST deliver it to the subscription's `url`.
+When an event that fans out is one an active subscription names, the subscription's `type_filter` and credential admit it, and its delivery would take the subscription past neither `webhook_backlog_deliveries` nor `webhook_backlog_bytes` (`events/backlog-deliveries`, `events/backlog-bytes`), the server MUST deliver it to the subscription's `url`.
 
 **Tests:** `compliance/webhooks.test.ts › delivers a matching event to the URL with a verifiable signature`.
 
@@ -1736,7 +1736,7 @@ When the server settles a delivery unsent, the server MUST record it `canceled` 
 
 ### `events/backlog-deliveries`
 
-If a delivery would take the `pending` deliveries of its subscription past `webhook_backlog_deliveries`, 10000 unless named, then the server MUST record that delivery `canceled`, unsent, with the `error` `The subscription held as many pending deliveries, or bytes, as the instance allows.`
+If a delivery would take the `pending` deliveries of its subscription past `webhook_backlog_deliveries`, 10000 unless named, then the server MUST record that delivery `canceled`, unsent, with the `error` `Adding this delivery would exceed the subscription's pending delivery or payload byte limit.`
 
 **Reason:** a receiver that never answers would otherwise hold a copy of every event's payload for its subscription without end. The delivery is still recorded, so the delivery log shows what the receiver missed and why.
 
@@ -1744,7 +1744,7 @@ If a delivery would take the `pending` deliveries of its subscription past `webh
 
 ### `events/backlog-bytes`
 
-If a delivery would take the bytes of its subscription's `pending` payloads past `webhook_backlog_bytes`, 67108864 unless named, then the server MUST record that delivery `canceled`, unsent, with the `error` `The subscription held as many pending deliveries, or bytes, as the instance allows.`
+If a delivery would take the bytes of its subscription's `pending` payloads past `webhook_backlog_bytes`, 67108864 unless named, then the server MUST record that delivery `canceled`, unsent, with the `error` `Adding this delivery would exceed the subscription's pending delivery or payload byte limit.`
 
 **Reason:** a few large payloads can use the byte allowance before the subscription reaches its delivery count limit.
 
@@ -1752,17 +1752,23 @@ If a delivery would take the bytes of its subscription's `pending` payloads past
 
 ### `events/backlog-keeps-pending`
 
-When `webhook_backlog_deliveries` or `webhook_backlog_bytes` is set below what a subscription holds pending, the server MUST keep each of its `pending` deliveries and go on attempting it.
+When `webhook_backlog_deliveries` or `webhook_backlog_bytes` is set below what a subscription holds pending, the server MUST keep each of its `pending` deliveries `pending`.
 
 **Reason:** a limit bounds what is added. Settling older deliveries to make room would lose events the receiver was already owed.
 
-**Tests:** `compliance/webhook-backlog.test.ts › keeps the pending deliveries a lowered limit leaves over it, across a restart`, `› lists a webhook in attention once every attempt has failed for a day, and clears it once one succeeds`.
+**Tests:** `compliance/webhook-backlog.test.ts › keeps the pending deliveries a lowered limit leaves over it, across a restart`.
+
+### `events/backlog-attempts-pending`
+
+While `webhook_backlog_deliveries` or `webhook_backlog_bytes` is below what a subscription holds pending, the server MUST go on attempting each of its `pending` deliveries on the retry schedule (`events/retry-schedule`).
+
+**Tests:** `compliance/webhook-backlog.test.ts › goes on attempting the pending deliveries a lowered limit leaves over it`.
 
 ### `events/backlog-drains`
 
-When a subscription's `pending` deliveries fall back within `webhook_backlog_deliveries` and `webhook_backlog_bytes`, the server MUST queue its next delivery `pending`.
+When a subscription's `pending` deliveries have fallen so far that adding a new delivery leaves their number within `webhook_backlog_deliveries` and the bytes of their payloads within `webhook_backlog_bytes`, the server MUST queue that delivery `pending`.
 
-**Tests:** `compliance/webhook-backlog.test.ts › lists a webhook in attention once every attempt has failed for a day, and clears it once one succeeds`.
+**Tests:** `compliance/webhook-backlog.test.ts › drains the backlog once the receiver answers, clears the webhook from attention and queues the next delivery`.
 
 ## Redelivery
 
@@ -1790,7 +1796,7 @@ If a redelivery names a delivery that is `pending`, `succeeded` or `canceled`, t
 
 If the server refuses a redelivery, then the server MUST leave the delivery's `status` and `attempt` as they were.
 
-**Tests:** `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`.
+**Tests:** `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`, `compliance/webhook-backlog.test.ts › refuses a redelivery past a subscription's pending limit with 409 backlog_full, keeping the delivery failed`.
 
 ### `events/redeliver-inactive`
 
@@ -1800,11 +1806,19 @@ If a redelivery names a delivery of a subscription that is not active, then the 
 
 ### `events/redeliver-conflict-reason`
 
-When the server answers a redelivery `409 conflict`, the server MUST carry in `details.reason` the first of these that holds: `webhook_inactive` if the subscription is not active, `credential_unavailable` if the credential that registered the subscription no longer holds `webhooks.manage` or is no longer live, `delivery_not_failed` if the delivery is not `failed`, or `delivery_expired` if the delivery is older than the instance's audit retention.
+When the server answers a redelivery `409 conflict`, the server MUST carry in `details.reason` the first of these that holds: `webhook_inactive` if the subscription is not active, `credential_unavailable` if the credential that registered the subscription no longer holds `webhooks.manage` or is no longer live, `delivery_not_failed` if the delivery is not `failed`, `delivery_expired` if the delivery is older than the instance's audit retention, or `backlog_full` if the redelivery would take the subscription past a backlog limit (`events/redeliver-backlog`).
 
-**Reason:** the four refusals need different remedies, and a caller who is told only that the request collides cannot tell a switch to turn on from a delivery that cannot be sent again. A `failed` delivery keeps the event it was queued with, so no fifth refusal is needed for an event the log has since let go.
+**Reason:** the five refusals need different remedies, and a caller who is told only that the request collides cannot tell a switch to turn on from a delivery that cannot be sent again. A `failed` delivery keeps the event it was queued with, so no sixth refusal is needed for an event the log has since let go.
 
-**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhook-history.test.ts › refuses to redeliver a failed delivery older than the audit retention`, `compliance/webhooks-owner.test.ts › names a maker that no longer holds webhooks.manage as the reason a local redelivery is refused`.
+**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhook-history.test.ts › refuses to redeliver a failed delivery older than the audit retention`, `compliance/webhooks-owner.test.ts › names a maker that no longer holds webhooks.manage as the reason a local redelivery is refused`, `compliance/webhook-backlog.test.ts › refuses a redelivery past a subscription's pending limit with 409 backlog_full, keeping the delivery failed`.
+
+### `events/redeliver-backlog`
+
+If a redelivery would take the `pending` deliveries of its subscription past `webhook_backlog_deliveries`, or the bytes of their payloads past `webhook_backlog_bytes`, then the server MUST answer `409 conflict`.
+
+**Reason:** a redelivered delivery is pending again, so it counts toward the same limits as a new one. The caller can redeliver it once fewer deliveries are pending.
+
+**Tests:** `compliance/webhook-backlog.test.ts › refuses a redelivery past a subscription's pending limit with 409 backlog_full, keeping the delivery failed`.
 
 ### `events/redeliver-missing`
 

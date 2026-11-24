@@ -31144,7 +31144,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookNotFoundRefusal"];
                 };
             };
-            /** @description - `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; or `delivery_expired`, past audit retention. */
+            /** @description - `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; `delivery_expired`, past audit retention; or `backlog_full`, sending it again would pass `webhook_backlog_deliveries` or `webhook_backlog_bytes`. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

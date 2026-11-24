@@ -94,7 +94,7 @@ impl Concern {
             "connector" => "A connector failed its last run, reports problems or has gone quiet.",
             "folder" => "A folder's sync needs a look.",
             "key" => "An API key expires within seven days.",
-            "webhook" => "Every attempt to deliver to a webhook has failed for a day.",
+            "webhook" => "Every recorded attempt to deliver to a webhook has failed for a day.",
             "backup" => "The backups need a look.",
             "clock" => "The server's clock disagrees with the time it last trusted.",
             "setting" => "A secret setting must be set again.",
@@ -573,7 +573,7 @@ async fn delivering(app: &Arc<App>) -> Result<Vec<Concern>> {
             failed_run: false,
             title: "A webhook's deliveries are failing".to_string(),
             description: format!(
-                "Every delivery attempt to webhook {id} has failed since {since}. Check the \
+                "Every recorded delivery attempt to webhook {id} has failed since {since}. Check the \
                  receiver and the webhook's delivery log. You can turn the webhook off or delete it."
             ),
             reference: id,

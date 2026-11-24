@@ -748,6 +748,79 @@ fn an_upgrade_counts_the_backlog_each_subscription_already_holds() {
     assert_eq!(failing(&tx).unwrap(), vec![]);
 }
 
+#[test]
+fn an_upgrade_fails_a_subscription_from_its_earliest_failure_since_its_last_success() {
+    use crate::db::migrate::{MIGRATIONS, upgrade};
+    let mut db = rusqlite::Connection::open_in_memory().unwrap();
+    db.pragma_update(None, "foreign_keys", false).unwrap();
+    for migration in MIGRATIONS.iter().filter(|migration| migration.version < 15) {
+        db.execute_batch(migration.sql).unwrap();
+    }
+    db.execute_batch(KEY).unwrap();
+    db.execute_batch(&webhooks(&[
+        ("recovered", "k1", ""),
+        ("failing", "k1", ""),
+        ("never", "k1", ""),
+        ("redelivered", "k1", ""),
+        ("off", "k1", ""),
+        ("changed", "k1", ""),
+    ]))
+    .unwrap();
+    db.execute_batch(
+        "UPDATE webhooks SET active = 0 WHERE id = 'off'; \
+         UPDATE webhooks SET updated_at = '2026-01-09T00:00:00.000Z' WHERE id = 'changed';",
+    )
+    .unwrap();
+    let rows = [
+        ("recovered", "failed", 8, "2026-01-02T00:00:00.000Z"),
+        ("recovered", "succeeded", 1, "2026-01-03T00:00:00.000Z"),
+        ("failing", "failed", 8, "2026-01-02T00:00:00.000Z"),
+        ("failing", "succeeded", 1, "2026-01-03T00:00:00.000Z"),
+        ("failing", "pending", 2, "2026-01-05T00:00:00.000Z"),
+        ("failing", "failed", 8, "2026-01-04T00:00:00.000Z"),
+        ("failing", "canceled", 3, "2026-01-03T12:00:00.000Z"),
+        ("never", "pending", 1, "2026-01-06T00:00:00.000Z"),
+        ("never", "failed", 8, "2026-01-07T00:00:00.000Z"),
+        ("redelivered", "pending", 0, "2026-01-04T00:00:00.000Z"),
+        ("off", "pending", 1, "2026-01-04T00:00:00.000Z"),
+        ("changed", "pending", 1, "2026-01-08T00:00:00.000Z"),
+        ("changed", "pending", 1, "2026-01-10T00:00:00.000Z"),
+    ];
+    for (seq, (hook, status, cycle, at)) in (1_i64..).zip(rows.iter()) {
+        let payload = if *status == "pending" || *status == "failed" {
+            "'{}'"
+        } else {
+            "NULL"
+        };
+        db.execute(
+            &format!(
+                "INSERT INTO webhook_deliveries (seq, id, webhook_id, event_id, event_type, type, \
+                 source, payload, status, attempt, cycle_attempt, due_at, created_at, updated_at) \
+                 VALUES (?1, 'd' || ?1, ?2, ?1, 'item.created', 'core.note', 'test', {payload}, \
+                 ?3, ?4, ?4, ?5, '2026-01-01T00:00:00.000Z', ?5)"
+            ),
+            params![seq, hook, status, cycle, at],
+        )
+        .unwrap();
+    }
+    upgrade(&mut db, MIGRATIONS, 14).unwrap();
+    let tx = db.transaction().unwrap();
+    assert_eq!(
+        failing(&tx).unwrap(),
+        vec![
+            (
+                "failing".to_string(),
+                "2026-01-04T00:00:00.000Z".to_string()
+            ),
+            ("never".to_string(), "2026-01-06T00:00:00.000Z".to_string()),
+            (
+                "changed".to_string(),
+                "2026-01-10T00:00:00.000Z".to_string()
+            ),
+        ]
+    );
+}
+
 #[cfg(test)]
 fn seq_by_id(tx: &Transaction<'_>, id: &str) -> i64 {
     tx.query_row(

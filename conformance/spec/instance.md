@@ -32,7 +32,7 @@ If `GET /attention` carries a query field, then the server MUST answer `400 vali
 
 ### `instance/attention-concerns`
 
-When `GET /attention` completes its checks, the server MUST include degraded or down health components, housekeeping jobs whose last run failed, connectors whose last run failed or that report problems or have said nothing for more than 24 hours, unhandled faults (`instance/attention-fault`), active folders whose current sign-ins report problems, paused removals or a first sync waiting, live keys expiring within the next seven days inclusive, active webhooks whose every attempt has failed for 24 hours (`instance/attention-webhook-failing`), and a clock more than 7 days later or more than an hour earlier than the trusted time (`housekeeping/clock-ahead-held`, `housekeeping/clock-followed`).
+When `GET /attention` completes its checks, the server MUST include degraded or down health components, housekeeping jobs whose last run failed, connectors whose last run failed or that report problems or have said nothing for more than 24 hours, unhandled faults (`instance/attention-fault`), active folders whose current sign-ins report problems, paused removals or a first sync waiting, live keys expiring within the next seven days inclusive, active webhooks whose every recorded attempt has failed for 24 hours (`instance/attention-webhook-failing`), and a clock more than 7 days later or more than an hour earlier than the trusted time (`housekeeping/clock-ahead-held`, `housekeeping/clock-followed`).
 
 **Reason:** connector silence follows the latest registration, heartbeat, or received run; folder totals exclude historical sign-ins and do not claim that a copy is online.
 
@@ -178,17 +178,17 @@ While the server's clock is more than an hour earlier than the trusted time, the
 
 ### `instance/attention-webhook-failing`
 
-While every attempt to deliver to an active webhook subscription since its last success, or since it was created, pointed at another URL or turned on, has failed, and the first of those failures was 24 hours ago or more, the server MUST answer `GET /attention` with a concern of kind `webhook` whose reference is the subscription's `id`.
+While every recorded attempt to deliver to an active webhook subscription since its last success, or since it was created, pointed at another URL or turned on, has failed, and the first of those failures was 24 hours ago or more, the server MUST answer `GET /attention` with a concern of kind `webhook` whose reference is the subscription's `id`.
 
-**Reason:** a day without a success spans several full retry cycles (`events/retry-schedule`). A subscription ID identifies the receiver without exposing a secret in its URL.
+**Reason:** a day without a success spans several full retry cycles (`events/retry-schedule`). A subscription ID identifies the receiver without exposing a secret in its URL. A delivery sent from memory (`events/attention-memory-unlisted`) is not recorded, so its attempts neither start nor end the failure.
 
-**Tests:** `compliance/webhook-backlog.test.ts › lists a webhook in attention once every attempt has failed for a day, and clears it once one succeeds`.
+**Tests:** `compliance/webhook-backlog.test.ts › lists a webhook in attention once every recorded attempt has failed for a day`.
 
 ### `instance/attention-webhook-clears`
 
 When an attempt to deliver to a subscription succeeds, or the subscription is pointed at another URL, turned off or deleted, the server MUST NOT include a concern of kind `webhook` for it in `GET /attention`.
 
-**Tests:** `compliance/webhook-backlog.test.ts › lists a webhook in attention once every attempt has failed for a day, and clears it once one succeeds`.
+**Tests:** `compliance/webhook-backlog.test.ts › clears a listed webhook from attention when it is pointed at another URL, turned off or deleted`, `› drains the backlog once the receiver answers, clears the webhook from attention and queues the next delivery`.
 
 ### `instance/attention-unavailable`
 

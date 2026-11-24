@@ -41,7 +41,7 @@ const CANCEL_UNREAD: &str = "The credential the subscription belongs to may not 
 const CANCEL_CREDENTIAL: &str = "The credential the subscription belongs to no longer stands or no longer holds webhooks.manage.";
 const CANCEL_UNREADABLE: &str = "The event could not be read, so it was not sent.";
 const CANCEL_BACKLOG: &str =
-    "The subscription held as many pending deliveries, or bytes, as the instance allows.";
+    "Adding this delivery would exceed the subscription's pending delivery or payload byte limit.";
 
 /// Subscriptions one key, or one app's grant, may hold at once.
 pub const MAX_PER_MAKER: i64 = 100;
@@ -544,6 +544,13 @@ pub async fn redeliver(
             ));
         }
         store::redeliver(tx, delivery.seq, clock.now_ms(), &unit.at)?;
+        if schedule::Backlog::read(tx, &live.settings.seeds())?.passed(tx, &id, 0, 0)? {
+            return Err(redelivery_refused(
+                "backlog_full",
+                "Sending this delivery again would exceed the webhook's pending delivery or \
+                 payload byte limit. Redeliver it once fewer deliveries are pending.",
+            ));
+        }
         unit.audit("webhook_delivery", &delivery.id, Some(json!({ "webhook_id": id })))?;
         let reopened = store::delivery(tx, &id, &delivery_id)?.ok_or_else(not_found)?;
         Ok(delivery_answer(&reopened))
