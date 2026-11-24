@@ -3,7 +3,7 @@ use askama::Template;
 use super::wait::Wait;
 use super::{Needs, Page, document, render_body};
 use crate::app::oauth::authorize::REQUEST_PATH;
-use crate::app::oauth::device::CONSENT_PATH;
+use crate::app::oauth::device::CHECK_PATH;
 use crate::app::refusal::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +53,7 @@ pub struct AskingApp {
 /// Whether `return_to` goes on with an app's request to connect.
 fn connects_an_app(return_to: &str) -> bool {
     let path = return_to.split(['?', '#']).next().unwrap_or_default();
-    path == REQUEST_PATH || path == CONSENT_PATH
+    path == REQUEST_PATH || path == CHECK_PATH
 }
 
 #[derive(Debug, Clone)]

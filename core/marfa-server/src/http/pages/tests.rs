@@ -441,7 +441,7 @@ fn the_setup_code_page_says_where_the_code_is_and_carries_return_to() {
     assert!(asked.contains("value=\"/oauth/authorize?client_id=a\""));
     assert!(asked.contains("you choose what the app can access"));
     assert!(!asked.contains("is asking to connect"));
-    let device = code_page("/auth/device/consent?user_code=ABCD-EFGH", None);
+    let device = code_page("/auth/device/check?user_code=ABCD-EFGH", None);
     assert!(device.contains("you choose what the app can access"));
     let elsewhere = code_page("/oauth/authorized", None);
     assert!(!elsewhere.contains("choose what the app can access"));
@@ -477,11 +477,11 @@ fn the_details_page_carries_return_to() {
         email: String::new(),
         errors: SetupFieldErrors::default(),
         notice: None,
-        return_to: "/auth/device/consent?user_code=ABCD-EFGH".into(),
+        return_to: "/auth/device/check?user_code=ABCD-EFGH".into(),
     })
     .unwrap()
     .html;
-    assert!(details.contains("value=\"/auth/device/consent?user_code=ABCD-EFGH\""));
+    assert!(details.contains("value=\"/auth/device/check?user_code=ABCD-EFGH\""));
     assert!(details.contains("Next, you choose what the app can access"));
 }
 
