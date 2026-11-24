@@ -1,4 +1,5 @@
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
+import { checkDeviceCode } from "../../utils/device-check.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   approvedAppToken,
@@ -160,8 +161,10 @@ describe("GET /auth/device/consent", () => {
     expect((await runJob(server, "credential-cleanup")).outcome).toBe(
       "succeeded",
     );
+    await checkDeviceCode(origin, origin, cookie, code.user_code);
     const refused = await fetch(consentUrl(code.user_code), {
       headers: { cookie },
+      redirect: "manual",
     });
     expect(refused.status).toBe(400);
     expect(refused.headers.get("X-Error-Code")).toBe("invalid_client");
@@ -172,8 +175,10 @@ describe("GET /auth/device/consent", () => {
     // The witness: the same owner and door show the consent screen for a code
     // whose client is registered.
     const kept = await codeFor(await register());
+    await checkDeviceCode(origin, origin, cookie, kept.user_code);
     const shown = await fetch(consentUrl(kept.user_code), {
       headers: { cookie },
+      redirect: "manual",
     });
     expect(shown.status).toBe(200);
     expect(shown.headers.get("Content-Type")).toContain("text/html");

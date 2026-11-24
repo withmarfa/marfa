@@ -1,4 +1,10 @@
 import { readFileSync } from "node:fs";
+import {
+  sessionCookieOf,
+  signInOwnerWithPassword,
+} from "../../client/owner-session.js";
+import { visibleText } from "../../utils/approval-form.js";
+import { postDeviceCheck } from "../../utils/device-check.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   bootFreshServer,
@@ -8,6 +14,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * A device asking for a code and polling for its token, with a person
@@ -277,5 +284,237 @@ describe("a device code whose grant is revoked", () => {
     expect(polled.status).toBe(400);
     expect(polled.body.error).toBe("invalid_grant");
     expect(polled.body.access_token).toBeUndefined();
+  });
+});
+
+describe("the device check step", () => {
+  function signIn(flow: DeviceFlow): Promise<string> {
+    return signInOwnerWithPassword(flow.origin, flow.origin, TEST_OWNER);
+  }
+
+  function open(
+    flow: DeviceFlow,
+    path: string,
+    cookie?: string,
+  ): Promise<Response> {
+    return fetch(
+      `${flow.origin}${path}?user_code=${encodeURIComponent(flow.userCode)}`,
+      { redirect: "manual", headers: cookie ? { cookie } : {} },
+    );
+  }
+
+  function decide(flow: DeviceFlow, cookie: string): Promise<Response> {
+    return fetch(`${flow.origin}/auth/device/consent`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        cookie,
+        origin: flow.origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        user_code: flow.userCode,
+        decision: "approve",
+        scopes: "core.note:read",
+      }),
+    });
+  }
+
+  /** Where a redirect sends the browser, read on the sign-in surface. */
+  async function sentTo(answer: Response, flow: DeviceFlow): Promise<URL> {
+    await answer.body?.cancel();
+    expect(answer.status).toBe(302);
+    return new URL(answer.headers.get("location") ?? "", flow.origin);
+  }
+
+  async function expectSentToCheck(
+    answer: Response,
+    flow: DeviceFlow,
+  ): Promise<void> {
+    const to = await sentTo(answer, flow);
+    expect(to.pathname, String(to)).toBe("/auth/device/check");
+    expect([...to.searchParams], String(to)).toEqual([
+      ["user_code", flow.userCode],
+    ]);
+  }
+
+  async function expectEntryError(
+    answer: Response,
+    flow: DeviceFlow,
+    error: string,
+  ): Promise<void> {
+    const to = await sentTo(answer, flow);
+    expect(to.pathname, String(to)).toBe("/auth/device");
+    expect(to.searchParams.get("error"), String(to)).toBe(error);
+  }
+
+  it("sends a link carrying the code to the check step, which shows the code to compare", async () => {
+    const flow = await startDeviceFlow(server!, ["core.note:read"]);
+    const cookie = await signIn(flow);
+    const followed = await fetch(flow.link, {
+      redirect: "manual",
+      headers: { cookie },
+    });
+    await expectSentToCheck(followed, flow);
+
+    const page = await open(flow, "/auth/device/check", cookie);
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    const text = visibleText(html);
+    expect(text).toContain(
+      `${flow.userCode.slice(0, 4)}-${flow.userCode.slice(4)}`,
+    );
+    expect(text).toContain("It should match the code on your device.");
+    expect(html).toMatch(/<form method="post" action="\/auth\/device\/check">/);
+    // Following the link decided nothing.
+    expect((await flow.poll()).body.error).toBe("authorization_pending");
+  });
+
+  it("sends a typed code to the check step", async () => {
+    const flow = await startDeviceFlow(server!, ["core.note:read"]);
+    const entered = await fetch(`${flow.origin}/auth/device`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        origin: flow.origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ user_code: flow.userCode }),
+    });
+    await expectSentToCheck(entered, flow);
+  });
+
+  it("sends a browser with no session to sign in, and back to the check step", async () => {
+    const flow = await startDeviceFlow(server!, ["core.note:read"]);
+    const back = `/auth/device/check?user_code=${encodeURIComponent(flow.userCode)}`;
+    for (const answer of [
+      await open(flow, "/auth/device/check"),
+      await postDeviceCheck(flow.origin, flow.origin, "", flow.userCode),
+    ]) {
+      const to = await sentTo(answer, flow);
+      expect(to.pathname, String(to)).toBe("/auth/sign-in");
+      expect(to.searchParams.get("return_to"), String(to)).toBe(back);
+    }
+    const signedIn = await fetch(`${flow.origin}${back}`, {
+      redirect: "manual",
+      headers: { cookie: await signIn(flow) },
+    });
+    await signedIn.body?.cancel();
+    expect(signedIn.status).toBe(200);
+  });
+
+  it("opens the approval page only for the code the owner confirmed, in the browser that confirmed it", async () => {
+    const flow = await startDeviceFlow(server!, ["core.note:read"]);
+    const other = await startDeviceFlow(server!, ["core.note:read"]);
+    const here = await signIn(flow);
+    const elsewhere = await signIn(flow);
+
+    // Nothing is confirmed: the page and a decision both go to the check step.
+    await expectSentToCheck(
+      await open(flow, "/auth/device/consent", here),
+      flow,
+    );
+    await expectSentToCheck(await decide(flow, here), flow);
+
+    const confirmed = await sentTo(
+      await postDeviceCheck(flow.origin, flow.origin, here, flow.userCode),
+      flow,
+    );
+    expect(confirmed.pathname).toBe("/auth/device/consent");
+    expect([...confirmed.searchParams]).toEqual([["user_code", flow.userCode]]);
+
+    // The confirmation admits no other code, and no other browser session of
+    // the same owner.
+    await expectSentToCheck(
+      await open(other, "/auth/device/consent", here),
+      other,
+    );
+    await expectSentToCheck(await decide(other, here), other);
+    await expectSentToCheck(
+      await open(flow, "/auth/device/consent", elsewhere),
+      flow,
+    );
+    await expectSentToCheck(await decide(flow, elsewhere), flow);
+    expect((await flow.poll()).body.error).toBe("authorization_pending");
+    expect((await other.poll()).body.error).toBe("authorization_pending");
+
+    // The witness: the browser that confirmed the code opens the page and
+    // approves.
+    const page = await open(flow, "/auth/device/consent", here);
+    await page.body?.cancel();
+    expect(page.status).toBe(200);
+    const approved = await decide(flow, here);
+    await approved.body?.cancel();
+    expect(approved.status).toBe(200);
+    await waitOut(flow.interval);
+    expect((await flow.poll()).status).toBe(200);
+  });
+
+  it("keeps a confirmed code when the owner confirms it's them", async () => {
+    const flow = await startDeviceFlow(server!, ["core.note:read"]);
+    const before = await signIn(flow);
+    const checked = await sentTo(
+      await postDeviceCheck(flow.origin, flow.origin, before, flow.userCode),
+      flow,
+    );
+    expect(checked.pathname).toBe("/auth/device/consent");
+    const confirmed = await fetch(`${flow.origin}/auth/confirm`, {
+      method: "POST",
+      headers: {
+        cookie: before,
+        origin: flow.origin,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ password: TEST_OWNER.password }),
+    });
+    expect(confirmed.status).toBe(200);
+    const after = sessionCookieOf(confirmed);
+    expect(after, "the confirmation set no session cookie").toBeDefined();
+    expect(after).not.toBe(before);
+
+    // The witness: a session that did not confirm the code is sent to check it.
+    await expectSentToCheck(
+      await open(flow, "/auth/device/consent", await signIn(flow)),
+      flow,
+    );
+    const page = await open(flow, "/auth/device/consent", after);
+    await page.body?.cancel();
+    expect(page.status, page.headers.get("location") ?? "").toBe(200);
+    const approved = await decide(flow, after!);
+    await approved.body?.cancel();
+    expect(approved.status).toBe(200);
+  });
+
+  it("sends a code it does not know back to the entry page as wrong, and a code it holds as expired as expired", async () => {
+    const flow = await startDeviceFlow(server!, ["core.note:read"]);
+    const cookie = await signIn(flow);
+    const unknown = { ...flow, userCode: "BCDFGHJK" };
+    await expectEntryError(
+      await open(unknown, "/auth/device/check", cookie),
+      flow,
+      "invalid_code",
+    );
+    await expectEntryError(
+      await postDeviceCheck(flow.origin, flow.origin, cookie, "BCDFGHJK"),
+      flow,
+      "invalid_code",
+    );
+
+    // The witness: before it expires, the code opens the check page.
+    const shown = await open(flow, "/auth/device/check", cookie);
+    await shown.body?.cancel();
+    expect(shown.status).toBe(200);
+    // Past the ten minutes the code lives.
+    await server!.advanceClock(11 * 60_000);
+    await expectEntryError(
+      await open(flow, "/auth/device/check", cookie),
+      flow,
+      "expired_code",
+    );
+    await expectEntryError(
+      await postDeviceCheck(flow.origin, flow.origin, cookie, flow.userCode),
+      flow,
+      "expired_code",
+    );
   });
 });

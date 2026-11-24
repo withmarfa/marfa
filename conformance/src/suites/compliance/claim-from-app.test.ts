@@ -47,7 +47,7 @@ const APPROVAL_NEXT =
   "Next, you choose what the app can access, or turn it down.";
 const WRONG_CODE =
   "That setup code isn't right, or Marfa has replaced it since. Enter the newest code Marfa shows.";
-const DEVICE_EXPIRED = "Start connecting again in the app or on the device";
+const DEVICE_EXPIRED = "That code has expired. Start again on your device.";
 
 interface Instance {
   url: string;
@@ -440,7 +440,7 @@ describe("claiming in the sign-in page an app opens", () => {
         const { scope, discovery } = await discover(instance);
         const flow = await startDevice(discovery, scope);
         const browser = new Browser(instance, "192.0.2.20");
-        const back = `/auth/device/consent?user_code=${encodeURIComponent(flow.userCode)}`;
+        const back = `/auth/device/check?user_code=${encodeURIComponent(flow.userCode)}`;
         const signIn = await deviceSignIn(browser, flow);
         expect(signIn).toBe(throughSignIn(back));
 
@@ -449,7 +449,12 @@ describe("claiming in the sign-in page an app opens", () => {
         expect(location(claimed)).toBe(back);
         expect(browser.holds("marfa_session")).toBe(true);
 
-        const consent = await browser.get(back);
+        const check = await browser.get(back);
+        expect(check.status).toBe(200);
+        const checked = await browser.post("/auth/device/check", [
+          ["user_code", flow.userCode],
+        ]);
+        const consent = await browser.get(location(checked));
         expect(consent.status).toBe(200);
         const approved = await browser.post("/auth/device/consent", [
           ["user_code", flow.userCode],
@@ -469,13 +474,13 @@ describe("claiming in the sign-in page an app opens", () => {
   );
 
   it(
-    "says to start connecting again in the app when the device code ended during setup",
+    "says to start again on the device when the device code ended during setup",
     async () => {
       await withInstance({}, async (instance) => {
         const { scope, discovery } = await discover(instance);
         const flow = await startDevice(discovery, scope);
         const browser = new Browser(instance, "192.0.2.30");
-        const back = `/auth/device/consent?user_code=${encodeURIComponent(flow.userCode)}`;
+        const back = `/auth/device/check?user_code=${encodeURIComponent(flow.userCode)}`;
         const signIn = await deviceSignIn(browser, flow);
 
         const codePage = await browser.get(signIn);
@@ -559,18 +564,13 @@ async function startDevice(
   };
 }
 
-/** The person opens the device link and continues: answers the sign-in page it sends them to. */
+/** The person opens the device link, which goes to the check step: answers the sign-in page it sends them to. */
 async function deviceSignIn(
   browser: Browser,
   flow: DeviceFlow,
 ): Promise<string> {
-  const entry = await browser.get(flow.verification);
-  expect(entry.status).toBe(200);
-  const entered = await browser.post("/auth/device", [
-    ["user_code", flow.userCode],
-  ]);
-  const consent = location(entered);
-  return location(await browser.get(consent));
+  const check = location(await browser.get(flow.verification));
+  return location(await browser.get(check));
 }
 
 async function pollDevice(

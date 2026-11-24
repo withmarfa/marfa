@@ -4,6 +4,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { checkDeviceCode } from "../../utils/device-check.js";
 import {
   HOUR_MS,
   MINUTE_MS,
@@ -396,15 +397,22 @@ describe("registrations nobody approves", () => {
       user_code: string;
     };
     await server.advanceClock(6 * MINUTE_MS);
+    await checkDeviceCode(server.apiUrl, issuer, cookie, userCode);
     const page = `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`;
-    const offered = await fetch(page, { headers: { cookie } });
+    const offered = await fetch(page, {
+      headers: { cookie },
+      redirect: "manual",
+    });
     await offered.body?.cancel();
     expect(offered.status).toBe(200);
 
     expect((await runJob(server, "credential-cleanup")).outcome).toBe(
       "succeeded",
     );
-    const again = await fetch(page, { headers: { cookie } });
+    const again = await fetch(page, {
+      headers: { cookie },
+      redirect: "manual",
+    });
     await again.body?.cancel();
     expect(again.status).toBe(200);
   });

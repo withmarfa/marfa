@@ -15,6 +15,7 @@ import {
   sentTo,
   signIn as ownerCookie,
 } from "../../utils/signed-in.js";
+import { checkDeviceCode } from "../../utils/device-check.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
 /**
@@ -474,9 +475,11 @@ async function deviceCode(
   return (await response.json()) as { device_code: string; user_code: string };
 }
 
-/** The owner enters `userCode` on the verification page. */
+/** The owner confirms `userCode` on the check page and opens its approval page. */
 async function enter(server: FreshServer, userCode: string): Promise<void> {
-  const cookie = await ownerCookie(server, await issuerOrigin(server));
+  const origin = await issuerOrigin(server);
+  const cookie = await ownerCookie(server, origin);
+  await checkDeviceCode(server.apiUrl, origin, cookie, userCode);
   const page = await fetch(
     `${server.apiUrl}/auth/device/consent?${new URLSearchParams({ user_code: userCode })}`,
     { headers: { cookie } },
@@ -526,7 +529,7 @@ describe("what every address together leaves stored", () => {
     }
   });
 
-  it("keeps at most 1000 device codes nobody has entered, removing the oldest, and keeps an entered one", async () => {
+  it("keeps at most 1000 device codes nobody has confirmed, removing the oldest, and keeps a confirmed one", async () => {
     await unentered.pauseClock(true);
     try {
       const client = await deviceClient(unentered);
@@ -584,9 +587,9 @@ describe("an instance with no sign-in address", () => {
 });
 
 describe("what a page and a redirect take from the request", () => {
-  it("fills the device page's code field with the user_code it is opened with", async () => {
+  it("fills the device page's code field with the user_code it is sent back with", async () => {
     const page = await fetch(
-      `${limited.apiUrl}/auth/device?user_code=WXYZ-2345`,
+      `${limited.apiUrl}/auth/device?error=invalid_code&user_code=WXYZ-2345`,
     );
     expect(page.status).toBe(200);
     expect(await page.text()).toMatch(
@@ -594,9 +597,9 @@ describe("what a page and a redirect take from the request", () => {
     );
     // The witness: with no user_code the field is empty.
     const blank = await fetch(`${limited.apiUrl}/auth/device`);
-    expect(await blank.text()).toMatch(
-      /<input id="user_code"(?![^>]*\svalue=)[^>]*>/,
-    );
+    const field = /<input id="user_code"[^>]*>/.exec(await blank.text())?.[0];
+    expect(field, "the page has no code field").toBeDefined();
+    expect(field).not.toContain("value=");
   });
 
   it("takes a loopback redirect URI on any port for one registered on the loopback", async () => {

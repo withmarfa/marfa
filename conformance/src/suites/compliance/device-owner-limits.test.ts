@@ -68,10 +68,14 @@ function enter(
 }
 
 function screen(code: string, cookie: string, address = "192.0.2.1") {
-  return fetch(`${server.apiUrl}/auth/device/consent?user_code=${code}`, {
+  return fetch(`${server.apiUrl}/auth/device/check?user_code=${code}`, {
     headers: { cookie, [CLIENT_HEADER]: address },
     redirect: "manual",
   });
+}
+
+function confirm(code: string, cookie: string, address = "192.0.2.1") {
+  return post("/auth/device/check", { user_code: code }, cookie, address);
 }
 
 async function signIn(): Promise<string> {
@@ -104,7 +108,7 @@ async function browsers(): Promise<string[]> {
 }
 
 describe("the owner device lookup lane", () => {
-  it("admits owner entry and consent and exchanges the grant after anonymous address and aggregate exhaustion", async () => {
+  it("admits owner entry and checks and exchanges the grant after anonymous address and aggregate exhaustion", async () => {
     const registration = await fetch(`${server.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -147,8 +151,20 @@ describe("the owner device lookup lane", () => {
     const cookie = server.ownerCookie;
     expect(
       await location(await enter(user_code, cookie, "2001:db8:5:6::abcd")),
+    ).toContain("/auth/device/check?");
+    const check = await screen(user_code, cookie, "2001:db8:5:6::abcd");
+    expect(check.status).toBe(200);
+    await check.body?.cancel();
+    expect(
+      await location(await confirm(user_code, cookie, "2001:db8:5:6::abcd")),
     ).toContain("/auth/device/consent?");
-    const consent = await screen(user_code, cookie, "2001:db8:5:6::abcd");
+    const consent = await fetch(
+      `${server.apiUrl}/auth/device/consent?user_code=${user_code}`,
+      {
+        headers: { cookie, [CLIENT_HEADER]: "2001:db8:5:6::abcd" },
+        redirect: "manual",
+      },
+    );
     expect(consent.status).toBe(200);
     await consent.body?.cancel();
     const approved = await post(
@@ -213,13 +229,8 @@ describe("the owner device lookup lane", () => {
           ? await enter(codeFor(i), cookie, address)
           : i % 3 === 1
             ? await screen(codeFor(i), cookie, address)
-            : await post(
-                "/auth/device/consent",
-                { user_code: codeFor(i), decision: "approve" },
-                cookie,
-                address,
-              );
-      expect(response.status).toBe(i % 3 === 2 ? 404 : 302);
+            : await confirm(codeFor(i), cookie, address);
+      expect(response.status).toBe(302);
       expect(response.headers.get("location") ?? "").not.toContain(
         "too_many_attempts",
       );
@@ -255,14 +266,7 @@ describe("the owner device lookup lane", () => {
       await location(await screen(codeFor(101), second, "203.0.113.2")),
     ).toContain("error=too_many_attempts");
     expect(
-      await location(
-        await post(
-          "/auth/device/consent",
-          { user_code: codeFor(102), decision: "approve" },
-          first,
-          "203.0.113.3",
-        ),
-      ),
+      await location(await confirm(codeFor(102), first, "203.0.113.3")),
     ).toContain("error=too_many_attempts");
     expect(
       await location(await enter(codeFor(103), undefined, "203.0.113.1")),
@@ -301,9 +305,9 @@ describe("the owner device lookup lane", () => {
       expect(
         await location(await enter(codeFor(100), cookie, "203.0.113.1")),
       ).toContain("error=too_many_attempts");
-      const consent = await screen(codeFor(101), cookie);
-      expect(consent.status).toBe(302);
-      expect(consent.headers.get("location")).toContain("/auth/sign-in?");
+      const check = await screen(codeFor(101), cookie);
+      expect(check.status).toBe(302);
+      expect(check.headers.get("location")).toContain("/auth/sign-in?");
     },
   );
 

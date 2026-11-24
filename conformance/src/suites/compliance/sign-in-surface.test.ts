@@ -29,6 +29,7 @@ const FOREIGN = "https://foreign.example";
 const FORM_DOORS = [
   "/auth/sign-in",
   "/auth/device",
+  "/auth/device/check",
   "/auth/device/consent",
   "/auth/consent",
 ];
@@ -121,6 +122,15 @@ describe("the sign-in surface", () => {
     );
     expect(unnamed.status).toBe(302);
     expect(unnamed.headers.get("location")).toContain("error=missing_code");
+    const unnamedCheck = await postForm(
+      "/auth/device/check",
+      { user_code: "ABCD-EFGH" },
+      { [CLIENT_HEADER]: "192.0.2.1" },
+    );
+    expect(unnamedCheck.status).toBe(302);
+    expect(
+      new URL(unnamedCheck.headers.get("location") ?? "", origin).pathname,
+    ).toBe("/auth/sign-in");
   });
 
   it("refuses a sign-in that says neither Origin nor Referer, as a form or as JSON, and sets no cookie", async () => {
@@ -322,7 +332,7 @@ describe("the sign-in surface", () => {
     expect((await signIn(OWNER.password, "198.51.100.20")).status).toBe(200);
   });
 
-  it("limits anonymous device code entry per address and owner consent per owner", async () => {
+  it("limits anonymous device code entry per address and the owner's checks per owner", async () => {
     const enter = async (code: string, address: string) => {
       const response = await postForm(
         "/auth/device",
@@ -357,7 +367,7 @@ describe("the sign-in surface", () => {
     expect(cookie).toBeDefined();
     const screen = async (code: string, address: string) => {
       const response = await fetch(
-        `${server!.apiUrl}/auth/device/consent?user_code=${code}`,
+        `${server!.apiUrl}/auth/device/check?user_code=${code}`,
         {
           headers: { cookie: cookie!, [CLIENT_HEADER]: address },
           redirect: "manual",
@@ -365,10 +375,10 @@ describe("the sign-in surface", () => {
       );
       return response.headers.get("location") ?? "";
     };
-    const decide = (code: string, address: string) =>
+    const confirm = (code: string, address: string) =>
       postForm(
-        "/auth/device/consent",
-        { user_code: code, decision: "approve" },
+        "/auth/device/check",
+        { user_code: code },
         { origin, cookie: cookie!, [CLIENT_HEADER]: address },
       );
     const browser = "203.0.113.31";
@@ -376,14 +386,14 @@ describe("the sign-in surface", () => {
       expect(await screen(`YY${String(100000 + i)}`, browser)).toContain(
         "error=invalid_code",
       );
-      expect((await decide(`YY${String(200000 + i)}`, browser)).status).toBe(
-        404,
-      );
+      const confirmed = await confirm(`YY${String(200000 + i)}`, browser);
+      expect(confirmed.status).toBe(302);
+      expect(confirmed.headers.get("location")).toContain("error=invalid_code");
     }
     expect(await screen("YY999999", browser)).toContain(
       "error=too_many_attempts",
     );
-    const refused = await decide("YY999998", browser);
+    const refused = await confirm("YY999998", browser);
     expect(refused.status).toBe(302);
     expect(refused.headers.get("location")).toContain(
       "error=too_many_attempts",
@@ -578,22 +588,22 @@ describe("the pages a person reads at sign-in", () => {
       );
     const wrong = await said("invalid_code");
     expect(wrong).toContain(
-      "That code isn't right or has expired. Check it against your device, or start again there to get a new one.",
+      "That code isn’t right or has expired. Check your device.",
     );
     // The witness: the other error is the one that says only expired.
     const expired = await said("expired_code");
     expect(expired).toContain(
-      "That code has expired. Start connecting again in the app or on the device to get a new one.",
+      "That code has expired. Start again on your device.",
     );
-    expect(expired).not.toContain("isn't right");
+    expect(expired).not.toContain("isn’t right");
   });
 
   it("says how long codes last", async () => {
     const plain = visibleText(
       await (await fetch(`${server!.apiUrl}/auth/device`)).text(),
     );
-    expect(plain).toContain("Codes end after 10 minutes.");
-    expect(plain).not.toContain("isn't right");
+    expect(plain).toContain("A code lasts 10 minutes.");
+    expect(plain).not.toContain("isn’t right");
   });
 
   it("names the app an authorization sent the person for, and no app for a link edited after signing", async () => {

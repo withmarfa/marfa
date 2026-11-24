@@ -6,6 +6,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { checkDeviceCode } from "../../utils/device-check.js";
 import { visibleText } from "../../utils/approval-form.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import {
@@ -740,6 +741,7 @@ describe("an approved page's address and the sign-in surface", () => {
         await passwordSignIn(from),
         await ownerForm("/auth/consent", from),
         await ownerForm("/auth/device", from),
+        await ownerForm("/auth/device/check", from),
         await ownerForm("/auth/device/consent", from),
         await passkeyOptions(from),
       ];
@@ -833,9 +835,10 @@ describe("where the owner reads a page's address", () => {
     const { user_code: userCode } = (await code.json()) as {
       user_code: string;
     };
+    await checkDeviceCode(server.apiUrl, issuer, cookie, userCode);
     const device = await fetch(
       `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
-      { headers: { cookie } },
+      { headers: { cookie }, redirect: "manual" },
     );
     expect(device.status).toBe(200);
     const deviceText = visibleText(await device.text());
@@ -872,9 +875,10 @@ describe("where the owner reads a page's address", () => {
     const { user_code: userCode } = (await code.json()) as {
       user_code: string;
     };
+    await checkDeviceCode(server.apiUrl, issuer, cookie, userCode);
     const screen = await fetch(
       `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
-      { headers: { cookie } },
+      { headers: { cookie }, redirect: "manual" },
     );
     expect(screen.status).toBe(200);
     const text = visibleText(await screen.text());
