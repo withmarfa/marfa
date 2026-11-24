@@ -1471,6 +1471,140 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(sentCreates(a)).toEqual([]);
   });
 
+  it.each(["first", "second"])(
+    "keeps a file both folders drop in one change, the %s folder pulling first, and lets go one the other folder still holds once it has pulled",
+    async (order) => {
+      const gone = {
+        id: "01a00000-0000-7000-8000-0000000023f1",
+        properties: { title: "Gone", body: "dropped by both\n" },
+      };
+      const moved = {
+        id: "01a00000-0000-7000-8000-0000000023f2",
+        properties: { title: "Moved", body: "kept by one\n" },
+      };
+      const { a, b, edges } = await onOneMac(
+        `both-drop-${order}`,
+        { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+        { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+        {
+          "core.note": [
+            { item: gone, tags: ["a", "b"] },
+            { item: moved, tags: ["a", "b"] },
+          ],
+        },
+      );
+      expect((await a.folder.push()).ok).toBe(true);
+      expect((await b.folder.push()).ok).toBe(true);
+      for (const name of ["Gone.md", "Moved.md"]) {
+        expect(existsSync(join(a.dir, name))).toBe(true);
+        expect(existsSync(join(b.dir, name))).toBe(true);
+      }
+      const retag = (item: typeof gone, tags: string[]) =>
+        edges.events.push(
+          copyItemEvent(
+            String(edges.events.length + 2),
+            "metadata.changed",
+            wireItem(item),
+            { tags },
+          ),
+        );
+      retag(gone, []);
+      retag(moved, ["b"]);
+      const [early, late] = order === "first" ? [a, b] : [b, a];
+      const pushed = async (folder: FolderHarness) => {
+        const result = await folder.folder.push();
+        expect(result.ok, JSON.stringify(result)).toBe(true);
+        return result.ok ? result.value.pull : undefined;
+      };
+      expect(
+        (await pushed(early))?.let_go,
+        "a folder let a file go to another folder whose copy had not heard the change that drops the item there too",
+      ).toBe(0);
+      expect((await pushed(late))?.let_go).toBe(order === "first" ? 0 : 1);
+      // The witness: once the other folder has pulled and still holds the
+      // item, its file is let go.
+      if (order === "first") expect((await pushed(a))?.let_go).toBe(1);
+      expect(existsSync(join(a.dir, "Moved.md"))).toBe(false);
+      expect(existsSync(join(b.dir, "Moved.md"))).toBe(true);
+      for (const folder of [a, b]) {
+        expect(
+          existsSync(join(folder.dir, "Gone.md")),
+          "a file of an item no folder holds was taken away",
+        ).toBe(true);
+        expect(idIn(folder, "Gone.md")).toBe(gone.id);
+      }
+      expect(deletesOf(a.server, gone.id)).toBe(0);
+    },
+  );
+
+  it.each([
+    ["the same folder", SAME_FOLDER],
+    ["another folder", "another"],
+  ] as const)(
+    "reads a file returned to a narrowed directory while a directory of %s has the item's file",
+    async (_, kind) => {
+      const kept = {
+        id: "01a00000-0000-7000-8000-0000000023f5",
+        properties: { title: "VA", body: "Keep me.\n" },
+      };
+      const left = {
+        id: "01a00000-0000-7000-8000-0000000023f6",
+        properties: { title: "VB", body: "Other.\n" },
+      };
+      const wide = { types: ["core.note"], filter: 'tags contains "v1"' };
+      const { a, b, edges } = await onOneMac(
+        `returned-${kind === SAME_FOLDER ? "same" : "other"}`,
+        { query: wide },
+        kind === SAME_FOLDER ? SAME_FOLDER : { query: wide },
+        {
+          "core.note": [
+            { item: kept, tags: ["v1", "vkeep"] },
+            { item: left, tags: ["v1"] },
+          ],
+        },
+      );
+      expect((await a.folder.push()).ok).toBe(true);
+      expect((await b.folder.push()).ok).toBe(true);
+      a.settings.settings = {
+        query: { types: ["core.note"], filter: 'tags contains "vkeep"' },
+      };
+      a.settings.version += 1;
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "item.updated",
+          folderItem(a.settings),
+        ),
+      );
+      expect((await a.folder.push()).ok).toBe(true);
+      if (existsSync(join(a.dir, "VB.md"))) {
+        const removed = await a.folder.removeUnmatched({ yes: true });
+        expect(removed.ok, JSON.stringify(removed)).toBe(true);
+      }
+      expect(existsSync(join(a.dir, "VB.md"))).toBe(false);
+      expect(idIn(b, "VB.md")).toBe(left.id);
+
+      put(a, "VB.md", read(b, "VB.md").replace("Other.", "Other, returned."));
+      const returned = await a.folder.push();
+      expect(returned.ok, JSON.stringify(returned)).toBe(true);
+      const titles = sentCreates(a).map(
+        (sent) => (sent.properties as Record<string, unknown>).title,
+      );
+      if (kind === SAME_FOLDER) {
+        expect(
+          titles,
+          "a file returned to a directory was made a second item because another directory of its folder had the item's file",
+        ).not.toContain("VB");
+        expect(sentUpdates(a).map((sent) => sent.id)).toContain(left.id);
+        expect(idIn(a, "VB.md")).toBe(left.id);
+      } else {
+        expect(titles).toContain("VB");
+        expect(idIn(a, "VB.md")).not.toBe(left.id);
+      }
+      expect(idIn(b, "VB.md")).toBe(left.id);
+    },
+  );
+
   it("leaves the binding of a file it let go where ending the placement fails, and the scan ends it past the grace", async () => {
     const brief = {
       id: "01a00000-0000-7000-8000-0000000023e3",
