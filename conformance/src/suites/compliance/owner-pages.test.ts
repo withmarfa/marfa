@@ -86,7 +86,27 @@ function change(
     body: form
       ? new URLSearchParams(body as Record<string, string>)
       : JSON.stringify(body),
+    redirect: "manual",
   });
+}
+
+/** The passkeys page's form, sent without script: it asks for HTML. */
+function changeFromPage(
+  body: Record<string, string>,
+  cookie: string | undefined,
+  address?: string,
+): Promise<Response> {
+  return change(body, cookie, {
+    form: true,
+    headers: { accept: "text/html,application/xhtml+xml,*/*;q=0.8" },
+    ...(address ? { address } : {}),
+  });
+}
+
+/** Where a redirect sends the browser, read as a path and a query. */
+async function sentTo(response: Response): Promise<URL> {
+  expect(response.status, await response.clone().text()).toBe(303);
+  return new URL(response.headers.get("location") ?? "", "http://instance");
 }
 
 /** The passkey page's list is a door a session counts on, so it says whether the session lives. */
@@ -109,6 +129,14 @@ async function signsIn(password: string): Promise<boolean> {
 async function code(response: Response): Promise<string> {
   const body = (await response.json()) as { error: { code: string } };
   return body.error.code;
+}
+
+/** The field a refusal names, if any. */
+async function field(response: Response): Promise<unknown> {
+  const body = (await response.json()) as {
+    error: { details?: { field?: unknown } | null };
+  };
+  return body.error.details?.field;
 }
 
 interface AuditEntry {
@@ -228,7 +256,8 @@ describe("changing the password", () => {
       here,
     );
     expect(wrong.status).toBe(401);
-    expect(await code(wrong)).toBe("unauthorized");
+    expect(await code(wrong.clone())).toBe("unauthorized");
+    expect(await field(wrong)).toBe("current_password");
     expect(await lives(here)).toBe(true);
     expect(await lives(elsewhere)).toBe(true);
     expect(await signsIn(NEW_PASSWORD)).toBe(false);
@@ -322,6 +351,15 @@ describe("changing the password", () => {
     expect(out.status).toBe(200);
     const gone = await change(body, ended);
     expect(gone.status).toBe(401);
+    expect(await code(gone.clone())).toBe("unauthorized");
+    expect(await field(gone)).toBeUndefined();
+    const goneFromPage = await changeFromPage(
+      { ...body, confirm_password: NEW_PASSWORD },
+      ended,
+    );
+    expect(goneFromPage.status).toBe(401);
+    expect(goneFromPage.headers.get("content-type")).toContain("text/html");
+    expect(await goneFromPage.text()).toContain('href="/auth/sign-in"');
 
     const here = await signIn();
     const keyed = await change(body, here, {
@@ -360,6 +398,177 @@ describe("changing the password", () => {
 
     expect(await lives(here)).toBe(true);
     expect(await signsIn(NEW_PASSWORD)).toBe(false);
+    expect(await signsIn(TEST_OWNER.password)).toBe(true);
+  });
+
+  it("sends the page's form back to the page, saying the password changed or what was wrong", async () => {
+    const here = await signIn();
+    const problems: [Record<string, string>, string][] = [
+      [
+        {
+          current_password: "",
+          new_password: NEW_PASSWORD,
+          confirm_password: NEW_PASSWORD,
+        },
+        "current_missing",
+      ],
+      [
+        {
+          current_password: TEST_OWNER.password,
+          new_password: "short",
+          confirm_password: "short",
+        },
+        "new_too_short",
+      ],
+      [
+        {
+          current_password: TEST_OWNER.password,
+          new_password: "x".repeat(129),
+          confirm_password: "x".repeat(129),
+        },
+        "new_too_long",
+      ],
+      [
+        {
+          current_password: TEST_OWNER.password,
+          new_password: NEW_PASSWORD,
+          confirm_password: `${NEW_PASSWORD} again`,
+        },
+        "not_the_same",
+      ],
+      [
+        {
+          current_password: "not the password",
+          new_password: NEW_PASSWORD,
+          confirm_password: NEW_PASSWORD,
+        },
+        "current_not_right",
+      ],
+    ];
+    for (const [body, problem] of problems) {
+      const to = await sentTo(await changeFromPage(body, here));
+      expect(to.pathname).toBe("/auth/owner/passkeys");
+      expect(to.searchParams.get("problem")).toBe(problem);
+      expect(to.searchParams.has("changed")).toBe(false);
+    }
+    expect(await signsIn(NEW_PASSWORD)).toBe(false);
+
+    const address = nextAddress();
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const wrong = await changeFromPage(
+        {
+          current_password: "wrong once more",
+          new_password: NEW_PASSWORD,
+          confirm_password: NEW_PASSWORD,
+        },
+        here,
+        address,
+      );
+      expect((await sentTo(wrong)).searchParams.get("problem")).toBe(
+        "current_not_right",
+      );
+    }
+    const locked = await sentTo(
+      await changeFromPage(
+        {
+          current_password: TEST_OWNER.password,
+          new_password: NEW_PASSWORD,
+          confirm_password: NEW_PASSWORD,
+        },
+        here,
+        address,
+      ),
+    );
+    expect(locked.searchParams.get("problem")).toBe("too_many_attempts");
+    expect(
+      Number(locked.searchParams.get("retry_after_seconds")),
+    ).toBeGreaterThan(0);
+    expect(await signsIn(NEW_PASSWORD)).toBe(false);
+
+    const changed = await sentTo(
+      await changeFromPage(
+        {
+          current_password: TEST_OWNER.password,
+          new_password: NEW_PASSWORD,
+          confirm_password: NEW_PASSWORD,
+        },
+        here,
+      ),
+    );
+    expect(`${changed.pathname}${changed.search}`).toBe(
+      "/auth/owner/passkeys?changed=1",
+    );
+    expect(await lives(here)).toBe(true);
+    expect(await signsIn(NEW_PASSWORD)).toBe(true);
+
+    const back = await sentTo(
+      await changeFromPage(
+        {
+          current_password: NEW_PASSWORD,
+          new_password: TEST_OWNER.password,
+          confirm_password: TEST_OWNER.password,
+        },
+        here,
+      ),
+    );
+    expect(back.searchParams.get("changed")).toBe("1");
+    expect(await signsIn(TEST_OWNER.password)).toBe(true);
+  });
+
+  it("refuses a current password longer than any the server sets without counting it, as JSON and from the page's form", async () => {
+    const here = await signIn();
+    const address = nextAddress();
+    const overlong = "x".repeat(1025);
+    // More than the ten a window holds, so a counted refusal would lock this address.
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const json = await change(
+        { current_password: overlong, new_password: NEW_PASSWORD },
+        here,
+        { address },
+      );
+      expect(json.status).toBe(400);
+      expect(await code(json)).toBe("validation_error");
+      const page = await changeFromPage(
+        {
+          current_password: overlong,
+          new_password: NEW_PASSWORD,
+          confirm_password: NEW_PASSWORD,
+        },
+        here,
+        address,
+      );
+      expect((await sentTo(page)).searchParams.get("problem")).toBe(
+        "current_missing",
+      );
+    }
+    const changed = await change(
+      { current_password: TEST_OWNER.password, new_password: NEW_PASSWORD },
+      here,
+      { address },
+    );
+    expect(changed.status, await changed.clone().text()).toBe(200);
+    const back = await change(
+      { current_password: NEW_PASSWORD, new_password: TEST_OWNER.password },
+      here,
+      { address },
+    );
+    expect(back.status).toBe(200);
+    // The witness: ten wrong passwords of a length the server judges lock an address.
+    const judged = nextAddress();
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const wrong = await change(
+        { current_password: "x".repeat(1024), new_password: NEW_PASSWORD },
+        here,
+        { address: judged },
+      );
+      expect(wrong.status).toBe(401);
+    }
+    const held = await change(
+      { current_password: TEST_OWNER.password, new_password: NEW_PASSWORD },
+      here,
+      { address: judged },
+    );
+    expect(held.status).toBe(429);
     expect(await signsIn(TEST_OWNER.password)).toBe(true);
   });
 

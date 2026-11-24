@@ -11,6 +11,7 @@ use super::{cookies, redirect, require_safe_caller, text_field, with_cookie};
 use crate::app::App;
 use crate::app::access::{Caller, Permission, unauthorized};
 use crate::app::auth::passkeys::{self, Assertion};
+use crate::app::auth::password;
 use crate::app::auth::return_to::kept;
 use crate::app::auth::session;
 use crate::app::auth::sign_in::SignedIn;
@@ -28,7 +29,6 @@ const CURRENT_PASSWORD_CHARS: usize = 1024;
 const CHANGE_FIELDS: [&str; 2] = ["current_password", "new_password"];
 const CHANGE_PAGE_FIELDS: [&str; 3] = ["current_password", "new_password", "confirm_password"];
 const PASSKEYS_PAGE: &str = "/auth/owner/passkeys";
-const NEW_PASSWORD_CHARS: usize = 8;
 
 fn not_from_here() -> Refusal {
     Refusal::new(
@@ -250,43 +250,42 @@ fn back_to_passkeys(pairs: &[(&str, &str)]) -> String {
     }
 }
 
-/// The passkeys page's form sent without JavaScript: the two new passwords are compared here,
-/// and the page it goes back to carries what happened.
+fn page_problem(problem: &str, wait: &str) -> Answer {
+    redirect(
+        StatusCode::SEE_OTHER,
+        &back_to_passkeys(&[("problem", problem), ("retry_after_seconds", wait)]),
+    )
+}
+
 async fn change_from_page(
     app: &Arc<App>,
     headers: &HeaderMap,
-    caller: &Caller,
+    caller: Option<Caller>,
     visit: Visit,
     body: JsonBody,
 ) -> Answer {
-    let fields = only_declared(body.form().await?, &CHANGE_PAGE_FIELDS)?;
-    let field = |name: &str| fields.get(name).and_then(Value::as_str).unwrap_or("");
-    let back = |problem: &str, wait: &str| {
-        redirect(
-            StatusCode::SEE_OTHER,
-            &back_to_passkeys(&[("problem", problem), ("retry_after_seconds", wait)]),
-        )
+    let Some(caller) = caller.filter(|caller| caller.session().is_some()) else {
+        return Err(unauthorized().into());
     };
-    let (current, new) = (field("current_password"), field("new_password"));
-    if current.is_empty() {
-        return back("current_not_right", "");
+    let fields = only_declared(body.form().await?, &CHANGE_PAGE_FIELDS)?;
+    let Ok(current) = current_password(&fields) else {
+        return page_problem("current_missing", "");
+    };
+    let field = |name: &str| fields.get(name).and_then(Value::as_str).unwrap_or("");
+    let new = field("new_password");
+    let length = new.chars().count();
+    if length < password::MIN_LENGTH {
+        return page_problem("new_too_short", "");
     }
-    if new.chars().count() < NEW_PASSWORD_CHARS {
-        return back("new_too_short", "");
+    if length > password::MAX_LENGTH {
+        return page_problem("new_too_long", "");
     }
     if new != field("confirm_password") {
-        return back("not_the_same", "");
+        return page_problem("not_the_same", "");
     }
     let mark = device_mark(app, headers);
-    let outcome = sign_in::change_password(
-        app,
-        caller,
-        current.to_string(),
-        new.to_string(),
-        mark,
-        visit,
-    )
-    .await;
+    let outcome =
+        sign_in::change_password(app, &caller, current, new.to_string(), mark, visit).await;
     match outcome {
         Ok(changed) => {
             let done = redirect(
@@ -298,7 +297,9 @@ async fn change_from_page(
                 cookies::device(&app.addresses().sign_in(), &changed.device(app)?)?,
             ))
         }
-        Err(refusal) if refusal.code == Code::Unauthorized => back("current_not_right", ""),
+        Err(refusal) if sign_in::is_current_not_right(&refusal) => {
+            page_problem("current_not_right", "")
+        }
         Err(refusal) if refusal.code == Code::RateLimited => {
             let wait = refusal
                 .details
@@ -306,14 +307,12 @@ async fn change_from_page(
                 .and_then(|details| details.get("retry_after_seconds"))
                 .map(Value::to_string)
                 .unwrap_or_default();
-            back("too_many_attempts", &wait)
+            page_problem("too_many_attempts", &wait)
         }
         Err(refusal) => Err(refusal.into()),
     }
 }
 
-/// The passkeys page's form, sent as a form or as JSON. A browser's form, which asks for a page,
-/// goes back to the page.
 pub async fn change_password(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
@@ -322,12 +321,12 @@ pub async fn change_password(
     body: JsonBody,
 ) -> Answer {
     require_safe_caller(&app, &visit)?;
+    if body.declares_form() && wants_page(&headers) {
+        return change_from_page(&app, &headers, caller, visit, body).await;
+    }
     let Some(caller) = caller.filter(|caller| caller.session().is_some()) else {
         return Err(unauthorized().into());
     };
-    if body.declares_form() && wants_page(&headers) {
-        return change_from_page(&app, &headers, &caller, visit, body).await;
-    }
     let body = if body.declares_form() {
         only_declared(body.form().await?, &CHANGE_FIELDS)?
     } else {

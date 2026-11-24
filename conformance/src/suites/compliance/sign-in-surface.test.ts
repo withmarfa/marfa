@@ -173,6 +173,33 @@ describe("the sign-in surface", () => {
     expect(after.status).toBe(401);
   });
 
+  it("answers a sign-out from a page with a page that says so, and ends the session cookie", async () => {
+    const signedIn = await signIn(OWNER.password, "192.0.2.16");
+    const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0];
+    const ended = await fetch(`${server!.apiUrl}/auth/sign-out`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "text/html,application/xhtml+xml,*/*;q=0.8",
+        origin,
+        cookie,
+      },
+      body: "",
+    });
+    expect(ended.status).toBe(200);
+    expect(ended.headers.get("content-type")).toContain("text/html");
+    const page = await ended.text();
+    expect(page).toContain("signed out");
+    expect(page).toContain('href="/auth/sign-in"');
+    const line = ended.headers.get("set-cookie") ?? "";
+    expect(line).toMatch(/^marfa_session=;/);
+    expect(line).toMatch(/;\s*Max-Age=0/i);
+    const after = await fetch(`${server!.apiUrl}/owner/passkeys`, {
+      headers: { cookie },
+    });
+    expect(after.status).toBe(401);
+  });
+
   it("refuses a sign-out 403 from another origin or none and 401 from no live session, and keeps the session until the instance's own origin ends it", async () => {
     const signedIn = await signIn(OWNER.password, "192.0.2.7");
     const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0]!;

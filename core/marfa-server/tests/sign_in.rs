@@ -812,7 +812,7 @@ async fn a_form_password_change_goes_back_to_the_page_with_what_happened() {
         ([PASSWORD, "short", "short"], "new_too_short"),
         ([PASSWORD, new, "the third password"], "not_the_same"),
         (["not the password", new, new], "current_not_right"),
-        (["", new, new], "current_not_right"),
+        (["", new, new], "current_missing"),
     ] {
         let reply = change_from_the_page(&instance, &cookie, fields).await;
         assert_eq!(
@@ -929,4 +929,132 @@ async fn the_passkeys_page_shows_what_a_form_password_change_got() {
         "{}",
         waiting.text
     );
+}
+
+#[tokio::test]
+async fn a_form_password_change_refuses_an_overlong_current_password_without_counting_it() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let new = "the second password";
+    let overlong = "x".repeat(1025);
+    for _ in 0..12 {
+        let reply = change_from_the_page(&instance, &cookie, [&overlong, new, new]).await;
+        assert_eq!(
+            goes_to(&reply),
+            "/auth/owner/passkeys?problem=current_missing"
+        );
+    }
+    let too_long_new = "y".repeat(129);
+    let reply =
+        change_from_the_page(&instance, &cookie, [PASSWORD, &too_long_new, &too_long_new]).await;
+    assert_eq!(goes_to(&reply), "/auth/owner/passkeys?problem=new_too_long");
+    let reply = change_from_the_page(&instance, &cookie, [PASSWORD, new, new]).await;
+    assert_eq!(goes_to(&reply), "/auth/owner/passkeys?changed=1");
+}
+
+#[tokio::test]
+async fn a_form_password_change_from_an_ended_session_is_sent_to_sign_in() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let ended = send(
+        instance.public.clone(),
+        post_signed_in("/auth/sign-out", &json!({}), &cookie),
+    )
+    .await;
+    assert_eq!(ended.status, StatusCode::OK);
+    let new = "the second password";
+    let reply = change_from_the_page(&instance, &cookie, [PASSWORD, new, new]).await;
+    assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{}", reply.text);
+    assert!(reply.text.contains("Sign in needed"), "{}", reply.text);
+    assert!(
+        reply.text.contains(r#"href="/auth/sign-in""#),
+        "{}",
+        reply.text
+    );
+    assert_eq!(instance.sign_in(PASSWORD).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_wrong_password_names_its_field_and_an_ended_session_names_none() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let new = "the second password";
+    let change = json!({ "current_password": "not the password", "new_password": new });
+    let wrong = send(
+        instance.public.clone(),
+        post_signed_in("/auth/owner/password", &change, &cookie),
+    )
+    .await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(wrong.body["error"]["details"]["field"], "current_password");
+    let confirm = json!({ "password": "not the password" });
+    let wrong = send(
+        instance.public.clone(),
+        post_signed_in("/auth/confirm", &confirm, &cookie),
+    )
+    .await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(wrong.body["error"]["details"]["field"], "password");
+
+    let ended = send(
+        instance.public.clone(),
+        post_signed_in("/auth/sign-out", &json!({}), &cookie),
+    )
+    .await;
+    assert_eq!(ended.status, StatusCode::OK);
+    for (path, body) in [
+        ("/auth/owner/password", &change),
+        ("/auth/confirm", &confirm),
+    ] {
+        let gone = send(instance.public.clone(), post_signed_in(path, body, &cookie)).await;
+        assert_eq!(gone.status, StatusCode::UNAUTHORIZED, "{path}");
+        assert_eq!(
+            gone.body["error"]["details"]["field"],
+            Value::Null,
+            "{path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_passkeys_page_marks_only_the_fields_a_problem_is_about() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let invalid = async |query: &str| {
+        let request = Request::builder()
+            .uri(format!("/auth/owner/passkeys{query}"))
+            .header(header::COOKIE, &cookie)
+            .header(header::ACCEPT, "text/html")
+            .body(Body::empty())
+            .unwrap();
+        let page = send(instance.public.clone(), request).await;
+        assert_eq!(page.status, StatusCode::OK);
+        ["current-password", "new-password", "new-password-again"]
+            .into_iter()
+            .filter(|id| {
+                let start = page.text.find(&format!(r#"<input id="{id}""#)).unwrap();
+                let end = start + page.text[start..].find('>').unwrap();
+                page.text[start..end].contains(r#"aria-invalid="true""#)
+            })
+            .collect::<Vec<_>>()
+    };
+    let both = vec!["new-password", "new-password-again"];
+    assert_eq!(invalid("?problem=not_the_same").await, both);
+    assert_eq!(invalid("?problem=new_too_short").await, both);
+    assert_eq!(invalid("?problem=new_too_long").await, both);
+    assert_eq!(
+        invalid("?problem=current_not_right").await,
+        ["current-password"]
+    );
+    assert_eq!(
+        invalid("?problem=current_missing").await,
+        ["current-password"]
+    );
+    assert!(
+        invalid("?problem=too_many_attempts&retry_after_seconds=60")
+            .await
+            .is_empty()
+    );
+    assert!(invalid("?problem=something_else").await.is_empty());
+    assert!(invalid("").await.is_empty());
 }

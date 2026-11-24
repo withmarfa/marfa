@@ -25,11 +25,11 @@
 <input type="text" value="{{ username }}" autocomplete="username" readonly hidden>
 <div class="fields">
 {% call parts::group(note="current-note", problem=current_problem.as_str(), live=true) %}
-{% call parts::field("current-password", "Current password", name="current_password", kind="password", autocomplete="current-password", note="current-note", invalid=!current_problem.is_empty()) %}{% endcall %}
+{% call parts::field("current-password", "Current password", name="current_password", kind="password", autocomplete="current-password", maxlength=1024, note="current-note", invalid=current_invalid) %}{% endcall %}
 {% endcall %}
 {% call parts::group(note="new-note", hint="At least 8 characters.", problem=new_problem.as_str(), live=true) %}
-{% call parts::field("new-password", "New password", name="new_password", kind="password", autocomplete="new-password", maxlength=128, note="new-note", invalid=!new_problem.is_empty()) %}{% endcall %}
-{% call parts::field("new-password-again", "Confirm new password", name="confirm_password", kind="password", autocomplete="new-password", maxlength=128, note="new-note", invalid=!new_problem.is_empty()) %}{% endcall %}
+{% call parts::field("new-password", "New password", name="new_password", kind="password", autocomplete="new-password", maxlength=128, note="new-note", invalid=new_invalid) %}{% endcall %}
+{% call parts::field("new-password-again", "Confirm new password", name="confirm_password", kind="password", autocomplete="new-password", maxlength=128, note="new-note", invalid=new_invalid) %}{% endcall %}
 {% endcall %}
 </div>
 {% call parts::actions() %}<button type="button" class="btn" data-dialog-cancel hidden data-js>Cancel</button><button type="submit" class="btn primary">Change Password</button>{% endcall %}
