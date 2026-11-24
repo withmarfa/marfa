@@ -455,8 +455,7 @@ export function scriptHydration(
     const latest = new Map<string, FilteredItem>();
     for (const frame of options.follow ?? []) {
       const data = frame.data as
-        | { item?: WireItemOptions; metadata?: { tags?: string[] } }
-        | undefined;
+        { item?: WireItemOptions; metadata?: { tags?: string[] } } | undefined;
       if (typeof data?.item?.id === "string")
         latest.set(data.item.id, {
           item: data.item,

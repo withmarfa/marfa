@@ -1477,7 +1477,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     "the second folder pulls first",
     "the other folder cannot be read",
   ])(
-    "keeps a file both folders drop in one change when %s, and lets go one the other folder still holds once it has pulled",
+    "keeps a file both folders drop in one change when %s, and lets go one the other folder still holds",
     async (order) => {
       const gone = {
         id: "01a00000-0000-7000-8000-0000000023f1",
@@ -1523,7 +1523,9 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       const behind =
         "a folder let a file go to another folder whose copy had not heard the change that drops the item there too";
       if (order === "the first folder pulls first") {
-        expect((await pushed(a))?.let_go, behind).toBe(0);
+        // The server already holds the change, so only the item the other
+        // folder still holds is let go, though that folder has not pulled.
+        expect((await pushed(a))?.let_go, behind).toBe(1);
         expect((await pushed(b))?.let_go).toBe(0);
       } else if (order === "the second folder pulls first") {
         expect((await pushed(b))?.let_go, behind).toBe(0);
@@ -1539,7 +1541,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
           chmodSync(b.dir, 0o755);
         }
       }
-      expect((await pushed(a))?.let_go).toBe(1);
+      if (order !== "the first folder pulls first")
+        expect((await pushed(a))?.let_go).toBe(1);
       expect(existsSync(join(a.dir, "Moved.md"))).toBe(false);
       expect(existsSync(join(b.dir, "Moved.md"))).toBe(true);
       for (const folder of [a, b]) {
@@ -1552,6 +1555,189 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       expect(deletesOf(a.server, gone.id)).toBe(0);
     },
   );
+
+  it.each([
+    "the other folder's query changed",
+    "the server changed the item",
+    "the server cannot be reached",
+    "another note replaced the other folder's file",
+  ])(
+    "keeps a file and its attachment another folder's copy holds while %s, and lets them go once the server says that folder holds them",
+    async (variant) => {
+      const bytes = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x23, 0xf7,
+      ]);
+      const plan = {
+        id: "01a00000-0000-7000-8000-0000000023f7",
+        properties: { title: "Plan", body: "the plan\n" },
+      };
+      const scan = {
+        id: "01a00000-0000-7000-8000-0000000023f8",
+        type: "core.file.image",
+        properties: {
+          title: "scan.png",
+          blob_ref: hashOf(bytes),
+          mime_type: "image/png",
+        },
+      };
+      const { a, b, edges } = await onOneMac(
+        `proof-${variant.split(" ").at(-1)!}`,
+        { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+        { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+        {
+          "core.note": [{ item: plan, tags: ["a", "b"] }],
+          "core.file": [{ item: scan }],
+        },
+        (server) => scriptBlob(server, bytes),
+        [
+          {
+            id: "01a00000-0000-7000-8000-0000000023f9",
+            from_id: scan.id,
+            to_id: plan.id,
+            edge_type: "attached-to",
+          },
+        ],
+      );
+      expect((await a.folder.pull()).ok).toBe(true);
+      expect((await b.folder.pull()).ok).toBe(true);
+      for (const folder of [a, b]) {
+        expect(idIn(folder, "Plan.md")).toBe(plan.id);
+        expect(readFileSync(join(folder.dir, "scan.png"))).toEqual(bytes);
+      }
+      const event = (
+        kind: string,
+        item: Record<string, unknown>,
+        tags?: string[],
+      ) =>
+        edges.events.push(
+          copyItemEvent(String(edges.events.length + 2), kind, item, { tags }),
+        );
+      const settle = (row: FolderItem, settings: FolderSettings) => {
+        row.settings = settings;
+        row.version += 1;
+        event("item.updated", folderItem(row));
+      };
+      // This folder hears its own query narrow, and nothing after; the other
+      // folder's copy hears nothing, so both copies hold the plan as before.
+      settle(a.settings, {
+        query: { types: ["core.note"], filter: 'tags contains "c"' },
+      });
+      expect((await a.folder.device().catchUp()).ok).toBe(true);
+      const ours = read(b, "Plan.md");
+      const away = {
+        "the other folder's query changed": () =>
+          settle(b.settings, {
+            query: {
+              types: ["core.note"],
+              filter: 'tags contains "b"',
+              state: ["archived"],
+            },
+          }),
+        "the server changed the item": () =>
+          event("metadata.changed", wireItem(plan), ["a"]),
+        "the server cannot be reached": () => a.server.offline(),
+        "another note replaced the other folder's file": () =>
+          put(
+            b,
+            "Plan.md",
+            ours.replace(plan.id, "01a00000-0000-7000-8000-0000000023fa"),
+          ),
+      }[variant];
+      const back = {
+        "the other folder's query changed": () =>
+          settle(b.settings, {
+            query: { types: ["core.note"], filter: 'tags contains "b"' },
+          }),
+        "the server changed the item": () =>
+          event("metadata.changed", wireItem(plan), ["a", "b"]),
+        "the server cannot be reached": () => a.server.online(),
+        "another note replaced the other folder's file": () =>
+          put(b, "Plan.md", ours),
+      }[variant];
+      await away!();
+      const kept = await a.folder.pull();
+      expect(kept.ok, JSON.stringify(kept)).toBe(true);
+      expect(
+        kept.ok && kept.value.let_go,
+        "a folder let its files go to another folder the server did not say holds them",
+      ).toBe(0);
+      expect(idIn(a, "Plan.md")).toBe(plan.id);
+      expect(readFileSync(join(a.dir, "scan.png"))).toEqual(bytes);
+
+      await back!();
+      const later = await a.folder.pull();
+      expect(later.ok, JSON.stringify(later)).toBe(true);
+      expect(
+        later.ok && later.value.let_go,
+        "a later pull kept the files once the server said the other folder holds them",
+      ).toBe(2);
+      expect(existsSync(join(a.dir, "Plan.md"))).toBe(false);
+      expect(existsSync(join(a.dir, "scan.png"))).toBe(false);
+      expect(idIn(b, "Plan.md")).toBe(plan.id);
+      expect(readFileSync(join(b.dir, "scan.png"))).toEqual(bytes);
+      expect(deletesOf(a.server, plan.id) + deletesOf(a.server, scan.id)).toBe(
+        0,
+      );
+    },
+  );
+
+  it("lets a file folder's image go to a notes folder holding the note it is attached to", async () => {
+    const bytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x23, 0xfb,
+    ]);
+    const plan = {
+      id: "01a00000-0000-7000-8000-0000000023fb",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const scan = {
+      id: "01a00000-0000-7000-8000-0000000023fc",
+      type: "core.file.image",
+      properties: {
+        title: "scan.png",
+        blob_ref: hashOf(bytes),
+        mime_type: "image/png",
+      },
+    };
+    const { a, b, edges } = await onOneMac(
+      "proof-files-only",
+      { query: { types: ["core.file"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"] } },
+      {
+        "core.note": [{ item: plan }],
+        "core.file": [{ item: scan, tags: ["a"] }],
+      },
+      (server) => scriptBlob(server, bytes),
+      [
+        {
+          id: "01a00000-0000-7000-8000-0000000023fd",
+          from_id: scan.id,
+          to_id: plan.id,
+          edge_type: "attached-to",
+        },
+      ],
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    expect((await b.folder.pull()).ok).toBe(true);
+    expect(readFileSync(join(a.dir, "scan.png"))).toEqual(bytes);
+    expect(readFileSync(join(b.dir, "scan.png"))).toEqual(bytes);
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "metadata.changed",
+        wireItem(scan),
+        { tags: [] },
+      ),
+    );
+    expect((await b.folder.push()).ok).toBe(true);
+    const left = await a.folder.push();
+    expect(left.ok, JSON.stringify(left)).toBe(true);
+    expect(
+      left.ok && left.value.pull?.let_go,
+      "a folder holding files only kept an image the other folder writes beside the note it is attached to",
+    ).toBe(1);
+    expect(existsSync(join(a.dir, "scan.png"))).toBe(false);
+    expect(readFileSync(join(b.dir, "scan.png"))).toEqual(bytes);
+  });
 
   it.each([
     ["the same folder", SAME_FOLDER],

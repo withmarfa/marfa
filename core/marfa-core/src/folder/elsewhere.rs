@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use super::lists::Lists;
 use super::registry::{Registered, Registry, gone};
-use super::{Catalog, Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
 use super::settings::Settings;
+use super::{Catalog, Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
 use crate::directory::Directory;
 use crate::http::ByIdRead;
 use crate::{Core, Result, store};
@@ -790,15 +790,23 @@ impl<'a> Peers<'a> {
         let Ok(http) = self.of.core.http() else {
             return false;
         };
-        let Ok(ByIdRead::Row((_, edges))) = crate::hydrate::read_with_edges_answered(http, item_id)
-        else {
-            return false;
-        };
-        edges.iter().any(|edge| {
-            edge.edge_type == super::embeds::ATTACHMENT_EDGE
-                && edge.from_id == item_id
-                && self.query_holds(settings, &edge.to_id) == Some(true)
-        })
+        let (mut cursor, mut seen) = (None::<String>, HashSet::new());
+        loop {
+            let Ok(page) =
+                http.item_edges_page(item_id, super::embeds::ATTACHMENT_EDGE, cursor.as_deref())
+            else {
+                return false;
+            };
+            if page.data.iter().any(|edge| {
+                edge.from_id == item_id && self.query_holds(settings, &edge.to_id) == Some(true)
+            }) {
+                return true;
+            }
+            match page.next_cursor {
+                Some(next) if seen.insert(next.clone()) => cursor = Some(next),
+                _ => return false,
+            }
+        }
     }
 
     fn current<'p>(&self, peer: &'p Peer) -> Option<&'p Settings> {
