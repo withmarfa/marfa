@@ -38,9 +38,9 @@ impl PasswordProblem {
 
     fn message(self) -> String {
         match self {
-            PasswordProblem::CurrentNotRight => "That password isn't right.".into(),
+            PasswordProblem::CurrentNotRight => "That password isn’t right.".into(),
             PasswordProblem::NewTooShort => "Use at least 8 characters.".into(),
-            PasswordProblem::NotTheSame => "The passwords don't match.".into(),
+            PasswordProblem::NotTheSame => "The passwords don’t match.".into(),
             PasswordProblem::TooManyAttempts(Some(wait)) => {
                 format!("Too many attempts. Try again in {wait}.")
             }

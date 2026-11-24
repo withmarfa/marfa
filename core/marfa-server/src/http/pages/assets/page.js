@@ -144,7 +144,7 @@
   function showConfirmError(kind, waitSeconds) {
     const passkeys = document.querySelector('[data-passkey="confirm"]');
     const messages = {
-      password: "That password isn't right.",
+      password: "That password isn’t right.",
       locked:
         "Too many attempts. Try again in " +
         waitWords(waitSeconds) +
@@ -713,8 +713,8 @@
     const removed = await confirmItsYou(
       {
         title: ["Remove ", name, "?"],
-        lede: "You can't sign in with it again.",
-        passwordLede: "Enter your password to confirm it's you.",
+        lede: "You can’t sign in with it again.",
+        passwordLede: "Enter your password to confirm it’s you.",
         button: "Remove",
         danger: true,
         plain: true,
@@ -810,7 +810,7 @@
         return;
       }
       if (next.value !== again.value) {
-        showNote(newNote, "The passwords don't match.", next, again);
+        showNote(newNote, "The passwords don’t match.", next, again);
         again.focus();
         return;
       }
@@ -827,7 +827,7 @@
           sheet.close();
           reveal("[data-password-changed]", true);
         } else if (status === 401) {
-          showNote(currentNote, "That password isn't right.", current);
+          showNote(currentNote, "That password isn’t right.", current);
           current.focus();
         } else if (status === 429) {
           showNote(

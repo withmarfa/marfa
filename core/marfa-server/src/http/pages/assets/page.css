@@ -540,7 +540,8 @@ code {
 }
 
 /* Rows that start with an icon: the dividers line up with the words. */
-.box > li > .ic {
+.box > li > .ic,
+.row-button .ic {
   flex: none;
   width: 1.125rem;
   height: 1.125rem;

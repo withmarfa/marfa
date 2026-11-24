@@ -1,16 +1,16 @@
 {% import "partials/parts.html" as parts %}{% call parts::head("Passkeys and password") %}{% endcall %}
 {% call parts::section("passkeys-title", "Passkeys") %}
 {% call parts::box_of_rows(symbols=!rows.is_empty()) %}
-{% if rows.is_empty() %}<li class="quiet">You haven't added a passkey yet.</li>
+{% if rows.is_empty() %}<li class="quiet">You haven’t added a passkey yet.</li>
 {% else %}{% for row in rows %}<li class="two" data-passkey-row="{{ row.id }}" data-name="{{ row.name }}">
 {% call parts::icon("key") %}{% endcall %}
-<span class="t"><span class="name"><bdi>{{ row.name }}</bdi></span><span class="m">{% if let Some(host) = row.made_for %}Made for <bdi>{{ host }}</bdi>. Can't sign in here.{% else if let Some(day) = row.last_used %}Last used {{ day }}.{% else %}Added {{ row.added }}.{% endif %}</span></span>
+<span class="t"><span class="name"><bdi>{{ row.name }}</bdi></span><span class="m">{% if let Some(host) = row.made_for %}Made for <bdi>{{ host }}</bdi>. Can’t sign in here.{% else if let Some(day) = row.last_used %}Last used {{ day }}.{% else %}Added {{ row.added }}.{% endif %}</span></span>
 {% call parts::menu("more-{}"|format(row.id), "More for {}"|format(row.name)) %}<button type="button" role="menuitem" data-passkey-rename>Rename…</button><button type="button" role="menuitem" class="danger" data-passkey-remove>Remove…</button>{% endcall %}
 </li>
 {% endfor %}{% endif %}<li class="act" data-passkey-group hidden><button type="button" class="row-button" data-passkey="add">{% call parts::icon("plus") %}{% endcall %}<span>Add Passkey…</span></button></li>
 {% endcall %}
-<p class="after" data-passkey-unavailable="address" hidden>You can't add a passkey at this address. Passkeys need HTTPS and a domain name, or localhost.</p>
-<p class="after" data-passkey-unavailable="browser" hidden>This browser can't make passkeys.</p>
+<p class="after" data-passkey-unavailable="address" hidden>You can’t add a passkey at this address. Passkeys need HTTPS and a domain name, or localhost.</p>
+<p class="after" data-passkey-unavailable="browser" hidden>This browser can’t make passkeys.</p>
 {% endcall %}
 {% call parts::section("account-title", "Account") %}
 {% call parts::box_of_rows(symbols=true) %}
@@ -35,7 +35,7 @@
 {% call parts::actions() %}<button type="button" class="btn" data-dialog-cancel hidden data-js>Cancel</button><button type="submit" class="btn primary">Change Password</button>{% endcall %}
 {% endcall %}
 {% call parts::dialog("add-dialog", "Add a passkey", text_id="add-text") %}
-<p id="add-text" class="lede">It signs you in with your device's lock instead of your password.</p>
+<p id="add-text" class="lede">It signs you in with your device’s lock instead of your password.</p>
 <div class="fields">
 {% call parts::group(note="add-note", live=true) %}
 {% call parts::field("passkey-name", "Name (optional)", maxlength=200, required=false, note="add-note", dir="auto") %}{% endcall %}

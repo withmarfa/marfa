@@ -10,11 +10,14 @@ Every page is built from the parts below. A page names its parts and adds none o
 | --- | --- | --- |
 | Head | `parts::head(title, lede)` | The page's one `h1` and at most one line under it. |
 | Field | `parts::field(id, label, ...)` | One input with its label inside the box. |
-| Joined group | `parts::group(...)` | Fields that answer one question, in one box, with one hint or problem under it. |
+| Joined group | `parts::group(...)` | Fields that answer one question, in one box, with one hint or problem under it. With `live`, the line under the box is for a dialog the script fills in. |
 | Actions | `parts::actions()` | Buttons at the trailing edge, the main action last. |
-| Box of rows | `parts::box_of_rows()` | A list of rows, each with words and at most one control. |
+| Box of rows | `parts::box_of_rows(symbols)` | A list of rows, each with words and at most one control. With `symbols`, each row starts with an icon and the dividers line up with the words. |
+| Icon | `parts::icon(name)` | A small symbol in a row or a button: `key`, `plus`, `lock`, `person` or `more`. |
+| Section | `parts::section(id, title)` | A heading over a box, and the lines after it. No button sits in the heading: adding is the box's last row. |
+| Row menu | `parts::menu(id, label)` | A round "…" button and the `popover` it opens, named for its row. The caller writes the items as buttons. Without JavaScript it stays hidden. |
 | Pop-up | `parts::pop(id, name, label, ...)` | A choice between levels, as a real `select`. |
-| Dialog | `parts::dialog(id, title, ...)` | A window over the page, drawn as a sheet at the bottom on a phone. |
+| Dialog | `parts::dialog(id, title, ...)` | A window over the page, drawn as a sheet at the bottom on a phone. With `inline`, a browser without JavaScript shows it under the page, so its form still works. |
 
 To add a part, write its macro in `parts.html` and its rules in `page.css`, and add a state that shows it to `preview.rs`. Name the part for what it is, not for a page that uses it.
 
@@ -66,6 +69,6 @@ Open `preview.rs`, in the folder above this one, and add a `State::new(board, sl
 - `slug` is the file's name after the board. Every file name is unique, and the test fails if one repeats.
 - `page` is the result of the page function for a view you build on made-up data.
 
-A state that needs a click, such as a dialog open or a detail opened, takes `.after(&[...])` with preview-only scripts: the generator adds them after the page's own script, in the file only. `OPEN_CONFIRM_DIALOG` and `OPEN_DETAILS` are examples. `.without_javascript()` writes the page with its script removed, to check what a reader sees with JavaScript off.
+A state that needs a click, such as a dialog open or a detail opened, takes `.after(&[...])` with preview-only scripts: the generator adds them after the page's own script, in the file only. `OPEN_CONFIRM_DIALOG` and `OPEN_DETAILS` are examples. A state that needs the browser to lack something, such as passkey support, takes `.before(&[...])`, which runs ahead of the page's own script (`NO_PASSKEY_SUPPORT`). `.without_javascript()` writes the page with its script removed, to check what a reader sees with JavaScript off.
 
 A new view gets a state for each thing it can show: its plain page, each problem it can name, and a long or right-to-left name where one is shown.
