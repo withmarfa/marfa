@@ -153,7 +153,8 @@ impl Fetcher {
             .host_str()
             .and_then(|host| self.faults.trusted_certificate(host))
         {
-            let agent = Agent::with_parts(config, trust::connector(certificate), Pinned(addresses));
+            let connector = trust::connector(certificate).map_err(failed_transport)?;
+            let agent = Agent::with_parts(config, connector, Pinned(addresses));
             return Self::read(&agent, &url);
         }
         let agent = Agent::with_parts(config, DefaultConnector::default(), Pinned(addresses));
@@ -602,6 +603,59 @@ mod tests {
                 .set(&format!("trust:{NAME}"), Some("nope"))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_trust_fault_refuses_its_certificate_for_another_host_name() {
+        let listener = listen(
+            "other.example.com",
+            reply("200 OK", "application/json", b"{}"),
+        );
+        assert!(matches!(
+            trusting(NAME, &listener.pem).fetch(&id_at(&listener)),
+            Err(Failure::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn a_trust_fault_refuses_its_certificate_once_expired() {
+        let key = rcgen::KeyPair::generate().expect("a key");
+        let mut params = rcgen::CertificateParams::new(vec![NAME.to_string()]).expect("params");
+        params.not_before = rcgen::date_time_ymd(2000, 1, 1);
+        params.not_after = rcgen::date_time_ymd(2001, 1, 1);
+        let expired = params.self_signed(&key).expect("a certificate");
+        let listener = serve(
+            vec![expired.der().clone()],
+            expired.pem(),
+            PrivateKeyDer::try_from(key.serialize_der()).expect("a key"),
+            reply("200 OK", "application/json", b"{}"),
+        );
+        assert!(matches!(
+            trusting(NAME, &listener.pem).fetch(&id_at(&listener)),
+            Err(Failure::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn a_trust_fault_refuses_a_certificate_that_is_not_for_serving() {
+        let mut authority = rcgen::CertificateParams::new(vec![NAME.to_string()]).expect("params");
+        authority.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let mut client = rcgen::CertificateParams::new(vec![NAME.to_string()]).expect("params");
+        client.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+        let mut server = client.clone();
+        server.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+        for (params, serves) in [(authority, false), (client, false), (server, true)] {
+            let key = rcgen::KeyPair::generate().expect("a key");
+            let certificate = params.self_signed(&key).expect("a certificate");
+            let listener = serve(
+                vec![certificate.der().clone()],
+                certificate.pem(),
+                PrivateKeyDer::try_from(key.serialize_der()).expect("a key"),
+                reply("200 OK", "application/json", b"{}"),
+            );
+            let fetched = trusting(NAME, &listener.pem).fetch(&id_at(&listener));
+            assert_eq!(fetched.is_ok(), serves, "{fetched:?}");
+        }
     }
 
     #[test]

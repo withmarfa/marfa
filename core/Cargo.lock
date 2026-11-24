@@ -2918,6 +2918,7 @@ dependencies = [
  "url",
  "uuid",
  "webauthn-rs",
+ "x509-parser",
 ]
 
 [[package]]
