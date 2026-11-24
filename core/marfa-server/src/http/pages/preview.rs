@@ -30,7 +30,7 @@ const OPEN_RENAME: &str =
     r#"document.querySelector('[data-passkey-row="a2"] [data-passkey-rename]').click();"#;
 const OPEN_REMOVE: &str =
     r#"document.querySelector('[data-passkey-row="a2"] [data-passkey-remove]').click();"#;
-const ASK_PASSWORD_TO_REMOVE: &str = r#"document.querySelector("[data-confirm-fields]").hidden = false; document.getElementById("confirm-password").disabled = false; document.getElementById("confirm-text").textContent = "Enter your password to confirm it’s you."; document.getElementById("confirm-password").focus();"#;
+const ASK_PASSWORD_TO_REMOVE: &str = r#"document.querySelector("[data-confirm-fields]").hidden = false; document.getElementById("confirm-password").disabled = false; document.getElementById("confirm-text").textContent = "Enter your password to confirm it’s you."; if (matchMedia("(pointer: fine)").matches) document.getElementById("confirm-password").focus(); else { const title = document.getElementById("confirm-dialog-title"); title.tabIndex = -1; title.focus(); }"#;
 const REMOVE_FAILED: &str = r#"const lede = document.getElementById("confirm-text"); lede.textContent = "Something went wrong. Try again."; lede.classList.add("err");"#;
 const WRONG_CONFIRM_PASSWORD: &str = r#"const note = document.getElementById("confirm-note"); note.className = "err"; note.textContent = "That password isn’t right."; document.getElementById("confirm-password").setAttribute("aria-invalid", "true");"#;
 const FILL_NEW_PASSWORDS: &str = r#"for (const id of ["new-password", "new-password-again"]) document.getElementById(id).value = "allotment-lewes";"#;

@@ -206,7 +206,6 @@ code {
 }
 
 .btn.small {
-  position: relative;
   min-height: var(--small);
   min-width: 0;
   padding: 0.25rem 0.8125rem;
@@ -242,13 +241,6 @@ code {
 
   .btn.more {
     padding: 0;
-  }
-
-  /* A small control in a row is drawn 36 px tall and takes touches over 44 px. */
-  .btn.small::after {
-    content: "";
-    position: absolute;
-    inset: -0.25rem;
   }
 }
 

@@ -44,10 +44,7 @@
     return title;
   }
 
-  /**
-   * Opens a dialog over the page with focus on `first`. A phone puts focus on a button but never
-   * in a field, so no keyboard rises over the dialog before it is read.
-   */
+  // Keep the software keyboard closed when a touch dialog opens.
   function openModal(dialog, from, first) {
     openers.set(dialog, from ?? document.activeElement);
     const fine = matchMedia("(pointer: fine)").matches;
@@ -62,7 +59,7 @@
 
   /** A session that ended, such as by signing out in another tab, signs in again and comes back. */
   function signInAgain() {
-    location.assign("/auth/sign-in?" + new URLSearchParams({ return_to: location.pathname }));
+    location.assign("/auth/sign-in?" + new URLSearchParams({ return_to: location.pathname + location.search }));
   }
 
   function watchFocusBack() {
@@ -193,6 +190,7 @@
   /** Turns a plain yes into a request for the password, and says where focus goes next. */
   function askForPassword(use) {
     use.plain = false;
+    showConfirmError("none", 0);
     use.lede = use.passwordLede || use.lede;
     confirmLede.textContent = use.lede;
     confirmLede.classList.remove("err");
@@ -208,10 +206,7 @@
     ];
   }
 
-  /**
-   * Runs `step` for the dialog's current use with every control disabled, and drops its answer if
-   * the dialog has moved on. `step` returns where focus goes once the controls are enabled again.
-   */
+  // Ignore a reply after the dialog has moved to another action.
   async function answering(step) {
     const use = confirming;
     const current = () => confirming === use && dialog.open;
@@ -580,6 +575,16 @@
     location.assign("/auth/sign-in?" + query);
   }
 
+  // A rejected passkey and an ended session both answer 401.
+  async function sessionEnded() {
+    const response = await fetch("/owner/passkeys", {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { accept: "application/json" },
+    }).catch(() => null);
+    return response?.status === 401;
+  }
+
   const webauthn = {
     async "sign-in"(button) {
       setBusy([button], true);
@@ -607,6 +612,11 @@
           const answer = await postJson("/auth/confirm", { passkey });
           if (!current()) return null;
           if (answer?.status === 200) return confirmed(use, current);
+          if (answer?.status === 401 && (await sessionEnded())) {
+            if (current()) signInAgain();
+            return null;
+          }
+          if (!current()) return null;
           showConfirmError("other", 0);
         } catch {
           if (current()) showConfirmError("other", 0);
@@ -686,6 +696,10 @@
         if (answer && answer.status === 201) {
           leaving = true;
           location.reload();
+          return;
+        }
+        if (answer?.status === 401) {
+          signInAgain();
           return;
         }
         showNote(note, answer?.body?.error?.message ?? SOMETHING_WENT_WRONG, field);
@@ -821,9 +835,6 @@
     if (removed) location.reload();
   }
 
-  // A row's menu is a popover the browser opens from its button; the page places it, closes it
-  // when the page scrolls, places it again when the window changes size and moves through it
-  // with the arrow keys.
   function placeMenu(menu, button) {
     const edge = 8;
     const at = button.getBoundingClientRect();
@@ -917,7 +928,11 @@
         return;
       }
       const buttons = [...submitsOf(form), ...cancelsOf(sheet)];
+      const lock = (locked) => {
+        for (const field of [current, next, again]) field.readOnly = locked;
+      };
       setBusy(buttons, true);
+      lock(true);
       try {
         const answer = await postJson("/auth/owner/password", {
           current_password: current.value,
@@ -929,6 +944,7 @@
           sheet.close();
           reveal("[data-password-changed]", true);
         } else if (status === 401 && answer.field === "current_password") {
+          lock(false);
           current.value = "";
           showNote(currentNote, "That password isn’t right.", current);
           current.focus();
@@ -943,6 +959,7 @@
           showNote(newNote, SOMETHING_WENT_WRONG);
         }
       } finally {
+        lock(false);
         setBusy(buttons, false);
       }
     });
