@@ -67,8 +67,7 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     let core = Core::open(&path, Some(server()))
         .unwrap()
         .with_catch_up_idle(Duration::from_secs(2));
-    // The default budget follows the volume's free space, which moves while
-    // other builds run; a set budget lets the two status reads be compared whole.
+    // The default budget follows free space, so reopening can change the status.
     core.set_file_budget(FileBudget::KeepAll).unwrap();
     let report = core
         .hydrate(
@@ -150,11 +149,7 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
         );
     }
 
-    // The server reads the file's text some seconds after the file is made and
-    // writes that as an update of the file, which may land after the catch-up
-    // above has read the stream. Follow the stream until that event is applied
-    // (its own signal), so it cannot reach a later catch-up that must apply
-    // nothing. The watchdog only ends a wait for an event that never comes.
+    // The file's enrichment update would otherwise race the quiet catch-up.
     let read_by_server = |core: &Core| {
         core.get(&file)
             .unwrap()

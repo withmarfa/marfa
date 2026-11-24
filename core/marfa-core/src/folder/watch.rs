@@ -3090,15 +3090,12 @@ mod backoff_tests {
 
     const SECOND: Duration = Duration::from_secs(1);
 
-    /// Held for a whole test: the manual clock and the pass counter are
-    /// process-wide, so two of these tests at once would count and advance
-    /// each other's time.
+    /// The manual clock and pass counter are shared by the test process.
     fn alone() -> MutexGuard<'static, ()> {
         crate::clock::alone()
     }
 
-    /// The pass counter when this test began counting: it is cumulative for
-    /// the process.
+    /// The process-wide pass count at the start of the test.
     static COUNTED_FROM: AtomicUsize = AtomicUsize::new(0);
 
     fn start_counting() {

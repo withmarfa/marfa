@@ -23,14 +23,8 @@ import { TEST_OWNER } from "../../utils/target.js";
  * wait for the page to be counted would wait for it. The budget is short
  * enough that a held page outlasts it many times over. The caps are far above
  * what the fixtures send.
- *
- * **Why the budget is long.** A write that waits behind a page is kept waiting
- * only while the page is heard from within the budget, and the held page is
- * heard from every 25 ms. A budget of a few hundred milliseconds let a runner
- * that stalled the server for that long turn a wait into a `503`, which says
- * how busy the runner was and nothing about the page. Each wait below is
- * counted from the write's own admission to the writer.
  */
+// The write budget leaves room for delays between the held page's heartbeats.
 const BUDGET_MS = 1000;
 const PAGE = 20;
 const SCHEDULER_NEVER_POLLS_MS = "3600000";
