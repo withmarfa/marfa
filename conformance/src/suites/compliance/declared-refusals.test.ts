@@ -1054,6 +1054,7 @@ describe("a query key no door declares", () => {
       "/auth/sign-in",
       "/auth/device",
       "/auth/error",
+      "/auth/forgot-password",
     ]) {
       const bare = await fetch(`${apiUrl}${path}`);
       expect(bare.status, `${path} without the key`).toBe(200);

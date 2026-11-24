@@ -10,17 +10,17 @@ Every instance ships these edge types, each a row of the table below, which is w
 
 | Edge type       | Label         | Reverse label   | Reverse name     | Cardinality  | On delete  | From item types | To item types                      |
 | --------------- | ------------- | --------------- | ---------------- | ------------ | ---------- | --------------- | ---------------------------------- |
-| `about`         | About         | Subject of      | None             | many-to-many | orphan     | Any type        | Any type                           |
-| `attached-to`   | Attached to   | Attachments     | `has-attachment` | many-to-many | with-hosts | Any type        | Any type                           |
-| `comments-on`   | Comment on    | Comments        | None             | many-to-one  | with-hosts | Any type        | Any type                           |
-| `derived-from`  | Derived from  | Basis for       | None             | many-to-many | orphan     | Any type        | Any type                           |
-| `excerpt-of`    | Excerpt from  | Excerpts        | None             | many-to-one  | orphan     | Any type        | Any type                           |
-| `in-collection` | In collection | Contents        | None             | many-to-many | orphan     | Any type        | Any type with the role `container` |
-| `in-folder`     | In folder     | Folder contents | None             | many-to-many | orphan     | Any type        | `system.folder`                    |
-| `in-thread`     | In thread     | Messages        | None             | many-to-one  | orphan     | Any type        | Any type                           |
+| `about`         | About         | Subject Of      | None             | many-to-many | orphan     | Any type        | Any type                           |
+| `attached-to`   | Attached To   | Attachments     | `has-attachment` | many-to-many | with-hosts | Any type        | Any type                           |
+| `comments-on`   | Comment On    | Comments        | None             | many-to-one  | with-hosts | Any type        | Any type                           |
+| `derived-from`  | Derived From  | Basis For       | None             | many-to-many | orphan     | Any type        | Any type                           |
+| `excerpt-of`    | Excerpt From  | Excerpts        | None             | many-to-one  | orphan     | Any type        | Any type                           |
+| `in-collection` | In Collection | Contents        | None             | many-to-many | orphan     | Any type        | Any type with the role `container` |
+| `in-folder`     | In Folder     | Folder Contents | None             | many-to-many | orphan     | Any type        | `system.folder`                    |
+| `in-thread`     | In Thread     | Messages        | None             | many-to-one  | orphan     | Any type        | Any type                           |
 | `parent-of`     | Children      | Parent          | `child-of`       | one-to-many  | cascade    | Any type        | Any type                           |
-| `references`    | References    | Referenced by   | None             | many-to-many | orphan     | Any type        | Any type                           |
-| `supersedes`    | Supersedes    | Superseded by   | None             | one-to-one   | orphan     | Any type        | Any type                           |
+| `references`    | References    | Referenced By   | None             | many-to-many | orphan     | Any type        | Any type                           |
+| `supersedes`    | Supersedes    | Superseded By   | None             | one-to-one   | orphan     | Any type        | Any type                           |
 
 <!-- edge-types-table:end -->
 
@@ -1521,6 +1521,14 @@ When a credential sends `GET /edge-types`, the server MUST list each shipped edg
 **Reason:** a shipped label names the from end and its reverse label the to end, such as `Children` on `parent-of` and `Parent` read from the child. An app shows them as the two headings of one relationship.
 
 **Tests:** `compliance/edge-types.test.ts › lists a label and a reverse label on every shipped edge type`, `device/fidelity.test.ts › matches the edge types a working copy holds and a folder reads its frontmatter lines by`.
+
+### `edges/types-shipped-label-case`
+
+When a credential sends `GET /edge-types`, the server MUST list each shipped edge type with a `label` and a `reverse_label` whose every word starts with a capital letter.
+
+**Reason:** an app shows an edge heading beside a field label, and a field label capitalizes every word, such as `End Time Zone`.
+
+**Tests:** `compliance/edge-types.test.ts › lists every shipped edge type label and reverse label in title case`.
 
 ### `edges/types-reverse-names`
 

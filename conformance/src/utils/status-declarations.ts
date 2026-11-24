@@ -68,8 +68,9 @@ export interface StatusReport {
 const HTTP_METHODS = ["get", "head", "post", "put", "patch", "delete"];
 
 /**
- * The statuses each sign-in route and discovery document answers, which no
- * document declares because none publishes them, so they are declared here
+ * The statuses each sign-in route, discovery document and the page an item's
+ * link opens answers, which no document declares because none publishes them,
+ * so they are declared here
  * and held as a published operation's are: a status a run draws and this
  * does not list fails the run. `authentication.md`, `keys-and-oauth.md` and `instance.md`
  * rule what each answers and when.
@@ -91,13 +92,18 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "POST /auth/passkeys/sign-in/options": [200, 403, 413, 429],
   "POST /auth/passkeys/sign-in": [200, 400, 401, 403, 413, 500],
   "GET /auth/consent": [200, 302, 400, 404],
-  "POST /auth/consent": [200, 302, 400, 403, 413, 500],
+  "POST /auth/consent": [200, 302, 400, 403, 409, 413, 500],
   "GET /auth/error": [200],
-  "GET /auth/device": [200],
+  "GET /auth/forgot-password": [200],
+  "GET /auth/device": [200, 302],
   "POST /auth/device": [302, 403, 413],
+  "GET /auth/device/check": [200, 302],
+  "POST /auth/device/check": [302, 403, 413],
   "GET /auth/device/consent": [200, 302, 400],
-  "POST /auth/device/consent": [200, 302, 400, 403, 404, 413],
+  "POST /auth/device/consent": [200, 302, 400, 403, 409, 413],
   "GET /auth/owner/passkeys": [200, 302, 401, 403],
+  "GET /i/": [404],
+  "GET /i/{*id}": [200, 404],
 };
 
 /**

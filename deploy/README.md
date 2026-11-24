@@ -80,7 +80,7 @@ An install keeps its runtime. To change it, export the data and restore it into 
 - `marfa server status` shows whether the server runs, its release and address, and whether it has an owner. When it isn't running, it shows its last log.
 - `marfa server start` starts the server, and `marfa server stop` stops it, keeping the service, the data and the settings.
 - `marfa server run` runs the server in the foreground. The service runs this.
-- `marfa server upgrade` moves the server to another release, newer or older. Read [Upgrade](#upgrade) first: before Marfa 0.1, a release may not read another release's database.
+- `marfa server upgrade` moves the server to another release, newer or older. Read [Upgrade](#upgrade) first: a release upgrades an earlier release's database in place, and an earlier release does not open it afterward.
 - `marfa server uninstall` removes the service. See [Remove the server](#remove-the-server).
 
 Each takes `--dir` when the install isn't in the default folder, and `marfa server <command> --help` lists its options.
@@ -111,7 +111,9 @@ Recovery changes the owner's password and ends browser sessions. Keys and approv
 
 ## Upgrade
 
-Before Marfa 0.1, a release may not read another release's database. `marfa server upgrade` is the only command that changes the release an install is on, newer or older. Before it changes anything, it asks the release it moves to whether it runs on the install's settings and database, and when that release says no, it changes nothing. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
+A release opens the database that any earlier release from 0.0.86 on wrote, except one that 0.0.88 wrote, and upgrades it in place. When the database holds rows, the release first keeps a copy beside it as `marfa.db.before-upgrade`. An earlier release does not open a database that a later release upgraded, so to go back, restore the copy; see [Go back to an earlier release](#go-back-to-an-earlier-release).
+
+`marfa server upgrade` is the only command that changes the release an install is on, newer or older. Before it changes anything, it asks the release it moves to whether it runs on the install's settings and database, and when that release says no, it changes nothing.
 
 A native install is on the release that last served its database. Once it serves, the server names its release in `marfa.db.release` beside the database, and the commands read that file while the server is stopped. A database that only releases up to 0.0.85 have served has no such file, so the release the install is on can't be told: when the server updated itself, those releases didn't write the new release to `.env`, so the commands don't trust that line. `marfa server status` shows it as recorded in `.env`, not as the release that ran, and `marfa server start` and `restart` refuse and say the release can't be told. `marfa server upgrade` moves the install, and when it refuses, its message says the release that last ran can't be told and gives the general way back. A native install's `.env` still names a release because `marfa` up to 0.0.85 can't run the service without it. A Docker install is on the image that `.env` names.
 
@@ -129,6 +131,12 @@ Going back is an upgrade to the earlier release, and the earlier release is aske
 - **Docker install:** run `marfa server upgrade --release <version>`. An image before 0.0.76 can't be asked whether it reads the database, so the command refuses it. To go back to one of them, move by export and restore, with `--release <version>` for the new install.
 
 The `marfa server upgrade` of releases up to 0.0.85 refuses to go back. To go back to one of them on a native install, install it the same way and run `marfa server restart` with its `marfa`. Its server refuses a database it can't read and changes nothing in it. This is also the way back when a message says the release that last ran can't be told: that release is one of them, so install the release you ran before the same way and run `marfa server restart` with its `marfa`.
+
+Once a release has upgraded the database, the earlier release refuses it, so put back the copy the upgrade kept first. The copy is the database as it was before the last upgrade, so it fits the release that wrote it, and a release before that refuses it too. Everything written since the upgrade is lost. When the database held no rows, the upgrade kept no copy; move `marfa.db` away as in step 2 and the earlier release starts on a new database.
+
+1. Stop the server: `marfa server stop`, with `--dir <dir>` when the install isn't in the default folder.
+2. In the install's `data` folder, move `marfa.db` away together with `marfa.db-wal` and `marfa.db-shm`, then copy `marfa.db.before-upgrade` to `marfa.db`. Keep the moved files until the instance works again. On a Docker install the files are in the volume `<name>-data`; swap them in a one-off container on that volume, because `docker cp` can't remove a file.
+3. Move to the earlier release as described above.
 
 Keep the release pinned, so that it changes only when you upgrade: don't use `latest`, and don't let anything update the image.
 

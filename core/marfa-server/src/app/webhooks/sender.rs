@@ -211,11 +211,13 @@ impl Sender {
                         &at,
                         catalog::Snapshot::Pending,
                     )?;
+                    let links = app.item_links();
                     schedule::pass(
                         tx,
                         &Context {
                             catalog: &catalog,
                             read_only: &read_only,
+                            links: &links,
                             faults: &app.faults,
                             pulse: &pulse,
                             at: &at,

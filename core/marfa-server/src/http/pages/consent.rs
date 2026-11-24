@@ -2,9 +2,9 @@ use askama::Template;
 
 use super::words;
 use super::{Needs, Page, document, render_body};
-use crate::app::access::Level;
+use crate::app::access::{Level, Permission};
 use crate::app::oauth::offer::{
-    CHOOSE_TYPES, Choice, FULL_ACCESS, Held, LevelRow, Offer, Power, Reach,
+    Admin, AdminLevel, CHOOSE_TYPES, Choice, LevelRow, Offer, Post, Reach, powers_at,
 };
 use crate::app::refusal::Result;
 
@@ -16,9 +16,11 @@ pub enum Answering {
 
 #[derive(Debug, Clone)]
 pub struct Consent {
-    pub instance_name: String,
     pub offer: Offer,
     pub answering: Answering,
+    /// An approval posted from a page built on access the app no longer holds as it did, drawn
+    /// again with the choices it made.
+    pub again: Option<Post>,
 }
 
 struct Pick {
@@ -40,30 +42,69 @@ struct Row {
     ident: Option<Ident>,
     now: Option<&'static str>,
     options: Vec<Pick>,
-    switches_types: bool,
+}
+
+impl Row {
+    /// The id of the line that tells two rows of the same name apart, which the select names in `aria-describedby`.
+    fn described_by(&self) -> &str {
+        self.ident.as_ref().map_or("", |ident| ident.id.as_str())
+    }
 }
 
 struct DataRow {
     row: Row,
     types: Vec<Row>,
+    /// Without scripts every type row shows, and counts only under Each Type.
+    counts: String,
 }
 
 struct PowerRow {
     id: String,
-    literal: String,
     title: String,
-    line: Option<String>,
-    cannot_be_undone: bool,
+    line: Option<&'static str>,
+    options: [Pick; 2],
 }
 
-struct HeldRow {
-    title: String,
-    level: &'static str,
+impl PowerRow {
+    /// The id of the line under the title, which the select names in `aria-describedby`.
+    fn note_id(&self) -> String {
+        if self.line.is_some() {
+            format!("{}-note", self.id)
+        } else {
+            String::new()
+        }
+    }
 }
 
-struct Gives {
-    text: String,
-    danger: bool,
+struct AdminRow {
+    title: &'static str,
+    options: Vec<Pick>,
+    powers: Vec<PowerRow>,
+    /// Without scripts every power row shows, and counts only under Custom.
+    counts: String,
+    limited: Option<String>,
+    /// Without scripts nothing shows the line above, so a sentence says what Limited holds.
+    limited_by_level: Option<String>,
+    asked: String,
+}
+
+/// A row of the summary box, or of what the app already holds. The object may carry a type's own
+/// name, so it is drawn in its own direction; a row with no verb is all one phrase.
+struct Glance {
+    symbol: &'static str,
+    verb: &'static str,
+    object: String,
+}
+
+/// The line under the Items box. The later-types sentences follow the first row that offers types.
+struct ItemsAfter {
+    edit: Option<&'static str>,
+    later_by: Option<String>,
+    /// The values of the row that grant a level reaching types added later, which the page's
+    /// script reads as a list divided by `|`.
+    later_at: String,
+    /// Without scripts, which levels reach types added later.
+    later_by_level: String,
 }
 
 /// The page's own rows have no identifier, and one type is never at odds with itself.
@@ -80,10 +121,35 @@ fn titled(row: &LevelRow) -> Titled {
     }
 }
 
-fn option_of(choice: &Choice, selected: &str) -> Pick {
+/// What a row shows chosen: its default on a first draw, and on a redraw the posted choice it
+/// still offers, or its least.
+fn chosen_of<'a>(row: &'a LevelRow, posted: Option<&'a [String]>) -> &'a str {
+    let Some(posted) = posted else {
+        return &row.selected;
+    };
+    if let Some(choice) = row
+        .choices
+        .iter()
+        .rev()
+        .find(|choice| !choice.value.is_empty() && posted.contains(&choice.value))
+    {
+        return &choice.value;
+    }
+    if !row.types.is_empty() && posted.iter().any(|value| value == CHOOSE_TYPES) {
+        return CHOOSE_TYPES;
+    }
+    ""
+}
+
+fn option_of(choice: &Choice, selected: &str, yes_or_no: bool) -> Pick {
+    let word = match (yes_or_no, choice.level) {
+        (true, Level::None) => words::DONT_ALLOW,
+        (true, _) => words::ALLOW,
+        (false, level) => words::level(level),
+    };
     Pick {
         value: choice.value.clone(),
-        word: words::level(choice.level),
+        word,
         selected: choice.value == selected,
     }
 }
@@ -94,7 +160,7 @@ struct Numbering {
 }
 
 impl Numbering {
-    fn row(&mut self, row: &LevelRow, field: &'static str) -> Row {
+    fn row(&mut self, row: &LevelRow, field: &'static str, posted: Option<&[String]>) -> Row {
         self.next += 1;
         let own = titled(row);
         let clashes = own.type_id.as_ref().is_some_and(|id| {
@@ -106,19 +172,21 @@ impl Numbering {
         if let Some(text) = words::description(row) {
             lines.push(text);
         }
-        if row.open_ended {
+        if row.open_ended && row.types.is_empty() {
             lines.push(words::reach_line(&row.covers));
         }
+        let chosen = chosen_of(row, posted);
         let mut options: Vec<Pick> = row
             .choices
             .iter()
-            .map(|choice| option_of(choice, &row.selected))
+            .rev()
+            .map(|choice| option_of(choice, chosen, row.yes_or_no))
             .collect();
         if !row.types.is_empty() {
             options.push(Pick {
                 value: CHOOSE_TYPES.to_string(),
                 word: words::CHOOSE_TYPES_WORD,
-                selected: false,
+                selected: chosen == CHOOSE_TYPES,
             });
         }
         Row {
@@ -132,80 +200,150 @@ impl Numbering {
             title: own.title,
             lines,
             options,
-            switches_types: !row.types.is_empty(),
         }
     }
 }
 
-fn power_row(index: usize, power: &Power) -> PowerRow {
-    let known = words::power(&power.literal);
-    let note = known.and_then(|words| words.note);
-    let line = match (note, power.cannot_be_undone) {
-        (Some(note), true) => Some(format!("{note} {}", words::UNDONE_MARK)),
-        (Some(note), false) => Some(note.to_string()),
-        (None, true) => Some(words::UNDONE_MARK.to_string()),
-        (None, false) => None,
-    };
+fn power_title(power: Permission) -> String {
+    words::power(power.word())
+        .map_or_else(|| power.word().to_string(), |words| words.title.to_string())
+}
+
+fn power_row(index: usize, power: Permission, allowed: bool) -> PowerRow {
     PowerRow {
         id: format!("power-{index}"),
-        literal: power.literal.clone(),
-        title: known.map_or_else(|| power.literal.clone(), |words| words.title.to_string()),
-        line,
-        cannot_be_undone: power.cannot_be_undone,
+        title: power_title(power),
+        line: words::power(power.word()).and_then(|words| words.note),
+        options: [
+            Pick {
+                value: power.word().to_string(),
+                word: words::ALLOW,
+                selected: allowed,
+            },
+            Pick {
+                value: String::new(),
+                word: words::DONT_ALLOW,
+                selected: !allowed,
+            },
+        ],
     }
 }
 
-fn held_row(held: &Held) -> HeldRow {
-    HeldRow {
-        title: words::title(held.reach, &held.pattern, held.label.as_deref()),
-        level: words::level(held.level),
+/// On a redraw, the posted level where it is still offered and No access otherwise, and Allow
+/// only on a row the post allowed.
+fn admin_row(admin: &Admin, again: Option<&Post>) -> AdminRow {
+    let mut ordered = admin.powers.clone();
+    ordered.sort_by_key(|power| words::power_rank(power.word()));
+    let level = match again {
+        None => admin.levels.first().copied(),
+        Some(post) => Some(
+            admin
+                .levels
+                .iter()
+                .copied()
+                .find(|level| post.admin.as_deref() == Some(level.word()))
+                .unwrap_or(AdminLevel::None),
+        ),
+    };
+    let titles = |powers: &[Permission]| -> Vec<String> {
+        powers
+            .iter()
+            .map(|power| words::lower_first(&power_title(*power)))
+            .collect()
+    };
+    let limited_powers = admin
+        .levels
+        .contains(&AdminLevel::Limited)
+        .then(|| titles(&powers_at(AdminLevel::Limited, &ordered, &[]).unwrap_or_default()));
+    let asked = if ordered.len() >= words::POWER_COUNT {
+        format!("all {}", words::POWER_COUNT)
+    } else {
+        ordered.len().to_string()
+    };
+    AdminRow {
+        title: words::ADMIN_TITLE,
+        options: admin
+            .levels
+            .iter()
+            .map(|one| Pick {
+                value: one.word().to_string(),
+                word: words::admin_level(*one),
+                selected: Some(*one) == level,
+            })
+            .collect(),
+        counts: words::counts_when(words::ADMIN_TITLE, words::admin_level(AdminLevel::Custom)),
+        limited: limited_powers.as_deref().map(words::limited_line),
+        limited_by_level: limited_powers.as_deref().map(words::limited_by_level),
+        asked,
+        powers: ordered
+            .into_iter()
+            .enumerate()
+            .map(|(index, power)| {
+                let allowed =
+                    again.is_none_or(|post| post.powers.iter().any(|row| row == power.word()));
+                power_row(index, power, allowed)
+            })
+            .collect(),
     }
 }
 
-fn gives(offer: &Offer, powers: &[PowerRow]) -> Vec<Gives> {
-    let mut lines = Vec::new();
-    for level in [Level::Write, Level::Read] {
-        let titles: Vec<String> = offer
-            .data
-            .iter()
-            .chain(&offer.profile)
-            .filter(|row| row.choices.last().map(|choice| choice.level) == Some(level))
-            .map(|row| titled(row).title)
-            .collect();
-        if !titles.is_empty() {
-            lines.push(Gives {
-                text: format!("{}: {}", words::level(level), titles.join(", ")),
-                danger: false,
-            });
-        }
-    }
-    if !powers.is_empty() {
-        let names: Vec<String> = powers
-            .iter()
-            .map(|power| words::lower_first(&power.title))
-            .collect();
-        lines.push(Gives {
-            text: format!("Control over Marfa: {}", names.join("; ")),
-            danger: false,
-        });
-    }
-    let undone: Vec<String> = powers
+fn sorted_titles(powers: &[Permission]) -> Vec<String> {
+    let mut ordered = powers.to_vec();
+    ordered.sort_by_key(|power| words::power_rank(power.word()));
+    ordered
         .iter()
-        .filter(|power| power.cannot_be_undone)
-        .map(|power| words::lower_first(&power.title))
-        .collect();
-    if !undone.is_empty() {
-        lines.push(Gives {
-            text: format!("Can't be undone: {}", undone.join("; ")),
-            danger: true,
-        });
+        .map(|power| words::lower_first(&power_title(*power)))
+        .collect()
+}
+
+fn admin_glance(powers: &[Permission]) -> Glance {
+    Glance {
+        symbol: "sliders",
+        verb: "",
+        object: words::admin_gives(&sorted_titles(powers)),
+    }
+}
+
+/// A row's line in the summary: each row at the level it starts at.
+fn gets(row: &LevelRow) -> Glance {
+    let level = row
+        .choices
+        .last()
+        .map_or(Level::None, |choice| choice.level);
+    let (verb, object) = words::gives(row.reach, &row.pattern, row.label.as_deref(), level);
+    Glance {
+        symbol: words::symbol(row.reach),
+        verb,
+        object,
+    }
+}
+
+fn glance(offer: &Offer) -> Vec<Glance> {
+    let mut lines: Vec<Glance> = offer.data.iter().chain(&offer.profile).map(gets).collect();
+    if let Some(admin) = &offer.admin {
+        lines.push(admin_glance(&admin.powers));
     }
     lines
 }
 
-fn powers_summary(count: usize) -> String {
-    let things = if count == 1 { "thing" } else { "things" };
-    format!("{count} {things} asked, each off until you turn it on")
+fn held_glance(offer: &Offer) -> Vec<Glance> {
+    let mut lines: Vec<Glance> = offer
+        .held
+        .iter()
+        .map(|held| {
+            let (verb, object) =
+                words::gives(held.reach, &held.pattern, held.label.as_deref(), held.level);
+            Glance {
+                symbol: words::symbol(held.reach),
+                verb,
+                object,
+            }
+        })
+        .collect();
+    if !offer.held_powers.is_empty() {
+        lines.push(admin_glance(&offer.held_powers));
+    }
+    lines
 }
 
 #[derive(Template)]
@@ -215,54 +353,35 @@ struct ConsentBody<'a> {
     action: &'static str,
     link_field: &'static str,
     link_value: &'a str,
-    device_code: Option<String>,
-    page_addresses: String,
-    full_access: &'static str,
-    edit_line: &'static str,
-    legend: &'static str,
-    held: Vec<HeldRow>,
-    gives: Vec<Gives>,
+    device: bool,
+    more_access: bool,
+    app_bracket: String,
+    app_line: Option<String>,
+    also_wants: bool,
+    also_wants_heading: &'static str,
+    allowed_heading: &'static str,
+    glance: Vec<Glance>,
+    held: Vec<Glance>,
     data: Vec<DataRow>,
+    items_after: ItemsAfter,
+    later_included: &'static str,
+    later_excluded: &'static str,
+    choices: bool,
     profile: Vec<Row>,
-    powers: Vec<PowerRow>,
-    powers_title: &'static str,
-    powers_each: &'static str,
-    powers_summary: String,
-}
-
-fn shown_code(code: &str) -> String {
-    let compact: String = code.chars().filter(|c| c.is_alphanumeric()).collect();
-    if compact.chars().count() == 8 {
-        let first: String = compact.chars().take(4).collect();
-        let second: String = compact.chars().skip(4).collect();
-        format!("{first}-{second}")
-    } else {
-        code.to_string()
-    }
-}
-
-fn page_addresses(origins: &[String]) -> String {
-    let shown: Vec<&str> = origins
-        .iter()
-        .map(|origin| origin.strip_prefix("https://").unwrap_or(origin))
-        .collect();
-    shown.join(" and ")
+    profile_after: Option<&'static str>,
+    admin: Option<AdminRow>,
+    custom: &'static str,
+    full: &'static str,
+    limited: &'static str,
+    choose_types: &'static str,
 }
 
 pub fn consent(view: &Consent) -> Result<Page> {
-    let (action, link_field, link_value, device_code) = match &view.answering {
-        Answering::Authorization(query) => (
-            "/auth/consent",
-            "authorization_request",
-            query.as_str(),
-            None,
-        ),
-        Answering::Device(code) => (
-            "/auth/device/consent",
-            "user_code",
-            code.as_str(),
-            Some(shown_code(code)),
-        ),
+    let (action, link_field, link_value) = match &view.answering {
+        Answering::Authorization(query) => {
+            ("/auth/consent", "authorization_request", query.as_str())
+        }
+        Answering::Device(code) => ("/auth/device/consent", "user_code", code.as_str()),
     };
     let offer = &view.offer;
     let shared: Vec<Titled> = offer
@@ -273,72 +392,126 @@ pub fn consent(view: &Consent) -> Result<Page> {
         .map(titled)
         .collect();
     let mut numbering = Numbering { next: 0, shared };
-    let data = offer
+    let again = view.again.as_ref();
+    let scopes = again.map(|post| post.scopes.as_slice());
+    let types = again.map(|post| post.types.as_slice());
+    let data: Vec<DataRow> = offer
         .data
         .iter()
-        .map(|row| DataRow {
-            row: numbering.row(row, "scopes"),
-            types: row
-                .types
-                .iter()
-                .map(|one| numbering.row(one, "types"))
-                .collect(),
+        .map(|row| {
+            let row_drawn = numbering.row(row, "scopes", scopes);
+            DataRow {
+                counts: words::counts_when(&row_drawn.title, words::CHOOSE_TYPES_WORD),
+                types: row
+                    .types
+                    .iter()
+                    .map(|one| numbering.row(one, "types", types))
+                    .collect(),
+                row: row_drawn,
+            }
         })
         .collect();
-    let profile = offer
+    let profile: Vec<Row> = offer
         .profile
         .iter()
-        .map(|row| numbering.row(row, "scopes"))
+        .map(|row| numbering.row(row, "scopes", scopes))
         .collect();
-    let mut ordered: Vec<&Power> = offer.powers.iter().collect();
-    ordered.sort_by_key(|power| words::power_rank(&power.literal));
-    let powers: Vec<PowerRow> = ordered
-        .into_iter()
-        .enumerate()
-        .map(|(index, power)| power_row(index, power))
-        .collect();
-    let held = offer
-        .held
+    let admin = offer.admin.as_ref().map(|admin| admin_row(admin, again));
+    let later_row = offer
+        .data
         .iter()
-        .map(held_row)
-        .chain(offer.held_powers.iter().map(|power| {
-            HeldRow {
-                title: words::power(&power.literal)
-                    .map_or_else(|| power.literal.clone(), |words| words.title.to_string()),
-                level: "Allowed",
+        .zip(&data)
+        .find(|(_, drawn)| !drawn.types.is_empty());
+    let granting: Vec<&Choice> = later_row
+        .map(|(row, _)| {
+            row.choices
+                .iter()
+                .filter(|choice| choice.level != Level::None)
+                .collect()
+        })
+        .unwrap_or_default();
+    let items_after = ItemsAfter {
+        edit: offer.offers_edit.then_some(words::EDIT_LINE),
+        later_by: later_row.map(|(_, drawn)| drawn.row.id.clone()),
+        later_at: granting
+            .iter()
+            .map(|choice| choice.value.as_str())
+            .collect::<Vec<_>>()
+            .join("|"),
+        later_by_level: words::later_by_level(
+            &granting
+                .iter()
+                .map(|choice| words::level(choice.level))
+                .collect::<Vec<_>>(),
+        ),
+    };
+    let profile_after = offer
+        .profile
+        .iter()
+        .find(|row| row.pattern == "profile")
+        .map(|row| {
+            if row
+                .choices
+                .iter()
+                .any(|choice| choice.level == Level::Write)
+            {
+                words::PROFILE_EDIT_FIELDS
+            } else {
+                words::PROFILE_FIELDS
             }
-        }))
-        .collect();
+        });
+    let choices = offer.asks_new && (!data.is_empty() || !profile.is_empty() || admin.is_some());
+    let title_text = match &view.answering {
+        Answering::Device(_) => "Allow this device?".to_string(),
+        Answering::Authorization(_) => format!(
+            "Allow {}{}?",
+            offer.app.name,
+            if offer.returning && offer.asks_new {
+                " more access"
+            } else {
+                ""
+            }
+        ),
+    };
     let body = render_body(&ConsentBody {
         view,
         action,
         link_field,
         link_value,
-        device_code,
-        page_addresses: page_addresses(&offer.app.web_origins),
-        full_access: FULL_ACCESS,
-        edit_line: words::EDIT_LINE,
-        legend: if offer.returning {
-            "New in this request"
+        device: matches!(view.answering, Answering::Device(_)),
+        more_access: offer.returning && offer.asks_new,
+        app_bracket: words::app_bracket(&offer.app),
+        app_line: words::app_line(&offer.app),
+        also_wants: offer.returning && offer.asks_new,
+        also_wants_heading: words::ALSO_WANTS,
+        allowed_heading: words::ALREADY_ALLOWED,
+        glance: if offer.asks_new {
+            glance(offer)
         } else {
-            "What to allow"
+            Vec::new()
         },
-        held,
-        gives: gives(offer, &powers),
+        held: held_glance(offer),
         data,
+        items_after,
+        later_included: words::LATER_INCLUDED,
+        later_excluded: words::LATER_NOT_INCLUDED,
+        choices,
         profile,
-        powers_summary: powers_summary(powers.len()),
-        powers,
-        powers_title: words::POWERS_TITLE,
-        powers_each: words::POWERS_EACH,
+        profile_after,
+        admin,
+        custom: AdminLevel::Custom.word(),
+        full: AdminLevel::Full.word(),
+        limited: AdminLevel::Limited.word(),
+        choose_types: CHOOSE_TYPES,
     })?;
     document(
-        "Allow access",
-        &view.instance_name,
+        &title_text,
         &body,
         Needs {
             connect: true,
-            confirm_dialog: offer.confirm,
+            confirm_dialog: offer
+                .confirm
+                .then_some("Enter your password to allow this."),
         },
     )
 }

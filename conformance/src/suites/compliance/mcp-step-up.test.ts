@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { offeredValues } from "../../utils/approval-form.js";
+import { everythingOffered, heldOn } from "../../utils/approval-form.js";
+import { checkDeviceCode } from "../../utils/device-check.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -152,13 +153,14 @@ async function authorizing(
   app: App,
   cookie: string,
   resource = `${origin}/mcp/admin`,
+  scope = SCOPE,
 ): Promise<{ landed: URL | undefined; verifier: string }> {
   const proof = pkce();
   const landed = await sentTo(
     server,
     await authorize(
       server,
-      authorizeQuery(app.clientId, SCOPE, proof, { resource }),
+      authorizeQuery(app.clientId, scope, proof, { resource }),
       cookie,
     ),
   );
@@ -166,8 +168,13 @@ async function authorizing(
 }
 
 /** Tokens for `app` from the browser `cookie`, through consent if none covers it. */
-async function connectTokens(app: App, cookie: string): Promise<Tokens> {
-  let { landed, verifier } = await authorizing(app, cookie);
+async function connectTokens(
+  app: App,
+  cookie: string,
+  resource = `${origin}/mcp/admin`,
+  scope = SCOPE,
+): Promise<Tokens> {
+  let { landed, verifier } = await authorizing(app, cookie, resource, scope);
   if (landed !== undefined && !landed.href.startsWith(CALLBACK)) {
     landed = await decide(
       server,
@@ -175,7 +182,7 @@ async function connectTokens(app: App, cookie: string): Promise<Tokens> {
       cookie,
       landed,
       true,
-      SCOPE.split(" "),
+      scope.split(" "),
     );
   }
   const code = landed?.searchParams.get("code");
@@ -191,7 +198,7 @@ async function connect(app: App, cookie: string): Promise<string> {
 async function consentPage(
   app: App,
   cookie: string,
-): Promise<{ page: URL; verifier: string }> {
+): Promise<{ page: URL; verifier: string; held: string }> {
   const proof = pkce();
   const landed = await sentTo(
     server,
@@ -205,7 +212,8 @@ async function consentPage(
     ),
   );
   expect(landed?.pathname, String(landed)).toBe("/auth/consent");
-  return { page: landed!, verifier: proof.verifier };
+  const html = await (await fetch(landed!, { headers: { cookie } })).text();
+  return { page: landed!, verifier: proof.verifier, held: heldOn(html) };
 }
 
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
@@ -243,23 +251,26 @@ async function askDevice(clientId: string): Promise<DeviceCode> {
   return (await response.json()) as DeviceCode;
 }
 
+/** The check step, which sends a browser that must sign in again to the sign-in page. */
 function devicePage(userCode: string, cookie: string): Promise<Response> {
   return fetch(
-    `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+    `${server.apiUrl}/auth/device/check?user_code=${encodeURIComponent(userCode)}`,
     { redirect: "manual", headers: { cookie } },
   );
 }
 
 async function approveDevice(userCode: string, cookie: string): Promise<void> {
-  const shown = await devicePage(userCode, cookie);
+  await checkDeviceCode(server.apiUrl, origin, cookie, userCode);
+  const shown = await fetch(
+    `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+    { redirect: "manual", headers: { cookie } },
+  );
   expect(shown.status, shown.headers.get("location") ?? "").toBe(200);
-  const form = new URLSearchParams({
-    user_code: userCode,
-    decision: "approve",
-  });
-  for (const scope of offeredValues(await shown.text(), "scopes")) {
-    form.append("scopes", scope);
-  }
+  const form = new URLSearchParams([
+    ["user_code", userCode],
+    ["decision", "approve"],
+    ...everythingOffered(await shown.text()),
+  ]);
   const decided = await fetch(`${server.apiUrl}/auth/device/consent`, {
     method: "POST",
     redirect: "manual",
@@ -556,7 +567,7 @@ describe("renewing the sign-in the settings tool asked for", () => {
     toolResult(await settingsCall(renewed, { [SWITCH]: false }));
 
     const third = await askDevice(clientId);
-    // The witness: the device consent still sends the older browser to sign in.
+    // The witness: the device check step still sends the older browser to sign in.
     const older = await devicePage(third.user_code, stale);
     await older.body?.cancel();
     expect(older.status).toBe(302);
@@ -573,7 +584,16 @@ describe("renewing the sign-in the settings tool asked for", () => {
     // The witness: before the refusal, approving an open consent page gives a code.
     const before = await consentPage(app, stale);
     expectCodeAtOnce(
-      await decide(server, origin, stale, before.page, true, SCOPE.split(" ")),
+      await decide(
+        server,
+        origin,
+        stale,
+        before.page,
+        true,
+        SCOPE.split(" "),
+        [],
+        before.held,
+      ),
       "before",
     );
     const open = await consentPage(app, stale);
@@ -581,7 +601,16 @@ describe("renewing the sign-in the settings tool asked for", () => {
     expectRenewalAsked(await settingsCall(access, { [SWITCH]: true }));
 
     const back = expectSignInAsked(
-      await decide(server, origin, stale, open.page, true, SCOPE.split(" ")),
+      await decide(
+        server,
+        origin,
+        stale,
+        open.page,
+        true,
+        SCOPE.split(" "),
+        [],
+        open.held,
+      ),
       "the page opened before the refusal",
     );
     expect(back.startsWith("/auth/consent?"), back).toBe(true);
@@ -595,6 +624,8 @@ describe("renewing the sign-in the settings tool asked for", () => {
           open.page,
           true,
           SCOPE.split(" "),
+          [],
+          open.held,
         ),
         "after the sign-in",
       ),
@@ -603,5 +634,272 @@ describe("renewing the sign-in the settings tool asked for", () => {
     toolResult(await settingsCall(renewed, { [SWITCH]: true }));
     expect((await stored())[SWITCH]).toBe(true);
     toolResult(await settingsCall(renewed, { [SWITCH]: false }));
+  });
+});
+
+describe("guidance through marfa_save_type", () => {
+  const TYPES = "user.*:write metadata.types:write schema.write offline_access";
+  const SCHEMA = () => `${origin}/mcp/schema`;
+
+  async function schemaToken(app: App, cookie: string): Promise<string> {
+    return (await connectTokens(app, cookie, SCHEMA(), TYPES)).access;
+  }
+
+  async function saveType(
+    access: string,
+    args: Record<string, unknown>,
+  ): Promise<ToolAnswer> {
+    const connection = await connectMcp(
+      server.apiUrl,
+      access,
+      "2026-07-28",
+      "/mcp/schema",
+    );
+    try {
+      return await callTool(connection, "marfa_save_type", args);
+    } finally {
+      await connection.close();
+    }
+  }
+
+  async function guidanceOf(id: string): Promise<unknown> {
+    const read = await call(server.workingKey, "GET", `/types/${id}`);
+    expect(read.status, JSON.stringify(read.body)).toBe(200);
+    return read.body.guidance;
+  }
+
+  function newType(): string {
+    return `user.mcp-guided-${String(Date.now())}-${String(++addresses)}`;
+  }
+
+  it("saves guidance through marfa_save_type for an app whose owner signed in within the recent sign-in window", async () => {
+    const access = await schemaToken(
+      await registerApp(server, TYPES),
+      await signIn(),
+    );
+    const id = newType();
+    toolResult(
+      await saveType(access, {
+        action: "register",
+        id,
+        guidance: "One.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    expect(await guidanceOf(id)).toBe("One.");
+    toolResult(
+      await saveType(access, { action: "change", id, guidance: "Two." }),
+    );
+    expect(await guidanceOf(id)).toBe("Two.");
+  });
+
+  it("refuses guidance through marfa_save_type to an app whose owner signed in longer ago than the recent sign-in window with insufficient_user_authentication and max_age, and keeps the type", async () => {
+    const access = await schemaToken(
+      await registerApp(server, TYPES),
+      await signIn(),
+    );
+    const id = newType();
+    // The witness: within the window the same token saves guidance.
+    toolResult(
+      await saveType(access, {
+        action: "register",
+        id,
+        guidance: "Kept.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    await server.advanceClock(PAST_RECENT);
+    expectRenewalAsked(
+      await saveType(access, { action: "change", id, guidance: "Changed." }),
+    );
+    expectRenewalAsked(
+      await saveType(access, { action: "change", id, guidance: "" }),
+    );
+    const other = newType();
+    expectRenewalAsked(
+      await saveType(access, {
+        action: "register",
+        id: other,
+        guidance: "New.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    expect(await guidanceOf(id)).toBe("Kept.");
+    expect(
+      (await call(server.workingKey, "GET", `/types/${other}`)).status,
+    ).toBe(404);
+    // A change that leaves the guidance as stored is not refused.
+    toolResult(
+      await saveType(access, { action: "change", id, label: "Relabeled" }),
+    );
+  });
+
+  it("sends the browser to sign in again when an app refused guidance reconnects, and the token it then gets saves the guidance", async () => {
+    const app = await registerApp(server, TYPES);
+    const stale = await signIn();
+    const access = await schemaToken(app, stale);
+    await server.advanceClock(PAST_RECENT);
+    // The witness: before the refusal, the older browser gets a code at once.
+    expectCodeAtOnce(
+      (await authorizing(app, stale, SCHEMA(), TYPES)).landed,
+      "before",
+    );
+    const id = newType();
+    expectRenewalAsked(
+      await saveType(access, {
+        action: "register",
+        id,
+        guidance: "Asked.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    const { landed, verifier } = await authorizing(app, stale, SCHEMA(), TYPES);
+    const back = expectSignInAsked(landed, "after the refusal");
+    const signedIn = await sentTo(
+      server,
+      await fetch(new URL(back, server.apiUrl), {
+        redirect: "manual",
+        headers: { cookie: await signIn() },
+      }),
+    );
+    const renewed = await exchange(
+      app,
+      expectCodeAtOnce(signedIn, "after the sign-in"),
+      verifier,
+    );
+    toolResult(
+      await saveType(renewed, {
+        action: "register",
+        id,
+        guidance: "Asked.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    expect(await guidanceOf(id)).toBe("Asked.");
+  });
+
+  it("refuses marfa_save_type for a parent the app may not write with type_not_permitted and sets no renewal mark", async () => {
+    const app = await registerApp(server, TYPES);
+    const other = await registerApp(server, TYPES);
+    const stale = await signIn();
+    const access = await schemaToken(app, stale);
+    await schemaToken(other, stale);
+    await server.advanceClock(PAST_RECENT);
+    const resource = SCHEMA();
+    expectCodeAtOnce(
+      (await authorizing(app, stale, resource, TYPES)).landed,
+      "before",
+    );
+
+    const parent = `ghost.missing-${String(++addresses)}`;
+    const id = `user.mcp-parent-${String(addresses)}`;
+    const refused = toolError(
+      await saveType(access, {
+        action: "register",
+        id,
+        parent,
+        guidance: "No.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    expect(refused.code, JSON.stringify(refused)).toBe("type_not_permitted");
+    expect(refused.details).toMatchObject({
+      grant: { kind: "type", name: parent, level: "write" },
+    });
+    expect((await call(server.workingKey, "GET", `/types/${id}`)).status).toBe(
+      404,
+    );
+    expectCodeAtOnce(
+      (await authorizing(app, stale, resource, TYPES)).landed,
+      "after the refusal",
+    );
+    expectCodeAtOnce(
+      (await authorizing(other, stale, resource, TYPES)).landed,
+      "another app",
+    );
+
+    // The witness: the same token is challenged, and marked, when it names no parent.
+    const witness = `user.mcp-shipped-${String(++addresses)}`;
+    expectRenewalAsked(
+      await saveType(access, {
+        action: "register",
+        id: witness,
+        guidance: "Yes.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    expectSignInAsked(
+      (await authorizing(app, stale, resource, TYPES)).landed,
+      "marked",
+    );
+    expect(
+      (await call(server.workingKey, "GET", `/types/${witness}`)).status,
+    ).toBe(404);
+  });
+
+  it("keeps the renewal where it was when marfa_save_type refuses a token from the older sign-in again after the person signed in again", async () => {
+    const app = await registerApp(server, TYPES);
+    const stale = await signIn();
+    const old = await schemaToken(app, stale);
+    await server.advanceClock(PAST_RECENT);
+    const id = newType();
+    const body = {
+      action: "register",
+      id,
+      guidance: "Kept.",
+      fields: { title: { type: "string" } },
+    };
+    expectRenewalAsked(await saveType(old, body));
+
+    const fresh = await signIn();
+    const renewed = await schemaToken(app, fresh);
+    await server.advanceClock(1000);
+    expectRenewalAsked(await saveType(old, body));
+    toolResult(await saveType(renewed, body));
+    expect(await guidanceOf(id)).toBe("Kept.");
+
+    const resource = SCHEMA();
+    expectSignInAsked(
+      (await authorizing(app, stale, resource, TYPES)).landed,
+      "the older browser",
+    );
+    expectCodeAtOnce(
+      (await authorizing(app, fresh, resource, TYPES)).landed,
+      "the new browser",
+    );
+  });
+
+  it("marks only the app marfa_save_type refused, so another app's older browser still gets a code", async () => {
+    const app = await registerApp(server, TYPES);
+    const other = await registerApp(server, TYPES);
+    const stale = await signIn();
+    const access = await schemaToken(app, stale);
+    await schemaToken(other, stale);
+    await server.advanceClock(PAST_RECENT);
+    const resource = SCHEMA();
+    expectCodeAtOnce(
+      (await authorizing(other, stale, resource, TYPES)).landed,
+      "before",
+    );
+    const id = newType();
+    expectRenewalAsked(
+      await saveType(access, {
+        action: "register",
+        id,
+        guidance: "Asked.",
+        fields: { title: { type: "string" } },
+      }),
+    );
+    expectSignInAsked(
+      (await authorizing(app, stale, resource, TYPES)).landed,
+      "the refused app",
+    );
+    expectCodeAtOnce(
+      (await authorizing(other, stale, resource, TYPES)).landed,
+      "another app",
+    );
+    expect((await call(server.workingKey, "GET", `/types/${id}`)).status).toBe(
+      404,
+    );
   });
 });

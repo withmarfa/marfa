@@ -5,6 +5,7 @@ import {
   stopServer,
 } from "../../../scripts/marfa-server.js";
 import {
+  asDrawn,
   offeredValues,
   readControls,
   visibleText,
@@ -20,6 +21,7 @@ import {
   connectMcp,
   toolNames,
 } from "../../utils/mcp.js";
+import { describedWords } from "../../utils/page-html.js";
 import { CALLBACK, pkce } from "../../utils/signed-in.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
@@ -40,14 +42,10 @@ const DEVICE_CODE_MS = 10 * 60_000;
 const SETUP_SESSION_MS = 15 * 60_000;
 const BUDGET_MS = 3 * FRESH_SERVER_TIMEOUT_MS;
 
-const CODE_PLACE = "in its terminal, or in its host's log";
-const APPROVAL_AFTER =
-  "After you create your account, you choose what the app can access, or turn it down.";
-const APPROVAL_NEXT =
-  "Next, you choose what the app can access, or turn it down.";
-const WRONG_CODE =
-  "That setup code isn't right, or Marfa has replaced it since. Enter the newest code Marfa shows.";
-const DEVICE_EXPIRED = "Start connecting again in the app or on the device";
+const CODE_PLACE = "in Marfa’s terminal, or its host’s log";
+const APP_CONNECTS = "Then the app can connect.";
+const WRONG_CODE = "That code isn’t right. Use the newest code Marfa printed.";
+const DEVICE_EXPIRED = "That code has expired. Start again on your device.";
 
 interface Instance {
   url: string;
@@ -294,7 +292,7 @@ async function claimThrough(
   expect(codePage.status).toBe(200);
   const codeHtml = await codePage.text();
   expect(visibleText(codeHtml)).toContain(CODE_PLACE);
-  expect(visibleText(codeHtml)).toContain(APPROVAL_AFTER);
+  expect(visibleText(codeHtml)).toContain(APP_CONNECTS);
   expect(carried(codeHtml)).toEqual([back]);
 
   const exchanged = await browser.post("/setup/exchange", [
@@ -311,14 +309,13 @@ async function claimThrough(
   expect(details.status).toBe(200);
   const detailsHtml = await details.text();
   expect(detailsHtml).toContain('id="owner-form"');
-  expect(visibleText(detailsHtml)).toContain(APPROVAL_NEXT);
   expect(carried(detailsHtml)).toEqual([back]);
 
   return browser.post("/setup/claim", [
     ["username", OWNER.username],
     ["password", OWNER.password],
+    ["confirm_password", OWNER.password],
     ["name", ""],
-    ["email", ""],
     ["return_to", back],
   ]);
 }
@@ -385,7 +382,7 @@ describe("claiming in the sign-in page an app opens", () => {
         const decided = await browser.post("/auth/consent", [
           ["decision", "approve"],
           ["authorization_request", consentUrl.search.slice(1)],
-          ["access", "full"],
+          ...asDrawn(await consent.text()),
         ]);
         const landed = new URL(location(decided));
         expect(`${landed.origin}${landed.pathname}`).toBe(CALLBACK);
@@ -422,7 +419,7 @@ describe("claiming in the sign-in page an app opens", () => {
         const { scope, discovery } = await discover(instance);
         const flow = await startDevice(discovery, scope);
         const browser = new Browser(instance, "192.0.2.20");
-        const back = `/auth/device/consent?user_code=${encodeURIComponent(flow.userCode)}`;
+        const back = `/auth/device/check?user_code=${encodeURIComponent(flow.userCode)}`;
         const signIn = await deviceSignIn(browser, flow);
         expect(signIn).toBe(throughSignIn(back));
 
@@ -431,12 +428,17 @@ describe("claiming in the sign-in page an app opens", () => {
         expect(location(claimed)).toBe(back);
         expect(browser.holds("marfa_session")).toBe(true);
 
-        const consent = await browser.get(back);
+        const check = await browser.get(back);
+        expect(check.status).toBe(200);
+        const checked = await browser.post("/auth/device/check", [
+          ["user_code", flow.userCode],
+        ]);
+        const consent = await browser.get(location(checked));
         expect(consent.status).toBe(200);
         const approved = await browser.post("/auth/device/consent", [
           ["user_code", flow.userCode],
           ["decision", "approve"],
-          ["access", "full"],
+          ...asDrawn(await consent.text()),
         ]);
         expect(approved.status).toBe(200);
 
@@ -451,13 +453,13 @@ describe("claiming in the sign-in page an app opens", () => {
   );
 
   it(
-    "says to start connecting again in the app when the device code ended during setup",
+    "says to start again on the device when the device code ended during setup",
     async () => {
       await withInstance({}, async (instance) => {
         const { scope, discovery } = await discover(instance);
         const flow = await startDevice(discovery, scope);
         const browser = new Browser(instance, "192.0.2.30");
-        const back = `/auth/device/consent?user_code=${encodeURIComponent(flow.userCode)}`;
+        const back = `/auth/device/check?user_code=${encodeURIComponent(flow.userCode)}`;
         const signIn = await deviceSignIn(browser, flow);
 
         const codePage = await browser.get(signIn);
@@ -475,6 +477,7 @@ describe("claiming in the sign-in page an app opens", () => {
         const claimed = await browser.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", back],
         ]);
         expect(location(claimed)).toBe(back);
@@ -541,18 +544,13 @@ async function startDevice(
   };
 }
 
-/** The person opens the device link and continues: answers the sign-in page it sends them to. */
+/** The person opens the device link, which goes to the check step: answers the sign-in page it sends them to. */
 async function deviceSignIn(
   browser: Browser,
   flow: DeviceFlow,
 ): Promise<string> {
-  const entry = await browser.get(flow.verification);
-  expect(entry.status).toBe(200);
-  const entered = await browser.post("/auth/device", [
-    ["user_code", flow.userCode],
-  ]);
-  const consent = location(entered);
-  return location(await browser.get(consent));
+  const check = location(await browser.get(flow.verification));
+  return location(await browser.get(check));
 }
 
 async function pollDevice(
@@ -573,7 +571,7 @@ async function pollDevice(
 
 describe("the setup code page an app opens", () => {
   it(
-    "names an app beside the host it sends the person back to, with the caution, and names no app that sends them to the loopback",
+    "names an app beside the host it sends the person back to, marked unverified, and names no app that sends them to the loopback",
     async () => {
       await withInstance({}, async (instance) => {
         const signInFor = async (
@@ -616,15 +614,14 @@ describe("the setup code page an app opens", () => {
           "https://notes.example/callback",
         );
         expect(web).toContain(
-          "Web Notes at notes.example is asking to connect to this Marfa.",
+          "Then Web Notes (unverified, notes.example) can connect.",
         );
-        expect(web).toContain("Marfa hasn't verified this app.");
-        expect(web).toContain(APPROVAL_AFTER);
+        expect(web).not.toContain(APP_CONNECTS);
 
         const loopback = await signInFor("Local Notes", CALLBACK);
         expect(loopback).not.toContain("Local Notes");
-        expect(loopback).not.toContain("is asking to connect");
-        expect(loopback).toContain(APPROVAL_AFTER);
+        expect(loopback).not.toContain("(unverified");
+        expect(loopback).toContain(APP_CONNECTS);
       });
     },
     BUDGET_MS,
@@ -651,7 +648,7 @@ describe("return_to through setup", () => {
           return {
             status: answer.status,
             carried: carried(html),
-            problem: /id="setup-problem"[^>]*>([^<]*)</.exec(html)?.[1],
+            described: describedWords(html, "code"),
           };
         };
         const replaced = await instance.code();
@@ -660,9 +657,13 @@ describe("return_to through setup", () => {
         expect(wrong).toEqual({
           status: 401,
           carried: [AUTHORIZE],
-          problem: expect.any(String) as string,
+          described: [WRONG_CODE],
         });
-        expect(visibleText(wrong.problem!)).toBe(WRONG_CODE);
+        // The witness: the page before a wrong code describes the field with its hint.
+        expect(visibleText(codeHtml)).not.toContain(WRONG_CODE);
+        const hint = describedWords(codeHtml, "code");
+        expect(hint).toHaveLength(1);
+        expect(hint[0]).toContain(CODE_PLACE);
         expect(await refusal(replaced)).toEqual(wrong);
 
         // The setup session the code opens ends after fifteen minutes.
@@ -681,6 +682,7 @@ describe("return_to through setup", () => {
         const claim = await browser.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", AUTHORIZE],
         ]);
         expect(claim.status).toBe(401);
@@ -721,6 +723,7 @@ describe("return_to through setup", () => {
         const claimed = await browser.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", foreign],
         ]);
         expect(location(claimed)).toBe("/auth/sign-in");
@@ -851,6 +854,7 @@ describe("a claim another tab or a refused sign-in finished", () => {
         const claimed = await first.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", AUTHORIZE],
         ]);
         expect(location(claimed)).toBe(AUTHORIZE);
@@ -859,6 +863,7 @@ describe("a claim another tab or a refused sign-in finished", () => {
           await second.post("/setup/claim", [
             ["username", "another"],
             ["password", "another owner password"],
+            ["confirm_password", "another owner password"],
             ["return_to", AUTHORIZE],
           ]),
           await second.post("/setup/exchange", [
@@ -940,7 +945,7 @@ describe("a claim another tab or a refused sign-in finished", () => {
         // recovery page then offers.
         await instance.restart();
         const recoveryHtml = await (await stale.get("/setup")).text();
-        expect(visibleText(recoveryHtml)).toContain("Recover the owner");
+        expect(visibleText(recoveryHtml)).toContain("Recover your account");
         const recoveryForm = hiddenFields(recoveryHtml);
 
         // The setup code form as the page sent it, then ten with no hidden
@@ -1000,6 +1005,7 @@ describe("a claim another tab or a refused sign-in finished", () => {
         const claimed = await browser.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", AUTHORIZE],
         ]);
         expect(location(claimed)).toBe(throughSignIn(AUTHORIZE));

@@ -374,7 +374,7 @@ describe("marfa_find", () => {
         }),
       ) as { items: { id: string; title: string; snippet?: string }[] };
       const byId = new Map(found.items.map((row) => [row.id, row]));
-      expect(byId.get(seen)?.title).toBe("Comment on Plan");
+      expect(byId.get(seen)?.title).toBe("Comment On Plan");
       // The body is no longer the name, so the preview shows all of it.
       expect(byId.get(seen)?.snippet).toBe("Looks good");
       expect(byId.get(hidden)?.title).toBe("On the secret");
@@ -434,7 +434,7 @@ describe("marfa_find", () => {
         expect(
           found.items.find((row) => row.id === part.data.item.id)?.title,
           label,
-        ).toBe("Comment on Plan");
+        ).toBe("Comment On Plan");
       } finally {
         await connection.close();
       }
@@ -473,7 +473,7 @@ describe("marfa_find", () => {
       }),
     ) as { items: { id: string; title: string }[] };
     expect(found.items.find((row) => row.id === part.data.item.id)?.title).toBe(
-      "Attached to Plan",
+      "Attached To Plan",
     );
   });
 
@@ -516,7 +516,7 @@ describe("marfa_find", () => {
         }),
       ) as { items: { id: string; title: string }[] };
       expect(found.items.find((row) => row.id === part)?.title).toBe(
-        "Attached to Host 0",
+        "Attached To Host 0",
       );
     } finally {
       await reader.close();

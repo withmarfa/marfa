@@ -736,6 +736,23 @@ marfa items get [OPTIONS] <ID>
 | --- | --- |
 | `--include <NAME>` | Extra to add to the item: `backrefs`, `neighbors` or `versions`; repeatable. |
 
+### marfa items link
+
+Print an item's link, one line, or open it. The link is the address the item's own server gives, the bin included.
+
+```text
+marfa items link [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The item id. |
+
+| Option | Description |
+| --- | --- |
+| `--app` | Give the link that opens the item in a Marfa app on this device, `marfa://` and the instance and item ids, in place of the address that opens in a browser. |
+| `--open` | Open the link with the system's opener in place of printing it. If nothing opens it, the link is printed and the command fails. |
+
 ### marfa items create
 
 Create an item.
@@ -1721,7 +1738,7 @@ marfa plugins mapping set [OPTIONS] <NAME> <FILE>
 
 ### marfa plugins mapping rewrite
 
-Count the connector's items on each kind's target type and ask the connector to rewrite them to the mapping on its next run, as a numbered request it clears when done. Marfa changes no item itself. Needs `connectors.manage`.
+Count the connector's items that a rewrite moves onto each kind's target type, from the kind's own type and from each type the kind was mapped onto before, and ask the connector to move them to the mapping on its next run, as a numbered request it clears when done. Until it does, the connector's key reaches its own items on those former types to move them. Marfa changes no item itself. Needs `connectors.manage`.
 
 ```text
 marfa plugins mapping rewrite [OPTIONS] <NAME>
@@ -3121,7 +3138,7 @@ marfa update status [OPTIONS]
 
 Have the server update itself to the newest release it found, where it runs as the service `marfa server install` set up. Elsewhere it changes nothing and says the step to take on the host. Requires `instance.maintain`.
 
-Before Marfa 0.1, a newer release may not read an earlier release's database. The server asks the newer release first, and when it cannot read the database, the update ends with nothing changed: the server stays on its release, and `marfa update status` gives the reason in `last`. The way to move is then to export, make a new install of the newer release and restore the archive there. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
+A release opens the database of any earlier release from 0.0.86 on, except one that 0.0.88 wrote, and upgrades it in place. When the database holds rows, the release first keeps a copy beside it as `marfa.db.before-upgrade`. The server asks the newer release first, and when it cannot open the database, the update ends with nothing changed: the server stays on its release, and `marfa update status` gives the reason in `last`. The way to move is then to export, make a new install of the newer release and restore the archive there.
 
 ```text
 marfa update start [OPTIONS]
@@ -5406,7 +5423,7 @@ Move the server to another release, newer or older.
 
 A native server moves to the release of the `marfa-server` installed beside this `marfa`. A Docker install moves to the release you name with `--release`, or to this binary's own. This is the only command that changes the release an install is on: `install`, `start` and `restart` keep it there. A native install is on the release that last served its database, and a Docker install on the image `.env` names.
 
-Before Marfa 0.1, a release may not read another release's database. This command first asks the release it moves to, newer or older, whether it opens the install's database and settings, and changes nothing when it does not. When the programs the service runs were already replaced, the error says how to put back the release the install is on. When a release up to 0.0.85 last served the database, which names none, the error says the release cannot be told and gives the general way back. A release that could not be asked is started, and a Docker install whose new release then refuses the database starts its earlier release again. A Docker image before 0.0.76 cannot be asked, so it is refused. The way to move is then to export, make a new install of the other release and restore the archive there. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
+A release opens the database of any earlier release from 0.0.86 on, except one that 0.0.88 wrote, and upgrades it in place. When the database holds rows, the release first keeps a copy beside it as `marfa.db.before-upgrade`. An earlier release does not open a database a later release upgraded, so to go back, restore that copy. This command first asks the release it moves to, newer or older, whether it opens the install's database and settings, and changes nothing when it does not. When the programs the service runs were already replaced, the error says how to put back the release the install is on. When a release up to 0.0.85 last served the database, which names none, the error says the release cannot be told and gives the general way back. A release that could not be asked is started, and a Docker install whose new release then refuses the database starts its earlier release again. A Docker image before 0.0.76 cannot be asked, so it is refused. The way to move is then to export, make a new install of the other release and restore the archive there.
 
 To go back to an earlier release, install it the way you installed marfa and run this command with its `marfa`, or with `--release` for Docker.
 

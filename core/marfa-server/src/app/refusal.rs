@@ -156,7 +156,7 @@ codes! {
     InsufficientStorage = "insufficient_storage", 507;
 }
 
-const INTERNAL_MESSAGE: &str = "Internal server error";
+pub const INTERNAL_MESSAGE: &str = "Internal server error";
 
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("{}: {message}", code.wire())]

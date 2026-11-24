@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>{{ title }}</title>
-<style nonce="{{ nonce }}">{{ style|safe }}</style>
+{% if let Some(address) = opens %}<meta http-equiv="refresh" content="0;url={{ address }}">
+{% endif %}<style nonce="{{ nonce }}">{{ style|safe }}</style>
 </head>
 <body>
-<header class="brand">{{ instance_name }}</header>
-<main>
+<main class="col">
 {{ body|safe }}
 </main>
-{% if confirm_dialog %}{% include "partials/confirm_dialog.html" %}{% endif %}
+{% if let Some(line) = confirm_dialog %}{% include "partials/confirm_dialog.html" %}{% endif %}
 <script nonce="{{ nonce }}">{{ script|safe }}</script>
 </body>
 </html>

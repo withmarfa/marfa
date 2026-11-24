@@ -11,6 +11,7 @@ import {
   keepStatusLog,
 } from "../../utils/fresh-server.js";
 import { testAuthenticator } from "../../utils/passkey-authenticator.js";
+import { visibleText } from "../../utils/page-html.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
 let document: OpenApiDocument;
@@ -146,7 +147,22 @@ afterAll(async () => {
   }
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
+const WAIT = "/auth/sign-in?error=too_many_attempts&retry_after_seconds=120";
+const signInPage = async (path = "/auth/sign-in") =>
+  visibleText(await (await fetch(base + path)).text());
+const signInMarkup = async (path = "/auth/sign-in") =>
+  (await fetch(base + path)).text();
+/** The page's own script names the attribute, so only an element counts. */
+const ADVICE = /<[a-z]+\b[^>]*\bdata-passkey-advice\b[^>]*>/;
+
 describe("owner passkeys", () => {
+  it("offers no passkey on the sign-in page, nor names one when an owner is told to wait, until the owner has one", async () => {
+    expect((await signInPage()).toLowerCase()).not.toContain("passkey");
+    const waiting = await signInPage(WAIT);
+    expect(waiting).toContain("Try again in 2 minutes.");
+    expect(waiting.toLowerCase()).not.toContain("passkey");
+    expect(await signInMarkup(WAIT)).not.toMatch(ADVICE);
+  });
   it("registers and lists independent owner credentials", async () => {
     firstId = (await register(first, "First")).id;
     secondId = (await register(second, "Second")).id;
@@ -181,8 +197,17 @@ describe("owner passkeys", () => {
     });
     const html = await page.text();
     expect(html).toContain("HTTPS");
-    for (const id of [firstId, secondId]) {
-      expect(html).toContain(`data-passkey-rename="${id}"`);
+    // Each row carries its passkey's ID and name, which its Rename and Remove act on.
+    for (const [id, name] of [
+      [firstId, "First"],
+      [secondId, "Second"],
+    ] as const) {
+      const opens = `data-passkey-row="${id}" data-name="${name}">`;
+      expect(html).toContain(opens);
+      const row = html.split(opens)[1]!.split("</li>")[0]!;
+      expect(row).toContain(`aria-label="More for ${name}"`);
+      expect(row).toContain("data-passkey-rename");
+      expect(row).toContain("data-passkey-remove");
     }
     const signed = await signIn(first, 1);
     expect(signed.status).toBe(200);
@@ -193,6 +218,16 @@ describe("owner passkeys", () => {
         })
       ).status,
     ).toBe(200);
+  });
+  it("offers a passkey on the sign-in page, and names one when an owner is told to wait, once the owner has one for this address", async () => {
+    expect(await signInPage()).toContain("Use Passkey");
+    expect(await signInPage(WAIT)).toContain(
+      "Try again in 2 minutes, or use a passkey.",
+    );
+    // The words sit in an element the page's script reveals with the button.
+    expect(await signInMarkup(WAIT)).toMatch(
+      /<[a-z]+\b(?=[^>]*\bdata-passkey-advice\b)(?=[^>]*\bhidden\b)[^>]*>, or use a passkey/,
+    );
   });
   it("gives passkey options only to a POST, answers a registration 201 with the passkey, and a passkey sign-in with only ok and its session cookie", async () => {
     for (const path of Object.values(OPTIONS)) {
@@ -695,4 +730,40 @@ describe("owner passkeys", () => {
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
   );
+  it("offers no passkey once the sign-in address has moved to a host the passkey was not made for", async () => {
+    const move = async (address: string) => {
+      const moved = await controlRequest(server.controlSocket, "/config", {
+        method: "PATCH",
+        body: {
+          sign_in_address: address,
+          confirm_sign_in_address_change: true,
+          skip_sign_in_address_check: true,
+        },
+      });
+      expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    };
+    try {
+      // The witness: at the host the passkeys were made for, one is offered and named.
+      expect(await signInPage()).toContain("Use Passkey");
+      expect(await signInMarkup(WAIT)).toMatch(ADVICE);
+
+      // An address where passkeys cannot work at all, and another host.
+      for (const address of [
+        base.replace("localhost", "127.0.0.1"),
+        "https://elsewhere.example",
+      ]) {
+        await move(address);
+        expect((await signInPage()).toLowerCase(), address).not.toContain(
+          "passkey",
+        );
+        const waiting = await signInPage(WAIT);
+        expect(waiting, address).toContain("Try again in 2 minutes.");
+        expect(waiting.toLowerCase(), address).not.toContain("passkey");
+        expect(await signInMarkup(WAIT), address).not.toMatch(ADVICE);
+      }
+    } finally {
+      // Last, so the move and its undoing disturb no other test.
+      await move(base);
+    }
+  });
 });

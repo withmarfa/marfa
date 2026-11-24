@@ -1,7 +1,7 @@
 {
   "id": "about",
   "label": "About",
-  "reverse_label": "Subject of",
+  "reverse_label": "Subject Of",
   "description": "Runs from the item to what it is about. When saving an item, about names that subject.",
   "cardinality": "many-to-many",
   "from_type_constraints": ["*"],

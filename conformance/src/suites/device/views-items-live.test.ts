@@ -24,6 +24,8 @@ interface Case {
   settings: Record<string, unknown>;
   /** The least a listing holds, so a pair of empty answers cannot agree. */
   atLeast: number;
+  /** When set, the listing holds this many, so a wider answer cannot pass. */
+  exact?: number;
   /** What the device's group keys must be, for a view that groups. */
   groupKeys?: (keys: unknown[]) => void;
 }
@@ -148,6 +150,32 @@ beforeAll(async () => {
       properties: { title: "A list of words", body: "", words },
     });
   }
+  for (const marks of [
+    [15],
+    [5],
+    [1, 5],
+    ["5"],
+    [true],
+    [1],
+    [[5]],
+    [{ n: 5 }],
+    [],
+    [null],
+    [5.5],
+    [false],
+    5,
+    15,
+    5.5,
+    true,
+    "15",
+    "true",
+  ]) {
+    await made({
+      type: "core.note",
+      tags: [mark],
+      properties: { title: "A list of marks", body: "", marks },
+    });
+  }
   const archived = ids[1]!;
   expect((await client.transitionItem(archived, "archived")).ok).toBe(true);
 
@@ -200,6 +228,7 @@ beforeAll(async () => {
     name: string,
     settings: Record<string, unknown>,
     atLeast = 10,
+    exact?: number,
     groupKeys?: Case["groupKeys"],
   ) => {
     const query = {
@@ -207,7 +236,13 @@ beforeAll(async () => {
       filter,
       ...((settings.query as Record<string, unknown> | undefined) ?? {}),
     };
-    cases.push({ name, settings: { ...settings, query }, atLeast, groupKeys });
+    cases.push({
+      name,
+      settings: { ...settings, query },
+      atLeast,
+      exact,
+      groupKeys,
+    });
   };
   add("no sort", {});
   add("title ascending", { sort: [asc("title")] });
@@ -272,38 +307,49 @@ beforeAll(async () => {
   add("no member equal", { query: words('neq "kitchen"') }, 4);
   add("a member holding text", { query: words('contains "kit"') }, 5);
   add("a member beginning with text", { query: words('starts_with "kit"') }, 5);
+  const marks = (condition: string) => ({
+    filter: `${filter} AND properties.marks ${condition}`,
+  });
+  add("a member equal to a number", { query: marks("eq 5") }, 3, 3);
+  add("a member equal to a boolean", { query: marks("eq true") }, 4, 4);
+  add("no member equal to a number", { query: marks("neq 5") }, 15, 15);
+  add("no member equal to a boolean", { query: marks("neq 1") }, 14, 14);
+  add("contains a number", { query: marks("contains 5") }, 6, 6);
+  add("contains a boolean", { query: marks("contains true") }, 4, 4);
 
+  const grouped = (
+    name: string,
+    settings: Record<string, unknown>,
+    groupKeys: Case["groupKeys"],
+  ) => add(name, settings, 10, undefined, groupKeys);
   const presence = (by: string) => ({ group: { by, bucket: "presence" } });
   const bothPresences = (keys: unknown[]) =>
     expect(keys).toEqual([false, true]);
-  add(
+  grouped(
     "presence of a property",
     presence("properties.probe"),
-    10,
     bothPresences,
   );
-  add("presence of tags", presence("tags"), 10, (keys) =>
+  grouped("presence of tags", presence("tags"), (keys) =>
     expect(keys).toEqual([true]),
   );
-  add("presence of an edge", presence("edge[parent-of]"), 10, bothPresences);
-  add(
+  grouped("presence of an edge", presence("edge[parent-of]"), bothPresences);
+  grouped(
     "presence of a backref",
     presence("backref[parent-of]"),
-    10,
     bothPresences,
   );
-  add(
+  grouped(
     "presence with a hidden group",
     {
       group: { by: "properties.probe", bucket: "presence", hidden: [false] },
     },
-    10,
     (keys) => expect(keys).toEqual([true]),
   );
-  add("source", { group: { by: "source" } }, 10, (keys) =>
+  grouped("source", { group: { by: "source" } }, (keys) =>
     expect(keys).toEqual([ctx.source]),
   );
-  add(
+  grouped(
     "status group, with an order and a hidden null group",
     {
       group: {
@@ -312,10 +358,9 @@ beforeAll(async () => {
         hidden: [null],
       },
     },
-    10,
     (keys) => expect(keys).toEqual(["completed", "not_started"]),
   );
-  add("status group", { group: { by: "status_group" } }, 10, (keys) =>
+  grouped("status group", { group: { by: "status_group" } }, (keys) =>
     expect(keys).toEqual(["not_started", "completed", null]),
   );
 
@@ -349,6 +394,7 @@ afterAll(async () => {
 });
 
 it("lists a view's items in the order the server does, for each sort and query", async () => {
+  const counts: string[] = [];
   for (const item of cases) {
     const id = views.get(item.name)!;
     const remote: string[] = [];
@@ -359,10 +405,17 @@ it("lists a view's items in the order the server does, for each sort and query",
       remote.push(...page.data.data.map((row) => row.id));
       cursor = page.data.next_cursor ?? undefined;
     } while (cursor !== undefined);
-    expect(
-      remote.length,
-      `${item.name}: the server listed too little`,
-    ).toBeGreaterThanOrEqual(item.atLeast);
+    const counted =
+      item.exact === undefined
+        ? remote.length >= item.atLeast
+        : remote.length === item.exact;
+    if (!counted) {
+      counts.push(
+        item.exact === undefined
+          ? `${item.name}: the server listed ${remote.length}, expected at least ${item.atLeast}`
+          : `${item.name}: the server listed ${remote.length}, expected ${item.exact}`,
+      );
+    }
     expect(new Set(remote).size, `${item.name}: an item twice`).toBe(
       remote.length,
     );
@@ -392,4 +445,5 @@ it("lists a view's items in the order the server does, for each sort and query",
       item.groupKeys(answer.data.map((group) => group.key));
     }
   }
+  expect(counts).toEqual([]);
 });

@@ -306,6 +306,19 @@ function constraintTargets(
  * server. Phase order is the caller's.
  */
 const CLEANUP_CONCURRENCY = 8;
+/**
+ * A delete that waits past the server's write wait answers `503
+ * write_contention` (`errors/contention`). On the shared CI server, other
+ * files' writes can hold the lock that long, so a 503 is tried again before
+ * it counts as a leak.
+ */
+const CONTENTION_TRIES = 4;
+const CONTENTION_PAUSE_MS = 250;
+
+function contended(res: unknown): boolean {
+  const answer = res as { ok?: boolean; status?: number } | undefined;
+  return answer?.ok === false && answer.status === 503;
+}
 interface CleanupOutcome {
   kind: string;
   failed: number;
@@ -325,8 +338,18 @@ async function deleteAll(
     await Promise.all(
       batch.map(async (id) => {
         try {
-          const res = (await del(id)) as
-            { ok?: boolean; status?: number } | undefined;
+          let answer = await del(id);
+          for (
+            let tried = 1;
+            tried < CONTENTION_TRIES && contended(answer);
+            tried += 1
+          ) {
+            await new Promise((r) =>
+              setTimeout(r, CONTENTION_PAUSE_MS * tried),
+            );
+            answer = await del(id);
+          }
+          const res = answer as { ok?: boolean; status?: number } | undefined;
           // A 404 is the goal state of a deletion: tests legitimately remove
           // their own fixtures mid-run. Any other refusal is a leak.
           if (res && res.ok === false && res.status !== 404) {

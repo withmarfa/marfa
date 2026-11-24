@@ -1435,16 +1435,28 @@ describe("each job reads its own answer", () => {
     const format = steps.findIndex((step) => step.run === "pnpm format:check");
     expect(format).toBeGreaterThan(0);
     expect(steps[format]?.if).toBeUndefined();
-    expect(steps[format + 1]).toEqual({
-      run: "pnpm vitest run ci/ci-required.test.ts ci/no-vendor-in-product.test.ts",
-    });
+    // The release check reads the newest tag, so that tag alone is fetched
+    // first, and named for the test in MARFA_RELEASE_TAG.
+    const fetchTag = steps[format + 1];
+    expect(fetchTag?.name).toBe("Fetch the newest release tag");
+    expect(fetchTag?.run).toContain("node scripts/release/newest-release.ts");
+    expect(fetchTag?.run).toContain(
+      'git fetch --depth=1 origin "refs/tags/$tag:refs/tags/$tag"',
+    );
+    expect(fetchTag?.run).toContain("for attempt in 1 2");
+    expect(fetchTag?.run).toContain(
+      'echo "MARFA_RELEASE_TAG=$tag" >> "$GITHUB_ENV"',
+    );
     expect(steps[format + 2]).toEqual({
+      run: "pnpm vitest run ci/ci-required.test.ts ci/no-vendor-in-product.test.ts ci/released-migrations.test.ts",
+    });
+    expect(steps[format + 3]).toEqual({
       "working-directory": "conformance",
       run: "pnpm exec vitest run --project generators src/utils/spec-citations.test.ts",
     });
     // The build, typecheck and lint are jobs of their own, so that each one
     // reports as soon as it can: see the next test.
-    expect(steps.slice(format + 3)).toEqual([]);
+    expect(steps.slice(format + 4)).toEqual([]);
     // The tests wait until the pull request is ready: they are the job
     // `Workspace tests`, which `ci/workspace-tests.test.ts` pins.
     // A draft passes here with the rest skipped; `Draft CI` keeps it from
@@ -1703,6 +1715,7 @@ describe("what a job reads reaches it", () => {
     const files = closure([
       "conformance/scripts/mcp-conformance.ts",
       "conformance/scripts/marfa-server.ts",
+      "conformance/scripts/stage-logs.ts",
       ...harnessTests(),
       "conformance/vitest.config.ts",
     ]);
@@ -2006,6 +2019,7 @@ describe("what the jobs that run a script or a harness load from the helpers", (
     return {
       "mcp-conformance": closure([
         "conformance/scripts/mcp-conformance.ts",
+        "conformance/scripts/stage-logs.ts",
         ...boot.slice(0, 1),
         ...harnessTests(),
         "conformance/vitest.config.ts",
@@ -2021,6 +2035,7 @@ describe("what the jobs that run a script or a harness load from the helpers", (
         "conformance/vitest.config.ts",
         ...setup,
         ...boot.slice(0, 1),
+        "conformance/scripts/stage-logs.ts",
         "conformance/scripts/rust-score.ts",
       ]),
     };

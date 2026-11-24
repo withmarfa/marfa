@@ -537,7 +537,7 @@ describe("the callback", () => {
     const start = await started(name);
     const arrived = await arrive({ state: start.state, code: randomUUID() });
     expectPage(arrived, 200);
-    expect(arrived.text).toMatch(/return to (your|the) app/i);
+    expect(arrived.text).toContain("Go back to your app.");
     expect((await tokenEntry(name)).set).toBe(true);
     expect((await statusOf(name)).status).toBe("signed_in");
   });

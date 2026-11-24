@@ -2,13 +2,16 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri};
+use axum::response::IntoResponse;
 use serde_json::{Map, Value, json};
 
 use super::origin::{self, Source};
+use super::pages::wants_page;
 use super::{cookies, redirect, require_safe_caller, text_field, with_cookie};
 use crate::app::App;
 use crate::app::access::{Caller, Permission, unauthorized};
 use crate::app::auth::passkeys::{self, Assertion};
+use crate::app::auth::password;
 use crate::app::auth::return_to::kept;
 use crate::app::auth::session;
 use crate::app::auth::sign_in::SignedIn;
@@ -17,12 +20,15 @@ use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::{JsonBody, only_declared};
 use crate::http::caller::OnPage;
+use crate::http::pages::{self, Notice};
 use crate::http::query;
 
 const PASSWORD_FIELDS: [&str; 2] = ["username", "password"];
 const CONFIRM_FIELDS: [&str; 2] = ["password", "passkey"];
 const CURRENT_PASSWORD_CHARS: usize = 1024;
 const CHANGE_FIELDS: [&str; 2] = ["current_password", "new_password"];
+const CHANGE_PAGE_FIELDS: [&str; 3] = ["current_password", "new_password", "confirm_password"];
+const PASSKEYS_PAGE: &str = "/auth/owner/passkeys";
 
 fn not_from_here() -> Refusal {
     Refusal::new(
@@ -114,12 +120,14 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
     let shown_return = if return_to == "/" { "" } else { &return_to };
     let username = field("username").trim();
     let password = field("password");
-    let failed = |error: &str, wait: &str| {
+    let failed = |error: &str, wait: &str, missing: [&str; 2]| {
         redirect(
             StatusCode::FOUND,
             &back_to_sign_in(&[
                 ("error", error),
                 ("retry_after_seconds", wait),
+                ("missing", missing[0]),
+                ("missing", missing[1]),
                 ("username", username),
                 ("return_to", shown_return),
                 ("authorization", field("authorization")),
@@ -127,7 +135,15 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
         )
     };
     if username.is_empty() || password.is_empty() {
-        return failed("missing_field", "");
+        let named = |empty: bool, name| if empty { name } else { "" };
+        return failed(
+            "missing_field",
+            "",
+            [
+                named(username.is_empty(), "username"),
+                named(password.is_empty(), "password"),
+            ],
+        );
     }
     let mark = device_mark(app, headers);
     let outcome =
@@ -135,7 +151,7 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
     let signed = match outcome {
         Ok(opened) => opened,
         Err(refusal) if refusal.code == Code::Unauthorized => {
-            return failed("invalid_credentials", "");
+            return failed("invalid_credentials", "", ["", ""]);
         }
         Err(refusal) if refusal.code == Code::RateLimited => {
             let wait = refusal
@@ -144,7 +160,7 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
                 .and_then(|details| details.get("retry_after_seconds"))
                 .map(Value::to_string)
                 .unwrap_or_default();
-            return failed("too_many_attempts", &wait);
+            return failed("too_many_attempts", &wait, ["", ""]);
         }
         Err(refusal) => return Err(refusal.into()),
     };
@@ -155,9 +171,19 @@ fn ended_cookie(app: &App) -> Result<HeaderValue, Refusal> {
     cookies::session_ended(&app.addresses().sign_in())
 }
 
-pub async fn sign_out(State(app): State<Arc<App>>, OnPage(caller): OnPage, visit: Visit) -> Answer {
+/// A browser's form asks for a page, and gets the notice that it is signed out.
+pub async fn sign_out(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    OnPage(caller): OnPage,
+    visit: Visit,
+) -> Answer {
     let caller = caller.ok_or_else(unauthorized)?;
     session::sign_out(&app, &caller, visit).await?;
+    if wants_page(&headers) {
+        let page = pages::notice(&Notice::signed_out())?.into_response();
+        return Ok(with_cookie(page, ended_cookie(&app)?));
+    }
     done(ended_cookie(&app)?)
 }
 
@@ -221,7 +247,82 @@ fn current_password(body: &Map<String, Value>) -> Result<String, Refusal> {
     }
 }
 
-/// The passkeys page's form, sent as a form or as JSON.
+fn back_to_passkeys(pairs: &[(&str, &str)]) -> String {
+    let mut query = form_urlencoded::Serializer::new(String::new());
+    for (name, value) in pairs.iter().filter(|(_, value)| !value.is_empty()) {
+        query.append_pair(name, value);
+    }
+    let query = query.finish();
+    if query.is_empty() {
+        PASSKEYS_PAGE.to_string()
+    } else {
+        format!("{PASSKEYS_PAGE}?{query}")
+    }
+}
+
+fn page_problem(problem: &str, wait: &str) -> Answer {
+    redirect(
+        StatusCode::SEE_OTHER,
+        &back_to_passkeys(&[("problem", problem), ("retry_after_seconds", wait)]),
+    )
+}
+
+async fn change_from_page(
+    app: &Arc<App>,
+    headers: &HeaderMap,
+    caller: Option<Caller>,
+    visit: Visit,
+    body: JsonBody,
+) -> Answer {
+    let Some(caller) = caller.filter(|caller| caller.session().is_some()) else {
+        return Err(unauthorized().into());
+    };
+    let fields = only_declared(body.form().await?, &CHANGE_PAGE_FIELDS)?;
+    let Ok(current) = current_password(&fields) else {
+        return page_problem("current_missing", "");
+    };
+    let field = |name: &str| fields.get(name).and_then(Value::as_str).unwrap_or("");
+    let new = field("new_password");
+    let length = new.chars().count();
+    if length < password::MIN_LENGTH {
+        return page_problem("new_too_short", "");
+    }
+    if length > password::MAX_LENGTH {
+        return page_problem("new_too_long", "");
+    }
+    if new != field("confirm_password") {
+        return page_problem("not_the_same", "");
+    }
+    let mark = device_mark(app, headers);
+    let outcome =
+        sign_in::change_password(app, &caller, current, new.to_string(), mark, visit).await;
+    match outcome {
+        Ok(changed) => {
+            let done = redirect(
+                StatusCode::SEE_OTHER,
+                &back_to_passkeys(&[("changed", "1")]),
+            )?;
+            Ok(with_cookie(
+                done,
+                cookies::device(&app.addresses().sign_in(), &changed.device(app)?)?,
+            ))
+        }
+        Err(refusal) if sign_in::is_current_not_right(&refusal) => {
+            page_problem("current_not_right", "")
+        }
+        Err(refusal) if refusal.code == Code::RateLimited => {
+            let wait = refusal
+                .details
+                .as_ref()
+                .and_then(|details| details.get("retry_after_seconds"))
+                .map(Value::to_string)
+                .unwrap_or_default();
+            page_problem("too_many_attempts", &wait)
+        }
+        Err(refusal) => Err(refusal.into()),
+    }
+}
+
 pub async fn change_password(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
@@ -230,6 +331,9 @@ pub async fn change_password(
     body: JsonBody,
 ) -> Answer {
     require_safe_caller(&app, &visit)?;
+    if body.declares_form() && wants_page(&headers) {
+        return change_from_page(&app, &headers, caller, visit, body).await;
+    }
     let Some(caller) = caller.filter(|caller| caller.session().is_some()) else {
         return Err(unauthorized().into());
     };

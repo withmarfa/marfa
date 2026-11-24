@@ -2,7 +2,7 @@
 
 use sha2::{Digest, Sha256};
 
-use super::migrate::MIGRATIONS;
+use super::migrate::{MIGRATIONS, Migration};
 use super::schema;
 
 struct Pin {
@@ -75,20 +75,28 @@ const PINS: &[Pin] = &[
         file: "5879bcd2b22952149df1001acd92966d69651e00d4b0f5ee6bfc6b69f810a5bf",
         holds: "6c59f4ba3feb967f7f8b3eab96025d4dfa0f48a48da3c5826dbfb1d870237e3d",
     },
+    Pin {
+        version: 13,
+        file: "a07f88fa0595c02b4c4a7c1722848d6b99afda7110aa32a92ed3594a5ede7e88",
+        holds: "cc2ae5bf2ca43d48dd939e4cf5e9b9ff5364a023168d6d455188428418579ebe",
+    },
+    Pin {
+        version: 14,
+        file: "7c5237f346b42cdd3b8a2069419d25227a2b8d6b635cae9e888e3bb3c066c1c6",
+        holds: "7cfeb760a8a9e06e2eaf9a306fdef5c4f8b40ca8840e3429d742cf4ae90d138d",
+    },
 ];
 
-const BEFORE_0_1: &str = "Before Marfa 0.1, no release promises that its databases keep opening: \
-    if the change is meant, write the new digests in PINS in the same pull request and say so in \
-    its description.";
+const MIGRATION_CHANGED: &str = "A migration that a published release contains is never edited, \
+    and CI refuses an edit to one by comparing it with the newest release tag \
+    (`ci/released-migrations.test.ts`): put it back as it was, and make the change a new numbered \
+    migration in MIGRATIONS with an entry of its own in PINS. A new digest is written only for a \
+    migration that no release contains yet.";
 
-const FROM_0_1_MIGRATION: &str = "From Marfa 0.1, a release's databases must keep opening: put \
-    the migration back as it was, and make the change a new numbered migration in MIGRATIONS with \
-    an entry of its own in PINS.";
-
-const FROM_0_1_MADE: &str = "From Marfa 0.1, a release's databases must keep opening, and a new \
-    migration cannot help, because the start compares a file with its own version, made by this \
-    build, before any later migration runs: keep what this build makes from the pinned SQL as it \
-    was.";
+const MADE_CHANGED: &str = "No migration's SQL changed, so no new migration can help: the start \
+    compares a file with its own version, made by this build, before any later migration runs. \
+    Keep what this build makes from the pinned SQL as it was. A new digest is written only while \
+    no release has written a database at this version.";
 
 fn sha256(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -113,19 +121,144 @@ fn every_schema_version_makes_the_database_pinned_for_it() {
         assert!(
             pin.file == file,
             "the migration for schema version {version} changed, and is now {pinned}. \
-             {BEFORE_0_1} {FROM_0_1_MIGRATION}"
+             {MIGRATION_CHANGED}"
         );
         assert!(
             pin.holds == holds,
             "a database made through schema version {version} no longer holds what is pinned, \
              though no migration's SQL changed: SQLite, or how this build makes a database from \
              its migrations, now makes the same SQL differently, and the start may refuse a \
-             database made before. It is now {pinned}. {BEFORE_0_1} {FROM_0_1_MADE}"
+             database made before. It is now {pinned}. {MADE_CHANGED}"
         );
     }
     assert_eq!(
         PINS.len(),
         MIGRATIONS.len(),
         "PINS holds a version MIGRATIONS lacks"
+    );
+}
+
+/// The SQL without its comments, on one line, in capitals. A quoted string or
+/// name is reduced to its empty quotes, so nothing inside one is read as a
+/// comment or a statement.
+fn plain(sql: &str) -> String {
+    let mut out = String::new();
+    let mut rest = sql;
+    while let Some(at) = rest.find(['-', '/', '\'', '"']) {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        if let Some(quote) = tail.chars().next().filter(|c| *c == '\'' || *c == '"') {
+            let end = tail[1..].find(quote).map_or(tail.len(), |end| end + 2);
+            out.push(quote);
+            out.push(quote);
+            rest = &tail[end..];
+            continue;
+        }
+        if tail.starts_with("--") {
+            rest = tail.find('\n').map_or("", |end| &tail[end..]);
+        } else if tail.starts_with("/*") {
+            rest = tail.find("*/").map_or("", |end| &tail[end + 2..]);
+        } else {
+            out.push_str(&tail[..1]);
+            rest = &tail[1..];
+        }
+        out.push(' ');
+    }
+    out.push_str(rest);
+    out.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_uppercase()
+}
+
+/// Whether the SQL holds a statement that fails on a file that already has its changes.
+fn cannot_run_twice(sql: &str) -> bool {
+    let sql = plain(sql);
+    let unguarded = |starts: &[&str], guard: &str| {
+        starts.iter().any(|start| {
+            sql.match_indices(start)
+                .any(|(at, _)| !sql[at + start.len()..].starts_with(guard))
+        })
+    };
+    ["ADD COLUMN", "DROP COLUMN", " RENAME "]
+        .iter()
+        .any(|part| sql.contains(part))
+        || unguarded(
+            &[
+                "CREATE TABLE ",
+                "CREATE INDEX ",
+                "CREATE UNIQUE INDEX ",
+                "CREATE TRIGGER ",
+                "CREATE VIEW ",
+            ],
+            "IF NOT EXISTS",
+        )
+        || unguarded(
+            &["DROP TABLE ", "DROP INDEX ", "DROP TRIGGER ", "DROP VIEW "],
+            "IF EXISTS",
+        )
+}
+
+/// The versions whose SQL cannot run twice and that name no `done` query.
+fn missing_done(migrations: &[Migration]) -> Vec<u32> {
+    migrations
+        .iter()
+        .filter(|m| cannot_run_twice(m.sql) && m.done.is_none())
+        .map(|m| m.version)
+        .collect()
+}
+
+#[test]
+fn a_migration_that_cannot_run_twice_says_when_it_is_done() {
+    let missing = missing_done(MIGRATIONS);
+    assert!(
+        missing.is_empty(),
+        "migrations {missing:?} hold a statement that fails on a file that already has its \
+         changes, so `done` must name a query that finds those changes in an unfinished file"
+    );
+}
+
+#[test]
+fn a_migration_without_done_is_caught_when_it_cannot_run_twice() {
+    let added = Migration {
+        version: 99,
+        sql: "ALTER TABLE a ADD COLUMN b TEXT;",
+        done: None,
+    };
+    let made = Migration {
+        version: 98,
+        sql: "-- note\nCREATE INDEX a_b ON a (b); /* x */",
+        done: None,
+    };
+    let safe = Migration {
+        version: 97,
+        sql: "CREATE TABLE IF NOT EXISTS a (b TEXT);\n-- ADD COLUMN in a comment\n\
+              /* RENAME\n   DROP COLUMN */\nCREATE  INDEX\n  IF NOT EXISTS c ON a (b);\n\
+              DROP INDEX IF EXISTS c;",
+        done: None,
+    };
+    let renamed = Migration {
+        version: 96,
+        sql: "ALTER TABLE a RENAME TO b;",
+        done: None,
+    };
+    let dropped = Migration {
+        version: 95,
+        sql: "DROP TRIGGER t;",
+        done: None,
+    };
+    let quoted = Migration {
+        version: 94,
+        sql: "UPDATE a SET b = 'https://*.example -- x', renamed_at = 1;\nCREATE TABLE c (d TEXT);",
+        done: None,
+    };
+    let named = Migration {
+        version: 93,
+        sql: "UPDATE a SET renamed_at = '/* ADD COLUMN */';",
+        done: None,
+    };
+    assert_eq!(
+        missing_done(&[added, made, safe, renamed, dropped, quoted, named]),
+        [99, 98, 96, 95, 94]
     );
 }

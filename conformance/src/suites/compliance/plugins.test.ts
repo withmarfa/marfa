@@ -880,7 +880,7 @@ describe("plugins in an archive", () => {
   it("keeps plugin provenance and the install record through an export and a restore", async () => {
     const archive = await owner.exportArchive({ state: "any" });
     expect(archive.status).toBe(200);
-    expect(archiveManifest(archive.data).version).toBe(3);
+    expect(archiveManifest(archive.data).version).toBe(4);
     const plugins = archiveLines(archive.data, "instance").filter(
       (line) => "plugin" in line,
     );
@@ -1187,110 +1187,6 @@ describe("a version 2 archive's provenance and install records", () => {
 });
 
 describe("who writes a type's guidance", () => {
-  it("refuses guidance to an app holding user.*:write and schema.write, and takes the same registration without it", async () => {
-    const app = await appToken(
-      origin,
-      "user.*:write metadata.types:write schema.write",
-    );
-    const refused = await app.registerType({
-      id: "user.app-guided",
-      guidance: "Use it.",
-      fields: { title: { type: "string" } },
-    } as never);
-    expect(refused.status, JSON.stringify(refused.error)).toBe(403);
-    expect(refused.error?.error.code).toBe("forbidden");
-    expect(refused.error?.error.details?.changes).toEqual(["guidance"]);
-    expect((await owner.getType("user.app-guided")).status).toBe(404);
-    const plain = await app.registerType({
-      id: "user.app-guided",
-      fields: { title: { type: "string" } },
-    } as never);
-    expect(plain.status, JSON.stringify(plain.error)).toBe(201);
-  });
-
-  it("refuses an app's replacement that adds guidance, and lets an owner's key add it", async () => {
-    const app = await appToken(
-      origin,
-      "user.*:write metadata.types:write schema.write",
-    );
-    const made = await app.registerType({
-      id: "user.app-replaced",
-      fields: { title: { type: "string" } },
-    } as never);
-    expect(made.status, JSON.stringify(made.error)).toBe(201);
-    const body = {
-      id: "user.app-replaced",
-      guidance: "Use it.",
-      fields: { title: { type: "string" } },
-    };
-    const refused = await app.replaceType("user.app-replaced", body);
-    expect(refused.status).toBe(403);
-    expect(refused.error?.error.details?.changes).toEqual(["guidance"]);
-    const taken = await owner.replaceType("user.app-replaced", body);
-    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
-    expect(taken.data.guidance).toBe("Use it.");
-  });
-
-  it("refuses 403 an app installing a plugin whose types carry guidance, and installs the same plugin without it", async () => {
-    // A grant names a root the instance holds a type under.
-    const anchor = await owner.registerType({
-      id: "guided.anchor",
-      fields: { title: { type: "string" } },
-    } as never);
-    expect(anchor.status, JSON.stringify(anchor.error)).toBe(201);
-    const app = await appToken(origin, "guided.*:write schema.write");
-    const guided = (guidance?: string) =>
-      single("guided-by-app", "guided.thing", {
-        types: [
-          {
-            id: "guided.thing",
-            description: "A guided thing.",
-            ...(guidance === undefined ? {} : { guidance }),
-            fields: { title: { type: "string" } },
-          },
-        ],
-      });
-    const refused = await app.installPlugin(guided("Installing writes this."));
-    expect(refused.status, JSON.stringify(refused.error)).toBe(403);
-    expect(refused.error?.error.code).toBe("forbidden");
-    expect(refused.error?.error.details?.changes).toEqual(["guidance"]);
-    expect((await owner.getType("guided.thing")).status).toBe(404);
-    const plain = await app.installPlugin(guided());
-    expect(plain.status, JSON.stringify(plain.error)).toBe(201);
-  });
-
-  it("refuses an app's newer version that would remove guidance the owner's install wrote", async () => {
-    const anchor = await owner.registerType({
-      id: "unguided.anchor",
-      fields: { title: { type: "string" } },
-    } as never);
-    expect(anchor.status, JSON.stringify(anchor.error)).toBe(201);
-    const at = (version: string, guidance?: string) =>
-      single("unguided", "unguided.thing", {
-        version,
-        types: [
-          {
-            id: "unguided.thing",
-            description: "A guided thing.",
-            ...(guidance === undefined ? {} : { guidance }),
-            fields: { title: { type: "string" } },
-          },
-        ],
-      });
-    const installed = await owner.installPlugin(at("1.0.0", "Read me."));
-    expect(installed.status, JSON.stringify(installed.error)).toBe(201);
-    const app = await appToken(origin, "unguided.*:write schema.write");
-    const refused = await app.installPlugin(at("1.1.0"));
-    expect(refused.status).toBe(403);
-    expect(refused.error?.error.details?.changes).toEqual(["guidance"]);
-    expect((await owner.getType("unguided.thing")).data.guidance).toBe(
-      "Read me.",
-    );
-    // The witness: the owner's key installs the same version.
-    const taken = await owner.installPlugin(at("1.1.0"));
-    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
-  });
-
   it("refuses guidance to an owner's key an app minted, on registration and on install, and takes both without it", async () => {
     // An app is offered a root's wildcard only once the instance holds a type under it.
     const seeded = await owner.registerType({

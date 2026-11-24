@@ -4,6 +4,11 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import {
+  instanceIdOf,
+  itemLinks,
+  unsetSignInOrigin,
+} from "../../utils/item-links.js";
 import { controlRequest } from "../../utils/control-request.js";
 
 let server: FreshServer;
@@ -233,7 +238,17 @@ it("admits trash, restore and purge of one item through the private socket and a
     path: string,
     query = `?version=${version}`,
   ) => controlRequest(server.controlSocket, `${path}${query}`, { method });
-  const summary = ["created_at", "id", "name", "source", "type", "version"];
+  const summary = [
+    "app_url",
+    "created_at",
+    "id",
+    "name",
+    "source",
+    "type",
+    "version",
+    "web_url",
+  ];
+  const instance = await instanceIdOf(server.apiUrl, server.workingKey);
   const answered = async (
     method: string,
     path: string,
@@ -242,6 +257,9 @@ it("admits trash, restore and purge of one item through the private socket and a
     expect(done.status, `${method} ${path}`).toBe(200);
     expect(Object.keys(done.body).sort(), `${method} ${path}`).toEqual(summary);
     expect(done.body.id).toBe(id);
+    expect({ web_url: done.body.web_url, app_url: done.body.app_url }).toEqual(
+      itemLinks(unsetSignInOrigin(server.apiUrl), instance, id),
+    );
     return done.body;
   };
   await answered("DELETE", `/items/${id}`);

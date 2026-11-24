@@ -90,7 +90,7 @@ export function emptyManifest(
     ...(typeof fields.version === "number" && fields.version >= 2
       ? { plugin_count: 0, app_vendor_count: 0 }
       : {}),
-    ...(fields.version === 3
+    ...(typeof fields.version === "number" && fields.version >= 3
       ? { connector_setting_count: 0, connector_mapping_count: 0 }
       : {}),
     ...fields,

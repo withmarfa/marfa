@@ -1,18 +1,16 @@
-<dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-text">
-<form method="dialog" class="stack">
-<h2 id="confirm-title">Confirm it's you</h2>
-<p id="confirm-text" class="lede">This change needs a recent sign-in. Enter your password to continue.</p>
-<p class="notice error" role="alert" data-confirm-error="password" hidden>That password isn't right. Try again.</p>
-<p class="notice error" role="alert" data-confirm-error="locked" hidden>Too many attempts. Try again in <span data-wait></span>.</p>
-<p class="notice error" role="alert" data-confirm-error="other" hidden>Something went wrong. Try again.</p>
-<div class="field">
-<label for="confirm-password">Password</label>
-<input id="confirm-password" type="password" name="password" autocomplete="current-password" required>
+{% import "partials/parts.html" as parts %}{% call parts::dialog("confirm-dialog", "Confirm it's you", text_id="confirm-text") %}
+<p id="confirm-text" class="lede">{{ line }}</p>
+<div class="fields" data-confirm-fields>
+<div>
+<div class="group">
+{% call parts::field("confirm-password", "Password", name="password", kind="password", autocomplete="current-password") %}{% endcall %}
 </div>
-<div class="actions">
-<button type="button" class="button" data-confirm-cancel>Cancel</button>
-<button type="submit" class="button primary">Confirm</button>
+<div class="under">
+<p class="hint" id="confirm-note" aria-live="polite" data-note data-hint=""></p>
+<p><button type="button" class="link" data-passkey="confirm" hidden>Use a passkey</button></p>
 </div>
-<button type="button" class="button wide" data-passkey="confirm" hidden>Use a passkey</button>
-</form>
-</dialog>
+</div>
+</div>
+{% call parts::actions() %}<button type="button" class="btn" data-dialog-cancel>Cancel</button>
+<button type="submit" class="btn primary" data-confirm-submit>Confirm</button>{% endcall %}
+{% endcall %}

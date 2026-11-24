@@ -4,7 +4,7 @@ A plugin is what an owner adds to Marfa: types under `common.*` or a root of its
 
 A bundle sets `format` to 1 and identifies the plugin by its `name`, `title`, `description`, `mark`, `maker` and `version`. The `marfa` field names the oldest Marfa release it supports. The `types` array holds type definitions with their guidance, and `edge_types` holds edge type definitions. The optional `connector` object describes the plugin's connector: its source, its kinds, its settings, its sign-in and where it runs. `PluginBundle` and `PluginConnector` in `openapi.json` define each field.
 
-`POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, its connector section included, a type under a reserved root, the Marfa release it needs, the caller's permission, a connector without `connectors.manage`, guidance an app sends, the version installed, a newer version's connector source, the connector's source held elsewhere, a type the plugin did not install, a clash with a type below, a parent outside the bundle the caller may not write, each type's definition, what a newer version narrows, each edge type, and each kind's `default_mapping` against the types as installed.
+`POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, its connector section included, a type under a reserved root, the Marfa release it needs, the caller's permission, a connector without `connectors.manage`, the version installed, a newer version's connector source, the connector's source held elsewhere, a type the plugin did not install, a clash with a type below, a parent outside the bundle the caller may not write, each type's definition and the guidance it adds, changes or removes, what a newer version narrows, each edge type, and each kind's `default_mapping` against the types as installed.
 
 ## Installing
 
@@ -106,19 +106,35 @@ When `POST /plugins` installs or updates a type, the server MUST record the plug
 
 ### `plugins/install-guidance`
 
-When a caller that is neither an app's access token, a key an app made nor a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `POST /plugins` with a type whose definition carries `guidance`, the server MUST store the guidance as the bundle gives it.
+When the local socket, a key the owner made that holds `schema.write`, or an app's access token that holds `schema.write` and whose browser session began at most 900 seconds before the request sends `POST /plugins` with a type whose definition carries `guidance`, the server MUST store the guidance as the bundle gives it.
 
-**Reason:** installing a plugin is the owner's way to give a type guidance, besides writing it directly (`types/guidance-app-made`).
+**Reason:** installing a plugin is the owner's way to give a type guidance, besides writing it directly. Agents read guidance as instructions, so a person decides what it says, and a recent sign-in proves the owner is present at this app now (`types/guidance-app-recent`).
 
-**Tests:** `compliance/plugins.test.ts › reads a type a plugin installed with origin plugin, naming the plugin and its version`.
+**Tests:** `compliance/plugins.test.ts › reads a type a plugin installed with origin plugin, naming the plugin and its version`, `compliance/guidance-step-up.test.ts › installs five guided types, an edge type and a connector when its owner signed in just now, and a challenged install writes no type, edge type, connector or plugin record`, `› is challenged at an upgrade that changes or removes guidance and writes nothing, upgrades for a recent sign-in, and is never challenged at an upgrade that leaves guidance as stored`.
 
 ### `plugins/install-guidance-app`
 
-If an app's access token, a key an app made or a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `POST /plugins` with a bundle whose types carry `guidance`, or a later version that would change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
+If an app's access token that holds `schema.write` and whose browser session began more than 900 seconds before the request, or after it, sends `POST /plugins` with a bundle that would add, change or remove a type's `guidance`, then the server MUST answer `401 insufficient_user_authentication` with `details.max_age` set to `900` and write no type, edge type, connector or plugin record.
 
-**Reason:** installing is an owner action, and an app may not write guidance by any door (`types/guidance-app-made`). The same app installs the same plugin without guidance.
+**Reason:** the app sends the person to sign in again and installs the whole bundle with the new token (`types/guidance-app-challenge`, `keys-and-oauth/step-up-writes-nothing`). A bundle installs whole or not at all, so one guided type holds back the rest.
 
-**Tests:** `compliance/plugins.test.ts › refuses 403 an app installing a plugin whose types carry guidance, and installs the same plugin without it`, `› refuses an app's newer version that would remove guidance the owner's install wrote`, `› refuses guidance to an owner's key an app minted, on registration and on install, and takes both without it`.
+**Tests:** `compliance/guidance-step-up.test.ts › installs five guided types, an edge type and a connector when its owner signed in just now, and a challenged install writes no type, edge type, connector or plugin record`, `› is challenged at an upgrade that changes or removes guidance and writes nothing, upgrades for a recent sign-in, and is never challenged at an upgrade that leaves guidance as stored`.
+
+### `plugins/install-guidance-key`
+
+If a key an app made, including an owner's key an app minted, or a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `POST /plugins` with a bundle that would add, change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
+
+**Reason:** a key has no sign-in to renew, so only a key the owner made writes guidance (`types/guidance-app-made`). The same key installs the same plugin without guidance.
+
+**Tests:** `compliance/plugins.test.ts › refuses guidance to an owner's key an app minted, on registration and on install, and takes both without it`, `compliance/guidance-step-up.test.ts › writes guidance through a key the owner made, and refuses a key an app made 403 with details.changes at a registration and an install`.
+
+### `plugins/install-guidance-unchanged`
+
+When a caller sends `POST /plugins` with a version whose types carry the `guidance` already stored for them, the server MUST judge the install without regard to who may write guidance.
+
+**Reason:** guidance a version leaves as it is was already decided by a person; only a change to it needs one.
+
+**Tests:** `compliance/guidance-step-up.test.ts › is challenged at an upgrade that changes or removes guidance and writes nothing, upgrades for a recent sign-in, and is never challenged at an upgrade that leaves guidance as stored`.
 
 ### `plugins/install-connector-permission`
 
@@ -236,6 +252,38 @@ If a bundle's `connector.sign_in` names in `client_id_setting`, `client_secret_s
 
 **Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error a connector section with an unknown key, no kinds, a kind type outside the bundle, a choice with no choices, a secret with a default or a sign-in naming an undeclared setting, naming each path and installing nothing`.
 
+### `plugins/connector-code-url`
+
+If a bundle's `connector.code` gives a `url` that is not an absolute address with the scheme `https` and a host, that holds a user name or a password, or that is longer than 2048 characters, then the server MUST answer `400 validation_error` with `details.errors` naming `connector.code.url`.
+
+**Reason:** a connector host fetches the connector's code from this address. `https` keeps the code from being changed on the way, and a bundle anyone can read carries no credential.
+
+**Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error a connector code that is not https, a sha256 that is not 64 lowercase hex characters or a size out of range, naming each path and installing nothing`, `device/plugins-check.test.ts › refuses a connector code that is not https, or a sha256 that is not 64 hex characters, as installing does`.
+
+### `plugins/connector-code-sha256`
+
+If a bundle's `connector.code` gives a `sha256` that is not 64 characters, each a digit or a lowercase letter from `a` to `f`, then the server MUST answer `400 validation_error` with `details.errors` naming `connector.code.sha256`.
+
+**Reason:** a connector host runs the code it fetched only when its SHA-256 matches this one, and the bundle's `fingerprint` (`plugins/install-fingerprint`) covers it.
+
+**Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error a connector code that is not https, a sha256 that is not 64 lowercase hex characters or a size out of range, naming each path and installing nothing`, `device/plugins-check.test.ts › refuses a connector code that is not https, or a sha256 that is not 64 hex characters, as installing does`.
+
+### `plugins/connector-code-size`
+
+If a bundle's `connector.code` gives a `size` that is not an integer from 1 to 268435456, then the server MUST answer `400 validation_error` with `details.errors` naming `connector.code.size`.
+
+**Reason:** a connector host stops a fetch that passes the size, so a wrong address cannot fill its disk.
+
+**Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error a connector code that is not https, a sha256 that is not 64 lowercase hex characters or a size out of range, naming each path and installing nothing`, `device/plugins-check.test.ts › refuses a connector code that is not https, or a sha256 that is not 64 hex characters, as installing does`.
+
+### `plugins/connector-code-update`
+
+When `POST /plugins` sends a later version of an installed plugin whose connector keeps its `source` and gives another `connector.code`, or none, the server MUST answer `200` with `outcome` `updated`.
+
+**Reason:** each version of a plugin carries its own code, so its address and digest change with the version, unlike its source (`plugins/connector-source-same`).
+
+**Tests:** `compliance/plugin-connectors.test.ts › answers a connector's code unchanged to its host, and takes a newer version that changes or drops it`.
+
 ### `plugins/connector-default-mapping`
 
 If a kind in a bundle's `connector.kinds` gives a `default_mapping` that holds a member other than `tier`, `status_overrides` and `fields`, or that `PUT /plugins/{name}/connector/mapping` would refuse as the kind's entry with its own type as `target_type`, then the server MUST answer `400 validation_error` with `details.errors` naming each fault as a `path` under `connector.kinds.<index>.default_mapping`.
@@ -254,7 +302,7 @@ If `POST /plugins` refuses a bundle for its connector section, then the server M
 
 When `POST /plugins` installs a bundle with a `connector` object, the server MUST answer the object as the bundle gives it as `connector` from `POST /plugins`, `GET /plugins` and `GET /plugins/{name}`.
 
-**Tests:** `compliance/plugin-connectors.test.ts › installs a bundle with a well-formed connector, keeps the section as sent and records the connector with no host`.
+**Tests:** `compliance/plugin-connectors.test.ts › installs a bundle with a well-formed connector, keeps the section as sent and records the connector with no host`, `› answers a connector's code unchanged to its host, and takes a newer version that changes or drops it`.
 
 ### `plugins/connector-recorded`
 
@@ -618,7 +666,7 @@ When a host's key sends `GET /connector-hosts/self`, the server MUST answer `200
 
 **Reason:** a host skips starting a connector the owner paused, and starts one the owner asked to run now.
 
-**Tests:** `compliance/connector-hosts.test.ts › answers a host only the connectors assigned to it, and records when it was last seen`, `compliance/connector-control.test.ts › stores a pause, a resume and a run request, answering each on the connector's door and to its host`.
+**Tests:** `compliance/connector-hosts.test.ts › answers a host only the connectors assigned to it, and records when it was last seen`, `compliance/connector-control.test.ts › stores a pause, a resume and a run request, answering each on the connector's door and to its host`, `compliance/plugin-connectors.test.ts › answers a connector's code unchanged to its host, and takes a newer version that changes or drops it`.
 
 ### `plugins/host-mint`
 
@@ -1246,9 +1294,11 @@ When a caller holding `connectors.manage` sends `PUT /plugins/{name}/connector/m
 
 ### `plugins/mapping-save-defaults`
 
-When `PUT /plugins/{name}/connector/mapping` leaves out a kind, or a member of a kind's entry, the server MUST store that kind or member as its default (`plugins/mapping-default`) gives it.
+When `PUT /plugins/{name}/connector/mapping` leaves out a kind, or a member of a kind's entry, the server MUST store that kind or member as its default (`plugins/mapping-default`) gives it, except that, in an entry whose `target_type` is not the kind's own type, `fields` left out are `{ "from": <field> }` for each field that `target_type` declares and the kind's own type also declares, and `status_overrides` left out are `{}`.
 
-**Tests:** `compliance/connector-mapping.test.ts › saves a mapping that fills a required field with a fixed value, and fills a kind it leaves out with its default`.
+**Reason:** a kind's default `fields` and `status_overrides` are made for its own type, and on another target they would name fields and status words that type may not declare.
+
+**Tests:** `compliance/connector-mapping.test.ts › saves a mapping that fills a required field with a fixed value, and fills a kind it leaves out with its default`, `› stores the fields both types declare for a target type a saved kind names without fields, and its own defaults once it lands back`, `› stores no status overrides for a target type a saved kind names without them, and its own defaults once it lands back`.
 
 ### `plugins/mapping-stale`
 
@@ -1350,7 +1400,15 @@ When the server stores a mapping, the server MUST change no stored item.
 
 **Reason:** a changed mapping applies to what the connector writes next; existing items change only when the owner asks for a rewrite (`plugins/rewrite-request`).
 
-**Tests:** `compliance/connector-mapping.test.ts › counts exactly the items under the connector's source on a kind's target type, and changes no item on a save or a rewrite`.
+**Tests:** `compliance/connector-mapping.test.ts › counts exactly the items under the connector's source that a rewrite would move onto a kind's target type, from its own type and from a type it was mapped onto before, and changes no item on a save or a rewrite`.
+
+### `plugins/mapping-former-target`
+
+When the server stores a mapping that moves a kind's `target_type` off a type that is none of its connector's kinds' own types, the server MUST keep that type as one the kind was mapped onto before, until a later save makes it the kind's `target_type` again.
+
+**Reason:** the connector's items of the kind stay on that type until a rewrite moves them (`plugins/mapping-keeps-items`), and a rewrite finds them there (`plugins/reach-former-read`). A kind's own types are decided by the key's type map alone (`plugins/reach-own-types`), so they are not kept.
+
+**Tests:** `compliance/connector-reach.test.ts › lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`, `› moves its own items from the former target type onto the kind's new target type and no other`.
 
 ### `plugins/mapping-audit`
 
@@ -1372,7 +1430,7 @@ While a plugin's connector key's mapping holds an enabled kind whose `target_typ
 
 **Reason:** a connector mapped onto a type the owner chose writes there only what it brought. The reach is read from the mapping each time, never copied into the key's type map, so the two cannot disagree.
 
-**Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`, `› leaves the owner's child, comment and attachment on its item where they are through its trash, restore and purge, and carries its own`.
+**Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`, `› leaves the owner's child, comment and attachment on its item where they are through its trash, restore and purge, and carries its own`, `› retypes its own item into the mapped target type and back, refusing a move that falls short of the type it enters`.
 
 ### `plugins/reach-own-types`
 
@@ -1404,7 +1462,7 @@ While a plugin's connector key holds no write on a type in its type map, when th
 
 **Reason:** a mapping onto a type that also holds the owner's items never opens those items to the connector. Each door answers as it does for a type the key cannot reach, so the connector learns nothing of the owner's items.
 
-**Tests:** `compliance/connector-reach.test.ts › answers an owner's item of the target type as one the key cannot reach on every door, where the same call on its own item succeeds`, `› mints a connector key holding write on the edge types its connector names, own and shipped, which writes both from its own item and no other`.
+**Tests:** `compliance/connector-reach.test.ts › answers an owner's item of the target type as one the key cannot reach on every door, where the same call on its own item succeeds`, `› mints a connector key holding write on the edge types its connector names, own and shipped, which writes both from its own item and no other`, `› refuses to move the owner's item of its own type into the target type, an item into a type outside its reach, and its own item once the kind is off`, `› writes, reads, lists and clears the agreements of its own items of the mapped type, and skips the owner's`, `› lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`.
 
 ### `plugins/reach-create-own-source`
 
@@ -1418,7 +1476,7 @@ If a plugin's connector key creates an item of an enabled kind's `target_type` t
 
 While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `GET /items/{id}`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs`, `GET /items/{id}/versions`, `GET /items/{id}/extensions`, `GET /items/{id}/extensions/{namespace}`, `GET /items/{id}/tables`, `GET /items/{id}/tables/{table}/rows`, `GET /items/{id}/tables/{table}/rows/{row}`, `GET /items/{id}/tables/{table}/totals`, `GET /items/{id}/tables/{table}/batches` or `POST /items/lookup` for an item of that type whose `source` is its own, the server MUST find the item as it would were that type granted read in its type map.
 
-**Reason:** a connector reads its own items back to update them, with the edges it reads from them (`plugins/reach-edges-own`), and their versions, extensions and table rows, which it writes as it writes the item. It also lists them (`plugins/reach-list-own`), follows their events (`plugins/reach-events-own`) and settles their tombstones (`plugins/reach-tombstones-own`). Every other door, among them search, the summaries, an export, a view's items, a folder, the MCP tools that only read (`plugins/reach-mcp-reads`) and the copy stream a working copy follows, answers the type as the key's type map reaches it.
+**Reason:** a connector reads its own items back to update them, with the edges it reads from them (`plugins/reach-edges-own`), and their versions, extensions and table rows, which it writes as it writes the item. It also lists them (`plugins/reach-list-own`), follows their events (`plugins/reach-events-own`), keeps their agreements (`plugins/reach-agreements-own`) and settles their tombstones (`plugins/reach-tombstones-own`). Every other door, among them search, the summaries, an export, a view's items, a folder, the MCP tools that only read (`plugins/reach-mcp-reads`) and the copy stream a working copy follows, answers the type as the key's type map reaches it.
 
 **Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`, `› reads an edge from its own item of the mapped type on every edge door, and never one from the owner's item into its own`, `› reads the versions, extensions and table rows of its own item of the mapped type, and answers the owner's item of that type as one it cannot read`.
 
@@ -1470,19 +1528,27 @@ While a plugin's connector key's mapping holds an enabled kind whose `target_typ
 
 **Tests:** `compliance/connector-reach.test.ts › settles the tombstones of its own purged items of the mapped type by source and natural key, and none by link or under another source`, `› lists its own items of the mapped type page by page and none of the owner's, which the owner lists beside them, and lists, streams and settles none once the kind is off`.
 
+### `plugins/reach-agreements-own`
+
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `POST /connectors/{id}/agreements`, `POST /connectors/{id}/agreements/lookup` or `GET /connectors/{id}/agreements` and an id it names or an agreement it reads is for an item of that type whose `source` is its own, the server MUST answer that item as it would were that type granted read in its type map.
+
+**Reason:** a connector keeps an agreement for every item it syncs, its rows on a mapped type among them. The owner's items of the type, and another source's, stay skipped and left out, as `plugins/reach-target-other-source` keeps them out of every door. The mapping is read in the write that commits the agreements (`plugins/reach-committed`).
+
+**Tests:** `compliance/connector-reach.test.ts › writes, reads, lists and clears the agreements of its own items of the mapped type, and skips the owner's`, `› skips its own items of the mapped type once the kind is off, keeps their agreements, and answers them again once it is back`, `› decides an agreement held on the writer by the mapping saved while it waited`.
+
 ### `plugins/reach-disabled`
 
-When a saved mapping turns a kind off or moves it to another `target_type`, the server MUST answer every later write of the plugin's connector key to the former target type as `plugins/reach-target-own-source` does not hold for it.
+When a saved mapping turns a kind off or moves it to another `target_type`, the server MUST answer every later write of the plugin's connector key to the former target type, other than a move `plugins/reach-former-move` takes, as `plugins/reach-target-own-source` does not hold for it.
 
-**Tests:** `compliance/connector-reach.test.ts › refuses the target type once the kind is off or moved, and takes it again once it is back`.
+**Tests:** `compliance/connector-reach.test.ts › refuses the target type once the kind is off or moved, and takes it again once it is back`, `› refuses to move the owner's item of its own type into the target type, an item into a type outside its reach, and its own item once the kind is off`.
 
 ### `plugins/reach-committed`
 
-When a plugin's connector key writes an item, the server MUST decide the key's reach on the mapping as it stands in the write that commits the item.
+When a plugin's connector key writes an item, or writes or clears an agreement through `POST /connectors/{id}/agreements`, the server MUST decide the key's reach on the mapping as it stands in the write that commits it.
 
 **Reason:** a mapping saved while a write waits on the writer decides that write.
 
-**Tests:** `compliance/connector-reach.test.ts › decides a write held on the writer by the mapping saved while it waited`.
+**Tests:** `compliance/connector-reach.test.ts › decides a write held on the writer by the mapping saved while it waited`, `› decides an agreement held on the writer by the mapping saved while it waited`.
 
 ### `plugins/reach-not-in-map`
 
@@ -1490,15 +1556,47 @@ When the server answers a plugin's connector key, the server MUST answer its `ty
 
 **Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`.
 
+### `plugins/reach-former-read`
+
+While a rewrite request the connector has not cleared names an enabled kind, when the plugin's connector key reads an item of a type that kind was mapped onto before (`plugins/mapping-former-target`) whose `source` is its own, on a door that `plugins/reach-read-own` names, or lists that type with `GET /items`, the server MUST answer it as `plugins/reach-read-own` and `plugins/reach-list-own` answer an item of a mapped target type.
+
+**Reason:** the connector finds its items where the kind was mapped before so that it can move them onto the kind's target. The owner's items of the type, and another source's, stay out of reach (`plugins/reach-target-other-source`), and so do the agreements of its own items there (`connectors/agreements-skip-unreadable`), which it keeps only on a type it writes.
+
+**Tests:** `compliance/connector-reach.test.ts › lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`.
+
+### `plugins/reach-former-move`
+
+While a rewrite request the connector has not cleared names an enabled kind, when the plugin's connector key sends `PATCH /items/{id}` or `POST /items/bulk` with `retype` `true`, moving an item of a type that kind was mapped onto before whose `source` is its own onto the kind's `target_type`, whatever kind wrote the item, the server MUST take the move as it would were the type the item leaves granted write in its type map.
+
+**Reason:** a rewrite moves the connector's items of the kind onto its target, and the server never moves one itself (`plugins/rewrite-request`). The reach is per type: the server does not know which kind wrote an item, so on a type two kinds were mapped onto before, the key may move its own items onto either kind's target, and the connector, which knows each item's kind, moves each onto its own kind's target.
+
+**Tests:** `compliance/connector-reach.test.ts › lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`, `› moves its own items from the former target type onto the kind's new target type and no other`, `› counts and opens under each kind the connector's own items of both kinds on a type both were mapped onto before, and moves each onto its own kind's target`.
+
+### `plugins/reach-former-other-write`
+
+While a plugin's connector key's type map does not grant write on a type an enabled kind was mapped onto before and no enabled kind's `target_type` is that type, the server MUST answer every write of the key to that type, other than a move `plugins/reach-former-move` takes, as `plugins/reach-target-own-source` does not hold for it.
+
+**Reason:** the reach a rewrite opens is for moving the connector's items onto the kind's target, so the connector creates and edits nothing on the type it leaves, and moves nothing onto another type.
+
+**Tests:** `compliance/connector-reach.test.ts › lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`, `› moves its own items from the former target type onto the kind's new target type and no other`.
+
+### `plugins/reach-former-ends`
+
+When the connector clears the last rewrite request naming a kind (`plugins/rewrite-done`), the server MUST answer every later read and write of the plugin's connector key to a type that kind was mapped onto before, and that no enabled kind's `target_type` is, as it answers a type its type map does not reach.
+
+**Reason:** a cleared request says the move is done, so the reach it opened ends with it.
+
+**Tests:** `compliance/connector-reach.test.ts › lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`.
+
 ## Rewriting existing items
 
 ### `plugins/rewrite-count`
 
-When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/mapping/rewrite` with `dry_run` `true`, the server MUST answer `200` with `dry_run` `true`, the mapping's `version` and `kinds` holding, for each kind the request names or, with none named, each enabled kind, its `target_type` and the `count` of items outside the bin of that type whose `source` is the connector's source, and store nothing.
+When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/mapping/rewrite` with `dry_run` `true`, the server MUST answer `200` with `dry_run` `true`, the mapping's `version` and `kinds` holding, for each kind the request names or, with none named, each enabled kind, its `target_type` and the `count` of items outside the bin whose `source` is the connector's source on the kind's own type and on each type it was mapped onto before (`plugins/mapping-former-target`), other than its `target_type`, counted by type whatever kind wrote them, or 0 for a kind that is off, and store nothing.
 
-**Reason:** the owner sees how many items a rewrite would touch before asking for it.
+**Reason:** the owner sees how many items a rewrite would move before asking for it. Items already on the target type stay where they are. The server does not know which kind wrote an item, so a type two kinds were mapped onto before counts the connector's items of both under each kind. A kind that is off writes nothing, so a rewrite moves none of its items.
 
-**Tests:** `compliance/connector-mapping.test.ts › counts exactly the items under the connector's source on a kind's target type, and changes no item on a save or a rewrite`.
+**Tests:** `compliance/connector-mapping.test.ts › counts exactly the items under the connector's source that a rewrite would move onto a kind's target type, from its own type and from a type it was mapped onto before, and changes no item on a save or a rewrite`, `compliance/connector-reach.test.ts › counts and opens under each kind the connector's own items of both kinds on a type both were mapped onto before, and moves each onto its own kind's target`, `› counts nothing and moves from no type for a kind turned off`.
 
 ### `plugins/rewrite-request`
 
@@ -1510,11 +1608,11 @@ When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/
 
 ### `plugins/rewrite-pending`
 
-While the connector has not cleared a rewrite request, the server MUST answer it in `rewrites` in `GET /plugins/{name}/connector/mapping`, with its `number`, `version`, `kinds` and `requested_at`, ordered by `number`.
+While the connector has not cleared a rewrite request, the server MUST answer it in `rewrites` in `GET /plugins/{name}/connector/mapping`, with its `number`, `version`, `kinds`, `from` holding for each of its kinds the types a rewrite moves that kind's items from (`plugins/rewrite-count`), none for a kind that is off, and `requested_at`, ordered by `number`.
 
-**Reason:** the owner may ask again before the connector runs; each request stands until the connector carries it out.
+**Reason:** the owner may ask again before the connector runs; each request stands until the connector carries it out. `from` tells the connector where to find the items it moves.
 
-**Tests:** `compliance/connector-mapping.test.ts › stores each rewrite request under its own number, which the connector clears one at a time, and refuses another key clearing one`.
+**Tests:** `compliance/connector-reach.test.ts › lists, reads and moves its own items back from the former target type while a rewrite is open, never the owner's or another source's, and reaches none once the request is cleared`, `compliance/connector-mapping.test.ts › stores each rewrite request under its own number, which the connector clears one at a time, and refuses another key clearing one`, `compliance/connector-reach.test.ts › counts nothing and moves from no type for a kind turned off`.
 
 ### `plugins/rewrite-unknown-kind`
 
@@ -1698,9 +1796,9 @@ If `POST /plugins/{name}/connector/previews` holds a `mapping` that `PUT /plugin
 
 ### `plugins/preview-draft-kept`
 
-When `POST /plugins/{name}/connector/previews` holds a `mapping` the server takes, the server MUST store and answer it as the entry of `kind` that a save would store, each member it leaves out taken from the kind's default (`plugins/mapping-default`).
+When `POST /plugins/{name}/connector/previews` holds a `mapping` the server takes, the server MUST store and answer it as the entry of `kind` that a save would store (`plugins/mapping-save-defaults`).
 
-**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`, `› stores a draft naming another target type without fields or status overrides as a save would store it`.
 
 ### `plugins/preview-cap`
 

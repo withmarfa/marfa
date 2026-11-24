@@ -752,6 +752,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn guidance_takes_an_apps_recent_sign_in_or_a_key_the_owner_made() {
+        const NOW: i64 = 1_800_000_000_000;
+        const FIFTEEN_MINUTES_MS: i64 = 900_000;
+        let at = |ms: i64| Stamp::from_ms(ms).unwrap().text();
+        let signed_in = |permissions: &[Permission]| Caller::App {
+            key: Box::new(app_key(key("app", "mine", permissions, &[]))),
+            grant: Box::new(oauth::Granted {
+                client_id: "client".into(),
+                owner_id: "owner".into(),
+                grant_id: "grant".into(),
+                authenticated_at: Some(Stamp::from_ms(NOW).unwrap()),
+            }),
+        };
+        let writer = signed_in(&[Permission::SchemaWrite]);
+        let write =
+            |caller: &Caller, ms: i64| caller.require_guidance(None, Some("Use it."), &at(ms));
+
+        write(&writer, NOW).unwrap();
+        write(&writer, NOW + FIFTEEN_MINUTES_MS).unwrap();
+        for late in [NOW + FIFTEEN_MINUTES_MS + 1, NOW - 1] {
+            let refused = write(&writer, late).unwrap_err();
+            assert_eq!(refused.code, Code::InsufficientUserAuthentication);
+            assert_eq!(refusal_detail(&refused, "max_age"), Some(json!(900)));
+        }
+        let stale = at(NOW + FIFTEEN_MINUTES_MS + 1);
+        writer
+            .require_guidance(Some("Kept."), Some("Kept."), &stale)
+            .unwrap();
+        writer
+            .require_guidance(Some("Kept."), None, &at(NOW))
+            .unwrap();
+        assert_eq!(
+            writer
+                .require_guidance(Some("Kept."), None, &stale)
+                .unwrap_err()
+                .code,
+            Code::InsufficientUserAuthentication
+        );
+
+        let lacking = write(&signed_in(&[]), NOW + FIFTEEN_MINUTES_MS + 1).unwrap_err();
+        assert_eq!(lacking.code, Code::Forbidden);
+        assert_eq!(
+            refusal_detail(&lacking, "required_scope"),
+            Some(json!("schema.write"))
+        );
+
+        let owners = Caller::Key(Box::new(key("o", "o", &[Permission::SchemaWrite], &[])));
+        write(&owners, NOW).unwrap();
+        write(&Caller::local(), NOW).unwrap();
+        let mut minted = key("m", "m", &[Permission::SchemaWrite], &[]);
+        minted.made_by = crate::app::keys::Maker::App("client".into());
+        let mut unknown = key("u", "u", &[Permission::SchemaWrite], &[]);
+        unknown.made_by = crate::app::keys::Maker::Unknown;
+        for refused in [
+            app_key(key("a", "a", &[Permission::SchemaWrite], &[])),
+            minted,
+            unknown,
+        ] {
+            let refused = write(&Caller::Key(Box::new(refused)), NOW).unwrap_err();
+            assert_eq!(refused.code, Code::Forbidden);
+            assert_eq!(
+                refusal_detail(&refused, "changes"),
+                Some(json!(["guidance"]))
+            );
+        }
+    }
+
     fn grants_of(value: Value) -> Grants {
         let mut grants = Grants::default();
         grants.maps[Axis::Type as usize] = map(Axis::Type, value);
@@ -919,20 +987,20 @@ mod tests {
         let unknown = Caller::Key(Box::new(unknown));
         let owners = Caller::Key(Box::new(owners));
         owners.require_vendor_move().unwrap();
-        owners.require_guidance(None, Some("Use it.")).unwrap();
+        owners.require_guidance(None, Some("Use it."), "").unwrap();
         assert_eq!(
             unknown.require_vendor_move().unwrap_err().code,
             Code::Forbidden
         );
         assert_eq!(
             unknown
-                .require_guidance(None, Some("Use it."))
+                .require_guidance(None, Some("Use it."), "")
                 .unwrap_err()
                 .code,
             Code::Forbidden
         );
         unknown
-            .require_guidance(Some("Kept."), Some("Kept."))
+            .require_guidance(Some("Kept."), Some("Kept."), "")
             .unwrap();
         assert_eq!(unknown.maker(), crate::app::keys::Maker::Unknown);
     }

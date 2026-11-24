@@ -104,6 +104,15 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "GET /auth/error",
         "the OAuth failure page a redirect lands on",
     ),
+    (
+        "GET /auth/forgot-password",
+        "how to reset the owner's password, for a person who cannot sign in",
+    ),
+    ("GET /i/", "the page of an item's link with no id"),
+    (
+        "GET /i/{*id}",
+        "the page an item's link opens, which names no operation",
+    ),
     ("GET /auth/consent", "the consent screen"),
     ("POST /auth/consent", "its decision"),
     (
@@ -112,6 +121,14 @@ const UNPUBLISHED: &[(&str, &str)] = &[
     ),
     ("GET /auth/device", "the device-code entry page"),
     ("POST /auth/device", "its form post"),
+    (
+        "GET /auth/device/check",
+        "the page that shows a device code to compare",
+    ),
+    (
+        "POST /auth/device/check",
+        "its confirmation that the code matches",
+    ),
     ("GET /auth/device/consent", "the device consent screen"),
     ("POST /auth/device/consent", "its decision"),
     ("GET /setup", "first-party owner setup page"),

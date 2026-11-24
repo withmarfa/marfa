@@ -1026,7 +1026,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     fn answer(&self, status: u16, item: &Item, also: &str) -> Result<Done> {
         self.answer_with(
             status,
-            item.answered(&self.read_only, self.caller())?,
+            item.answered(&self.read_only, self.caller(), &self.unit.links)?,
             item,
             also,
         )
@@ -1039,6 +1039,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             self.caller(),
             &self.catalog,
             &self.unit.cursors,
+            &self.unit.links,
         )?;
         self.answer_with(status, shown, item, also)
     }
@@ -1394,15 +1395,13 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     }
 
     fn update(&self, update: Update) -> Result<Done> {
-        let row = self.gate().writable_row(&update.id)?;
-        let moving = update.retype
-            && update
-                .type_id
-                .as_deref()
-                .is_some_and(|declared| declared != row.type_id);
+        let to = update.type_id.as_deref().filter(|_| update.retype);
+        let row = self.gate().writable_row_moving(&update.id, to)?;
+        let moving = to.is_some_and(|declared| declared != row.type_id);
         if moving {
             if let Some(destination) = update.type_id.as_deref() {
-                self.gate().type_gate(destination)?;
+                self.gate()
+                    .type_gate_under(destination, Some(&row.source))?;
             }
         } else if let Some(declared) = update.type_id.as_deref() {
             require_declared(declared, &row)?;
@@ -2254,7 +2253,11 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 )
             });
         }
-        self.gate().row_gate(&row)?;
+        if retype {
+            self.gate().moving_gate(&row, &put.type_id)?;
+        } else {
+            self.gate().row_gate(&row)?;
+        }
         if row.state == "trashed" {
             if !retype {
                 refuse_other_type(&row, &put.type_id, named_by_id)?;
@@ -2314,7 +2317,10 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         named_by_id: bool,
     ) -> Result<Landing> {
         let moving = retype && put.type_id != row.type_id;
-        if !moving {
+        if moving {
+            self.gate()
+                .type_gate_under(&put.type_id, Some(&row.source))?;
+        } else {
             refuse_other_type(&row, &put.type_id, named_by_id)?;
         }
         let writing = Writing {
@@ -2634,7 +2640,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let gate = self.gate();
         let row = gate.readable_row(&selected.id)?;
         gate.row_gate(&row)?;
-        gate.type_gate(to)?;
+        gate.type_gate_under(to, Some(&row.source))?;
         self.change_row(
             row,
             Writing {
@@ -2666,7 +2672,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             OwnerAct::Trash | OwnerAct::Restore => self.caller().require_local()?,
         }
         let row = self.gate().owner_row(&id)?;
-        let summary = summary_of(self.unit.tx(), &self.catalog, &row)?;
+        let summary = summary_of(self.unit.tx(), &self.catalog, &row, &self.unit.links)?;
         if row.version != version {
             let conflict = Done {
                 status: 409,

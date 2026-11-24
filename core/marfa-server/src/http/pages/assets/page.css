@@ -1,33 +1,73 @@
+/* Marfa's own pages: one stylesheet for every page, built from the parts below. The parts are described in README.md. */
+
 :root {
   color-scheme: light dark;
-  --page: #f5f5f7;
-  --surface: #ffffff;
-  --text: #1d1d1f;
-  --muted: #5b5b63;
-  --line: #c7c7cf;
-  --accent: #0a5fd1;
-  --on-accent: #ffffff;
-  --danger: #b3261e;
-  --danger-wash: #fdeceb;
-  --caution: #7a4b00;
-  --caution-wash: #fff4dc;
-  --focus: #0a5fd1;
+  --bg: #fff;
+  --t1: rgb(0 0 0 / 0.86);
+  --t2: rgb(0 0 0 / 0.57);
+  --line: rgb(0 0 0 / 0.09);
+  --edge: rgb(0 0 0 / 0.17);
+  --focus: rgb(0 0 0 / 0.45);
+  --ring: rgb(0 0 0 / 0.07);
+  --fill: rgb(0 0 0 / 0.055);
+  --well: rgb(0 0 0 / 0.04);
+  --blue: #0088ff;
+  --on-blue: #fff;
+  --link: #06c;
+  --red: #c3161c;
+  --red-fill: rgb(255 56 60 / 0.1);
+  --red-ring: rgb(195 22 28 / 0.1);
+  --scrim: rgb(0 0 0 / 0.22);
+  --shadow: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 24px 64px rgb(0 0 0 / 0.22);
+  --shadow-menu: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 10px 32px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.06);
+
+  --control: 2rem;
+  --small: 1.75rem;
+  --field: 3.125rem;
+  --field-text: 0.9375rem;
+  --field-x: 0.875rem;
+  --field-up: 0.4375rem;
+  --field-down: 1.0625rem;
+  --field-r: 0.625rem;
+  --group-r: 0.75rem;
 }
 
+/* The dark palette has its own value for each property above, checked for contrast. */
 @media (prefers-color-scheme: dark) {
   :root {
-    --page: #111113;
-    --surface: #1e1e21;
-    --text: #f5f5f7;
-    --muted: #a6a6ae;
-    --line: #48484f;
-    --accent: #5aa2ff;
-    --on-accent: #001a38;
-    --danger: #ff9188;
-    --danger-wash: #3a1d1b;
-    --caution: #f4c76a;
-    --caution-wash: #38290b;
-    --focus: #8fc0ff;
+    --bg: #1c1c1e;
+    --t1: rgb(255 255 255 / 0.88);
+    --t2: rgb(255 255 255 / 0.62);
+    --line: rgb(255 255 255 / 0.14);
+    --edge: rgb(255 255 255 / 0.25);
+    --focus: rgb(255 255 255 / 0.6);
+    --ring: rgb(255 255 255 / 0.12);
+    --fill: rgb(255 255 255 / 0.1);
+    --well: rgb(255 255 255 / 0.07);
+    --blue: #0a84ff;
+    --on-blue: #001a38;
+    --link: #6cb4ff;
+    --red: #ff8a84;
+    --red-fill: rgb(255 69 58 / 0.18);
+    --red-ring: rgb(255 138 132 / 0.25);
+    --scrim: rgb(0 0 0 / 0.5);
+    --shadow: 0 0 0 0.5px rgb(255 255 255 / 0.14), 0 24px 64px rgb(0 0 0 / 0.6);
+    --shadow-menu: 0 0 0 0.5px rgb(255 255 255 / 0.18), 0 10px 32px rgb(0 0 0 / 0.5);
+  }
+}
+
+/* On a phone: the same parts, with 44 px targets. */
+@media (max-width: 600px) {
+  :root {
+    --control: 2.75rem;
+    --small: 2.75rem;
+    --field: 3.5rem;
+    --field-text: 1.0625rem;
+    --field-x: 0.9375rem;
+    --field-up: 0.5625rem;
+    --field-down: 1.125rem;
+    --field-r: 0.75rem;
+    --group-r: 0.875rem;
   }
 }
 
@@ -39,540 +79,1104 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+[hidden] {
+  display: none !important;
+}
+
+/* Page: one column, its content left-aligned. */
 body {
-  margin: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
   min-height: 100vh;
-  padding: 1.5rem 1rem 3rem;
-  background: var(--page);
-  color: var(--text);
-  font: 1rem/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  margin: 0;
+  padding: 7.5rem 1.5rem 4rem;
+  background: var(--bg);
+  color: var(--t1);
+  font: 0.9375rem/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
   overflow-wrap: anywhere;
 }
 
-body:has(.wide-page) {
-  --width: 38rem;
-}
-
-.brand {
-  max-width: var(--width, 26rem);
-  margin: 0 auto 1rem;
-  color: var(--muted);
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
-
-main {
-  max-width: var(--width, 26rem);
-  margin: 0 auto;
-  padding: 1.5rem;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 0.75rem;
-}
-
-@media (max-width: 30rem) {
+@media (max-width: 600px) {
   body {
-    padding: 1rem 0.75rem 2rem;
-  }
-
-  main {
-    padding: 1.25rem 1rem;
+    padding: 3.5rem 1.25rem 2.5rem;
   }
 }
 
-h1 {
-  margin: 0 0 0.5rem;
-  font-size: 1.5rem;
-  line-height: 1.25;
+.col {
+  flex: 0 1 23.75rem;
+  min-width: 0;
 }
 
-h2 {
-  margin: 0 0 0.5rem;
-  font-size: 1.1875rem;
-  line-height: 1.3;
+@media (max-width: 600px) {
+  .col {
+    flex: 1 1 auto;
+  }
 }
 
-p {
-  margin: 0 0 1rem;
+:where(p, h1, h2, h3, ul, fieldset) {
+  margin: 0;
+  padding: 0;
 }
 
-.lede {
-  color: var(--muted);
-}
-
-.small {
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-
-.stack > * + * {
-  margin-top: 1rem;
-}
-
-.stack > p {
-  margin-bottom: 0;
-}
-
-.field label {
-  display: block;
-  margin-bottom: 0.25rem;
-  font-weight: 600;
-}
-
-.field .hint,
-.field .error {
-  margin: 0.25rem 0 0;
-  font-size: 0.875rem;
-}
-
-.field .hint {
-  color: var(--muted);
-}
-
-.field .error {
-  color: var(--danger);
-}
-
-input[type="text"],
-input[type="email"],
-input[type="password"] {
-  display: block;
-  width: 100%;
-  min-height: 2.75rem;
-  padding: 0.5rem 0.75rem;
-  background: var(--surface);
-  color: inherit;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  font: inherit;
-}
-
-input[aria-invalid="true"] {
-  border-color: var(--danger);
-}
-
-.code {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  letter-spacing: 0.08em;
-}
-
-.button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 2.75rem;
-  padding: 0.5rem 1.25rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  background: transparent;
-  color: var(--accent);
-  font: inherit;
-  font-weight: 600;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-
-.button.wide {
-  display: flex;
-  width: 100%;
-}
-
-.button[hidden] {
-  display: none;
-}
-
-.button:disabled {
-  opacity: 0.6;
-  cursor: default;
+:where(ul) {
+  list-style: none;
 }
 
 a {
-  color: var(--accent);
+  color: var(--link);
+  text-decoration: none;
 }
 
 :focus-visible {
-  outline: 3px solid var(--focus);
+  outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
 
-.notice {
-  margin: 0 0 1rem;
-  padding: 0.75rem 1rem;
-  border-radius: 0.5rem;
-  border: 1px solid var(--line);
+code {
+  padding: 0.1em 0.3em;
+  border-radius: 0.25rem;
+  background: var(--well);
+  font: 0.875em ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-.notice > :last-child {
-  margin-bottom: 0;
+/* Head: a title, and at most one line under it. */
+.head {
+  margin-bottom: 1.5rem;
 }
 
-.notice.error {
-  background: var(--danger-wash);
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
-.notice.caution {
-  background: var(--caution-wash);
-  border-color: var(--caution);
-  color: var(--caution);
-}
-
-.part + .part {
-  margin-top: 1.5rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--line);
-}
-
-.app-name {
+.head h1 {
+  font-size: 1.5rem;
+  line-height: 1.875rem;
   font-weight: 600;
+  letter-spacing: -0.017em;
 }
 
-.or {
-  margin: 1rem 0;
-  color: var(--muted);
+.head .lede {
+  margin-top: 0.375rem;
+  color: var(--t2);
+}
+
+@media (max-width: 600px) {
+  .head h1 {
+    font-size: 1.625rem;
+    line-height: 2rem;
+  }
+}
+
+/* Buttons: filled capsules, since every button here stands on its own. Blue for the one main action. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-width: 4.75rem;
+  max-width: 100%;
+  min-height: var(--control);
+  padding: 0.5rem 0.875rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--t1);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.2;
   text-align: center;
-  font-size: 0.875rem;
+  cursor: default;
 }
 
+.btn.primary {
+  background: var(--blue);
+  color: var(--on-blue);
+}
+
+.btn.danger {
+  background: var(--red-fill);
+  color: var(--red);
+}
+
+.btn.small {
+  min-height: var(--small);
+  min-width: 0;
+  padding: 0.25rem 0.8125rem;
+}
+
+.btn.more {
+  width: var(--small);
+  padding: 0;
+  border-radius: 50%;
+}
+
+.btn:disabled {
+  opacity: 0.38;
+}
+
+@media (max-width: 600px) {
+  .btn {
+    min-width: 5.5rem;
+    padding: 0.5rem 1.125rem;
+    font-size: 1rem;
+  }
+
+  .btn.small {
+    padding: 0.25rem 0.875rem;
+    font-size: 0.875rem;
+  }
+
+  .btn.more {
+    padding: 0;
+  }
+}
+
+/* Actions: at the trailing edge, the main action last. One button may sit at the leading edge. */
 .actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.75rem;
+}
+
+.actions .lead {
+  margin-right: auto;
+}
+
+/* Keep the input before its label so CSS can use :placeholder-shown. */
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.fields:has(.gh) {
+  gap: 1.5rem;
+}
+
+.field {
+  position: relative;
+}
+
+.field label {
+  position: absolute;
+  top: calc((var(--field) - 1.375rem) / 2);
+  right: calc(var(--field-x) + 1px);
+  left: calc(var(--field-x) + 1px);
+  overflow: hidden;
+  color: var(--t2);
+  font-size: var(--field-text);
+  line-height: 1.375rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  transition:
+    top 0.125s ease-in,
+    font-size 0.125s ease-in,
+    line-height 0.125s ease-in;
+}
+
+.field .in:focus ~ label,
+.field .in:not(:placeholder-shown) ~ label,
+.field .in:autofill ~ label {
+  top: var(--field-up);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+.in {
+  display: block;
+  width: 100%;
+  height: var(--field);
+  padding: var(--field-down) var(--field-x) 0;
+  border: 1px solid var(--edge);
+  border-radius: var(--field-r);
+  background: var(--bg);
+  color: var(--t1);
+  font: inherit;
+  font-size: var(--field-text);
+  outline: none;
+}
+
+.in[type="password"]:not(:placeholder-shown) {
+  letter-spacing: 0.14em;
+}
+
+.in:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.in.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.875rem;
+  letter-spacing: 0.06em;
+}
+
+@media (max-width: 600px) {
+  .in.mono {
+    font-size: 1rem;
+    letter-spacing: 0;
+  }
+}
+
+.in[aria-invalid="true"] {
+  border-color: var(--red);
+}
+
+.in[aria-invalid="true"] ~ label {
+  color: var(--red);
+}
+
+.in[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 3px var(--red-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .field label {
+    transition: none;
+  }
+}
+
+/* A group of fields shares one box; a lone field is a group of one. */
+.group .field + .field {
+  margin-top: -1px;
+}
+
+.group .in {
+  border-radius: 0;
+}
+
+.group .field:first-child .in {
+  border-radius: var(--group-r) var(--group-r) 0 0;
+}
+
+.group .field:last-child .in {
+  border-radius: 0 0 var(--group-r) var(--group-r);
+}
+
+.group .field:only-child .in {
+  border-radius: var(--field-r);
+}
+
+.group .in:focus,
+.group .in[aria-invalid="true"] {
+  position: relative;
+  z-index: 1;
+}
+
+.group .in:focus ~ *,
+.group .in[aria-invalid="true"] ~ * {
+  z-index: 2;
+}
+
+.gh {
+  margin: 0 0 0.625rem;
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  font-weight: 600;
+  color: var(--t1);
+}
+
+/* Under a group: one hint or one problem, which takes the hint's place; then a link, if there is one. */
+.under {
+  margin-top: 0.5rem;
+  color: var(--t2);
+  font-size: 0.8125rem;
+}
+
+.under > * + * {
+  margin-top: 0.5rem;
+}
+
+.under a,
+.under .link {
+  display: inline-flex;
+  align-items: center;
+}
+
+@media (max-width: 600px) {
+  .under a,
+  .under .link {
+    min-height: 2.75rem;
+    margin: -0.8125rem 0;
+  }
+}
+
+/* A button drawn as a link: it acts, where a link goes. */
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  cursor: default;
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* A line a script fills in has nothing to show until it has something to say. */
+[data-note]:empty {
+  display: none;
+}
+
+.under:has(> [data-note]:empty:only-child) {
+  display: none;
+}
+
+.under > [data-note]:empty + * {
+  margin-top: 0;
+}
+
+.hint {
+  color: var(--t2);
+  font-size: 0.8125rem;
+}
+
+/* A problem: the icon is drawn here, so text a script sets in place needs no markup. */
+.err {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+  color: var(--red);
+  font-size: 0.8125rem;
+}
+
+.err::before {
+  content: "";
+  flex: none;
+  width: 0.9375rem;
+  height: 0.9375rem;
+  margin-top: 0.0625rem;
+  background: currentcolor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 4.5 20.5 19h-17z'/%3E%3Cpath d='M12 10v4M12 16.6v.01'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+/* A short code in cells. Without the script, or in forced colors, a typed code shows in its input instead. */
+.code {
+  position: relative;
+}
+
+.code .cells {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.code .cell {
+  position: relative;
+  display: flex;
+  flex: 0 1 2.75rem;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 3.25rem;
+  border: 1px solid var(--edge);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  color: var(--t1);
+  font: 500 1.375rem/1 ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.code .dash {
+  flex: none;
+  width: 0.625rem;
+  height: 2px;
+  margin: 0 0.1875rem;
+  border-radius: 1px;
+  background: var(--t2);
+  opacity: 0.7;
+}
+
+.code.shown .cell {
+  border-color: transparent;
+  background: var(--well);
+}
+
+.code.bad .cell {
+  border-color: var(--red);
+}
+
+.code .said {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.code .in {
+  height: 3.25rem;
+  padding: 0 0.875rem;
+  font: 500 1.375rem/1 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.code .in ~ .cells {
+  display: none;
+}
+
+@media (forced-colors: none) {
+  .js .code:not(.plain) .in ~ .cells {
+    display: flex;
+  }
+
+  .js .code:not(.plain) .in {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    height: 100%;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    color: transparent;
+    caret-color: transparent;
+  }
+
+  .js .code:not(.plain) .in::selection {
+    background: transparent;
+  }
+
+  .js .code:not(.plain) .in:focus-visible {
+    outline: none;
+  }
+}
+
+.code .cell.at {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.code.bad .cell.at {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px var(--red-ring);
+}
+
+.code .cell.at:empty::after {
+  content: "";
+  width: 1.5px;
+  height: 1.5rem;
+  background: var(--t1);
+}
+
+.code .cell.at:not(:empty)::after {
+  content: "";
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  left: 0.25rem;
+  width: 1.5px;
+  background: var(--t1);
+}
+
+.code .cell.at.end:not(:empty)::after {
+  right: 0.25rem;
+  left: auto;
+}
+
+.code .cell.picked {
+  background: color-mix(in srgb, Highlight 30%, var(--bg));
+}
+
+.code + .hint,
+.code + .err {
+  margin-top: 0.625rem;
+}
+
+@media (max-width: 600px) {
+  .code .cells {
+    gap: 0.3125rem;
+  }
+
+  .code .cell {
+    flex-basis: 2.25rem;
+    height: 3rem;
+    font-size: 1.25rem;
+  }
+
+  .code .in {
+    height: 3rem;
+  }
+}
+
+/* A note under a box. */
+.note {
+  margin-top: 0.875rem;
+  color: var(--t2);
+  font-size: 0.8125rem;
+}
+
+/* Box of rows: one line each (or two lines for every row in the box); the words, then one control at the end. */
+.box {
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--bg);
+}
+
+.box > li {
+  position: relative;
+  display: flex;
+  align-items: center;
   gap: 0.75rem;
+  min-height: 3rem;
+  padding: 0.375rem 0.875rem;
 }
 
-.actions > .button {
-  flex: 1 1 8rem;
+@media (max-width: 600px) {
+  .box > li {
+    padding-block: 0.125rem;
+  }
+
+  .box > li > .t {
+    padding-block: 0.25rem;
+  }
 }
 
+.box > li + li::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0.875rem;
+  left: 0.875rem;
+  height: 1px;
+  background: var(--line);
+}
+
+.box .t {
+  flex: 1;
+  min-width: 0;
+}
+
+.box > li.two {
+  min-height: 3.75rem;
+}
+
+.box > li.two .t {
+  display: flex;
+  flex-direction: column;
+}
+
+.box > li.two .m {
+  overflow: hidden;
+  color: var(--t2);
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.box > li.quiet {
+  color: var(--t2);
+}
+
+/* Pop-up: a real select, one width so a column of them lines up. */
+.pop {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  width: 8.5rem;
+  height: var(--small);
+}
+
+.pop select {
+  appearance: none;
+  width: 100%;
+  height: 100%;
+  padding: 0 1.75rem 0 0.625rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--t1);
+  font: inherit;
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.pop::after {
+  content: "";
+  position: absolute;
+  right: 0.375rem;
+  width: 0.875rem;
+  height: 0.875rem;
+  background: var(--t2);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8.5 9.5 12 6l3.5 3.5M8.5 14.5 12 18l3.5-3.5'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  pointer-events: none;
+}
+
+.pop select:disabled {
+  opacity: 0.38;
+}
+
+@media (max-width: 600px) {
+  .pop select {
+    font-size: 0.875rem;
+  }
+
+  .pop {
+    width: 8.25rem;
+  }
+}
+
+/* A dialog over the page: a sheet at the foot of the screen on a phone. */
+dialog {
+  inset-block: clamp(1rem, 20vh, 11.875rem) auto;
+  width: 26.25rem;
+  max-width: calc(100% - 3rem);
+  max-height: calc(100dvh - 2rem);
+  margin: 0 auto;
+  padding: 1.5rem;
+  overflow: auto;
+  border: 0;
+  border-radius: 0.875rem;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  color: var(--t1);
+}
+
+dialog::backdrop {
+  background: var(--scrim);
+}
+
+dialog h2 {
+  font-size: 1.125rem;
+  line-height: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+dialog .lede {
+  margin: 0.25rem 0 1.125rem;
+  color: var(--t2);
+}
+
+dialog .lede.err {
+  color: var(--red);
+}
+
+dialog h2 + .fields,
+dialog .lede + .fields {
+  margin-top: 1.125rem;
+}
+
+dialog .actions {
+  margin-top: 1.5rem;
+}
+
+@media (max-width: 600px) {
+  dialog {
+    inset-block: auto 0;
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 1.5rem 1.25rem 2.25rem;
+    border-radius: 1.125rem 1.125rem 0 0;
+  }
+}
+
+/* Without a script nothing can open a dialog, so one that holds a form the page needs is drawn under the page's own content. */
+html:not(.js) dialog[data-inline] {
+  display: block;
+  position: static;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  overflow: visible;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+}
+
+/* Icons in rows and buttons, and sections: a heading over a box, and the line after it. */
+.box > li > .ic,
+.row-button .ic,
+.btn .ic {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.box > li > .ic,
+.row-button .ic {
+  color: var(--t2);
+}
+
+.btn .ic {
+  width: 1rem;
+  height: 1rem;
+}
+
+.box.sym > li + li::before {
+  left: 2.75rem;
+}
+
+.sec {
+  margin-top: 1.5rem;
+}
+
+.sec > h2 {
+  display: flex;
+  align-items: center;
+  min-height: 1.75rem;
+  margin-bottom: 0.375rem;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  font-weight: 600;
+  color: var(--t1);
+}
+
+.after {
+  margin-top: 0.5rem;
+  color: var(--t2);
+  font-size: 0.8125rem;
+}
+
+.sec form .err {
+  margin-top: 0.5rem;
+}
+
+/* Adding is the box's last row, the whole row a button, never a button in the section's heading. */
+.box > li.act {
+  padding: 0;
+  color: var(--t2);
+}
+
+.row-button {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.375rem 0.875rem;
+  border: 0;
+  border-radius: 0 0 0.6875rem 0.6875rem;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: default;
+}
+
+.row-button:focus-visible {
+  outline-offset: -2px;
+}
+
+.row-button:disabled {
+  opacity: 0.38;
+}
+
+/* A row's menu: a popover the script places beside its button. */
+.menu {
+  inset: auto;
+  min-width: 9.375rem;
+  margin: 0;
+  padding: 0.3125rem;
+  border: 0;
+  border-radius: 0.625rem;
+  background: var(--bg);
+  box-shadow: var(--shadow-menu);
+  color: var(--t1);
+  font-size: 0.875rem;
+  overflow: visible;
+}
+
+.menu:popover-open {
+  display: flex;
+  flex-direction: column;
+}
+
+.menu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 0.3125rem 0.625rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: default;
+}
+
+.menu button:hover,
+.menu button:focus-visible {
+  background: var(--fill);
+}
+
+.menu button:focus-visible {
+  outline-offset: -2px;
+}
+
+.menu .danger {
+  color: var(--red);
+}
+
+@media (max-width: 600px) {
+  .menu button {
+    min-height: 2.75rem;
+  }
+}
+
+/* A command on a row's second line. */
+.box > li.two .m code {
+  padding: 0;
+  background: none;
+  color: var(--t1);
+  font-size: 0.78125rem;
+  line-height: 1.4;
+}
+
+/* A row that is a link: the whole row is the link, and a chevron says it goes to another page. */
+.box > li.link {
+  padding: 0;
+}
+
+.row-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  align-self: stretch;
+  min-height: 3rem;
+  padding: 0.375rem 0.875rem;
+  border-radius: 0.6875rem;
+  color: inherit;
+}
+
+.row-link:focus-visible {
+  outline-offset: -2px;
+}
+
+.row-link > .ic {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  color: var(--t2);
+}
+
+.row-link::after {
+  content: "";
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  background: var(--t2);
+  opacity: 0.7;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 6l6 6-6 6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+/* "Can't find it?" opens in place: the steps are a box, and the line after it comes from the page. */
+details .box {
+  margin-top: 0.75rem;
+  color: var(--t1);
+  font-size: 0.9375rem;
+}
+
+details .box + .hint {
+  margin-top: 0.5rem;
+}
+
+/* Reading aids: what an owner may open, and inline code. */
 details {
   font-size: 0.9375rem;
 }
 
 summary {
-  cursor: pointer;
-  color: var(--accent);
-  min-height: 2.75rem;
   display: flex;
   align-items: center;
+  min-height: 2.75rem;
+  color: var(--link);
+  cursor: default;
 }
 
 details > :not(summary) {
-  color: var(--muted);
+  color: var(--t2);
 }
 
-.powers-each > .row {
-  color: inherit;
+details p + p {
+  margin-top: 0.5rem;
 }
 
-.powers-all {
-  border-top: 0;
+.fields + details,
+.head + details {
+  margin-top: 0.5rem;
 }
 
-code {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 0.9em;
-  padding: 0.1em 0.3em;
-  border-radius: 0.25rem;
-  background: var(--page);
+/* "Can't find it?" sits under the field like a link under a group. */
+.fields + details {
+  font-size: 0.8125rem;
 }
 
-dialog {
-  width: calc(100% - 2rem);
-  max-width: 24rem;
-  padding: 1.5rem;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 0.75rem;
+.fields + details > summary {
+  min-height: 1.125rem;
 }
 
-dialog::backdrop {
-  background: rgb(0 0 0 / 0.5);
-}
-
-[hidden] {
-  display: none !important;
-}
-
-@media (forced-colors: active) {
-  .button.primary {
-    border-color: ButtonText;
+@media (max-width: 600px) {
+  .fields + details > summary {
+    min-height: 2.75rem;
+    margin: -0.8125rem 0;
   }
 }
 
-.wide-page > h1 {
-  margin-bottom: 1rem;
+.fields + .err,
+.box + .err,
+.fields + .note {
+  margin-top: 0.75rem;
 }
 
-.device-check {
-  margin: 1.25rem 0 1rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  background: var(--page);
+.note + form {
+  margin-top: 1.25rem;
 }
 
-.device-check h2 {
-  margin: 0 0 0.25rem;
-  font-size: 1rem;
-}
-
-.device-check p {
-  margin: 0.25rem 0 0;
-}
-
-.device-check .user-code {
-  margin: 0.25rem 0 0.5rem;
-  font-size: 1.75rem;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
-.facts,
-.held ul,
-.gives {
-  margin: 0 0 1rem;
-  padding-left: 1.25rem;
-}
-
-.facts {
-  color: var(--muted);
-  font-size: 0.9375rem;
-}
-
-.held {
-  margin-bottom: 1.25rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-}
-
-.held h2 {
-  margin-bottom: 0.25rem;
-  font-size: 1rem;
-}
-
-.held ul {
-  margin: 0;
-  list-style: none;
-  padding: 0;
-}
-
-.held li {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.held .level {
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-fieldset.access {
-  margin: 0 0 1rem;
-  padding: 0;
+fieldset {
+  min-inline-size: 0;
   border: 0;
-  min-width: 0;
 }
 
-fieldset.access legend {
-  margin-bottom: 0.5rem;
+legend {
   padding: 0;
-  font-size: 1.1875rem;
-  font-weight: 600;
 }
 
-fieldset.access > p {
-  margin-bottom: 0.25rem;
+/* A row under another row, and a row with a second line. */
+.box > li.sub .t {
+  padding-left: 1rem;
 }
 
-.gives {
-  color: var(--muted);
+.box > li.sub::before {
+  left: 1.875rem;
 }
 
-.gives .danger,
-.line.danger {
-  color: var(--danger);
+.box > li.noted {
+  padding-block: 0.5625rem;
 }
 
-.choice {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: 0.75rem;
-  align-items: start;
-  margin-top: 0.5rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  cursor: pointer;
+.box .m {
+  display: block;
+  color: var(--t2);
+  font-size: 0.8125rem;
+  line-height: 1.0625rem;
 }
 
-.choice:has(input:checked) {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+.box .m.ident {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.78125rem;
 }
 
-.choice:has(input:focus-visible) {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
+.box > li.hint {
+  min-height: 0;
+  padding-block: 0.5rem;
 }
 
-.choice input {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-  margin: 0.2rem 0 0;
-  width: 1.125rem;
-  height: 1.125rem;
-  accent-color: var(--accent);
-}
-
-.choice .name {
-  grid-column: 2;
-  font-weight: 600;
-}
-
-.choice .sub {
-  grid-column: 2;
-  color: var(--muted);
-  font-size: 0.9375rem;
-}
-
-.choose {
-  margin-bottom: 1rem;
-}
-
-.js .choose[data-needs-choice]:not(.open),
-.js .types:not(.open) {
+/* A part a choice shows or hides is shown by script only; without script every part shows,
+   and the sentences that depend on a choice give way to the ones that hold for all. */
+.js [data-shown-by]:not(.open),
+.js .without-script,
+html:not(.js) .when {
   display: none;
 }
 
-.choose h3 {
-  margin: 1.25rem 0 0.25rem;
-  font-size: 1rem;
+/* A line of sentences shows only while one of them does. */
+.js .after.whens:not(:has(.always, .when.open)),
+html:not(.js) .after.whens:not(:has(.always, .without-script)) {
+  display: none;
 }
 
-.choose .hint {
-  margin: 0 0 0.5rem;
-  color: var(--muted);
-  font-size: 0.875rem;
+/* The allow page. */
+/* The sections carry their own space above, so the head leaves none below. */
+.head:has(~ .consent) {
+  margin-bottom: 0;
 }
 
-.types {
-  margin: 0 0 0 0.75rem;
-  padding-left: 0.75rem;
-  border-left: 2px solid var(--line);
+.consent .err[data-form-error] {
+  margin-top: 1rem;
 }
 
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.625rem 0;
-  border-top: 1px solid var(--line);
+/* Allow comes first in the markup, so Return sends it; it is drawn last. */
+.consent .actions .btn:not(.primary) {
+  order: 1;
 }
 
-.choose > .row:first-child,
-.types > .hint + .row {
-  border-top: 0;
+.consent .actions .btn.primary {
+  order: 2;
 }
 
-.row .text {
-  min-width: 0;
-}
-
-.row .title {
-  font-weight: 600;
-}
-
-.row .line,
-.row .ident {
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-
-.row .ident {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-}
-
-.row select {
-  flex: none;
-  max-width: 11rem;
-  min-height: 2.75rem;
-  padding: 0.25rem 0.5rem;
-  background: var(--surface);
-  color: inherit;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  font: inherit;
-}
-
-.row input[type="checkbox"][role="switch"] {
-  appearance: none;
-  flex: none;
+/* Choose is a button drawn over the start of the actions while the choices are closed. */
+.consent .choose {
   position: relative;
-  width: 2.75rem;
-  height: 1.625rem;
-  margin: 0;
-  border: 1px solid var(--line);
-  border-radius: 1rem;
-  background: var(--page);
-  cursor: pointer;
+  display: flow-root;
+  font-size: inherit;
 }
 
-.row input[type="checkbox"][role="switch"]::after {
-  content: "";
+.consent .choose:not([open]) > summary {
   position: absolute;
-  top: 0.125rem;
-  left: 0.125rem;
-  width: 1.25rem;
-  height: 1.25rem;
-  border-radius: 50%;
-  background: var(--muted);
-  transition: transform 0.15s;
+  top: 1.75rem;
+  left: 0;
+  z-index: 1;
 }
 
-.row input[type="checkbox"][role="switch"]:checked {
-  background: var(--accent);
-  border-color: var(--accent);
+.consent .choose[open] > summary {
+  display: none;
 }
 
-.row input[type="checkbox"][role="switch"]:checked::after {
-  background: var(--on-accent);
-  transform: translateX(1.125rem);
+.consent .choose > summary {
+  list-style: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .row input[type="checkbox"][role="switch"]::after {
-    transition: none;
-  }
+.consent .choose > summary::-webkit-details-marker {
+  display: none;
 }
 
-@media (max-width: 30rem) {
-  .row:not(.power) {
-    flex-wrap: wrap;
-  }
+.consent .choose:not([open]) ~ .actions {
+  padding-left: 6rem;
+}
 
-  .row select {
-    max-width: 100%;
-    width: 100%;
-  }
+.consent .choose > :not(summary) {
+  color: var(--t1);
+}
+
+.consent:has(.choose[open]) .glance {
+  display: none;
 }
 
 @media (forced-colors: active) {
-  .row input[type="checkbox"][role="switch"]:checked {
-    background: Highlight;
+  .btn,
+  .pop select,
+  .in,
+  .code .cell {
+    border: 1px solid ButtonText;
   }
 
-  .row input[type="checkbox"][role="switch"]::after {
-    background: ButtonText;
+  .btn:disabled {
+    border-color: GrayText;
+    color: GrayText;
+    opacity: 1;
+  }
+
+  .in:focus {
+    outline: 2px solid Highlight;
+  }
+
+  .link {
+    color: LinkText;
+  }
+
+  .err::before,
+  .pop::after {
+    background: CanvasText;
+  }
+
+  .menu {
+    border: 1px solid CanvasText;
   }
 }

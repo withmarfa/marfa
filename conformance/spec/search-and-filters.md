@@ -584,7 +584,7 @@ When a `filter` compares a property using an operator that takes a value, the se
 
 When a `filter` compares a property whose value is a list with a double-quoted string using `eq`, `contains` or `starts_with`, the server MUST select the items whose list holds at least one member, other than a list or an object, that the condition would select were that member the property's whole value.
 
-**Reason:** `properties.words eq "kitchen"` finds an item whose words include `kitchen`, and `contains "kit"` matches within one member, never within the list's JSON text or across two members. A range, and `eq` with a number, still select no list (`search-and-filters/filter-range-numbers`, `search-and-filters/filter-range-text`, `search-and-filters/filter-numeric-only`).
+**Reason:** `properties.words eq "kitchen"` finds an item whose words include `kitchen`, and `contains "kit"` matches within one member, never within the list's JSON text or across two members. A range still selects no list (`search-and-filters/filter-range-numbers`, `search-and-filters/filter-range-text`). A number or a boolean is compared as `search-and-filters/filter-list-number` says.
 
 **Tests:** `compliance/filter-grammar.test.ts › compares each member of a list, never the list's JSON text`.
 
@@ -595,6 +595,30 @@ When a `filter` compares a property whose value is a list with a double-quoted s
 **Reason:** among the items that hold the property, `neq` selects what `eq` does not, so an empty list is selected and an absent property is not (`search-and-filters/filter-absent-unselected`).
 
 **Tests:** `compliance/filter-grammar.test.ts › selects by neq a list that holds no member equal to the value`.
+
+### `search-and-filters/filter-list-number`
+
+When a `filter` compares a property whose value is a list with a number or a boolean using `eq`, the server MUST select the items whose list holds at least one member, other than a list or an object, that `eq` with that value would select were that member the property's whole value.
+
+**Reason:** `properties.marks eq 5` finds a list that holds `5`, and `eq true` finds a list that holds `true` or `1`, the same pairs a single value matches. A member that is text, such as `"5"`, is not that number. A range still selects no list (`search-and-filters/filter-range-numbers`, `search-and-filters/filter-range-text`).
+
+**Tests:** `compliance/filter-grammar.test.ts › compares a list's scalar members with a number or a boolean`.
+
+### `search-and-filters/filter-list-number-contains`
+
+When a `filter` compares a property whose value is a list with a number or a boolean using `contains`, the server MUST select the items that `eq` with the same value selects.
+
+**Reason:** `contains` on a single number or boolean is a text search of the value stored for that property, so `contains 5` matches the number `15` and `contains true` does not match the boolean `true`. The same search on a list would match the digits inside `[15]` and the letters inside `[true]`. On a list, `contains` therefore means the same as `eq`: a scalar member equal to the value, compared as a number or a boolean.
+
+**Tests:** `compliance/filter-grammar.test.ts › compares a list's scalar members with a number or a boolean`.
+
+### `search-and-filters/filter-list-number-neq`
+
+When a `filter` compares a property whose value is a list with a number or a boolean using `neq`, the server MUST select the items whose list holds no member, other than a list or an object, that `eq` with that value would select were that member the property's whole value.
+
+**Reason:** among the items that hold the property, `neq` selects what `eq` does not, so an empty list is selected and an absent property is not (`search-and-filters/filter-absent-unselected`).
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by neq a list that holds no member equal to a number or a boolean`.
 
 ### `search-and-filters/filter-contains`
 
@@ -842,9 +866,11 @@ When distinct spellings of an integer round to the same double, the server MUST 
 
 ### `search-and-filters/filter-numeric-only`
 
-The server MUST NOT turn text, an array, an object, a missing property or `null` into a number when a numeric `filter` compares with `eq`.
+The server MUST NOT turn text, a list, an object, a missing property or `null` into a number when a numeric `filter` compares with `eq`.
 
-**Tests:** `compliance/numeric-property-filters.test.ts › does not turn text, arrays, objects, missing or null properties into numeric equality matches`.
+**Reason:** an empty list is not the number `0`. A list is selected only when one of its scalar members would be (`search-and-filters/filter-list-number`).
+
+**Tests:** `compliance/numeric-property-filters.test.ts › does not turn text, a list, an object, a missing property or null into a number`.
 
 ### `search-and-filters/filter-range-numbers`
 
@@ -2080,7 +2106,7 @@ If a credential whose type map reaches no type sends `GET /items/summaries`, the
 
 ### `search-and-filters/owner-summaries-projection`
 
-When `GET /items/summaries` succeeds, the server MUST return each item as exactly `id`, `type`, `version`, `name`, `source` and `created_at`, with its name computed as in `types/item-name-fields`, `types/item-name-markdown`, `types/item-name-text` and `types/item-name-empty`.
+When `GET /items/summaries` succeeds, the server MUST return each item as exactly `id`, `type`, `version`, `name`, `source`, `created_at`, `web_url` and `app_url`, with its name computed as in `types/item-name-fields`, `types/item-name-markdown`, `types/item-name-text` and `types/item-name-empty`.
 
 **Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
 

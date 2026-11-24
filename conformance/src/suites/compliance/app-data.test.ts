@@ -20,6 +20,7 @@ import {
   toolNames,
   toolResult,
 } from "../../utils/mcp.js";
+import { instanceIdOf, itemLinks } from "../../utils/item-links.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
@@ -70,7 +71,13 @@ interface Listed {
     archived: number;
     trashed: number;
   }>;
-  data: Array<{ id: string; type: string; state: string }>;
+  data: Array<{
+    id: string;
+    type: string;
+    state: string;
+    web_url: string;
+    app_url: string;
+  }>;
   next_cursor: string | null;
 }
 
@@ -320,6 +327,12 @@ describe("listing an app's hidden data", () => {
     expect(new Set(listed.data.map((item) => item.state))).toEqual(
       new Set(["active", "archived", "trashed"]),
     );
+    const instance = await instanceIdOf(server.apiUrl, owner);
+    for (const item of listed.data) {
+      expect({ web_url: item.web_url, app_url: item.app_url }).toEqual(
+        itemLinks(origin, instance, item.id),
+      );
+    }
     for (const item of second.items) expect(ids(listed)).not.toContain(item);
     // The witness: the other vendor's own listing holds its items.
     expect(ids(await dataOf(owner, second.vendor))).toEqual(second.items);

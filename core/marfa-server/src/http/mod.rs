@@ -34,6 +34,7 @@ mod health;
 mod hosts_gate;
 mod housekeeping;
 mod inbound;
+mod item_page;
 mod items;
 mod jobs;
 mod keys;
@@ -537,6 +538,15 @@ fn sender_doors() -> Routes {
         .unjudged()
 }
 
+/// Any text after `/i/` reaches the page, which tells a well-formed id from the rest.
+fn item_page_doors() -> Routes {
+    Doors::new()
+        .route("/i/", get(item_page::open))
+        .route("/i/{*id}", get(item_page::open))
+        .asking(Asks::Nothing)
+        .unjudged()
+}
+
 /// Sign-in, grant and OAuth callers hold no copy of the instance.
 fn public_doors(app: Arc<App>) -> Routes {
     shared(app)
@@ -544,6 +554,7 @@ fn public_doors(app: Arc<App>) -> Routes {
         .merge(auth::doors().unjudged())
         .merge(oauth::doors().unjudged())
         .merge(mcp::doors())
+        .merge(item_page_doors())
         .merge(sender_doors())
         .merge(sign_in_return_doors())
 }

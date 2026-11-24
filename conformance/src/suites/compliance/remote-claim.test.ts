@@ -2,6 +2,8 @@ import { rm } from "node:fs/promises";
 import { request } from "node:http";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  type BootOptions,
+  bootControlServer,
   bootUnclaimedServer,
   stopServer,
 } from "../../../scripts/marfa-server.js";
@@ -18,6 +20,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { pageField, visibleText } from "../../utils/page-html.js";
 import { listened, settingLines } from "../../utils/refused-boot.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { tempFolder } from "../../utils/temp-folder.js";
@@ -33,6 +36,8 @@ const PROXIED = {
 const CLAIM_ADDRESS = "https://marfa.example";
 const NEW_PASSWORD = "a recovered owner password";
 const HOUR_MS = 60 * 60_000;
+const CODE_SHAPE = /^[A-Z2-7]{5}(-[A-Z2-7]{5}){4}$/;
+const MISMATCH = "The passwords don’t match.";
 
 interface Unclaimed {
   state: string;
@@ -125,6 +130,26 @@ async function pageText(url: string, cookie?: string): Promise<string> {
   });
   expect(page.status).toBe(200);
   return page.text();
+}
+
+/** Whether a page's form can be sent empty, so the server and not the browser answers it. */
+function formReachesServerEmpty(html: string, field: string): boolean {
+  return (
+    /<form\b[^>]*\snovalidate[\s>]/i.test(html) &&
+    new RegExp(`<input id="${field}"[^>]*\\srequired`, "i").test(html)
+  );
+}
+
+/** The `Set-Cookie` line of the cookie a response sets under `name`. */
+function setCookieNamed(response: Response, name: string): string | undefined {
+  return response.headers
+    .getSetCookie()
+    .find((line) => line.startsWith(`${name}=`));
+}
+
+/** Whether a response ends the cookie `name`. */
+function endsCookie(response: Response, name: string): boolean {
+  return /;\s*Max-Age=0\b/i.test(setCookieNamed(response, name) ?? "");
 }
 
 /** Whether a password sign-in with `password` gives the owner a session. */
@@ -227,6 +252,285 @@ function forged(
     sent.end(body);
   });
 }
+
+/** A browser's form post to a setup door, as its page sends it. */
+function formPost(
+  url: string,
+  path: string,
+  fields: Record<string, string>,
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  return fetch(`${url}${path}`, {
+    method: "POST",
+    redirect: "manual",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      accept: "text/html",
+      origin: new URL(url).origin,
+      ...headers,
+    },
+    body: new URLSearchParams(fields),
+  });
+}
+
+describe("the setup code", () => {
+  it(
+    "is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once",
+    async () => {
+      const server = await bootUnclaimed("setup-code-shape");
+      const log = serverOutput(server.state);
+      const [code] = codesIn(log, "setup");
+      expect(code).toMatch(CODE_SHAPE);
+      const line = log.split("\n").find((one) => one.includes("setup code:"))!;
+      const ticket = /\/setup#handoff=([0-9a-f]+)/.exec(line)?.[1];
+      expect(ticket).toBeDefined();
+      expect(formReachesServerEmpty(await pageText(server.url), "code")).toBe(
+        true,
+      );
+      const origin = new URL(server.url).origin;
+      const exchange = () =>
+        post(server.url, "/setup/exchange", { ticket }, { origin });
+      expect((await exchange()).status).toBe(200);
+      expect(await answer(await exchange())).toEqual({
+        status: 401,
+        code: "setup_proof_invalid",
+      });
+      // The witness: the line's code is still good, typed in lowercase with spaces.
+      const typed = ` ${code!.toLowerCase().replaceAll("-", " ")}\n`;
+      expect(
+        (await post(server.url, "/setup/claim", { ...TEST_OWNER, code: typed }))
+          .status,
+      ).toBe(201);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "prints no setup link beside the code where the setup page cannot take one",
+    async () => {
+      const linked = async (label: string, address: string) => {
+        const server = await bootUnclaimed(label, {
+          MARFA_SIGN_IN_ADDRESS: address,
+        });
+        const line = serverOutput(server.state)
+          .split("\n")
+          .find((one) => one.includes("setup code:"))!;
+        // The line holds a live code, so a failure names the check, not the line.
+        expect(
+          /setup code: [A-Z2-7-]+/.test(line),
+          "the line has no code",
+        ).toBe(true);
+        return line.includes("#handoff=");
+      };
+      // A start with no public listener has no page for a link to open,
+      // whatever address it holds: port 0 with an https address, and a port
+      // with no address.
+      const controlOnly = async (
+        label: string,
+        boot: Omit<BootOptions, "state">,
+      ) => {
+        const state = tempFolder(`marfa-${label}-`);
+        states.push(state);
+        await bootControlServer({ ...boot, state });
+        const line = serverOutput(state)
+          .split("\n")
+          .find((one) => one.includes("setup code:"))!;
+        // The line holds a live code, so a failure names the check, not the line.
+        expect(
+          /setup code: [A-Z2-7-]+/.test(line),
+          "the line has no code",
+        ).toBe(true);
+        return line.includes("#handoff=");
+      };
+      // The witness: an address the page serves on is given the link.
+      expect(await linked("link-https", "https://marfa.example")).toBe(true);
+      expect(await linked("link-http", "http://marfa.example")).toBe(false);
+      expect(
+        await controlOnly("link-control-port-0", {
+          port: 0,
+          env: { MARFA_SIGN_IN_ADDRESS: CLAIM_ADDRESS },
+        }),
+      ).toBe(false);
+      expect(
+        await controlOnly("link-control-no-address", {
+          env: { MARFA_SIGN_IN_ADDRESS: "" },
+        }),
+      ).toBe(false);
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "is the shape of a recovery code too",
+    async () => {
+      const server = await recoverable("recovery-code-shape");
+      await server.restart();
+      expect(await lastRecoveryCode(server)).toMatch(CODE_SHAPE);
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a claim form whose two passwords differ or are not repeated, with both password fields empty and nothing claimed",
+    async () => {
+      const server = await bootUnclaimed("claim-confirm");
+      const [code] = codesIn(serverOutput(server.state), "setup");
+      const claimed = async () =>
+        (await controlRequest(server.controlSocket, "/_control/setup/status"))
+          .body.claimed;
+      const fields = {
+        username: TEST_OWNER.username,
+        name: "",
+        password: TEST_OWNER.password,
+      };
+      const claim = (
+        more: Record<string, string>,
+        headers: Record<string, string> = {},
+      ) =>
+        formPost(server.url, "/setup/claim", { ...fields, ...more }, headers);
+
+      // Typed twice and not alike, or not twice: the page comes back with nothing secret in it.
+      const unmatched: Record<string, string>[] = [
+        { code: code!, confirm_password: `${TEST_OWNER.password}!` },
+        { code: code! },
+      ];
+      for (const more of unmatched) {
+        const refused = await claim(more);
+        expect(refused.status).toBe(400);
+        const html = await refused.text();
+        expect(visibleText(html)).toContain(MISMATCH);
+        expect(pageField(html, "username")?.value).toBe(TEST_OWNER.username);
+        for (const name of ["password", "confirm_password"]) {
+          expect(pageField(html, name), name).toBeDefined();
+          expect(pageField(html, name)?.value ?? "").toBe("");
+        }
+        expect(html).not.toContain(TEST_OWNER.password);
+        expect(await claimed()).toBe(false);
+      }
+
+      // A form that asks for JSON is answered in JSON.
+      expect(
+        await answer(
+          await claim(
+            { code: code!, confirm_password: `${TEST_OWNER.password}!` },
+            { accept: "application/json" },
+          ),
+        ),
+      ).toEqual({ status: 400, code: "validation_error" });
+
+      // The code was kept through all three refusals: it still opens a setup session.
+      const exchanged = await formPost(server.url, "/setup/exchange", {
+        code: code!,
+      });
+      expect(exchanged.status).toBe(303);
+      const session = { cookie: cookiesOf(exchanged) };
+      const refusedAgain = await claim(
+        { confirm_password: `${TEST_OWNER.password}!` },
+        session,
+      );
+      expect(refusedAgain.status).toBe(400);
+      expect(await claimed()).toBe(false);
+
+      // Each refusal below is the first of the ones the form meets: a key the
+      // page does not declare is said before the proof and the mismatch.
+      const undeclared = await claim(
+        { confirm_password: `${TEST_OWNER.password}!`, bogus: "x" },
+        { ...session, accept: "application/json" },
+      );
+      expect(undeclared.status).toBe(400);
+      const refusal = (await undeclared.json()) as {
+        error: { details: { unknown_body_fields?: string[] } };
+      };
+      expect(refusal.error.details.unknown_body_fields).toEqual(["bogus"]);
+      expect(
+        (
+          await claim(
+            { confirm_password: `${TEST_OWNER.password}!`, bogus: "x" },
+            { cookie: "marfa_setup=ended", accept: "application/json" },
+          )
+        ).status,
+      ).toBe(400);
+
+      // A session that has ended is said before a mismatch.
+      expect(
+        await answer(
+          await claim(
+            { confirm_password: `${TEST_OWNER.password}!` },
+            { cookie: "marfa_setup=ended", accept: "application/json" },
+          ),
+        ),
+      ).toEqual({ status: 401, code: "setup_proof_invalid" });
+
+      // The witness: the same session, with the passwords alike, claims.
+      const matched = await claim(
+        { confirm_password: TEST_OWNER.password },
+        session,
+      );
+      expect(matched.status).toBe(303);
+      expect(await claimed()).toBe(true);
+
+      // An owner is said before an undeclared key and a mismatch.
+      expect(
+        await answer(
+          await claim(
+            { confirm_password: `${TEST_OWNER.password}!`, bogus: "x" },
+            { cookie: "marfa_setup=ended", accept: "application/json" },
+          ),
+        ),
+      ).toEqual({ status: 409, code: "owner_exists" });
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a claim form that sends an empty email, naming email, and the same setup code still claims afterwards",
+    async () => {
+      const server = await bootUnclaimed("claim-form-email");
+      const [code] = codesIn(serverOutput(server.state), "setup");
+      const claimed = async () =>
+        (await controlRequest(server.controlSocket, "/_control/setup/status"))
+          .body.claimed;
+      const fields = {
+        username: TEST_OWNER.username,
+        name: "",
+        password: TEST_OWNER.password,
+        confirm_password: TEST_OWNER.password,
+        code: code!,
+      };
+
+      for (const headers of [{ accept: "application/json" }, {}] as Record<
+        string,
+        string
+      >[]) {
+        const refused = await formPost(
+          server.url,
+          "/setup/claim",
+          { ...fields, email: "" },
+          headers,
+        );
+        expect(refused.status, JSON.stringify(headers)).toBe(400);
+        if ("accept" in headers) {
+          const { error } = (await refused.json()) as {
+            error: { code: string; details: { errors: unknown[] } };
+          };
+          expect(error.code).toBe("validation_error");
+          expect(error.details.errors).toEqual([
+            { path: "email", message: "Enter a valid email address." },
+          ]);
+        } else {
+          await refused.body?.cancel();
+        }
+        expect(await claimed()).toBe(false);
+      }
+
+      // The witness: the form without the email claims with the code the refusals left standing.
+      const matched = await formPost(server.url, "/setup/claim", fields);
+      expect(matched.status).toBe(303);
+      expect(await claimed()).toBe(true);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
 
 describe("the claim address", () => {
   it(
@@ -443,11 +747,13 @@ describe("owner recovery", () => {
         /Recover this Marfa's owner at \/setup with recovery code: [A-Z2-7-]+\. It works once, for 60 minutes\./,
       );
       const code = await lastRecoveryCode(server);
-      expect(await pageText(server.apiUrl)).toContain("Recover the owner");
+      expect(await pageText(server.apiUrl)).toContain("Recover your account");
 
       await server.restart({ env: { MARFA_OWNER_RECOVERY: "false" } });
       expect(codesIn(await server.output(), "recovery")).toHaveLength(1);
-      expect(await pageText(server.apiUrl)).not.toContain("Recover the owner");
+      expect(await pageText(server.apiUrl)).not.toContain(
+        "Recover your account",
+      );
       const origin = new URL(server.apiUrl).origin;
       expect(
         await answer(
@@ -486,6 +792,34 @@ describe("owner recovery", () => {
           }),
         ),
       ).toEqual({ status: 404, code: "owner_not_found" });
+      // A key the page does not declare is said before the missing owner.
+      expect(
+        await answer(
+          await formPost(
+            server.url,
+            "/setup/recover",
+            { code: setupCode!, password: NEW_PASSWORD, bogus: "x" },
+            { accept: "application/json" },
+          ),
+        ),
+      ).toEqual({ status: 400, code: "validation_error" });
+      // The owner is judged before the passwords: a mismatched form has none to recover either.
+      for (const confirm_password of [`${NEW_PASSWORD}!`, undefined]) {
+        const form = await formPost(
+          server.url,
+          "/setup/recover",
+          {
+            code: setupCode!,
+            password: NEW_PASSWORD,
+            ...(confirm_password === undefined ? {} : { confirm_password }),
+          },
+          { accept: "application/json" },
+        );
+        expect(await answer(form)).toEqual({
+          status: 404,
+          code: "owner_not_found",
+        });
+      }
       expect(
         (await controlRequest(server.controlSocket, "/_control/setup/status"))
           .body.claimed,
@@ -537,9 +871,11 @@ describe("owner recovery", () => {
       const code = await lastRecoveryCode(server);
       await server.advanceClock(HOUR_MS - 60_000);
       // The witness: a minute before the hour is out, the code is offered.
-      expect(await pageText(server.apiUrl)).toContain("Recover the owner");
+      expect(await pageText(server.apiUrl)).toContain("Recover your account");
       await server.advanceClock(2 * 60_000);
-      expect(await pageText(server.apiUrl)).not.toContain("Recover the owner");
+      expect(await pageText(server.apiUrl)).not.toContain(
+        "Recover your account",
+      );
       expect(
         await answer(
           await post(
@@ -641,8 +977,18 @@ describe("owner recovery", () => {
       const origin = new URL(server.apiUrl).origin;
 
       const first = await pageText(server.apiUrl);
-      expect(first).toContain("Recover the owner");
+      expect(first).toContain("Recover your account");
       expect(first).toContain('action="/setup/exchange"');
+      expect(formReachesServerEmpty(first, "code")).toBe(true);
+      // A code that is not the one printed says it may have been used or have expired.
+      const wrongCode = await formPost(server.apiUrl, "/setup/exchange", {
+        code: "AAAAA-AAAAA-AAAAA-AAAAA-AAAAA",
+        purpose: "recovery",
+      });
+      expect(wrongCode.status).toBe(401);
+      expect(visibleText(await wrongCode.text())).toContain(
+        "That code isn’t right, or it was used or has expired.",
+      );
       // The form as the page sends it: its hidden fields and the code.
       const hidden = readControls(first)
         .filter((control) => control.type === "hidden")
@@ -675,10 +1021,48 @@ describe("owner recovery", () => {
           cookie: setup,
           origin,
         },
-        body: new URLSearchParams({ password: NEW_PASSWORD }),
+        body: new URLSearchParams({
+          password: NEW_PASSWORD,
+          confirm_password: NEW_PASSWORD,
+        }),
       });
       await sent.body?.cancel();
       expect(sent.status).toBe(303);
+      const landing = sent.headers.get("location") ?? "";
+      expect(landing).toBe("/auth/sign-in");
+      const flag = setCookieNamed(sent, "marfa_recovered");
+      expect(flag).toMatch(/;\s*HttpOnly/i);
+      expect(flag).toMatch(/;\s*SameSite=Strict/i);
+      expect(flag).toMatch(/;\s*Path=\/auth\/sign-in(;|$)/i);
+      expect(
+        Number(/;\s*Max-Age=(\d+)/i.exec(flag ?? "")?.[1]),
+      ).toBeLessThanOrEqual(120);
+      const told = "Your password has been changed.";
+      const signInPage = (headers: Record<string, string> = {}) =>
+        fetch(`${server.apiUrl}${landing}`, { headers });
+      // The witness: nothing but the cookie makes the page say so, not the query a link may carry.
+      expect(visibleText(await (await signInPage()).text())).not.toContain(
+        told,
+      );
+      const flagged = await fetch(`${server.apiUrl}${landing}?recovered=true`);
+      expect(visibleText(await flagged.text())).not.toContain(told);
+      // The cookie makes it say so, once.
+      const cookie = { cookie: "marfa_recovered=1" };
+      const shown = await signInPage(cookie);
+      expect(visibleText(await shown.text())).toContain(told);
+      expect(endsCookie(shown, "marfa_recovered")).toBe(true);
+      // A person already signed in is told so, and the cookie still ends.
+      const session = await signInOwnerWithPassword(server.apiUrl, origin, {
+        username: TEST_OWNER.username,
+        password: NEW_PASSWORD,
+      });
+      const signedIn = await signInPage({
+        cookie: `${session}; marfa_recovered=1`,
+      });
+      const signedInText = visibleText(await signedIn.text());
+      expect(signedInText).toContain("You’re signed in");
+      expect(signedInText).not.toContain(told);
+      expect(endsCookie(signedIn, "marfa_recovered")).toBe(true);
       expect(await afterRecovery(server, before)).toEqual({
         sameOwner: true,
         oldPassword: false,
@@ -697,6 +1081,128 @@ describe("owner recovery", () => {
           )
         ).status,
       ).toBe(401);
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a recovery form whose two passwords differ or are not repeated, with both password fields empty, and keeps the password and the setup session for another try",
+    async () => {
+      const server = await recoverable("recovery-confirm");
+      await server.restart();
+      const code = await lastRecoveryCode(server);
+      const exchanged = await formPost(server.apiUrl, "/setup/exchange", {
+        code,
+        purpose: "recovery",
+      });
+      expect(exchanged.status).toBe(303);
+      const setup = cookiesOf(exchanged);
+      const recover = (
+        more: Record<string, string>,
+        headers: Record<string, string> = { cookie: setup },
+      ) =>
+        formPost(
+          server.apiUrl,
+          "/setup/recover",
+          { password: NEW_PASSWORD, ...more },
+          headers,
+        );
+
+      // Typed twice and not alike, or not twice: the form comes back with nothing secret in it.
+      const unmatched: Record<string, string>[] = [
+        { confirm_password: `${NEW_PASSWORD}!` },
+        {},
+      ];
+      for (const more of unmatched) {
+        const refused = await recover(more);
+        expect(refused.status).toBe(400);
+        expect(setCookieNamed(refused, "marfa_recovered")).toBeUndefined();
+        const html = await refused.text();
+        expect(visibleText(html)).toContain(MISMATCH);
+        expect(html).toContain('id="recover-form"');
+        for (const name of ["password", "confirm_password"]) {
+          expect(pageField(html, name), name).toBeDefined();
+          expect(pageField(html, name)?.value ?? "").toBe("");
+        }
+        expect(html).not.toContain(NEW_PASSWORD);
+        expect(await signsIn(server, TEST_OWNER.password)).toBe(true);
+      }
+
+      // A form that asks for JSON is answered in JSON.
+      expect(
+        await answer(
+          await recover(
+            { confirm_password: `${NEW_PASSWORD}!` },
+            { cookie: setup, accept: "application/json" },
+          ),
+        ),
+      ).toEqual({ status: 400, code: "validation_error" });
+
+      // A key the page does not declare is said before the proof and the mismatch.
+      expect(
+        await answer(
+          await recover(
+            { confirm_password: `${NEW_PASSWORD}!`, bogus: "x" },
+            { cookie: "marfa_setup=ended", accept: "application/json" },
+          ),
+        ),
+      ).toEqual({ status: 400, code: "validation_error" });
+
+      // A session that has ended is said before a mismatch.
+      expect(
+        await answer(
+          await recover(
+            { confirm_password: `${NEW_PASSWORD}!` },
+            { cookie: "marfa_setup=ended", accept: "application/json" },
+          ),
+        ),
+      ).toEqual({ status: 401, code: "setup_proof_invalid" });
+      expect(await signsIn(server, TEST_OWNER.password)).toBe(true);
+
+      // The witness: the same session, with the passwords alike, recovers.
+      const matched = await recover({ confirm_password: NEW_PASSWORD });
+      expect(matched.status).toBe(303);
+      expect(await signsIn(server, NEW_PASSWORD)).toBe(true);
+      expect(await signsIn(server, TEST_OWNER.password)).toBe(false);
+
+      // The session ended with the recovery.
+      expect(
+        await answer(
+          await recover(
+            { confirm_password: `${NEW_PASSWORD}!` },
+            { cookie: setup, accept: "application/json" },
+          ),
+        ),
+      ).toEqual({ status: 401, code: "setup_proof_invalid" });
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps a recovery code through a mismatched form sent with it, and recovers with the same code",
+    async () => {
+      const server = await recoverable("recovery-confirm-direct");
+      await server.restart();
+      const code = await lastRecoveryCode(server);
+      const typed = { code, password: NEW_PASSWORD };
+      const mismatched = await formPost(
+        server.apiUrl,
+        "/setup/recover",
+        { ...typed, confirm_password: `${NEW_PASSWORD}!` },
+        { accept: "application/json" },
+      );
+      expect(await answer(mismatched)).toEqual({
+        status: 400,
+        code: "validation_error",
+      });
+      expect(await signsIn(server, TEST_OWNER.password)).toBe(true);
+      // The witness: the same code, with the passwords alike, recovers.
+      const recovered = await formPost(server.apiUrl, "/setup/recover", {
+        ...typed,
+        confirm_password: NEW_PASSWORD,
+      });
+      expect(recovered.status).toBe(303);
+      expect(await signsIn(server, NEW_PASSWORD)).toBe(true);
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
   );
@@ -721,6 +1227,7 @@ describe("owner recovery", () => {
       });
       expect(recovered.status).toBe(200);
       expect(await recovered.json()).toEqual({ recovered: true });
+      expect(setCookieNamed(recovered, "marfa_recovered")).toBeUndefined();
       const local = await controlRequest(
         bySocket.controlSocket,
         "/_control/owner/recover",

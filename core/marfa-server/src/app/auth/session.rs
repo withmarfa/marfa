@@ -10,7 +10,7 @@ use crate::app::clock::{Stamp, Unread, readable};
 use crate::app::faults::{FAIL_SESSION_DELETE, FAIL_SESSION_LOOKUP, FAIL_SESSION_USE};
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::app::{App, instance};
+use crate::app::{App, instance, oauth};
 use crate::db::Write;
 
 const TOKEN_BYTES: usize = 32;
@@ -315,14 +315,16 @@ pub(super) fn ended(
     )
 }
 
-/// Ends a session a confirmation has just replaced.
+/// Ends a session a confirmation has just replaced, moving its device code checks to the new one.
 pub(super) fn end_replaced(
     tx: &Transaction<'_>,
     at: &str,
     actor: &Caller,
     visit: &Visit,
     session: &Session,
+    replacement: &Session,
 ) -> Result<()> {
+    oauth::store::carry_device_checks(tx, &session.id, &replacement.id)?;
     ended(tx, at, actor, visit, &session.id, &session.owner_id, true)
 }
 

@@ -1092,9 +1092,9 @@ If an id in `set` or `clear` names no stored item, then the server MUST name it 
 
 ### `connectors/agreements-skip-unreadable`
 
-If an id in `set` or `clear` names an item whose type the key's type map does not read, then the server MUST skip it as it skips an id that names no stored item.
+If an id in `set` or `clear` names an item whose type the key's type map does not read, other than as `plugins/reach-agreements-own` lets it, then the server MUST skip it as it skips an id that names no stored item.
 
-**Tests:** `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`, `› leaves an item the key no longer reads out of its reads and its clears`.
+**Tests:** `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`, `› leaves an item the key no longer reads out of its reads and its clears`, `compliance/connector-reach.test.ts › skips its own item on the former target type when setting, clearing, looking up and listing agreements while a rewrite is open, and answers it again once it is moved back`.
 
 ### `connectors/agreements-trashed`
 
@@ -1278,9 +1278,9 @@ If `POST /connectors/{id}/agreements/lookup` names no `item_ids`, then the serve
 
 ### `connectors/lookup-unreadable`
 
-When an item's type is one the key's type map does not read, the server MUST leave its agreement out of `POST /connectors/{id}/agreements/lookup`.
+When an item's type is one the key's type map does not read, other than as `plugins/reach-agreements-own` lets it, the server MUST leave its agreement out of `POST /connectors/{id}/agreements/lookup`.
 
-**Tests:** `compliance/connector-state.test.ts › leaves an item the key no longer reads out of its reads and its clears`, `› writes and clears agreements, skipping an id it cannot hold`.
+**Tests:** `compliance/connector-state.test.ts › leaves an item the key no longer reads out of its reads and its clears`, `› writes and clears agreements, skipping an id it cannot hold`, `compliance/connector-reach.test.ts › skips its own item on the former target type when setting, clearing, looking up and listing agreements while a rewrite is open, and answers it again once it is moved back`.
 
 ### `connectors/list-agreements-order`
 
@@ -1332,13 +1332,13 @@ If `GET /connectors/{id}/agreements` names a query key the operation does not de
 
 ### `connectors/list-agreements-unreadable`
 
-When an item's type is one the key's type map does not read, the server MUST leave its agreement out of `GET /connectors/{id}/agreements`.
+When an item's type is one the key's type map does not read, other than as `plugins/reach-agreements-own` lets it, the server MUST leave its agreement out of `GET /connectors/{id}/agreements`.
 
-**Tests:** `compliance/connector-state.test.ts › leaves an item the key no longer reads out of its reads and its clears`.
+**Tests:** `compliance/connector-state.test.ts › leaves an item the key no longer reads out of its reads and its clears`, `compliance/connector-reach.test.ts › skips its own item on the former target type when setting, clearing, looking up and listing agreements while a rewrite is open, and answers it again once it is moved back`.
 
 ### `connectors/list-agreements-short-page`
 
-When a page of agreements holds agreements for items the key's type map does not read, the server MUST answer the page without them and with a `next_cursor` that reaches the rest, so the page can be short.
+When a page of agreements holds agreements for items the key does not read, the server MUST answer the page without them and with a `next_cursor` that reaches the rest, so the page can be short.
 
 **Reason:** the page is cut before the agreements for such items are left out, so a cursor never skips an agreement the key can read.
 

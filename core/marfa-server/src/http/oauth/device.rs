@@ -4,22 +4,23 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::IntoResponse;
 
-use super::{Browser, Fields, problem_answer};
+use super::{Browser, Fields, drawn_again, problem_answer};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::auth::Visit;
 use crate::app::auth::return_to::encoded;
-use crate::app::instance;
 use crate::app::oauth::authorize::sign_in_then;
 use crate::app::oauth::device::{
-    self, Answer as Answered, Blocked, CONSENT_PATH as CONSENT, Lookup,
+    self, Answer as Answered, Blocked, CHECK_PATH as CHECK, CONSENT_PATH as CONSENT, Lookup,
+    NotOpen,
 };
 use crate::app::oauth::token::Form;
+use crate::app::oauth::tokens::normalize_user_code;
 use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::auth::redirect;
 use crate::http::body::JsonBody;
-use crate::http::pages::{self, Answering, Consent, Notice};
+use crate::http::pages::{self, Answering, Consent, DeviceCheck, Notice};
 use crate::http::query;
 
 const ENTRY: &str = "/auth/device";
@@ -80,27 +81,27 @@ pub async fn enter(
         return too_many(wait);
     }
     match device::look_up(&app, typed).await? {
-        Lookup::Pending => redirect(
-            StatusCode::FOUND,
-            &format!("{CONSENT}?user_code={}", encoded(typed)),
-        ),
+        Lookup::Pending => to_check(typed),
         lookup => blocked(lookup, typed),
     }
 }
 
-fn back_to(typed: Option<&str>) -> String {
-    typed.map_or(CONSENT.to_string(), |typed| {
-        format!("{CONSENT}?user_code={}", encoded(typed))
-    })
+fn to_check(typed: &str) -> Answer {
+    redirect(StatusCode::FOUND, &check_page(typed))
+}
+
+fn check_page(typed: &str) -> String {
+    format!("{CHECK}?user_code={}", encoded(typed))
 }
 
 fn to_sign_in(app: &App, typed: Option<&str>) -> Answer {
-    redirect(StatusCode::FOUND, &sign_in_then(app, &back_to(typed)))
+    let back = typed.map_or(CHECK.to_string(), check_page);
+    redirect(StatusCode::FOUND, &sign_in_then(app, &back))
 }
 
 /// The sign-in page shows its form to a browser already signed in only under `prompt=login`.
 fn to_sign_in_again(app: &App, typed: &str) -> Answer {
-    let page = sign_in_then(app, &back_to(Some(typed)));
+    let page = sign_in_then(app, &check_page(typed));
     redirect(StatusCode::FOUND, &format!("{page}&prompt=login"))
 }
 
@@ -108,18 +109,30 @@ fn signed_in(owner: Option<Caller>) -> Option<Caller> {
     owner.filter(|caller| caller.session().is_some())
 }
 
-pub async fn screen(
+fn not_open(app: &App, not_open: NotOpen, typed: &str) -> Answer {
+    match not_open {
+        NotOpen::Code(lookup) => blocked(lookup, typed),
+        NotOpen::SignInAgain => to_sign_in_again(app, typed),
+        NotOpen::SignedOut => to_sign_in(app, Some(typed)),
+    }
+}
+
+fn typed_in(uri: &Uri) -> Result<Option<String>, Refusal> {
+    Ok(query::pairs(uri)?
+        .into_iter()
+        .find(|(key, _)| key == "user_code")
+        .map(|(_, value)| value.trim().to_string())
+        .filter(|value| !value.is_empty()))
+}
+
+/// Asks the owner to compare the code with the device's before the approval page opens.
+pub async fn check_screen(
     State(app): State<Arc<App>>,
     visit: Visit,
     Browser(owner): Browser,
     uri: Uri,
 ) -> Answer {
-    let pairs = query::pairs(&uri)?;
-    let typed = pairs
-        .iter()
-        .find(|(key, _)| key == "user_code")
-        .map(|(_, value)| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+    let typed = typed_in(&uri)?;
     let Some(owner) = signed_in(owner) else {
         return to_sign_in(&app, typed.as_deref());
     };
@@ -129,17 +142,66 @@ pub async fn screen(
     if let Some(wait) = device::admit_lookup(&app, visit.address, Some(&owner)) {
         return too_many(wait);
     }
+    match device::to_check(&app, &typed, &owner).await? {
+        Ok(()) => {
+            let view = DeviceCheck {
+                user_code: normalize_user_code(&typed),
+                typed,
+            };
+            Ok(pages::device_check(&view)?.into_response())
+        }
+        Err(closed) => not_open(&app, closed, &typed),
+    }
+}
+
+pub async fn check(
+    State(app): State<Arc<App>>,
+    visit: Visit,
+    Browser(owner): Browser,
+    body: JsonBody,
+) -> Answer {
+    let fields = Fields(body.form_pairs().await?);
+    let typed = fields
+        .get("user_code")
+        .map(str::trim)
+        .filter(|typed| !typed.is_empty());
+    let Some(owner) = signed_in(owner) else {
+        return to_sign_in(&app, typed);
+    };
+    let Some(typed) = typed else {
+        return to_entry("missing_code");
+    };
+    if let Some(wait) = device::admit_lookup(&app, visit.address, Some(&owner)) {
+        return too_many(wait);
+    }
+    match device::check(&app, typed, &owner).await? {
+        Ok(()) => redirect(
+            StatusCode::FOUND,
+            &format!("{CONSENT}?user_code={}", encoded(typed)),
+        ),
+        Err(closed) => not_open(&app, closed, typed),
+    }
+}
+
+pub async fn screen(State(app): State<Arc<App>>, Browser(owner): Browser, uri: Uri) -> Answer {
+    let typed = typed_in(&uri)?;
+    let Some(owner) = signed_in(owner) else {
+        return to_sign_in(&app, typed.as_deref());
+    };
+    let Some(typed) = typed else {
+        return to_entry("missing_code");
+    };
     match device::screen(&app, &typed, &owner).await? {
         Ok(offer) => {
             let view = Consent {
-                instance_name: instance::name(&app).await?,
                 offer: *offer,
                 answering: Answering::Device(typed),
+                again: None,
             };
             Ok(pages::consent(&view)?.into_response())
         }
-        Err(Blocked::Code(lookup)) => blocked(lookup, &typed),
-        Err(Blocked::SignInAgain) => to_sign_in_again(&app, &typed),
+        Err(Blocked::Unchecked) => to_check(&typed),
+        Err(Blocked::Closed(closed)) => not_open(&app, closed, &typed),
         Err(Blocked::ClientGone) => {
             Err(Refusal::new(Code::InvalidClient, "This app is gone.").into())
         }
@@ -148,8 +210,8 @@ pub async fn screen(
 
 pub async fn answer(
     State(app): State<Arc<App>>,
-    visit: Visit,
     Browser(owner): Browser,
+    headers: HeaderMap,
     body: JsonBody,
 ) -> Answer {
     let fields = Fields(body.form_pairs().await?);
@@ -165,18 +227,20 @@ pub async fn answer(
         Some("deny") => false,
         _ => return Err(Refusal::validation("Provide `decision` as approve or deny.").into()),
     };
-    if let Some(wait) = device::admit_lookup(&app, visit.address, Some(&owner)) {
-        return too_many(wait);
-    }
-    let answered = device::answer(&app, &owner, typed, approve, fields.post()).await?;
-    let name = instance::name(&app).await?;
+    let post = fields.post();
+    let answered = device::answer(&app, &owner, typed, approve, post.clone()).await?;
     match answered {
-        Answered::Approved => Ok(pages::notice(&Notice::device_approved(&name))?.into_response()),
-        Answered::Denied => Ok(pages::notice(&Notice::device_denied(&name))?.into_response()),
-        Answered::Code(Lookup::Unknown) => {
-            Err(Refusal::new(Code::NotFound, "No code matches this one.").into())
+        Answered::Approved => Ok(pages::notice(&Notice::device_approved())?.into_response()),
+        Answered::Denied => Ok(pages::notice(&Notice::device_denied())?.into_response()),
+        Answered::Unchecked => to_check(typed),
+        Answered::Closed(closed) => not_open(&app, closed, typed),
+        Answered::Changed(offer) => {
+            let view = Consent {
+                offer: *offer,
+                answering: Answering::Device(typed.to_string()),
+                again: Some(post),
+            };
+            drawn_again(&view, &headers)
         }
-        Answered::Code(lookup) => blocked(lookup, typed),
-        Answered::SignInAgain => to_sign_in_again(&app, typed),
     }
 }

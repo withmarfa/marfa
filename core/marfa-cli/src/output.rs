@@ -93,7 +93,7 @@ const DRAWN: [&str; 5] = [
     "\u{1b}[0m",
 ];
 
-fn needs_escape(c: char) -> bool {
+pub(crate) fn needs_escape(c: char) -> bool {
     c.is_control()
         || matches!(
             c,

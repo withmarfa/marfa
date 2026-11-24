@@ -9,11 +9,11 @@ use super::answer::{Answer, json_answer};
 use super::body::JsonBody;
 use super::pages::{self, Notice};
 use super::query;
+use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::auth::Visit;
 use crate::app::connector_sign_in::{self, Finished};
 use crate::app::refusal::Refusal;
-use crate::app::{App, instance};
 
 pub async fn start(
     State(app): State<Arc<App>>,
@@ -57,7 +57,6 @@ pub async fn callback(State(app): State<Arc<App>>, visit: Visit, uri: Uri) -> An
     };
     let finished =
         connector_sign_in::callback(&app, first("state"), first("code"), first("error")).await?;
-    let name = instance::name(&app).await?;
     let mut response = match finished {
         Finished::Back(location) => {
             let mut response = Response::new(Body::empty());
@@ -69,16 +68,15 @@ pub async fn callback(State(app): State<Arc<App>>, visit: Visit, uri: Uri) -> An
             );
             response
         }
-        Finished::SignedIn => pages::notice(&Notice::connector_signed_in(&name))?.into_response(),
+        Finished::SignedIn => pages::notice(&Notice::connector_signed_in())?.into_response(),
         Finished::NotFinished => {
-            pages::notice(&Notice::connector_sign_in_unfinished(&name, None))?.into_response()
+            pages::notice(&Notice::connector_sign_in_unfinished(None))?.into_response()
         }
         Finished::Ended(failure) => {
-            pages::notice(&Notice::connector_sign_in_unfinished(&name, Some(&failure)))?
-                .into_response()
+            pages::notice(&Notice::connector_sign_in_unfinished(Some(&failure)))?.into_response()
         }
         Finished::ProviderFailed(failure) => {
-            pages::notice(&Notice::connector_sign_in_failed(&name, &failure))?.into_response()
+            pages::notice(&Notice::connector_sign_in_failed(&failure))?.into_response()
         }
     };
     // The address holds the code the provider sent.

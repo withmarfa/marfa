@@ -1,3 +1,3 @@
-<h1>{{ view.heading }}</h1>
-<p>{{ view.message }}</p>
-{% if let Some(link) = view.link %}<p><a href="{{ link.href }}">{{ link.label }}</a></p>{% endif %}
+{% import "partials/parts.html" as parts %}{% call parts::head(view.heading, view.message) %}{% endcall %}
+{% if let Some(link) = view.link %}{% call parts::actions() %}<a class="btn primary" href="{{ link.href }}">{{ link.label }}</a>{% endcall %}
+{% endif %}

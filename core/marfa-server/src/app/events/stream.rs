@@ -218,6 +218,7 @@ fn read_page(
         levers: read.caller.levers()?,
         rules: &read.catalog.rules,
         read_only: &read.read_only,
+        links: &read.links,
         filter,
         own: !filter.copy,
     };

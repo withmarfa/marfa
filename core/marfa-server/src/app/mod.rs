@@ -30,6 +30,7 @@ pub mod housekeeping;
 pub mod idempotency;
 pub mod inbound;
 pub mod instance;
+pub mod item_links;
 pub mod items;
 pub mod jobs;
 pub mod keys;
@@ -333,6 +334,11 @@ impl App {
 
     pub fn addresses(&self) -> Addresses {
         Addresses::read(&self.settings, self.bound_port())
+    }
+
+    /// The addresses an answered item carries, read once for the response.
+    pub fn item_links(&self) -> item_links::Links {
+        item_links::Links::of(self.addresses().sign_in().origin(), &self.instance_id)
     }
 
     pub fn addresses_in(&self, snapshot: Arc<crate::settings::Snapshot>) -> Addresses {

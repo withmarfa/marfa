@@ -23,6 +23,7 @@ const spellings = [
 const rows: { id: string; value: number }[] = [];
 const otherIds: string[] = [];
 let textId = "";
+let listId = "";
 let missingId = "";
 let nullId = "";
 
@@ -63,6 +64,7 @@ beforeAll(async () => {
     trackItem(ctx, made.data.item.id);
     otherIds.push(made.data.item.id);
     if (label === "numeric-text") textId = made.data.item.id;
+    if (label === "array") listId = made.data.item.id;
     if (label === "missing") missingId = made.data.item.id;
     if (label === "null") nullId = made.data.item.id;
   }
@@ -127,15 +129,17 @@ describe("numeric property filters", () => {
     }
   });
 
-  it("does not turn text, arrays, objects, missing or null properties into numeric equality matches", async () => {
+  it("does not turn text, a list, an object, a missing property or null into a number", async () => {
     for (const door of ["items", "search"] as const) {
       expect(await ids(door, 'properties.other_probe eq "0"')).toEqual([
         textId,
       ]);
       expect(await ids(door, "properties.other_probe eq 0")).toEqual([]);
-      expect(await ids(door, "properties.other_probe neq 0")).toEqual(
+      const notZero = await ids(door, "properties.other_probe neq 0");
+      expect(notZero).toEqual(
         otherIds.filter((id) => id !== missingId && id !== nullId).sort(),
       );
+      expect(notZero).toContain(listId);
     }
   });
   it("bounds a property by a number only on a number, on the listing and the search", async () => {

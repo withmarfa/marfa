@@ -839,7 +839,7 @@ export interface paths {
         put?: never;
         /**
          * Install a plugin
-         * @description Installs a plugin's bundle in one write and records the plugin on each type. Needs `schema.write`, write on each type and edge type name, and `connectors.manage` for a `connector`. An app can't install guidance.
+         * @description Installs a plugin's bundle in one write and records the plugin on each type. Needs `schema.write`, write on each type and edge type name, and `connectors.manage` for a `connector`.
          */
         post: operations["installPlugin"];
         delete?: never;
@@ -1985,7 +1985,7 @@ export interface paths {
         };
         /**
          * List connector agreements
-         * @description Returns the agreements of the connector's source, the one written longest ago first. Items whose type you can't read are left out, so a page can be short with more to follow.
+         * @description Returns the agreements of the connector's source, the one written longest ago first. Items you can't read are left out, so a page can be short with more to follow.
          */
         get: operations["listConnectorAgreements"];
         put?: never;
@@ -2011,7 +2011,7 @@ export interface paths {
         put?: never;
         /**
          * Look up connector agreements
-         * @description Looks up the agreements of the named items and returns those that exist, each item once, in the order you first named it. An item whose type you can't read is left out.
+         * @description Looks up the agreements of the named items and returns those that exist, each item once, in the order you first named it. An item you can't read is left out.
          */
         post: operations["lookupConnectorAgreements"];
         delete?: never;
@@ -3270,6 +3270,18 @@ export interface components {
             source_id?: string;
             /** @description `true` if every connector with a live write key for the item's type that owns or claims its `source` lists the type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit. */
             read_only: boolean;
+            /**
+             * Format: uri
+             * @description The item's page at this instance's sign-in address, then `/i/` and the item's ID. Marfa builds it when it answers the item, so it changes when the sign-in address moves.
+             * @example https://marfa.example/i/01a1011a-3923-73d1-963d-9e3779b19e37
+             */
+            readonly web_url: string;
+            /**
+             * Format: uri
+             * @description The item's address for apps on one device: `marfa://`, the instance's ID, then the item's ID. It stays the same when the sign-in address moves.
+             * @example marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-3923-73d1-963d-9e3779b19e37
+             */
+            readonly app_url: string;
             /** @description The latitude where the item was captured. Absent if the writer set none. */
             capture_latitude?: number;
             /** @description The longitude where the item was captured. Absent if the writer set none. */
@@ -3977,6 +3989,18 @@ export interface components {
              * @example 2026-10-03T09:30:00.000Z
              */
             created_at: string;
+            /**
+             * Format: uri
+             * @description The item's page at this instance's sign-in address, then `/i/` and the item's ID. Marfa builds it when it answers the item, so it changes when the sign-in address moves.
+             * @example https://marfa.example/i/01a1011a-3923-73d1-963d-9e3779b19e37
+             */
+            readonly web_url: string;
+            /**
+             * Format: uri
+             * @description The item's address for apps on one device: `marfa://`, the instance's ID, then the item's ID. It stays the same when the sign-in address moves.
+             * @example marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-3923-73d1-963d-9e3779b19e37
+             */
+            readonly app_url: string;
         };
         /** @description A page of trashed item summaries. */
         TrashSummaryPage: {
@@ -9712,8 +9736,27 @@ export interface components {
              */
             on: "host";
         };
+        /** @description Where a connector's code is: the address of its code file, the file's SHA-256 and its size. */
+        PluginConnectorCode: {
+            /**
+             * Format: uri
+             * @description The `https` address of the connector's code file, with no user name or password.
+             * @example https://example.com/releases/v0.0.14/rss.connector.mjs
+             */
+            url: string;
+            /**
+             * @description The SHA-256 of the code file, in lowercase hexadecimal. A connector host runs the file only when its digest matches.
+             * @example 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+             */
+            sha256: string;
+            /**
+             * @description The size of the code file, in bytes. A connector host stops a fetch that passes it.
+             * @example 524288
+             */
+            size: number;
+        };
         /**
-         * @description A plugin's connector: the source it writes under, the kinds it brings, the settings it reads, its sign-in and where it runs.
+         * @description A plugin's connector: the source it writes under, the kinds it brings, the settings it reads, its sign-in, where it runs and where its code is.
          * @example {
          *       "source": "rss",
          *       "source_name": "RSS",
@@ -9735,6 +9778,11 @@ export interface components {
          *       ],
          *       "runs": {
          *         "on": "host"
+         *       },
+         *       "code": {
+         *         "url": "https://example.com/releases/v0.0.14/rss.connector.mjs",
+         *         "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+         *         "size": 524288
          *       }
          *     }
          */
@@ -9769,6 +9817,8 @@ export interface components {
             sign_in?: components["schemas"]["PluginConnectorSignIn"];
             /** @description Where the connector runs. */
             runs: components["schemas"]["PluginConnectorRuns"];
+            /** @description Where the connector's code is, so a connector host can fetch and check it. A later version of the plugin may change it. Present only when the bundle gives it. */
+            code?: components["schemas"]["PluginConnectorCode"];
         };
         /**
          * @description A connector host is one machine that runs connectors, linked to the instance once.
@@ -10228,7 +10278,7 @@ export interface components {
             /** @description Jinja text the connector renders. Fills only a field of type `string`. */
             template: string;
         };
-        /** @description What one kind of the connector brings. An answer holds every member; a member a save leaves out takes its default. */
+        /** @description What one kind of the connector brings. An answer holds every member; a member a save leaves out takes its default, except when `target_type` is not the kind's own type: `fields` left out are the fields both types declare, each `{ "from": <field> }`, and `status_overrides` left out are none. */
         ConnectorMappingKind: {
             /** @description Whether the kind comes in. */
             enabled?: boolean;
@@ -10288,7 +10338,7 @@ export interface components {
                 [key: string]: {
                     /** @description The kind's target type. */
                     target_type: string;
-                    /** @description The items outside the bin of the target type under the connector's source. */
+                    /** @description The items outside the bin under the connector's source that the rewrite moves onto the target type: those on the kind's own type and on each type the kind was mapped onto before. */
                     count: number;
                 };
             };
@@ -10311,6 +10361,10 @@ export interface components {
             version: number;
             /** @description The kinds to rewrite. */
             kinds: string[];
+            /** @description Each kind's types that the rewrite moves its items from, by name: its own type and each type it was mapped onto before, other than its target. */
+            from: {
+                [key: string]: string[];
+            };
             /**
              * Format: date-time
              * @description When the rewrite was asked for.
@@ -10477,7 +10531,7 @@ export interface components {
              * @example 01a1fa41-9d8e-7f10-b2c3-4d5e6f708192
              */
             item_id?: string;
-            /** @description A draft of the kind's mapping, checked as a save checks it; a member you leave out takes its default. Leave it out to preview the mapping in force. */
+            /** @description A draft of the kind's mapping, checked as a save checks it. A member you leave out takes the default a save gives it, as `ConnectorMappingKind` says, including when `target_type` is another type. Leave it out to preview the mapping in force. */
             mapping?: components["schemas"]["ConnectorMappingKind"];
         };
         /** @description The connector's answer to a mapping preview: `result` or `error`, not both. */
@@ -10580,6 +10634,18 @@ export interface components {
              * @example 2026-11-21T09:30:00.000Z
              */
             created_at: string;
+            /**
+             * Format: uri
+             * @description The item's page at this instance's sign-in address, then `/i/` and the item's ID. Marfa builds it when it answers the item, so it changes when the sign-in address moves.
+             * @example https://marfa.example/i/019980d6-7612-7000-8000-000000000002
+             */
+            readonly web_url: string;
+            /**
+             * Format: uri
+             * @description The item's address for apps on one device: `marfa://`, the instance's ID, then the item's ID. It stays the same when the sign-in address moves.
+             * @example marfa://01a1011e-87bd-7ab7-bbab-538453d75381/019980d6-7612-7000-8000-000000000002
+             */
+            readonly app_url: string;
         };
         /** @description What an app keeps under one `app.<vendor>` namespace: its types with counts, and a page of its items in every state. */
         AppVendorDataPage: {
@@ -10713,6 +10779,8 @@ export interface operations {
                      *           "schema_version": 1,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "web_url": "https://marfa.example/i/01a10119-55c0-77ac-9589-f7c48fa642b6",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10119-55c0-77ac-9589-f7c48fa642b6",
                      *           "properties": {
                      *             "name": "Pilot for Sample Ltd",
                      *             "amount": 4500,
@@ -10735,6 +10803,8 @@ export interface operations {
                      *           "schema_version": 1,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "web_url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *           "properties": {
                      *             "name": "Renewal for Example Co",
                      *             "amount": 12000,
@@ -10962,6 +11032,8 @@ export interface operations {
                      *         "schema_version": 1,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "web_url": "https://marfa.example/i/01a10119-55c0-77ac-9589-f7c48fa642b6",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10119-55c0-77ac-9589-f7c48fa642b6",
                      *         "properties": {
                      *           "name": "Pilot for Sample Ltd",
                      *           "amount": 4500,
@@ -11006,6 +11078,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "web_url": "https://marfa.example/i/01a10119-cf61-7ef1-bc70-3c55fcd9f838",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10119-cf61-7ef1-bc70-3c55fcd9f838",
                      *         "properties": {
                      *           "name": "Invoice 2026-001"
                      *         },
@@ -11260,6 +11334,8 @@ export interface operations {
                      *         "schema_version": 1,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "web_url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *         "properties": {
                      *           "name": "Renewal for Example Co",
                      *           "amount": 12000,
@@ -11704,6 +11780,8 @@ export interface operations {
                      *         "schema_version": 1,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "web_url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *         "properties": {
                      *           "name": "Renewal for Example Co",
                      *           "amount": 12000,
@@ -12408,6 +12486,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "web_url": "https://marfa.example/i/01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-c2a3-78ab-88fe-01dda6454da2",
                      *         "properties": {
                      *           "name": "Casey Sample"
                      *         }
@@ -12851,6 +12931,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "web_url": "https://marfa.example/i/01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-c2a3-78ab-88fe-01dda6454da2",
                      *         "properties": {
                      *           "name": "Casey Sample"
                      *         }
@@ -13271,6 +13353,8 @@ export interface operations {
                      *           "schema_version": 1,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "web_url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *           "properties": {
                      *             "name": "Renewal for Example Co",
                      *             "amount": 12000,
@@ -13683,6 +13767,8 @@ export interface operations {
                      *           "schema_version": 1,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "web_url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *           "properties": {
                      *             "name": "Renewal for Example Co",
                      *             "amount": 12000,
@@ -13704,6 +13790,8 @@ export interface operations {
                      *           "schema_version": 0,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "web_url": "https://marfa.example/i/01a1011c-2f86-76b6-9594-050c109f4957",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011c-2f86-76b6-9594-050c109f4957",
                      *           "properties": {
                      *             "name": "Alex Example"
                      *           }
@@ -14571,7 +14659,9 @@ export interface operations {
                      *           "type": "core.note",
                      *           "version": 1,
                      *           "source": "notes",
-                     *           "created_at": "2026-01-01T12:00:00.000Z"
+                     *           "created_at": "2026-01-01T12:00:00.000Z",
+                     *           "web_url": "https://marfa.example/i/01900000-0000-7000-8000-000000000001",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01900000-0000-7000-8000-000000000001"
                      *         }
                      *       ],
                      *       "next_cursor": null
@@ -14724,6 +14814,8 @@ export interface operations {
                      *             "schema_version": 1,
                      *             "trashed_at": null,
                      *             "read_only": false,
+                     *             "web_url": "https://marfa.example/i/01a1012b-8d07-7a13-b5c4-61e0f39a2d78",
+                     *             "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1012b-8d07-7a13-b5c4-61e0f39a2d78",
                      *             "properties": {
                      *               "title": "Dentist",
                      *               "starts_at": "2026-10-07T08:00:00.000Z",
@@ -14748,6 +14840,8 @@ export interface operations {
                      *             "schema_version": 1,
                      *             "trashed_at": null,
                      *             "read_only": false,
+                     *             "web_url": "https://marfa.example/i/01a1012b-5e31-7c42-9a6e-2d4f8b1c7e50",
+                     *             "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1012b-5e31-7c42-9a6e-2d4f8b1c7e50",
                      *             "properties": {
                      *               "title": "Team review",
                      *               "starts_at": "2026-09-04T10:00:00.000Z",
@@ -15112,6 +15206,8 @@ export interface operations {
                      *           "name": "Casey Sample",
                      *           "source": "crm",
                      *           "created_at": "2026-10-03T09:44:15.777Z",
+                     *           "web_url": "https://marfa.example/i/01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-c2a3-78ab-88fe-01dda6454da2",
                      *           "trashed_at": "2026-10-03T09:47:15.447Z",
                      *           "trashed_by": {
                      *             "kind": "key",
@@ -20619,6 +20715,8 @@ export interface operations {
                      *             "schema_version": 1,
                      *             "trashed_at": null,
                      *             "read_only": false,
+                     *             "web_url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *             "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *             "properties": {
                      *               "name": "Renewal for Example Co",
                      *               "amount": 12000,
@@ -21013,22 +21111,26 @@ export interface operations {
                     "application/json": components["schemas"]["PluginBundleRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            /**
+             * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
+             *     - `insufficient_user_authentication`: you are an app adding, changing or removing a type's guidance, and your owner signed in more than fifteen minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "WWW-Authenticate": components["headers"]["WWW-Authenticate"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                    "application/json": components["schemas"]["InsufficientUserAuthenticationOrUnauthorizedRefusal"];
                 };
             };
             /**
-             * @description - `forbidden`: no `schema.write`, no `connectors.manage` for a `connector` (`details.required_scope`), a type under `core`, `system`, `marfa`, `app` or `user` (`details.namespace`), or app guidance.
-             *     - `type_not_permitted`: no write on a type of the bundle, or on a parent outside it that isn't shipped or under `common`.
-             *     - `edge_type_not_permitted`: no write on an edge type name of the bundle.
+             * @description - `forbidden`: no `schema.write`, no `connectors.manage` for a `connector` (`details.required_scope`), a type under `core`, `system`, `marfa`, `app` or `user` (`details.namespace`), or guidance from an app-made key.
+             *     - `type_not_permitted`: no write on a bundle type, or a parent outside it that isn't shipped or under `common`.
+             *     - `edge_type_not_permitted`: no write on a bundle edge type.
              */
             403: {
                 headers: {
@@ -26288,20 +26390,24 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            /**
+             * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
+             *     - `insufficient_user_authentication`: you are an app adding, changing or removing a type's guidance, and your owner signed in more than fifteen minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "WWW-Authenticate": components["headers"]["WWW-Authenticate"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                    "application/json": components["schemas"]["InsufficientUserAuthenticationOrUnauthorizedRefusal"];
                 };
             };
             /**
-             * @description - `forbidden`: you lack `metadata.types:write`, guidance needs `schema.write`, the identifier is under `core.*`, `system.*`, `marfa.*` or `common.*` (install its plugin), or you are an app and another app or the owner holds its `app.<vendor>` namespace (`details.namespace`).
+             * @description - `forbidden`: no `metadata.types:write`, guidance without `schema.write` or from an app-made key, the identifier is under `core.*`, `system.*`, `marfa.*` or `common.*` (install its plugin), or another app holds its `app.<vendor>` namespace (`details.namespace`).
              *     - `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` (`details.grant` names it).
              */
             403: {
@@ -26686,20 +26792,24 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            /**
+             * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
+             *     - `insufficient_user_authentication`: you are an app adding, changing or removing a type's guidance, and your owner signed in more than fifteen minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "WWW-Authenticate": components["headers"]["WWW-Authenticate"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                    "application/json": components["schemas"]["InsufficientUserAuthenticationOrUnauthorizedRefusal"];
                 };
             };
             /**
-             * @description - `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`.
+             * @description - `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`, or guidance, which a key an app made can't change.
              *     - `core_type_immutable`: Marfa ships this type.
              *     - `type_not_permitted`: your type map lacks write on the type or a new non-platform `parent` (`details.grant` names it).
              */
@@ -27953,7 +28063,7 @@ export interface operations {
                      *         {
                      *           "id": "about",
                      *           "label": "About",
-                     *           "reverse_label": "Subject of",
+                     *           "reverse_label": "Subject Of",
                      *           "description": "Says that an item is about another item, such as a note about a book.",
                      *           "cardinality": "many-to-many",
                      *           "from_type_constraints": [
@@ -27971,7 +28081,7 @@ export interface operations {
                      *         },
                      *         {
                      *           "id": "attached-to",
-                     *           "label": "Attached to",
+                     *           "label": "Attached To",
                      *           "reverse_label": "Attachments",
                      *           "description": "Says that an item is attached to another item and exists for it, such as a scanned page attached to the document it was scanned for.",
                      *           "cardinality": "many-to-many",
@@ -31314,6 +31424,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "web_url": "https://marfa.example/i/01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10122-54e3-7447-9e6f-91e7d99f361f",
                      *         "properties": {
                      *           "title": "Deals",
                      *           "query": {
@@ -31570,6 +31682,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "web_url": "https://marfa.example/i/01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10122-54e3-7447-9e6f-91e7d99f361f",
                      *         "properties": {
                      *           "title": "Open deals",
                      *           "query": {
@@ -31816,6 +31930,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": "2026-10-03T10:10:45.735Z",
                      *         "read_only": false,
+                     *         "web_url": "https://marfa.example/i/01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10122-54e3-7447-9e6f-91e7d99f361f",
                      *         "properties": {
                      *           "title": "Open deals",
                      *           "query": {
@@ -32430,6 +32546,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "web_url": "https://marfa.example/i/01a10122-ce84-7b6c-b1fd-38287d45e791",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10122-ce84-7b6c-b1fd-38287d45e791",
                      *         "properties": {
                      *           "title": "Won deals",
                      *           "query": {
@@ -32662,6 +32780,8 @@ export interface operations {
                      *           "schema_version": 1,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "web_url": "https://marfa.example/i/01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a1011a-4902-76cf-a4a9-88e99c038c8d",
                      *           "properties": {
                      *             "name": "Renewal for Example Co",
                      *             "amount": 12000,
@@ -32683,6 +32803,8 @@ export interface operations {
                      *           "schema_version": 1,
                      *           "trashed_at": null,
                      *           "read_only": false,
+                     *           "web_url": "https://marfa.example/i/01a10119-55c0-77ac-9589-f7c48fa642b6",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10119-55c0-77ac-9589-f7c48fa642b6",
                      *           "properties": {
                      *             "name": "Pilot for Sample Ltd",
                      *             "amount": 4500,
@@ -33068,6 +33190,8 @@ export interface operations {
                      *         "schema_version": 0,
                      *         "trashed_at": null,
                      *         "read_only": false,
+                     *         "web_url": "https://marfa.example/i/01a10122-ce84-7b6c-b1fd-38287d45e791",
+                     *         "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/01a10122-ce84-7b6c-b1fd-38287d45e791",
                      *         "properties": {
                      *           "title": "Won this quarter",
                      *           "query": {
@@ -35743,7 +35867,7 @@ export interface operations {
                         written: number;
                         /** @description How many agreements Marfa removed. */
                         cleared: number;
-                        /** @description The IDs Marfa skipped, in the order named, `set` first. An ID is skipped if no stored item has it or its type is one you can't read. A trashed item counts as stored. */
+                        /** @description The IDs Marfa skipped, in the order named, `set` first. An ID is skipped if no stored item has it or it names an item you can't read. A trashed item counts as stored. */
                         skipped: string[];
                     };
                 };
@@ -39707,7 +39831,9 @@ export interface operations {
                      *           "name": "Preferences",
                      *           "source": "oauth:01a10127-d974-7c54-8cc4-5c5581d45c4c",
                      *           "state": "active",
-                     *           "created_at": "2026-11-21T09:30:00.000Z"
+                     *           "created_at": "2026-11-21T09:30:00.000Z",
+                     *           "web_url": "https://marfa.example/i/019980d6-7612-7000-8000-000000000002",
+                     *           "app_url": "marfa://01a1011e-87bd-7ab7-bbab-538453d75381/019980d6-7612-7000-8000-000000000002"
                      *         }
                      *       ],
                      *       "next_cursor": null

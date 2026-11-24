@@ -28,6 +28,7 @@ struct Instance {
 struct Reply {
     status: StatusCode,
     body: Value,
+    text: String,
     headers: HeaderMap,
 }
 
@@ -62,6 +63,7 @@ async fn send(router: Router, request: Request<Body>) -> Reply {
     Reply {
         status,
         body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        text: String::from_utf8_lossy(&bytes).into_owned(),
         headers,
     }
 }
@@ -740,4 +742,671 @@ async fn sign_out_answers_ok_and_ends_the_cookie() {
     assert_eq!(ended.body, json!({ "ok": true }));
     let gone = send(instance.public.clone(), on_the_passkey_list(&cookie)).await;
     assert_eq!(gone.status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_form_sign_out_shows_the_signed_out_notice_and_ends_the_cookie() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let ended = send(
+        instance.public.clone(),
+        post_form("/auth/sign-out", &[], &cookie),
+    )
+    .await;
+    assert_eq!(ended.status, StatusCode::OK);
+    assert!(ended.text.contains("signed out"), "{}", ended.text);
+    let line = ended.headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(line.starts_with("marfa_session=;"), "{line}");
+    let gone = send(instance.public.clone(), on_the_passkey_list(&cookie)).await;
+    assert_eq!(gone.status, StatusCode::UNAUTHORIZED);
+}
+
+fn goes_to(reply: &Reply) -> String {
+    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text);
+    reply.headers[header::LOCATION]
+        .to_str()
+        .unwrap()
+        .to_string()
+}
+
+async fn change_from_the_page(instance: &Instance, cookie: &str, fields: [&str; 3]) -> Reply {
+    let [current, new, again] = fields;
+    send(
+        instance.public.clone(),
+        post_form(
+            "/auth/owner/password",
+            &[
+                ("current_password", current),
+                ("new_password", new),
+                ("confirm_password", again),
+            ],
+            cookie,
+        ),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_form_password_change_goes_back_to_the_page_with_what_happened() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let new = "the second password";
+    for (fields, problem) in [
+        ([PASSWORD, "short", "short"], "new_too_short"),
+        ([PASSWORD, new, "the third password"], "not_the_same"),
+        (["not the password", new, new], "current_not_right"),
+        (["", new, new], "current_missing"),
+    ] {
+        let reply = change_from_the_page(&instance, &cookie, fields).await;
+        assert_eq!(
+            goes_to(&reply),
+            format!("/auth/owner/passkeys?problem={problem}"),
+            "{fields:?}"
+        );
+        assert!(
+            reply.headers.get(header::SET_COOKIE).is_none(),
+            "{fields:?}"
+        );
+    }
+    assert_eq!(instance.sign_in(PASSWORD).await.status, StatusCode::OK);
+
+    let reply = change_from_the_page(&instance, &cookie, [PASSWORD, new, new]).await;
+    assert_eq!(goes_to(&reply), "/auth/owner/passkeys?changed=1");
+    assert_eq!(
+        instance.sign_in(PASSWORD).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(instance.sign_in(new).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_form_password_change_that_is_tried_too_often_says_how_long_to_wait() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let mut places = Vec::new();
+    for _ in 0..60 {
+        let reply = change_from_the_page(
+            &instance,
+            &cookie,
+            [
+                "not the password",
+                "the second password",
+                "the second password",
+            ],
+        )
+        .await;
+        let place = goes_to(&reply);
+        let stop = place.contains("too_many_attempts");
+        places.push(place);
+        if stop {
+            break;
+        }
+    }
+    assert_eq!(places[0], "/auth/owner/passkeys?problem=current_not_right");
+    let last = places.last().unwrap();
+    assert!(
+        last.starts_with("/auth/owner/passkeys?problem=too_many_attempts&retry_after_seconds="),
+        "{last}"
+    );
+}
+
+#[tokio::test]
+async fn a_json_password_change_still_answers_in_json() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let wrong = send(
+        instance.public.clone(),
+        post_signed_in(
+            "/auth/owner/password",
+            &json!({ "current_password": "not the password", "new_password": "the second password" }),
+            &cookie,
+        ),
+    )
+    .await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    let changed = send(
+        instance.public.clone(),
+        post_signed_in(
+            "/auth/owner/password",
+            &json!({ "current_password": PASSWORD, "new_password": "the second password" }),
+            &cookie,
+        ),
+    )
+    .await;
+    assert_eq!(changed.status, StatusCode::OK);
+    assert_eq!(changed.body, json!({ "ok": true }));
+}
+
+#[tokio::test]
+async fn the_passkeys_page_shows_what_a_form_password_change_got() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let page = |query: &str| {
+        let request = Request::builder()
+            .uri(format!("/auth/owner/passkeys{query}"))
+            .header(header::COOKIE, &cookie)
+            .header(header::ACCEPT, "text/html")
+            .body(Body::empty())
+            .unwrap();
+        send(instance.public.clone(), request)
+    };
+    let plain = page("").await;
+    assert_eq!(plain.status, StatusCode::OK);
+    let shown = "data-password-changed>Your password has been changed.";
+    assert!(plain.text.contains("data-password-changed hidden>"));
+    assert!(!plain.text.contains(shown));
+    assert!(!plain.text.contains(r#"class="err" id="current-note""#));
+    let changed = page("?changed=1").await;
+    assert!(changed.text.contains(shown), "{}", changed.text);
+    let wrong = page("?problem=current_not_right").await;
+    assert!(
+        wrong
+            .text
+            .contains(r#"class="err" id="current-note" aria-live="polite" data-note data-hint="">That password isn’t right."#),
+        "{}",
+        wrong.text
+    );
+    let waiting = page("?problem=too_many_attempts&retry_after_seconds=600").await;
+    assert!(
+        waiting.text.contains("Try again in 10 minutes"),
+        "{}",
+        waiting.text
+    );
+}
+
+#[tokio::test]
+async fn a_form_password_change_refuses_an_overlong_current_password_without_counting_it() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let new = "the second password";
+    let overlong = "x".repeat(1025);
+    for _ in 0..12 {
+        let reply = change_from_the_page(&instance, &cookie, [&overlong, new, new]).await;
+        assert_eq!(
+            goes_to(&reply),
+            "/auth/owner/passkeys?problem=current_missing"
+        );
+    }
+    let too_long_new = "y".repeat(129);
+    let reply =
+        change_from_the_page(&instance, &cookie, [PASSWORD, &too_long_new, &too_long_new]).await;
+    assert_eq!(goes_to(&reply), "/auth/owner/passkeys?problem=new_too_long");
+    let reply = change_from_the_page(&instance, &cookie, [PASSWORD, new, new]).await;
+    assert_eq!(goes_to(&reply), "/auth/owner/passkeys?changed=1");
+}
+
+#[tokio::test]
+async fn a_form_password_change_from_an_ended_session_is_sent_to_sign_in() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let ended = send(
+        instance.public.clone(),
+        post_signed_in("/auth/sign-out", &json!({}), &cookie),
+    )
+    .await;
+    assert_eq!(ended.status, StatusCode::OK);
+    let new = "the second password";
+    let reply = change_from_the_page(&instance, &cookie, [PASSWORD, new, new]).await;
+    assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{}", reply.text);
+    assert!(reply.text.contains("Sign in needed"), "{}", reply.text);
+    assert!(
+        reply.text.contains(r#"href="/auth/sign-in""#),
+        "{}",
+        reply.text
+    );
+    assert_eq!(instance.sign_in(PASSWORD).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_wrong_password_names_its_field_and_an_ended_session_names_none() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let new = "the second password";
+    let change = json!({ "current_password": "not the password", "new_password": new });
+    let wrong = send(
+        instance.public.clone(),
+        post_signed_in("/auth/owner/password", &change, &cookie),
+    )
+    .await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(wrong.body["error"]["details"]["field"], "current_password");
+    let confirm = json!({ "password": "not the password" });
+    let wrong = send(
+        instance.public.clone(),
+        post_signed_in("/auth/confirm", &confirm, &cookie),
+    )
+    .await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(wrong.body["error"]["details"]["field"], "password");
+
+    let ended = send(
+        instance.public.clone(),
+        post_signed_in("/auth/sign-out", &json!({}), &cookie),
+    )
+    .await;
+    assert_eq!(ended.status, StatusCode::OK);
+    for (path, body) in [
+        ("/auth/owner/password", &change),
+        ("/auth/confirm", &confirm),
+    ] {
+        let gone = send(instance.public.clone(), post_signed_in(path, body, &cookie)).await;
+        assert_eq!(gone.status, StatusCode::UNAUTHORIZED, "{path}");
+        assert_eq!(
+            gone.body["error"]["details"]["field"],
+            Value::Null,
+            "{path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_passkeys_page_marks_only_the_fields_a_problem_is_about() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let invalid = async |query: &str| {
+        let request = Request::builder()
+            .uri(format!("/auth/owner/passkeys{query}"))
+            .header(header::COOKIE, &cookie)
+            .header(header::ACCEPT, "text/html")
+            .body(Body::empty())
+            .unwrap();
+        let page = send(instance.public.clone(), request).await;
+        assert_eq!(page.status, StatusCode::OK);
+        ["current-password", "new-password", "new-password-again"]
+            .into_iter()
+            .filter(|id| {
+                let start = page.text.find(&format!(r#"<input id="{id}""#)).unwrap();
+                let end = start + page.text[start..].find('>').unwrap();
+                page.text[start..end].contains(r#"aria-invalid="true""#)
+            })
+            .collect::<Vec<_>>()
+    };
+    let both = vec!["new-password", "new-password-again"];
+    assert_eq!(invalid("?problem=not_the_same").await, both);
+    assert_eq!(invalid("?problem=new_too_short").await, both);
+    assert_eq!(invalid("?problem=new_too_long").await, both);
+    assert_eq!(
+        invalid("?problem=current_not_right").await,
+        ["current-password"]
+    );
+    assert_eq!(
+        invalid("?problem=current_missing").await,
+        ["current-password"]
+    );
+    assert!(
+        invalid("?problem=too_many_attempts&retry_after_seconds=60")
+            .await
+            .is_empty()
+    );
+    assert!(invalid("?problem=something_else").await.is_empty());
+    assert!(invalid("").await.is_empty());
+}
+
+/// A browser's form post, which asks for a page.
+fn post_form(path: &str, fields: &[(&str, &str)], cookie: &str) -> Request<Body> {
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(fields)
+        .finish();
+    Request::builder()
+        .method(Method::POST)
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(header::ACCEPT, "text/html")
+        .header(header::ORIGIN, ORIGIN)
+        .header(header::COOKIE, cookie)
+        .body(Body::from(body))
+        .unwrap()
+}
+
+async fn page_of(router: Router, request: Request<Body>) -> (StatusCode, String) {
+    let response = router.oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// A setup session cookie, made the way a person's browser makes one: with the setup code.
+async fn setup_session(router: &Router, private: &Router) -> String {
+    let issued = send(private.clone(), post("/_control/setup/code", &json!({}))).await;
+    let code = json!({ "code": issued.body["code"] });
+    let exchanged = send(router.clone(), post("/setup/exchange", &code)).await;
+    assert_eq!(exchanged.status, StatusCode::OK);
+    exchanged.cookie().unwrap()
+}
+
+const MISMATCH: &str = "The passwords don’t match.";
+
+#[tokio::test]
+async fn a_claim_form_whose_passwords_differ_is_refused_and_claims_nothing() {
+    let dir = TempDir::new().unwrap();
+    let app = boot(&dir).await;
+    let (router, private) = (public(app.clone()), control(app.clone()));
+    let setup = setup_session(&router, &private).await;
+    let form = |confirm: &'static str| {
+        post_form(
+            "/setup/claim",
+            &[
+                ("username", USERNAME),
+                ("name", ""),
+                ("password", "first-password"),
+                ("confirm_password", confirm),
+            ],
+            &setup,
+        )
+    };
+
+    let (status, page) = page_of(router.clone(), form("first-passwrod")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(page.contains(MISMATCH), "{page}");
+    assert!(page.contains("id=\"owner-form\""));
+    assert!(page.contains(&format!("value=\"{USERNAME}\"")));
+    assert!(!page.contains("first-pass"), "a password came back");
+    assert!(!claim::is_claimed(&app).await.unwrap());
+
+    // The witness: the same form with the passwords alike claims, and a blank name is the username.
+    let (status, _) = page_of(router, form("first-password")).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(claim::is_claimed(&app).await.unwrap());
+    let owner = marfa_server::app::auth::owner::find(&app)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(owner.name, USERNAME);
+}
+
+#[tokio::test]
+async fn the_forgot_password_page_answers_to_anyone_and_prints_no_path() {
+    let instance = Instance::claimed().await;
+    let socket = instance.dir.path().join("s.sock");
+    let get = |path: &str, cookie: Option<&str>| {
+        let mut request = Request::builder().uri(path);
+        if let Some(cookie) = cookie {
+            request = request.header(header::COOKIE, cookie);
+        }
+        request.body(Body::empty()).unwrap()
+    };
+
+    let (status, page) = page_of(instance.public.clone(), get("/auth/forgot-password", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("owner recover"), "{page}");
+    assert!(page.contains("MARFA_OWNER_RECOVERY=true"), "{page}");
+    assert!(!page.contains(socket.to_str().unwrap()), "{page}");
+    assert!(
+        !page.contains(instance.dir.path().to_str().unwrap()),
+        "{page}"
+    );
+    // The witness: the page names the socket by a word, and the sign-in page links here.
+    assert!(page.contains("socket PATH"), "{page}");
+    let (_, sign_in) = page_of(instance.public.clone(), get("/auth/sign-in", None)).await;
+    assert!(
+        sign_in.contains("href=\"/auth/forgot-password\""),
+        "{sign_in}"
+    );
+
+    // A signed-in person is answered the same page.
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let (status, again) = page_of(
+        instance.public.clone(),
+        get("/auth/forgot-password", Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(again.contains("owner recover"), "{again}");
+}
+
+#[tokio::test]
+async fn a_claim_sent_as_json_needs_no_confirmation_and_a_blank_name_is_the_username() {
+    let dir = TempDir::new().unwrap();
+    let app = boot(&dir).await;
+    let router = control(app.clone());
+    let claim_body = json!({ "username": USERNAME, "password": PASSWORD, "name": "  " });
+    let reply = send(router, post("/_control/setup/claim", &claim_body)).await;
+    assert_eq!(reply.status, StatusCode::CREATED);
+    assert_eq!(reply.body["name"], USERNAME);
+}
+
+#[tokio::test]
+async fn a_recovery_form_is_judged_for_its_owner_and_its_proof_before_its_passwords() {
+    let form = |password: &'static str, confirm: Option<&'static str>| {
+        let mut fields = vec![("password", password)];
+        fields.extend(confirm.map(|confirm| ("confirm_password", confirm)));
+        post_form("/setup/recover", &fields, "")
+    };
+
+    // No owner: whatever the passwords are, there is nothing to recover.
+    let dir = TempDir::new().unwrap();
+    let app = boot_with(
+        &dir,
+        &[
+            ("MARFA_TEST_HOOKS", "true"),
+            ("MARFA_SIGN_IN_ADDRESS", ORIGIN),
+            ("MARFA_OWNER_RECOVERY", "true"),
+        ],
+    )
+    .await;
+    let unowned = public(app);
+    for confirm in [Some("second-passwrod"), Some("second-password"), None] {
+        let (status, _) = page_of(unowned.clone(), form("second-password", confirm)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{confirm:?}");
+    }
+
+    // An owner and no proof standing: the ended proof is said before a mismatch.
+    let instance = Instance::claimed_with(&[
+        ("MARFA_TEST_HOOKS", "true"),
+        ("MARFA_SIGN_IN_ADDRESS", ORIGIN),
+        ("MARFA_OWNER_RECOVERY", "true"),
+    ])
+    .await;
+    for confirm in [Some("second-passwrod"), Some("second-password")] {
+        let (status, page) =
+            page_of(instance.public.clone(), form("second-password", confirm)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{confirm:?}");
+        assert!(page.contains("recovery session ended"), "{page}");
+    }
+    assert!(instance.sign_in(PASSWORD).await.status.is_success());
+}
+
+#[tokio::test]
+async fn a_form_that_sets_a_password_must_repeat_it() {
+    let dir = TempDir::new().unwrap();
+    let app = boot(&dir).await;
+    let (router, private) = (public(app.clone()), control(app.clone()));
+    let setup = setup_session(&router, &private).await;
+    let claim_form = |extra: &[(&str, &str)]| {
+        let mut fields = vec![
+            ("username", USERNAME),
+            ("name", ""),
+            ("password", "first-password"),
+        ];
+        fields.extend_from_slice(extra);
+        post_form("/setup/claim", &fields, &setup)
+    };
+
+    // The page leaves the confirmation out: nothing is claimed.
+    let (status, page) = page_of(router.clone(), claim_form(&[])).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(page.contains(MISMATCH), "{page}");
+    assert!(!claim::is_claimed(&app).await.unwrap());
+
+    // A claim that also holds a field it does not declare is refused for that field first.
+    let mut undeclared = claim_form(&[("confirm_password", "first-passwrod"), ("bogus", "1")]);
+    undeclared
+        .headers_mut()
+        .insert(header::ACCEPT, "application/json".parse().unwrap());
+    let (status, body) = page_of(router.clone(), undeclared).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("unknown_body_fields"), "{body}");
+    assert!(body.contains("bogus"), "{body}");
+
+    // A session that has ended is said before a mismatch.
+    let ended = post_form(
+        "/setup/claim",
+        &[
+            ("username", USERNAME),
+            ("password", "first-password"),
+            ("confirm_password", "first-passwrod"),
+        ],
+        "marfa_setup=gone",
+    );
+    let (status, _) = page_of(router.clone(), ended).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(!claim::is_claimed(&app).await.unwrap());
+
+    // The witness: the same form with the confirmation alike claims.
+    let (status, _) = page_of(
+        router,
+        claim_form(&[("confirm_password", "first-password")]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(claim::is_claimed(&app).await.unwrap());
+}
+
+#[tokio::test]
+async fn a_start_without_an_owner_issues_a_setup_link_beside_its_code() {
+    let dir = TempDir::new().unwrap();
+    let app = boot(&dir).await;
+    app.record_bound(ORIGIN.trim_start_matches("http://").parse().unwrap());
+    claim::announce_at_start(&app).await.unwrap();
+    let held = |kind: &'static str| {
+        app.db.read(move |tx| {
+            Ok(tx.query_row(
+                "SELECT count(*) FROM setup_proof WHERE kind = ?1",
+                [kind],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+    };
+    assert_eq!(
+        (held("code").await.unwrap(), held("ticket").await.unwrap()),
+        (1, 1)
+    );
+    assert_eq!(
+        claim::handoff_link(&app, "abc"),
+        format!("{ORIGIN}/setup#handoff=abc")
+    );
+    let claimed = Instance::claimed().await;
+    claim::announce_at_start(&claimed.app).await.unwrap();
+    let tickets: i64 = claimed
+        .app
+        .db
+        .read(|tx| {
+            Ok(tx.query_row(
+                "SELECT count(*) FROM setup_proof WHERE kind = 'ticket'",
+                [],
+                |row| row.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(tickets, 0);
+}
+
+#[tokio::test]
+async fn a_start_offers_its_link_only_where_the_setup_page_can_take_it() {
+    let notice = |extra: &'static [(&'static str, &'static str)], listening: bool| async move {
+        let dir = TempDir::new().unwrap();
+        let mut pairs = vec![("MARFA_TEST_HOOKS", "true")];
+        pairs.extend_from_slice(extra);
+        let app = boot_with(&dir, &pairs).await;
+        if listening {
+            app.record_bound("127.0.0.1:8600".parse().unwrap());
+        }
+        let line = claim::claim_notice(&app).await.unwrap().unwrap();
+        let tickets: i64 = app
+            .db
+            .read(|tx| {
+                Ok(tx.query_row(
+                    "SELECT count(*) FROM setup_proof WHERE kind = 'ticket'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        (line, tickets)
+    };
+
+    // The witness: an address the page serves on carries the link, and its ticket is held.
+    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", ORIGIN)], true).await;
+    assert!(line.contains("setup code: "), "the notice lost its code");
+    assert!(
+        line.contains(&format!("{ORIGIN}/setup#handoff=")),
+        "the loopback notice has no link"
+    );
+    assert_eq!(tickets, 1);
+    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", "https://marfa.example")], true).await;
+    assert!(
+        line.contains("https://marfa.example/setup#handoff="),
+        "the https notice has no link"
+    );
+    assert_eq!(tickets, 1);
+
+    // A control-only start has no public listener, so no address it holds can open the page.
+    let control_only: [&'static [(&'static str, &'static str)]; 2] = [
+        &[
+            ("MARFA_CONTROL_ONLY", "true"),
+            ("MARFA_PORT", "0"),
+            ("MARFA_SIGN_IN_ADDRESS", "https://marfa.example"),
+        ],
+        &[("MARFA_CONTROL_ONLY", "true"), ("MARFA_PORT", "8600")],
+    ];
+    for extra in control_only {
+        let (line, tickets) = notice(extra, false).await;
+        assert!(line.contains("setup code: "), "the notice lost its code");
+        assert!(
+            !line.contains("handoff") && !line.contains("link"),
+            "a control-only start printed a link"
+        );
+        assert_eq!(tickets, 0);
+    }
+
+    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", "http://marfa.example")], true).await;
+    assert!(line.contains("setup code: "), "the notice lost its code");
+    assert!(
+        !line.contains("handoff") && !line.contains("link"),
+        "a plain http address printed a link"
+    );
+    assert_eq!(tickets, 0);
+}
+
+#[tokio::test]
+async fn a_form_sign_in_with_a_field_empty_names_only_that_field() {
+    let instance = Instance::claimed().await;
+    let sent = |username: &str, password: &str| {
+        let fields = form_urlencoded::Serializer::new(String::new())
+            .append_pair("username", username)
+            .append_pair("password", password)
+            .finish();
+        Request::builder()
+            .method(Method::POST)
+            .uri("/auth/sign-in")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(header::ORIGIN, ORIGIN)
+            .body(Body::from(fields))
+            .unwrap()
+    };
+    let missing = |reply: &Reply| {
+        assert_eq!(reply.status, StatusCode::FOUND);
+        let location = reply.headers[header::LOCATION].to_str().unwrap();
+        let (_, query) = location.split_once('?').unwrap();
+        let pairs: Vec<(String, String)> = form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
+        assert!(pairs.contains(&("error".into(), "missing_field".into())));
+        pairs
+            .into_iter()
+            .filter(|(name, _)| name == "missing")
+            .map(|(_, value)| value)
+            .collect::<Vec<_>>()
+    };
+    for (username, password, named) in [
+        ("   ", PASSWORD, vec!["username"]),
+        ("", PASSWORD, vec!["username"]),
+        (USERNAME, "", vec!["password"]),
+        ("  ", "", vec!["username", "password"]),
+    ] {
+        let reply = send(instance.public.clone(), sent(username, password)).await;
+        assert_eq!(missing(&reply), named, "{username:?} {password:?}");
+    }
 }

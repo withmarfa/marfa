@@ -23,7 +23,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Find items",
-        description: "Use to find notes, tasks, records, files and other items: search by words, or list by type, tags, source or dates. Returns short entries (id, type, title, snippet, and the table row a search matched); read the full items with marfa_get and a row with marfa_read_rows.",
+        description: "Use to find notes, tasks, records, files and other items: search by words, or list by type, tags, source or dates. Returns short entries (id, type, title, snippet, and the table row a search matched); read the full items with marfa_get and a row with marfa_read_rows. Give the person an entry's web_url when you point at that item.",
         input: json!({
             "type": "object",
             "properties": {
@@ -65,6 +65,8 @@ pub fn definition() -> Definition {
                     "properties": {
                         "id": { "type": "string" },
                         "type": { "type": "string" },
+                        "web_url": { "type": "string" },
+                        "app_url": { "type": "string" },
                         "title": { "type": "string" },
                         "snippet": { "type": "string" },
                         "state": { "type": "string" },
@@ -81,7 +83,7 @@ pub fn definition() -> Definition {
                             "required": ["table", "id", "column"],
                         },
                     },
-                    "required": ["id", "type", "title", "updated_at"],
+                    "required": ["id", "type", "web_url", "app_url", "title", "updated_at"],
                 } },
                 "next_cursor": { "type": ["string", "null"] },
                 "hint": { "type": "string" },
@@ -181,6 +183,14 @@ fn short(entry: &Entry, caption: Option<&items::Caption>) -> Value {
     let mut row = Map::new();
     row.insert("id".into(), field("id").unwrap_or_default().into());
     row.insert("type".into(), field("type").unwrap_or_default().into());
+    row.insert(
+        "web_url".into(),
+        field("web_url").unwrap_or_default().into(),
+    );
+    row.insert(
+        "app_url".into(),
+        field("app_url").unwrap_or_default().into(),
+    );
     row.insert("title".into(), title.into());
     if !snippet.is_empty() {
         row.insert("snippet".into(), snippet.into());

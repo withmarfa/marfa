@@ -28,6 +28,10 @@ export interface WireItemOptions {
   trashed_at?: string | null;
   /** Null leaves the field out, as a server from before it does. */
   read_only?: boolean | null;
+  /** The page at the sign-in address. A stand-in: fidelity compares presence. */
+  web_url?: string;
+  /** `marfa://`, an instance id, then the item's id. A stand-in, as `web_url` is. */
+  app_url?: string;
   /** The edges the server hydrates onto the item, keyed by edge type. */
   edges?: Record<string, unknown>;
 }
@@ -66,6 +70,8 @@ export function wireItem(options: WireItemOptions): Record<string, unknown> {
     ...(options.read_only === null
       ? {}
       : { read_only: options.read_only ?? false }),
+    web_url: options.web_url ?? `https://marfa.example/i/${options.id}`,
+    app_url: options.app_url ?? `marfa://instance/${options.id}`,
     // Present and empty, which is what the server answers for an item with no
     // edges. Absent would be a different thing to a device, and this is the
     // shape every door that returns an item returns.
@@ -554,8 +560,8 @@ function shipped(
 /** The shipped edge types as `GET /edge-types` lists them, which
  *  `fidelity.test.ts` holds to the real listing. */
 export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
-  shipped("about", "About", "Subject of"),
-  shipped("attached-to", "Attached to", "Attachments", {
+  shipped("about", "About", "Subject Of"),
+  shipped("attached-to", "Attached To", "Attachments", {
     reverse_name: "has-attachment",
     cascade_on_delete: "with-hosts",
     property_schema: {
@@ -566,15 +572,15 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
       },
     },
   }),
-  shipped("comments-on", "Comment on", "Comments", {
+  shipped("comments-on", "Comment On", "Comments", {
     cardinality: "many-to-one",
     cascade_on_delete: "with-hosts",
   }),
-  shipped("derived-from", "Derived from", "Basis for"),
-  shipped("excerpt-of", "Excerpt from", "Excerpts", {
+  shipped("derived-from", "Derived From", "Basis For"),
+  shipped("excerpt-of", "Excerpt From", "Excerpts", {
     cardinality: "many-to-one",
   }),
-  shipped("in-collection", "In collection", "Contents", {
+  shipped("in-collection", "In Collection", "Contents", {
     to_type_constraints: ["role:container"],
     flat: true,
     property_schema: {
@@ -584,7 +590,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
       },
     },
   }),
-  shipped("in-folder", "In folder", "Folder contents", {
+  shipped("in-folder", "In Folder", "Folder Contents", {
     written_from: "none",
     to_type_constraints: ["system.folder"],
     property_schema: {
@@ -599,7 +605,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
       },
     },
   }),
-  shipped("in-thread", "In thread", "Messages", {
+  shipped("in-thread", "In Thread", "Messages", {
     cardinality: "many-to-one",
     property_schema: {
       position: {
@@ -615,8 +621,8 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
     written_from: "to",
     acyclic: true,
   }),
-  shipped("references", "References", "Referenced by"),
-  shipped("supersedes", "Supersedes", "Superseded by", {
+  shipped("references", "References", "Referenced By"),
+  shipped("supersedes", "Supersedes", "Superseded By", {
     cardinality: "one-to-one",
     acyclic: true,
   }),

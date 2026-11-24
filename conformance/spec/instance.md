@@ -1870,7 +1870,7 @@ If the server starts on a database file whose structure is not the one the schem
 
 When the server starts on a database an earlier schema version of its own wrote, whose structure is the one that version declares, the server MUST upgrade it before it takes a request, and answer it from then on as at the version it now has.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-from-release.test.ts › upgrades the database v0.0.90 wrote to the schema version this build makes, and answers its type as before but for the origin v0.0.91 renamed`.
 
 ### `instance/upgrade-failure-keeps-old`
 
@@ -1878,7 +1878,7 @@ If upgrading a database fails before it is whole, then the server MUST refuse to
 
 **Reason:** an upgrade that stops partway must not leave a database that is neither version.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-from-release.test.ts › refuses to start when a migration fails, and leaves the database at the version it was with its rows`, `› refuses to start when the upgrade would leave a row referring to one the database does not hold, and changes nothing`.
 
 ### `instance/upgrade-keeps-references`
 
@@ -1886,7 +1886,7 @@ If upgrading a database would leave something it holds referring to something it
 
 **Reason:** the references between what a database holds are checked once, before the upgrade is kept, because an upgrade can rebuild what holds them.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-from-release.test.ts › refuses to start when the upgrade would leave a row referring to one the database does not hold, and changes nothing`.
 
 ### `instance/upgrade-keeps-rows`
 
@@ -1894,7 +1894,7 @@ When the server upgrades a database, the server MUST answer every read a client 
 
 **Reason:** an upgrade that rebuilds what holds the data can lose what refers to it along the way.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-from-release.test.ts › answers the items, the edge and the list after an upgrade as v0.0.90 did`.
 
 ### `instance/upgrade-copy-before`
 
@@ -1902,13 +1902,13 @@ When the server upgrades a database that holds a row, the server MUST write a co
 
 **Reason:** an upgrade that goes wrong, or a build the owner wants to go back from, leaves the database as the earlier build wrote it.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-from-release.test.ts › leaves a copy of the database as v0.0.90 wrote it beside the file the start upgraded`.
 
 ### `instance/upgrade-copy-refused`
 
 If the copy before an upgrade cannot be written, or would leave less free space on the database's volume than `disk_reserve_bytes`, then the server MUST refuse to start and leave the database file byte for byte as it found it.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-from-release.test.ts › refuses to start when the copy would leave less free space than the disk reserve, and changes nothing`, `› refuses to start when the copy cannot be written, and changes nothing`.
 
 ### `instance/upgrade-copy-last`
 
@@ -1916,7 +1916,7 @@ When the server has written a copy before an upgrade, the server MUST keep no co
 
 **Reason:** one copy is enough to go back one build, and each copy is as large as the database.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-from-release.test.ts › keeps only the copy from before the last upgrade`.
 
 ### `instance/upgrade-names-cause`
 
@@ -1960,7 +1960,7 @@ If the server refuses to start on a database under `instance/upgrade-refuses-sch
 
 **Reason:** what supervises the process tells a stop that starting again will not mend from one that it may.
 
-**Tests:** `compliance/database-file.test.ts › exits with status 78, not 1, when it refuses a database this build did not write`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses a database that lacks a table and has a column it does not declare, though it holds no rows`, `› refuses to start on a database a newer build wrote, and leaves it as it was`.
+**Tests:** `compliance/database-file.test.ts › exits with status 78, not 1, when it refuses a database this build did not write`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses a database that lacks a table and has a column it does not declare, though it holds no rows`, `› refuses to start on a database a newer build wrote, and leaves it as it was`, `compliance/upgrade-from-release.test.ts › refuses to start when the upgrade would leave a row referring to one the database does not hold, and changes nothing`.
 
 ### `instance/upgrade-exit-failure`
 
@@ -2134,7 +2134,7 @@ If the public listener reads a request body whole, other than one sent to `POST 
 
 ### `instance/public-body-declared`
 
-If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/consent`, `POST /oauth/token`, `POST /oauth/revoke`, `POST /oauth/device-authorization`, `POST /auth/device` or `POST /auth/device/consent` declares a body longer than 32768 bytes, then the server MUST answer `413 request_too_large` before it reads any of the body.
+If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/consent`, `POST /oauth/token`, `POST /oauth/revoke`, `POST /oauth/device-authorization`, `POST /auth/device`, `POST /auth/device/check` or `POST /auth/device/consent` declares a body longer than 32768 bytes, then the server MUST answer `413 request_too_large` before it reads any of the body.
 
 **Reason:** these operations judge no credential before they read the body, so any caller can send them, and the general cap, which an owner can set up to a terabyte, would let such a caller make the server hold a body for the whole of the deadline in `instance/body-deadline`. The largest real body at these operations is about half a kilobyte, a consent decision that carries an authorization's signed query, so 32768 bytes leaves room for any. Registration, the other operation of this kind, has a smaller cap of its own (`keys-and-oauth/register-body-cap`).
 
@@ -2142,7 +2142,7 @@ If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POS
 
 ### `instance/public-body-streamed`
 
-If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/consent`, `POST /oauth/token`, `POST /oauth/revoke`, `POST /oauth/device-authorization`, `POST /auth/device` or `POST /auth/device/consent` sends more than 32768 bytes of body without declaring its length, then the server MUST answer `413 request_too_large`.
+If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/consent`, `POST /oauth/token`, `POST /oauth/revoke`, `POST /oauth/device-authorization`, `POST /auth/device`, `POST /auth/device/check` or `POST /auth/device/consent` sends more than 32768 bytes of body without declaring its length, then the server MUST answer `413 request_too_large`.
 
 **Reason:** a body with no declared length cannot be refused at the head, so the server stops reading at the cap.
 
@@ -2316,6 +2316,82 @@ When the server answers with an HTML page, the server MUST carry in the page the
 
 **Tests:** `compliance/instance.test.ts › names in its policy the one nonce its page carries, a new one on each answer at one address`.
 
+## The page that opens an item in an app
+
+`GET /i/{id}` is the address an item's `https` link names. The page it answers hands the browser over to the item's `marfa://` link, and it is the same page for every item, so it shows nothing of the item, not even whether the item exists. In this section an item's id is well formed when it is a lowercase UUIDv7, the form `GET /items/{id}` accepts, and the item's `marfa://` link is `marfa://<instance_id>/<id>`, where `<instance_id>` is the `instance_id` the description at `GET /` answers.
+
+### `instance/item-page-link`
+
+When `GET /i/{id}` names a well-formed id, the server MUST answer `200` with an HTML page that carries a link to the item's `marfa://` link.
+
+**Reason:** an item's `https` link opens in whichever app the owner chose for `marfa://` links, and a page is how a browser hands a link over to an app.
+
+**Tests:** `compliance/item-page.test.ts › answers a well-formed id with a page that links to marfa://<instance_id>/<id>`.
+
+### `instance/item-page-opens-at-once`
+
+When `GET /i/{id}` names a well-formed id, the server MUST put in the page a refresh with no delay to the item's `marfa://` link.
+
+**Reason:** a person who follows an `https` link expects the app to open without a second click, and a refresh does that with no script.
+
+**Tests:** `compliance/item-page.test.ts › answers a well-formed id with a page that links to marfa://<instance_id>/<id>`.
+
+### `instance/item-page-no-app`
+
+When `GET /i/{id}` names a well-formed id, the server MUST put in the page a line that says what it means when nothing opens: that no app on the device opens Marfa links.
+
+**Reason:** a browser that has no app for `marfa://` shows nothing, and the page is the only place to say why.
+
+**Tests:** `compliance/item-page.test.ts › answers a well-formed id with a page that links to marfa://<instance_id>/<id>`.
+
+### `instance/item-page-same-answer`
+
+When `GET /i/{id}` names a well-formed id, the server MUST answer the same status, headers and page for an item that exists, one in the trash, one that was purged and an id no item has had, apart from the id, the nonce, the request id and the date.
+
+**Reason:** a stranger who can open the address must learn nothing of what the instance holds. The server answers from the text of the address alone and never reads the item.
+
+**Tests:** `compliance/item-page.test.ts › answers an item that exists, a trashed one, a purged one and an id never used with one page`.
+
+### `instance/item-page-same-signed-in`
+
+When `GET /i/{id}` names a well-formed id, the server MUST answer a request that carries the owner's live browser session as it answers one that carries none, apart from the id, the nonce, the request id and the date.
+
+**Reason:** the page shows nothing of the item to anyone, the owner included, because Marfa has no web view of an item and a page that read the session would be one more path to what the instance holds.
+
+**Tests:** `compliance/item-page.test.ts › answers a signed-in browser as it answers a stranger`.
+
+### `instance/item-page-malformed`
+
+If `GET /i/{text}` names text that is not a well-formed id, a trailing slash, another path segment, a percent-encoded id, no id and a very long one included, then the server MUST answer `404` with an HTML page.
+
+**Reason:** the answer is decided by the text alone, so the server never looks anything up for it.
+
+**Tests:** `compliance/item-page.test.ts › answers text that is not a well-formed id with a 404 page`.
+
+### `instance/item-page-malformed-unechoed`
+
+If `GET /i/{text}` names text that is not a well-formed id, then the server MUST answer the same page whatever the text, apart from the nonce.
+
+**Reason:** a page that echoed text from an address would let anyone who can share a link write on it.
+
+**Tests:** `compliance/item-page.test.ts › answers text that is not a well-formed id with a 404 page`.
+
+### `instance/item-page-headers`
+
+When the server answers `GET /i/{text}` with `200` or `404`, the server MUST send `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`.
+
+**Reason:** an item's id is in the address, so the page is kept out of caches and search indexes, and a link on it leaves no referrer.
+
+**Tests:** `compliance/item-page.test.ts › answers a well-formed id with a page that links to marfa://<instance_id>/<id>`, `› answers text that is not a well-formed id with a 404 page`.
+
+### `instance/item-page-query-unread`
+
+When `GET /i/{id}` carries a query string, the server MUST answer as it answers the same address without one, apart from the nonce, the request id and the date.
+
+**Reason:** a query is the one part of an address a sender can fill with anything, and the page reads nothing from it.
+
+**Tests:** `compliance/item-page.test.ts › ignores a query string`.
+
 ## An unfinished database
 
 A database file can be left unfinished when a first start stops partway: it holds part of what a first start makes, differs from the server's structure in nothing else, and holds no data.
@@ -2466,13 +2542,13 @@ When `PUT /config` supplies `name`, the server MUST store it with whitespace at 
 
 If a supplied `name` is empty after trimming, exceeds 200 Unicode code points after trimming, or contains a C0 control, DEL, C1 control or Unicode bidirectional control character, then the server MUST refuse `PUT /config` with `400 validation_error`.
 
-**Tests:** `compliance/instance-config.test.ts › refuses invalid names and escapes the name in pages on later requests`.
+**Tests:** `compliance/instance-config.test.ts › refuses invalid names and keeps the name out of pages on later requests`.
 
 ### `instance/config-name-live`
 
-When `PUT /config` has acknowledged a display name, the server MUST use that name in subsequent root descriptions and existing page labels that identify the instance, without requiring a restart.
+When `PUT /config` has acknowledged a display name, the server MUST use that name in subsequent root descriptions, without requiring a restart.
 
-**Tests:** `compliance/instance-config.test.ts › sets, trims, persists and clears the name without changing identity`, `› refuses invalid names and escapes the name in pages on later requests`.
+**Tests:** `compliance/instance-config.test.ts › sets, trims, persists and clears the name without changing identity`, `› refuses invalid names and keeps the name out of pages on later requests`.
 
 ### `instance/config-name-durable`
 
@@ -2480,11 +2556,11 @@ When the server restarts on the same database, the server MUST retain the config
 
 **Tests:** `compliance/instance-config.test.ts › sets, trims, persists and clears the name without changing identity`.
 
-### `instance/config-name-page-escaped`
+### `instance/config-name-not-in-pages`
 
-When an HTML page identifies the instance by its display name, the server MUST render that name as text.
+The server MUST NOT include the instance's display name in any HTML page it serves.
 
-**Tests:** `compliance/instance-config.test.ts › refuses invalid names and escapes the name in pages on later requests`.
+**Tests:** `compliance/instance-config.test.ts › refuses invalid names and keeps the name out of pages on later requests`.
 
 ### `instance/config-unauthenticated`
 

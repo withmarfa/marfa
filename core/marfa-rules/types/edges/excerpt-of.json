@@ -1,6 +1,6 @@
 {
   "id": "excerpt-of",
-  "label": "Excerpt from",
+  "label": "Excerpt From",
   "reverse_label": "Excerpts",
   "description": "Runs from the excerpt to the item it was taken from. When saving a highlight or quote, excerpt-of names that item. An excerpt has one source.",
   "cardinality": "many-to-one",

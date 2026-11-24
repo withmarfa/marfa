@@ -1,6 +1,6 @@
 {
   "id": "comments-on",
-  "label": "Comment on",
+  "label": "Comment On",
   "reverse_label": "Comments",
   "description": "Runs from the comment to the item it comments on. When saving a comment, comments-on names that item. A comment has one subject.",
   "cardinality": "many-to-one",

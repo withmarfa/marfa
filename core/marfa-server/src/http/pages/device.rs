@@ -26,12 +26,12 @@ impl DeviceProblem {
 
     fn message(self) -> String {
         match self {
-            DeviceProblem::InvalidCode => "That code isn't right or has expired. Check it against \
-                 your device, or start again there to get a new one."
-                .into(),
-            DeviceProblem::ExpiredCode => "That code has expired. Start connecting again in the \
-                 app or on the device to get a new one."
-                .into(),
+            DeviceProblem::InvalidCode => {
+                "That code isn’t right or has expired. Check your device.".into()
+            }
+            DeviceProblem::ExpiredCode => {
+                "That code has expired. Start again on your device.".into()
+            }
             DeviceProblem::TooManyAttempts(Some(wait)) => {
                 format!("Too many codes. Try again in {wait}.")
             }
@@ -43,7 +43,6 @@ impl DeviceProblem {
 
 #[derive(Debug, Clone)]
 pub struct DeviceEntry {
-    pub instance_name: String,
     pub user_code: String,
     pub problem: Option<DeviceProblem>,
 }
@@ -53,28 +52,43 @@ pub struct DeviceEntry {
 struct DeviceBody<'a> {
     view: &'a DeviceEntry,
     problem_message: Option<String>,
-    has_problem: bool,
     invalid_code: bool,
-    show_lifetime: bool,
 }
 
 pub fn device_entry(view: &DeviceEntry) -> Result<Page> {
     let body = render_body(&DeviceBody {
         view,
         problem_message: view.problem.map(DeviceProblem::message),
-        has_problem: view.problem.is_some(),
         invalid_code: matches!(
             view.problem,
             Some(DeviceProblem::InvalidCode | DeviceProblem::ExpiredCode)
         ),
-        // A wait is already said in minutes, and a second figure beside it
-        // reads as a second wait.
-        show_lifetime: !matches!(view.problem, Some(DeviceProblem::TooManyAttempts(_))),
     })?;
-    document(
-        "Enter your code",
-        &view.instance_name,
-        &body,
-        Needs::default(),
-    )
+    document("Enter the code", &body, Needs::default())
+}
+
+/// The code a device shows, for the owner to compare before the approval page opens.
+#[derive(Debug, Clone)]
+pub struct DeviceCheck {
+    /// The code's characters alone, as the device shows them.
+    pub user_code: String,
+    /// As the link or the form carried it, which the confirmation sends back.
+    pub typed: String,
+}
+
+#[derive(Template)]
+#[template(path = "device_check.html")]
+struct DeviceCheckBody<'a> {
+    view: &'a DeviceCheck,
+    said: String,
+}
+
+pub fn device_check(view: &DeviceCheck) -> Result<Page> {
+    let code = &view.user_code;
+    let said = match (code.get(..4), code.get(4..)) {
+        (Some(first), Some(rest)) if !rest.is_empty() => format!("{first}-{rest}"),
+        _ => code.clone(),
+    };
+    let body = render_body(&DeviceCheckBody { view, said })?;
+    document("Check the code", &body, Needs::default())
 }

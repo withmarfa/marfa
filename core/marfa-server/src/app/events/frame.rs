@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 
 use crate::app::access::{Caller, Holding, Permission};
 use crate::app::connectors::ReadOnly;
+use crate::app::item_links::Links;
 use crate::app::refusal::{Refusal, Result};
 
 /// What the request asked for, which the stream keeps for its life.
@@ -53,6 +54,7 @@ pub struct Judge<'a> {
     pub levers: &'a Holding,
     pub rules: &'a Rules,
     pub read_only: &'a ReadOnly,
+    pub links: &'a Links,
     pub filter: &'a Filter,
     /// Whether a connector key reads its mapped types for its own items.
     pub own: bool,
@@ -184,7 +186,7 @@ impl Judge<'_> {
             Err(refused) if refused.unread => return Ok(None),
             Err(refused) => return Err(refused),
         };
-        *item = before_properties(std::mem::take(item), read_only);
+        *item = before_properties(std::mem::take(item), read_only, self.links);
         let with_type = body.remove("restored_with_type");
         self.named_to_readers(body, "restored_with", with_type);
         if let Some(Value::Object(metadata)) = body.get_mut("metadata")
@@ -215,16 +217,36 @@ impl Judge<'_> {
     }
 }
 
-fn before_properties(item: Map<String, Value>, read_only: bool) -> Map<String, Value> {
+fn before_properties(
+    item: Map<String, Value>,
+    read_only: bool,
+    links: &Links,
+) -> Map<String, Value> {
+    let id = item
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let web_url = Value::String(links.web_url(&id));
+    let app_url = Value::String(links.app_url(&id));
     let mut out = Map::new();
+    let mut stamped = false;
     for (key, value) in item {
+        if key == "web_url" || key == "app_url" {
+            continue;
+        }
         if key == "properties" {
             out.insert("read_only".into(), read_only.into());
+            out.insert("web_url".into(), web_url.clone());
+            out.insert("app_url".into(), app_url.clone());
+            stamped = true;
         }
         out.insert(key, value);
     }
-    if !out.contains_key("read_only") {
+    if !stamped {
         out.insert("read_only".into(), read_only.into());
+        out.insert("web_url".into(), web_url);
+        out.insert("app_url".into(), app_url);
     }
     out
 }

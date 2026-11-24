@@ -6,6 +6,11 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import {
+  instanceIdOf,
+  itemLinks,
+  unsetSignInOrigin,
+} from "../../utils/item-links.js";
 
 /**
  * A real round trip on throwaway servers: the archive is exported from one
@@ -30,6 +35,19 @@ afterEach(async () => {
 
 const working = (server: FreshServer) =>
   new MarfaClient({ baseUrl: server.apiUrl, apiKey: server.workingKey });
+
+/** The archived rows, with the addresses the answering instance computes. */
+async function asAnswered<T extends { item: { id: string } }>(
+  rows: T[],
+  server: FreshServer,
+): Promise<T[]> {
+  const instance = await instanceIdOf(server.apiUrl, server.workingKey);
+  const origin = unsetSignInOrigin(server.apiUrl);
+  return rows.map((row) => ({
+    ...row,
+    item: { ...row.item, ...itemLinks(origin, instance, row.item.id) },
+  }));
+}
 const owner = (server: FreshServer) =>
   new MarfaClient({
     baseUrl: server.apiUrl,
@@ -129,7 +147,9 @@ describe("a restore of items whose type no longer shapes them", () => {
     const ids = [id, note.data.item.id];
     const before = await held(source, ids);
     const reader = working(destination);
-    expect(await held(reader, ids)).toEqual(before);
+    expect(await held(reader, ids)).toEqual(
+      await asAnswered(before, destination),
+    );
     expect((await reader.getType(type)).status).toBe(404);
     expect((await reader.listItemEdges(id)).data.data).toEqual(
       (await source.listItemEdges(id)).data.data,
@@ -192,7 +212,9 @@ describe("a restore of items whose type no longer shapes them", () => {
       imported: 2,
       edges_imported: 1,
     });
-    expect(await held(working(third), ids)).toEqual(await held(reader, ids));
+    expect(await held(working(third), ids)).toEqual(
+      await asAnswered(await held(reader, ids), third),
+    );
   }, 180_000);
 
   it("restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type", async () => {
@@ -244,7 +266,9 @@ describe("a restore of items whose type no longer shapes them", () => {
 
     const reader = working(destination);
     const read = await held(reader, ids);
-    expect(read).toEqual(await held(source, ids));
+    expect(read).toEqual(
+      await asAnswered(await held(source, ids), destination),
+    );
     expect(read[0]!.item.properties).toEqual({
       name: "written before the field",
     });
@@ -269,6 +293,8 @@ describe("a restore of items whose type no longer shapes them", () => {
     const second = await archiveOf(reader);
     const restoredAgain = await owner(third).restoreArchive(second);
     expect(restoredAgain.status, JSON.stringify(restoredAgain.error)).toBe(200);
-    expect(await held(working(third), ids)).toEqual(read);
+    expect(await held(working(third), ids)).toEqual(
+      await asAnswered(read, third),
+    );
   }, 180_000);
 });

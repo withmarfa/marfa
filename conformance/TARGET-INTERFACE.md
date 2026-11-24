@@ -115,6 +115,30 @@ stays because that thing is what it checks.
   newer build wrote, one whose tables, columns or indexes differ from the
   server's, and one a crash left holding some of its tables and no rows. Each is
   a state no door reaches, made in the file before the server starts.
+- `compliance/upgrade-from-release.test.ts` loads `fixtures/database-v0.0.90.sql`,
+  a text dump of the database the published v0.0.90 release wrote at schema
+  version 3, into a file before each start, and alters that file (a type origin
+  no migration carries over, a row that refers to one the file does not hold, a
+  marker row) and reads it and the files beside it afterwards. No operation
+  can make an earlier release's database, and the dump is frozen so that the
+  fixture holds a build to what a release wrote and not to the migrations the
+  build carries.
+- `compliance/upgrade-unknown-maker.test.ts` loads the same dump and adds rows
+  to it before each start, with every column set as v0.0.90 wrote it: a key the
+  working key minted and its `key.create` record, a key an app's grant minted
+  and a key a grant that has ended minted, each with the minting app key's
+  `key.create` record, the app's client and consent (the ended grant has only
+  its `auth.grant.reused` record, as the owner's browser wrote it), and the
+  app's types and items. On one server of each pair it deletes the working
+  key's `key.create` record, and in one test it deletes the working key's own
+  row from both. A key that outlives the record of who minted it is a state no
+  operation on this build makes, and the keys, the consent and the records must
+  be in the file before the upgrade reads them. The API does not name a key's
+  maker, so each test holds the refusal against the same request from the same
+  key with its record kept. The owner makes the owner-held vendors, the type
+  with guidance and the working key's type map through the control socket after
+  the start, their items through a key it mints there, and counts the items
+  an app's vendor holds from its vendor data listing.
 - `compliance/device-grant.test.ts`, "is held by the server as something other
   than the code it issued", searches the database file and the log beside it for
   the issued device code, because the contract is about the bytes at rest.

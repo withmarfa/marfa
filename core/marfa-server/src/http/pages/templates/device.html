@@ -1,13 +1,5 @@
-<h1>Enter your code</h1>
-<p class="lede">Enter the code your device is showing to connect it to Marfa.</p>
-{% if let Some(message) = problem_message %}
-<p class="notice error" id="code-problem" role="alert">{{ message }}</p>
-{% endif %}
-<form method="post" action="/auth/device" class="stack">
-<div class="field">
-<label for="user_code">Code</label>
-<input id="user_code" class="code" type="text" name="user_code" value="{{ view.user_code }}" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" required autofocus{% if has_problem %} aria-describedby="code-problem"{% endif %}{% if invalid_code %} aria-invalid="true"{% endif %}>
-{% if show_lifetime %}<p class="hint">Codes end after 10 minutes.</p>{% endif %}
-</div>
-<button type="submit" class="button primary wide">Continue</button>
+{% import "partials/parts.html" as parts %}{% call parts::head("Enter the code", "Type the code your device shows.") %}{% endcall %}
+<form method="post" action="/auth/device">
+{% call parts::code_field("user_code", "user_code", "Code", value=view.user_code.as_str(), invalid=invalid_code, note="code-note", hint="A code lasts 10 minutes.", problem=problem_message.as_deref().unwrap_or_default()) %}{% endcall %}
+{% call parts::actions() %}<button type="submit" class="btn primary">Continue</button>{% endcall %}
 </form>

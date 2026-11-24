@@ -157,13 +157,36 @@ pub fn panicked(_: Box<dyn Any + Send>) -> Response {
     refusal_answer(&Refusal::panicked("a request panicked"))
 }
 
-fn position(accept: &str, media: &str) -> Option<usize> {
-    accept.split(',').position(|range| {
-        range
-            .split(';')
-            .next()
-            .is_some_and(|name| name.trim().eq_ignore_ascii_case(media))
+/// Whether one range of an `Accept` header names `media`: the type is read without regard to
+/// case, and a range with a quality of zero is one the caller refuses.
+fn range_names(range: &str, media: &str) -> bool {
+    let mut parts = range.split(';');
+    if !parts
+        .next()
+        .is_some_and(|name| name.trim().eq_ignore_ascii_case(media))
+    {
+        return false;
+    }
+    !parts.any(|parameter| {
+        parameter.split_once('=').is_some_and(|(key, value)| {
+            key.trim().eq_ignore_ascii_case("q")
+                && value
+                    .trim()
+                    .parse::<f32>()
+                    .is_ok_and(|quality| quality == 0.0)
+        })
     })
+}
+
+/// Whether an `Accept` header names `media` as a range the caller takes.
+pub fn names(accept: &str, media: &str) -> bool {
+    accept.split(',').any(|range| range_names(range, media))
+}
+
+fn position(accept: &str, media: &str) -> Option<usize> {
+    accept
+        .split(',')
+        .position(|range| range_names(range, media))
 }
 
 /// Whether `Accept` names `text/html` and not `application/json` before it.
@@ -178,5 +201,31 @@ pub fn asks_for_html(accept: Option<&str>) -> bool {
         (Some(html), Some(json)) => html < json,
         (Some(_), None) => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{asks_for_html, names};
+
+    #[test]
+    fn a_range_is_read_without_regard_to_case_and_a_quality_of_zero_refuses_it() {
+        assert!(names("Application/JSON", "application/json"));
+        assert!(names(
+            "text/html, application/json;q=0.5",
+            "application/json"
+        ));
+        assert!(names("application/json; Q=1", "application/json"));
+        assert!(!names("application/json, text/html;q=0", "text/html"));
+        assert!(!names("text/html;Q=0.0", "text/html"));
+        assert!(!names("application/jsonish", "application/json"));
+    }
+
+    #[test]
+    fn a_page_is_asked_for_only_by_a_range_the_caller_takes_before_json() {
+        assert!(asks_for_html(Some("text/html, application/json")));
+        assert!(!asks_for_html(Some("text/html;q=0, application/json")));
+        assert!(!asks_for_html(Some("application/json, text/html")));
+        assert!(asks_for_html(Some("application/json;q=0, TEXT/HTML")));
     }
 }

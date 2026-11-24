@@ -11,18 +11,18 @@ use super::sign_in::{done, refuse_elsewhere, require_own_page};
 use super::{
     cookies, redirect, require_safe_caller, require_safe_transport, text_field, with_cookie,
 };
+use crate::app::App;
 use crate::app::access::{Caller, Permission, unauthorized};
 use crate::app::auth::owner;
 use crate::app::auth::passkeys::{self, Adding, Assertion, Begun, Listed};
 use crate::app::auth::{Visit, own_origins};
 use crate::app::clock::Stamp;
 use crate::app::refusal::Refusal;
-use crate::app::{App, instance};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::JsonBody;
 use crate::http::caller::OnPage;
 use crate::http::named_instance;
-use crate::http::pages::{self, OwnerPasskey, OwnerPasskeys};
+use crate::http::pages::{self, OwnerPasskey, OwnerPasskeys, PasswordProblem};
 use crate::http::query;
 
 const REGISTRATION_FIELDS: [&str; 2] = ["name", "response"];
@@ -175,8 +175,17 @@ fn shown(passkey: Listed, host: &str) -> Result<OwnerPasskey, Refusal> {
 }
 
 /// `GET /auth/owner/passkeys`. Anyone but the signed-in owner goes to sign in.
-pub async fn page(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer {
+///
+/// `changed` and `problem` carry what the password form sent without JavaScript got.
+pub async fn page(State(app): State<Arc<App>>, OnPage(caller): OnPage, uri: Uri) -> Answer {
     require_safe_transport(&app)?;
+    let pairs = query::pairs(&uri)?;
+    let first = |name: &str| {
+        pairs
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    };
     let Some(caller) = caller.filter(|caller| caller.session().is_some()) else {
         return redirect(StatusCode::FOUND, SIGN_IN_FOR_PAGE);
     };
@@ -188,9 +197,10 @@ pub async fn page(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer
         .collect::<Result<_, Refusal>>()?;
     let owner = owner::find(&app).await?.ok_or_else(owner::not_found)?;
     let view = OwnerPasskeys {
-        instance_name: instance::name(&app).await?,
         username: owner.username,
         rows,
+        changed: first("changed") == Some("1"),
+        problem: PasswordProblem::from_query(first("problem"), first("retry_after_seconds")),
     };
     let page: Response = pages::owner_passkeys(&view)?.into_response();
     Ok(page)

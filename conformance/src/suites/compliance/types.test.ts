@@ -314,6 +314,8 @@ describe("type registration and listing", () => {
       "source_id",
       "version",
       "schema_version",
+      "app_url",
+      "web_url",
       "capture_latitude",
       "capture_longitude",
       "trashed_at",

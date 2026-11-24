@@ -3,6 +3,7 @@ import {
   readRows,
   visibleText,
 } from "../../utils/approval-form.js";
+import { checkDeviceCode } from "../../utils/device-check.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
@@ -23,8 +24,7 @@ let origin: string;
 let cookie: string;
 
 const CALLBACK = "http://127.0.0.1:9/callback";
-const CAUTION = "can't confirm who made this app";
-const SIGN_IN_CAUTION = "hasn't verified this app";
+const SIGN_IN_CAUTION = "(unverified";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 beforeAll(async () => {
@@ -134,34 +134,33 @@ async function deviceApprovalPage(
   });
   expect(code.status).toBe(200);
   const { user_code: userCode } = (await code.json()) as { user_code: string };
+  await checkDeviceCode(server!.apiUrl, origin, cookie, userCode);
   const page = await fetch(
     `${server!.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
-    { headers: { cookie } },
+    { headers: { cookie }, redirect: "manual" },
   );
   expect(page.status).toBe(200);
   return page.text();
 }
 
 describe("an app a person approves", () => {
-  it("is shown with the caution on the consent page", async () => {
+  it("is marked unverified beside its name on the consent page", async () => {
     const app = await register("Consent App", ["authorization_code"]);
     const page = visibleText(await consentPage(app.clientId));
-    expect(page).toContain("Consent App");
-    expect(page).toContain(CAUTION);
+    expect(page).toMatch(/Consent App \(unverified[,)]/);
   });
 
-  it("is shown with the caution on the sign-in page", async () => {
+  it("is marked unverified beside its name on the sign-in page", async () => {
     const app = await register("Sign-In App", ["authorization_code"]);
     const page = visibleText(await signInPage(app.clientId));
     expect(page).toContain("Sign-In App");
     expect(page).toContain(SIGN_IN_CAUTION);
   });
 
-  it("is shown with the caution on the device approval page", async () => {
+  it("is marked unverified beside its name on the device approval page", async () => {
     const app = await register("Device App", [DEVICE_GRANT]);
     const page = visibleText(await deviceApprovalPage(app));
-    expect(page).toContain("Device App");
-    expect(page).toContain(CAUTION);
+    expect(page).toMatch(/Device App \(unverified[,)]/);
   });
 });
 
@@ -172,9 +171,8 @@ describe("an app a person approves", () => {
 function rowLines(html: string): Map<string, string> {
   const rows = new Map<string, string>();
   for (const { control, text } of readRows(html)) {
-    // Full access or Choose access, and the switch over every permission,
-    // are how a person answers, not a grant.
-    if (control.name === "access" || control.name === "") continue;
+    // The admin level is how a person answers, not a grant.
+    if (control.name === "admin") continue;
     const name = control.label ?? "";
     const after = text.slice(text.lastIndexOf(name) + name.length).trim();
     for (const literal of control.tag === "select"
@@ -215,9 +213,9 @@ describe("a grant a person reads", () => {
       (c) => c.tag === "select" && c.label === "Note",
     );
     expect(notes?.options.map((o) => [o.value, o.label])).toEqual([
-      ["", "No access"],
-      ["core.note:read", "Read only"],
-      ["core.note:write", "Read and edit"],
+      ["core.note:write", "Read and Edit"],
+      ["core.note:read", "Read Only"],
+      ["", "No Access"],
     ]);
     // A wildcard names the types it covers today and says it grows; a
     // grant of one type says no reach beyond it.

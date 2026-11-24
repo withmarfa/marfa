@@ -35,7 +35,7 @@ use crate::settings::registry;
 pub use spool::Sealed;
 use spool::{Lines, Spooled};
 
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 /// What a manifest names itself, so a reader knows the archive for one before reading its version.
 pub const FORMAT: &str = "marfa-archive";
 /// The most a manifest, or one line of a line file, may hold.
@@ -643,7 +643,15 @@ fn select<W: RowSink>(
         };
         after = *last;
         read.hydrating();
-        let held = items::archived(read.tx, caller, catalog, &read.read_only, &seqs, true)?;
+        let held = items::archived(
+            read.tx,
+            caller,
+            catalog,
+            &read.read_only,
+            &read.links,
+            &seqs,
+            true,
+        )?;
         for row in held {
             let value = line_value(&row.line)?;
             checks::item(catalog, cap, &value, items.lines as usize + 1)

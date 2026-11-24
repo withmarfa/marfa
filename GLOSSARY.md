@@ -20,6 +20,7 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **tier**: The layer an item sits in. `feed` holds what arrives in volume and as it came, from connectors and capture, until a person or an app moves it to the library or archives it. `library` holds what a person chose to keep, modeled in a core type or a child of one. An item **moves to the library** or **moves to the feed** by a change of its `tier`: it is the same item, not a copy. A moved item is read as a core type through its type's `parent` (`types/parent`). A connector's new items take the tier its mapping gives, `feed` unless the owner chooses otherwise (`items/tier-connector`). Not a permission, not a lifecycle and not a namespace.
 - **hidden type**: A type under `system` or `app`. Ordinary listings, searches and counts omit its items by default (`items/hidden-types`). The bin includes recoverable app items. Exports and backups include hidden items. Apps write their own `app.*` items through the item operations. Only the server writes `system.*` items.
 - **link**: The value an item holds in the field its type names as `link_field`: the item's own ID at the vendor that writes the type, by which a connector finds the item. A type's own, never inherited. The word keeps its ordinary sense of a URL, a blob's link or a `[[name]]` in a Markdown body where the sentence says which.
+- **item link**: The two addresses an answered item carries. `web_url` is the instance's sign-in address, then `/i/`, then the item's id, for sharing. `app_url` is `marfa://`, then the instance's id, then the item's id, for an app on the same device. The instance is named by its id because a sign-in address changes. Not a **link**, which is the value of a type's `link_field`.
 - **tombstone**: What a purge leaves of an item under its type: its link and its natural key, `(source, source_id)`, each with `purged_at` and `settled_at`. Not a trashed item, which leaves none, and not a revoked grant. What a write that names the key does is `connectors/tombstone-write-accepted`.
 - **natural key**: An item's `source` and `source_id` together. A write that names one that a live item of its type holds updates that item, whichever key sends it, so a connector's item stays one item. Not the item's `id`, which a natural key decides before, and not its link. A conflicted copy gets neither it nor a link, and a tombstone keeps it.
 - **conversation**: One item of `core.conversation`, whose messages are the rows of its `messages` table. A message is never an item, so it has no version, tags or edges. A message people view on its own, such as an email, is a `core.message` item.
@@ -98,20 +99,20 @@ Access is read the same way wherever a person sees it: on the pages where they a
 
 | Level   | The word      |
 | ------- | ------------- |
-| `none`  | No access     |
-| `read`  | Read only     |
-| `write` | Read and edit |
+| `none`  | No Access     |
+| `read`  | Read Only     |
+| `write` | Read and Edit |
 
 | Row                   | The title                  |
 | --------------------- | -------------------------- |
-| `*`                   | All your data              |
+| `*`                   | Your items                 |
 | `content`             | Your content               |
 | `user.*`              | Your custom types          |
 | `core.*`              | Built-in types             |
 | `common.*`            | Shared types               |
 | `app.*`               | Every app's own data       |
 | `edge.*`              | Links between items        |
-| `profile`             | Profile                    |
+| `profile`             | Your profile               |
 | `profile.name`        | Name                       |
 | `profile.username`    | Username                   |
 | `profile.email`       | Email address              |
@@ -120,22 +121,22 @@ Access is read the same way wherever a person sees it: on the pages where they a
 | `metadata.types`      | Custom data types          |
 | `metadata.edge_types` | Custom relationship types  |
 
-| Power               | The title                                          |
-| ------------------- | -------------------------------------------------- |
-| `keys.mint`         | Make, see, edit and revoke keys                    |
-| `keys.manage`       | See, edit, narrow and revoke every key             |
-| `grants.manage`     | See and disconnect other apps                      |
-| `config.manage`     | See and change Marfa's settings                    |
-| `instance.read`     | See health, metrics, storage and job status        |
-| `instance.maintain` | Run housekeeping and update the server             |
-| `schema.write`      | Replace or remove type definitions                 |
-| `blobs.manage`      | Read and add any file, and manage file storage     |
-| `webhooks.manage`   | Manage webhooks that send events to other services |
-| `connectors.manage` | See, manage and remove all connectors              |
-| `audit.read`        | Read the activity log                              |
-| `items.purge`       | Delete items in the trash for good                 |
-| `backups.manage`    | See, take, adopt and restore backups               |
-| `sign_ins.manage`   | See, rename and end sign-ins and passkeys          |
+| Power               | The title                    |
+| ------------------- | ---------------------------- |
+| `keys.mint`         | Make keys                    |
+| `keys.manage`       | Manage every key             |
+| `grants.manage`     | Disconnect other apps        |
+| `config.manage`     | Change settings              |
+| `instance.read`     | See server health            |
+| `instance.maintain` | Run housekeeping and updates |
+| `schema.write`      | Replace or remove types      |
+| `blobs.manage`      | Manage files                 |
+| `webhooks.manage`   | Manage webhooks              |
+| `connectors.manage` | Manage connectors            |
+| `audit.read`        | Read the activity log        |
+| `items.purge`       | Empty the trash              |
+| `backups.manage`    | Back up and restore          |
+| `sign_ins.manage`   | Manage sign-ins and passkeys |
 
 ### The instance
 

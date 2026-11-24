@@ -12,6 +12,40 @@ When the server returns item data or related metadata, extensions, edges, histor
 
 **Tests:** `compliance/item-read-boundary.test.ts › keeps item and metadata reads in the state that authorized them during a retype`, `› authorizes hydrated occurrences after a concurrent retype`, `› authorizes occurrence parent relationships with their source state`, `› keeps extensions, history, lookup and edge hydration in the authorized state`.
 
+## Item link
+
+An answered item carries two addresses. `web_url` shares the item. `app_url` opens it in an app on the same device.
+
+### `items/item-web-url`
+
+When the server answers an item, the server MUST include `web_url` as the origin of the sign-in address in force, then `/i/`, then the item's id.
+
+**Tests:** `compliance/item-links.test.ts › answers web_url from the sign-in address, including localhost, a port and an IDN host`.
+
+### `items/item-app-url`
+
+When the server answers an item, the server MUST include `app_url` as `marfa://`, then the instance's id, a slash and the item's id.
+
+**Tests:** `compliance/item-links.test.ts › answers app_url from the instance id`.
+
+### `items/item-web-url-follows-address`
+
+When the sign-in address changes, the server MUST answer an item's `web_url` on the next read from the sign-in address then in force.
+
+**Tests:** `compliance/item-links.test.ts › answers the new web_url on the next read after the sign-in address moves`, `› answers every item in a list from the sign-in address of that read, and the next list from the address after it moves`.
+
+### `items/item-web-url-trashed`
+
+When the server answers a trashed item, the server MUST include `web_url` and `app_url`.
+
+**Tests:** `compliance/item-links.test.ts › answers web_url and app_url on a trashed item`.
+
+### `items/item-web-url-frame`
+
+When the server sends an event frame that carries an item, the server MUST include `web_url` and `app_url` on that item.
+
+**Tests:** `compliance/item-links.test.ts › answers web_url and app_url on an event frame`.
+
 ## Read only
 
 A connector declares the types whose items it holds read only in its registration's `read_only_types` (`connectors/read-only-types-stored`).
@@ -658,7 +692,7 @@ If a write names a well-formed type identifier that nothing registered, and the 
 
 ### `items/create-type-not-permitted`
 
-If a key writes an item of a type its type map does not grant write on, then the server MUST answer `403 type_not_permitted`.
+If a key writes an item of a type its type map does not grant write on, other than as `plugins/reach-target-own-source` allows, then the server MUST answer `403 type_not_permitted`.
 
 **Tests:** `compliance/error-codes.test.ts › rejects creation of out-of-scope type`.
 
@@ -2812,7 +2846,7 @@ If a `GET /search` query contains a NUL character, then the server MUST answer `
 
 ### `items/owner-trash-summary`
 
-When a caller holding `items.purge` calls `GET /trash`, the server MUST return a page of summaries containing `id`, `type`, `version`, `name`, `source`, `created_at`, `trashed_at`, `trashed_by` and `eligible_for_deletion_at`, with `retention_days` beside the page.
+When a caller holding `items.purge` calls `GET /trash`, the server MUST return a page of summaries containing `id`, `type`, `version`, `name`, `source`, `created_at`, `web_url`, `app_url`, `trashed_at`, `trashed_by` and `eligible_for_deletion_at`, with `retention_days` beside the page.
 
 **Tests:** `compliance/owner-trash.test.ts › lists a trashed item as a summary with its fields and retention_days beside the page`.
 
@@ -2880,7 +2914,7 @@ If `GET /trash` names a `cursor` it did not issue, then the server MUST answer `
 
 ### `items/owner-trash-actions`
 
-When the private local command sends `DELETE /items/{id}`, `POST /items/{id}/restore` or `POST /items/{id}/purge` with the item's current `version`, the server MUST answer `200` with the item's summary: `id`, `type`, `version`, `name`, `source` and `created_at`.
+When the private local command sends `DELETE /items/{id}`, `POST /items/{id}/restore` or `POST /items/{id}/purge` with the item's current `version`, the server MUST answer `200` with the item's summary: `id`, `type`, `version`, `name`, `source`, `created_at`, `web_url` and `app_url`.
 
 **Reason:** the private local command holds no type map, so it is told an item's name and nothing of its content (`items/local-authority-content`).
 
