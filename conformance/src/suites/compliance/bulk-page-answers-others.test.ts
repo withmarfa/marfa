@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -22,12 +23,24 @@ import { TEST_OWNER } from "../../utils/target.js";
  * wait for the page to be counted would wait for it. The budget is short
  * enough that a held page outlasts it many times over. The caps are far above
  * what the fixtures send.
+ *
+ * **Why the budget is long.** A write that waits behind a page is kept waiting
+ * only while the page is heard from within the budget, and the held page is
+ * heard from every 25 ms. A budget of a few hundred milliseconds let a runner
+ * that stalled the server for that long turn a wait into a `503`, which says
+ * how busy the runner was and nothing about the page. Each wait below is
+ * counted from the write's own admission to the writer.
  */
-const BUDGET_MS = 300;
+const BUDGET_MS = 1000;
 const PAGE = 20;
 const SCHEDULER_NEVER_POLLS_MS = "3600000";
 
 let server: FreshServer;
+
+/** A source id part new to each run of a test, so a retry seeds rows again. */
+function unique(label: string): string {
+  return `${label}-${randomUUID()}`;
+}
 
 beforeAll(async () => {
   server = await bootFreshServer("bulk-page-answers-others", {
@@ -116,9 +129,10 @@ afterEach(async () => {
 
 describe("a bulk page leaves the server answering other requests", () => {
   it("answers a read of an item an atomic items page is updating, with the item as it was", async () => {
-    const ids = await seed("atomic-read");
+    const tag = unique("atomic-read");
+    const ids = await seed(tag);
     const page = await heldPage(() =>
-      send("POST", "/items/bulk", notes("atomic-read", "after", true)),
+      send("POST", "/items/bulk", notes(tag, "after", true)),
     );
 
     expect(await bodyOf(ids[0]!)).toBe("before");
@@ -129,9 +143,10 @@ describe("a bulk page leaves the server answering other requests", () => {
   }, 120_000);
 
   it("answers a read of an item an items page under atomic: false is updating, with the item as it was", async () => {
-    const ids = await seed("partial-read");
+    const tag = unique("partial-read");
+    const ids = await seed(tag);
     const page = await heldPage(() =>
-      send("POST", "/items/bulk", notes("partial-read", "after", false)),
+      send("POST", "/items/bulk", notes(tag, "after", false)),
     );
 
     // The first entry is written and the page has not committed it.
@@ -144,7 +159,8 @@ describe("a bulk page leaves the server answering other requests", () => {
   }, 120_000);
 
   it("answers a read while an atomic edges page is written", async () => {
-    const [hub, ...targets] = await seed("edges-read");
+    const tag = unique("edges-read");
+    const [hub, ...targets] = await seed(tag);
     const page = await heldPage(() =>
       send("POST", "/edges/bulk", {
         atomic: true,
@@ -170,9 +186,10 @@ describe("a bulk page leaves the server answering other requests", () => {
 
 describe("a write that waits behind a bulk page", () => {
   it("lands after an atomic page that holds the lock longer than the write wait", async () => {
-    await seed("waiting-write");
+    const tag = unique("waiting-write");
+    await seed(tag);
     const page = await heldPage(() =>
-      send("POST", "/items/bulk", notes("waiting-write", "after", true)),
+      send("POST", "/items/bulk", notes(tag, "after", true)),
     );
 
     const single = track(
@@ -181,6 +198,7 @@ describe("a write that waits behind a bulk page", () => {
         properties: { title: "behind the page", body: "waited" },
       }),
     );
+    await server.waitForQueuedWrite("item.create");
     // Held for twice the budget and not refused: the write waits on the
     // page and is not given up on the budget alone.
     await new Promise((resolve) => setTimeout(resolve, 2 * BUDGET_MS));
@@ -191,9 +209,10 @@ describe("a write that waits behind a bulk page", () => {
   }, 120_000);
 
   it("lands after a best-effort page that holds the lock longer than the write wait", async () => {
-    await seed("waiting-partial");
+    const tag = unique("waiting-partial");
+    await seed(tag);
     const page = await heldPage(() =>
-      send("POST", "/items/bulk", notes("waiting-partial", "after", false)),
+      send("POST", "/items/bulk", notes(tag, "after", false)),
     );
 
     const single = track(
@@ -202,6 +221,7 @@ describe("a write that waits behind a bulk page", () => {
         properties: { title: "behind the best-effort page", body: "waited" },
       }),
     );
+    await server.waitForQueuedWrite("item.create");
     await new Promise((resolve) => setTimeout(resolve, 2 * BUDGET_MS));
     expect(single.state.answered).toBe(false);
 
@@ -213,9 +233,10 @@ describe("a write that waits behind a bulk page", () => {
     // A password attempt is counted before the password is checked, in a
     // write of its own outside any transaction.
     const origin = await issuerOrigin(server);
-    await seed("waiting-sign-in");
+    const tag = unique("waiting-sign-in");
+    await seed(tag);
     const page = await heldPage(() =>
-      send("POST", "/items/bulk", notes("waiting-sign-in", "after", true)),
+      send("POST", "/items/bulk", notes(tag, "after", true)),
     );
 
     const attempt = track(
