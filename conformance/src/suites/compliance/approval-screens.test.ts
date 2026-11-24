@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  asDrawn,
   defaultSubmission,
+  heldOn,
   offeredValues,
   readControls,
   readRows,
@@ -132,13 +134,12 @@ async function deviceScreen(app: App, scope: string): Promise<DeviceScreen> {
   };
 }
 
-/** A person's post on the device approval page. */
+/** A person's post on the device approval page, carrying the access the page was drawn on. */
 async function decideDevice(
   screen: DeviceScreen,
   decision: "approve" | "deny",
   scopes: readonly string[],
   types: readonly string[] = [],
-  access?: string,
 ): Promise<Response> {
   return fetch(`${server.apiUrl}/auth/device/consent`, {
     method: "POST",
@@ -151,9 +152,51 @@ async function decideDevice(
     body: new URLSearchParams([
       ["user_code", screen.userCode],
       ["decision", decision],
-      ...(access === undefined ? [] : [["access", access] as [string, string]]),
+      ["held", heldOn(screen.html)],
       ...scopes.map((s): [string, string] => ["scopes", s]),
       ...types.map((t): [string, string] => ["types", t]),
+    ]),
+  });
+}
+
+/** An approval on the consent screen `consent` is the address of, posting `fields`. */
+function approveWith(
+  consent: URL,
+  fields: readonly [string, string][],
+): Promise<Response> {
+  return fetch(`${server.apiUrl}/auth/consent`, {
+    method: "POST",
+    redirect: "manual",
+    headers: {
+      cookie,
+      origin,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams([
+      ["decision", "approve"],
+      ["authorization_request", consent.search.slice(1)],
+      ...fields,
+    ]),
+  });
+}
+
+/** An approval on the device approval page for `screen`'s code, posting `fields`. */
+function approveDeviceWith(
+  screen: DeviceScreen,
+  fields: readonly [string, string][],
+): Promise<Response> {
+  return fetch(`${server.apiUrl}/auth/device/consent`, {
+    method: "POST",
+    redirect: "manual",
+    headers: {
+      cookie,
+      origin,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams([
+      ["user_code", screen.userCode],
+      ["decision", "approve"],
+      ...fields,
     ]),
   });
 }
@@ -321,24 +364,6 @@ describe("the admin level on the approval pages", () => {
   beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
   afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-  /** An approval on the consent screen `consent` is the address of, posting `fields`. */
-  function post(consent: URL, fields: [string, string][]): Promise<Response> {
-    return fetch(`${server.apiUrl}/auth/consent`, {
-      method: "POST",
-      redirect: "manual",
-      headers: {
-        cookie,
-        origin,
-        "content-type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams([
-        ["decision", "approve"],
-        ["authorization_request", consent.search.slice(1)],
-        ...fields,
-      ]),
-    });
-  }
-
   /** The scopes a token carries after an approval of `scope` that posts `fields`. */
   async function granted(
     scope: string,
@@ -354,7 +379,7 @@ describe("the admin level on the approval pages", () => {
         cookie,
       ),
     );
-    const sent = await sentTo(server, await post(landed!, fields));
+    const sent = await sentTo(server, await approveWith(landed!, fields));
     const code = sent?.searchParams.get("code");
     expect(code, String(sent)).toBeTruthy();
     const exchanged = await token(server, {
@@ -402,7 +427,7 @@ describe("the admin level on the approval pages", () => {
     const held = "core.note:read keys.mint";
     const app = await register(`${held} audit.read`);
     const first = await consentScreen(app, held);
-    const approved = await post(first.consent, [
+    const approved = await approveWith(first.consent, [
       ["scopes", "core.note:read"],
       ["admin", "full"],
     ]);
@@ -517,7 +542,7 @@ describe("the admin level on the approval pages", () => {
     ]);
   });
 
-  it("refuses an admin level or a power the request did not name, and grants nothing", async () => {
+  it("refuses an admin level or a power the request did not name, or a permission posted as a scope, and grants nothing", async () => {
     const app = await register(`${ASKED} items.purge`);
     const landed = await sentTo(
       server,
@@ -531,8 +556,11 @@ describe("the admin level on the approval pages", () => {
       [NOTE, ["admin", "custom"], ["powers", "items.purge"]],
       [NOTE, ["admin", "custom"], ["powers", "core.note:read"]],
       [NOTE, ["admin", "everything"]],
+      // A permission comes only through the admin level, never as a scope.
+      [NOTE, ["scopes", "keys.mint"], ["admin", "none"]],
+      [NOTE, ["scopes", "keys.mint"], ["admin", "full"]],
     ] as [string, string][][]) {
-      const refused = await post(landed!, fields);
+      const refused = await approveWith(landed!, fields);
       expect(refused.status, JSON.stringify(fields)).toBe(400);
       await refused.body?.cancel();
     }
@@ -545,7 +573,7 @@ describe("the admin level on the approval pages", () => {
         cookie,
       ),
     );
-    const levelled = await post(plain!, [NOTE, ["admin", "none"]]);
+    const levelled = await approveWith(plain!, [NOTE, ["admin", "none"]]);
     expect(levelled.status).toBe(400);
     await levelled.body?.cancel();
     // The witness: the same requests, posted within them, are codes.
@@ -553,7 +581,7 @@ describe("the admin level on the approval pages", () => {
       [landed!, [NOTE, ["admin", "custom"], ["powers", "keys.mint"]]],
       [plain!, [NOTE]],
     ] as [URL, [string, string][]][]) {
-      const sent = await sentTo(server, await post(consent, fields));
+      const sent = await sentTo(server, await approveWith(consent, fields));
       expect(sent?.searchParams.get("code"), String(sent)).toBeTruthy();
     }
   });
@@ -698,9 +726,17 @@ describe("what the approval pages show of what an app holds", () => {
       ),
     );
     expect(again?.pathname).toBe("/auth/consent");
-    const approved = await decide(server, origin, cookie, again!, true, [
-      "core.note:read",
-    ]);
+    const page = await fetch(again!, { headers: { cookie } });
+    const approved = await decide(
+      server,
+      origin,
+      cookie,
+      again!,
+      true,
+      ["core.note:read"],
+      [],
+      heldOn(await page.text()),
+    );
     expect(approved?.searchParams.get("code")).toBeTruthy();
     // A request for the write is answered without asking: it is still held.
     const silent = await sentTo(
@@ -876,6 +912,8 @@ describe("what an approval with everything newly asked turned off does for an ap
       screen.consent,
       true,
       tasksOff(screen.html),
+      [],
+      heldOn(screen.html),
     );
     expect(sent?.href.startsWith(CALLBACK), String(sent)).toBe(true);
     expect(sent?.searchParams.get("error")).toBe("access_denied");
@@ -901,6 +939,8 @@ describe("what an approval with everything newly asked turned off does for an ap
       screen.consent,
       true,
       defaultSubmission(screen.html, "scopes"),
+      [],
+      heldOn(screen.html),
     );
     expect(approved?.searchParams.get("code")).toBeTruthy();
   });
@@ -938,52 +978,70 @@ describe("what an approval with everything newly asked turned off does for an ap
   });
 });
 
-describe("what an approval grants an app whose access ended while the screen was open", () => {
+describe("what an approval grants an app whose access changed while the screen was open", () => {
   const booted = bootFor("approval-ended");
   beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
   afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
 
   const HELD = "core.note:write keys.mint";
   const ASKED = `${HELD} core.task:read`;
+  const CHANGED = "This app's access changed after this page opened.";
 
-  /** The app holds `HELD`, having been approved on the consent screen. */
-  async function holder(): Promise<App> {
-    const app = await register(ASKED);
-    const screen = await consentScreen(app, HELD);
-    // The permission is posted as a scope, which a page never does and the server reads all the same.
-    const sent = await decide(
+  /** The app holds `held`, having been approved on the consent screen as drawn. */
+  async function holder(held = HELD, asked = ASKED): Promise<App> {
+    const app = await register(asked);
+    const screen = await consentScreen(app, held);
+    const sent = await sentTo(
       server,
-      origin,
-      cookie,
-      screen.consent,
-      true,
-      HELD.split(" "),
+      await approveWith(screen.consent, asDrawn(screen.html)),
     );
     expect(sent?.searchParams.get("code")).toBeTruthy();
     return app;
   }
 
-  /** The person disconnects the app from another tab. */
-  async function disconnect(app: App): Promise<void> {
-    const authorization = { authorization: `Bearer ${server.managementKey}` };
+  /** The app's grant, as the owner's grant list shows it. */
+  async function grantOf(app: App): Promise<{ id: string; scopes: string[] }> {
     const listed = await fetch(`${server.apiUrl}/grants`, {
-      headers: authorization,
+      headers: { authorization: `Bearer ${server.managementKey}` },
     });
     const grant = (
-      (await listed.json()) as { data: { id: string; client_id: string }[] }
+      (await listed.json()) as {
+        data: { id: string; client_id: string; scopes: string[] }[];
+      }
     ).data.find((g) => g.client_id === app.clientId);
-    expect(grant, "the app had no grant to disconnect").toBeDefined();
-    const revoked = await fetch(`${server.apiUrl}/grants/${grant!.id}`, {
-      method: "DELETE",
-      headers: authorization,
-    });
+    expect(grant, "the app holds no grant").toBeDefined();
+    return grant!;
+  }
+
+  /** The person disconnects the app from another tab. */
+  async function disconnect(app: App): Promise<void> {
+    const revoked = await fetch(
+      `${server.apiUrl}/grants/${(await grantOf(app)).id}`,
+      {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${server.managementKey}` },
+      },
+    );
     expect(revoked.status).toBe(200);
+  }
+
+  /** The person narrows the app's access to `scopes` from another tab. */
+  async function narrow(app: App, scopes: string[]): Promise<void> {
+    const grant = await grantOf(app);
+    const narrowed = await fetch(`${server.apiUrl}/grants/${grant.id}`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${server.managementKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ scopes, expected_scopes: grant.scopes }),
+    });
+    expect(narrowed.status, await narrowed.text()).toBe(200);
   }
 
   /** The scopes the code of an approval on the consent screen exchanges for. */
   async function exchanged(
     app: App,
-    screen: Screen,
     sent: URL | undefined,
     proof: ReturnType<typeof pkce>,
   ): Promise<string[]> {
@@ -996,12 +1054,14 @@ describe("what an approval grants an app whose access ended while the screen was
       client_id: app.clientId,
     });
     expect(answer.status, JSON.stringify(answer.body)).toBe(200);
-    expect(screen.consent.pathname).toBe("/auth/consent");
     return (answer.body.scope ?? "").split(" ").sort();
   }
 
-  /** The consent screen for `ASKED`, asked with a proof the code can be redeemed with. */
-  async function askAgain(app: App): Promise<{
+  /** The consent screen for `asked`, asked with a proof the code can be redeemed with. */
+  async function askAgain(
+    app: App,
+    asked = ASKED,
+  ): Promise<{
     screen: Screen;
     proof: ReturnType<typeof pkce>;
   }> {
@@ -1010,13 +1070,35 @@ describe("what an approval grants an app whose access ended while the screen was
       server,
       await authorize(
         server,
-        authorizeQuery(app.clientId, ASKED, proof),
+        authorizeQuery(app.clientId, asked, proof),
         cookie,
       ),
     );
     expect(landed?.pathname, String(landed)).toBe("/auth/consent");
     const page = await fetch(landed!, { headers: { cookie } });
     return { screen: { html: await page.text(), consent: landed! }, proof };
+  }
+
+  /** A post answered with the approval page drawn again, saying the access changed. */
+  async function drawnAgain(answered: Response): Promise<string> {
+    expect(answered.status).toBe(200);
+    expect(answered.headers.get("content-type")).toContain("text/html");
+    const html = await answered.text();
+    expect(visibleText(html)).toContain(CHANGED);
+    return html;
+  }
+
+  /** Whether a browser request for `scope` is answered with a code and no screen. */
+  async function holds(app: App, scope: string): Promise<boolean> {
+    const sent = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, scope, pkce()),
+        cookie,
+      ),
+    );
+    return sent?.href.startsWith(CALLBACK) === true;
   }
 
   it("adds the access the app still holds to what is approved on the consent screen", async () => {
@@ -1032,8 +1114,10 @@ describe("what an approval grants an app whose access ended while the screen was
       screen.consent,
       true,
       posted,
+      [],
+      heldOn(screen.html),
     );
-    expect(await exchanged(app, screen, sent, proof)).toEqual([
+    expect(await exchanged(app, sent, proof)).toEqual([
       "core.note:write",
       "core.task:read",
       "keys.mint",
@@ -1064,78 +1148,91 @@ describe("what an approval grants an app whose access ended while the screen was
     ]);
   });
 
-  it("gives back nothing the person ended, and denies where nothing new is chosen, on the consent screen", async () => {
+  it("draws the consent screen again and grants nothing once the app is disconnected while it is open", async () => {
     const app = await holder();
     const { screen, proof } = await askAgain(app);
-    const posted = defaultSubmission(screen.html, "scopes");
     await disconnect(app);
 
-    const denied = await decide(
-      server,
-      origin,
-      cookie,
-      screen.consent,
-      true,
-      posted.filter((v) => v !== "core.task:read"),
+    const html = await drawnAgain(
+      await approveWith(screen.consent, asDrawn(screen.html)),
     );
-    expect(denied?.searchParams.get("error")).toBe("access_denied");
-    expect(denied?.searchParams.get("code")).toBeNull();
-
-    // The witness: the tasks they chose are all they get. The notes and key
-    // making they held come back with no control shown.
-    const sent = await decide(
+    expect(await holds(app, "core.note:write")).toBe(false);
+    expect(await holds(app, "core.task:read")).toBe(false);
+    // The page drawn again offers what was held as new, and posting it
+    // grants what it now shows.
+    expect(visibleText(html)).not.toContain("Already allowed");
+    expect(heldOn(html)).not.toBe(heldOn(screen.html));
+    const sent = await sentTo(
       server,
-      origin,
-      cookie,
-      screen.consent,
-      true,
-      posted,
+      await approveWith(screen.consent, [
+        ["held", heldOn(html)],
+        ["scopes", "core.task:read"],
+        ["admin", "none"],
+      ]),
     );
-    expect(await exchanged(app, screen, sent, proof)).toEqual([
-      "core.task:read",
-    ]);
+    expect(await exchanged(app, sent, proof)).toEqual(["core.task:read"]);
   });
 
   it("gives back no held read through Read only beside the write once the app is disconnected", async () => {
     const asked = "core.note:read core.note:write core.task:read";
     /** Approve the read alone, then post Read only and the tasks on a second screen. */
-    async function readOnlyAndTasks(cut: boolean): Promise<string[]> {
+    async function readOnlyAndTasks(cut: boolean): Promise<Response> {
       const app = await register(asked);
       const first = await consentScreen(app, "core.note:read");
       const held = await decide(server, origin, cookie, first.consent, true, [
         "core.note:read",
       ]);
       expect(held?.searchParams.get("code")).toBeTruthy();
-      const proof = pkce();
-      const landed = await sentTo(
-        server,
-        await authorize(
-          server,
-          authorizeQuery(app.clientId, asked, proof),
-          cookie,
-        ),
-      );
-      const page = await fetch(landed!, { headers: { cookie } });
-      const screen = { html: await page.text(), consent: landed! };
+      const { screen } = await askAgain(app, asked);
       const readOnly = selectNamed(screen.html, "Note")?.options.find(
         (o) => o.label === "Read only",
       );
       // The held level is offered, and posts nothing.
       expect(readOnly?.value).toBe("");
       if (cut) await disconnect(app);
-      const sent = await decide(server, origin, cookie, screen.consent, true, [
-        readOnly?.value ?? "?",
-        "core.task:read",
-      ]);
-      return exchanged(app, screen, sent, proof);
+      return decideResponse(
+        server,
+        origin,
+        cookie,
+        screen.consent,
+        true,
+        [readOnly?.value ?? "?", "core.task:read"],
+        [],
+        heldOn(screen.html),
+      );
     }
 
     // The witness: while the read is held, it comes with the approval.
-    expect(await readOnlyAndTasks(false)).toEqual([
-      "core.note:read",
-      "core.task:read",
-    ]);
-    expect(await readOnlyAndTasks(true)).toEqual(["core.task:read"]);
+    const kept = await sentTo(server, await readOnlyAndTasks(false));
+    expect(kept?.searchParams.get("code")).toBeTruthy();
+    const cut = await readOnlyAndTasks(true);
+    await drawnAgain(cut);
+  });
+
+  it("draws the page again for a post with no held field from an app that holds access, and approves one from an app that holds none", async () => {
+    const app = await holder();
+    const { screen } = await askAgain(app);
+    const unsaid = asDrawn(screen.html).filter(([name]) => name !== "held");
+    await drawnAgain(await approveWith(screen.consent, unsaid));
+    expect(await holds(app, "core.task:read")).toBe(false);
+    // The witness: the same post with the page's held value is a code.
+    const said = await sentTo(
+      server,
+      await approveWith(screen.consent, asDrawn(screen.html)),
+    );
+    expect(said?.searchParams.get("code")).toBeTruthy();
+
+    const fresh = await register(ASKED);
+    const first = await consentScreen(fresh, ASKED);
+    expect(heldOn(first.html)).toBe("");
+    const sent = await sentTo(
+      server,
+      await approveWith(
+        first.consent,
+        asDrawn(first.html).filter(([name]) => name !== "held"),
+      ),
+    );
+    expect(sent?.searchParams.get("code")).toBeTruthy();
   });
 
   it("refuses the device code of a screen left open once the app is disconnected, and grants nothing", async () => {
@@ -1149,6 +1246,51 @@ describe("what an approval grants an app whose access ended while the screen was
     const polled = await poll(app, device);
     expect(polled.body.error).toBe("invalid_grant");
     expect(polled.body.access_token).toBeUndefined();
+  });
+
+  it("draws the page again and restores no power the person removed while it was open, at Full and at Limited, on both pages", async () => {
+    const powers = "core.note:read keys.mint items.purge";
+    for (const level of ["full", "limited"]) {
+      const app = await holder("keys.mint", powers);
+      const { screen } = await askAgain(app, powers);
+      const device = await deviceScreen(app, powers);
+      expect(visibleText(screen.html)).toMatch(/Already allowed.*Make keys/);
+      await narrow(app, []);
+
+      const fields = (html: string): [string, string][] => [
+        ...asDrawn(html).filter(([name]) => name !== "admin"),
+        ["admin", level],
+      ];
+      const browser = await drawnAgain(
+        await approveWith(screen.consent, fields(screen.html)),
+      );
+      const onDevice = await drawnAgain(
+        await approveDeviceWith(device, fields(device.html)),
+      );
+      expect(await holds(app, "keys.mint"), level).toBe(false);
+      const pending = await poll(app, device);
+      expect(pending.body.error, level).toBe("authorization_pending");
+      // Each page drawn again offers the power as new.
+      for (const html of [browser, onDevice])
+        expect(
+          readControls(html)
+            .filter((c) => c.name === "powers")
+            .map((c) => c.value)
+            .sort(),
+          level,
+        ).toEqual(["items.purge", "keys.mint"]);
+
+      // The witness: the page drawn again grants the level it shows.
+      const approved = await approveDeviceWith(device, fields(onDevice));
+      await approved.body?.cancel();
+      const issued = await poll(app, device);
+      expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+      expect(issued.body.scope?.split(" ").sort(), level).toEqual(
+        level === "full"
+          ? ["core.note:read", "items.purge", "keys.mint"]
+          : ["core.note:read"],
+      );
+    }
   });
 });
 
@@ -1683,6 +1825,7 @@ describe("what the approval pages keep when an app holds types and asks again fo
       true,
       [CHOOSE],
       ["core.task:read"],
+      heldOn(page),
     );
     const issued = await redeem(app, sent, proof);
     expect(sorted(issued.body.scope)).toEqual([
@@ -1702,6 +1845,7 @@ describe("what the approval pages keep when an app holds types and asks again fo
         cookie,
       ),
     );
+    const page = await (await fetch(again!, { headers: { cookie } })).text();
     const sent = await decide(
       server,
       origin,
@@ -1710,6 +1854,7 @@ describe("what the approval pages keep when an app holds types and asks again fo
       true,
       [CHOOSE],
       [""],
+      heldOn(page),
     );
     expect(sent?.searchParams.get("error")).toBe("access_denied");
     const still = await sentTo(
@@ -1899,27 +2044,86 @@ describe("what the approval pages say of one item type shown in two rows", () =>
   });
 });
 
-describe("what the approval pages say under full access", () => {
-  const booted = bootFor("approval-full-access-words");
+describe("what the approval pages start at, and what a page approved as drawn grants", () => {
+  const booted = bootFor("approval-as-drawn");
   beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
   afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-  const REQUEST = "core.note:read core.note:write core.task:read";
+  const REQUEST = "core.note:read core.note:write core.task:read keys.mint";
 
-  it("offers no choice of access where the app's standing consent covers every scope, on both pages", async () => {
+  it("starts every choice at what the request names, on both pages", async () => {
+    for (const [page, html] of await bothPages(REQUEST)) {
+      expect(selectNamed(html, "Note")?.value, page).toBe("core.note:write");
+      expect(selectNamed(html, "Task")?.value, page).toBe("core.task:read");
+      expect(defaultSubmission(html, "admin"), page).toEqual(["full"]);
+      expect(defaultSubmission(html, "powers"), page).toEqual(["keys.mint"]);
+      // Each choice also offers less than the request names.
+      expect(offeredValues(html, "admin"), page).toContain("none");
+      expect(
+        selectNamed(html, "Task")?.options.map((o) => o.value),
+        page,
+      ).toEqual(["", "core.task:read"]);
+    }
+  });
+
+  it("grants the whole request for a page approved as drawn, on both pages", async () => {
+    const app = await register(REQUEST);
+    const proof = pkce();
+    const landed = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, REQUEST, proof),
+        cookie,
+      ),
+    );
+    const page = await fetch(landed!, { headers: { cookie } });
+    const sent = await sentTo(
+      server,
+      await approveWith(landed!, asDrawn(await page.text())),
+    );
+    const exchanged = await token(server, {
+      grant_type: "authorization_code",
+      code: sent?.searchParams.get("code") ?? "",
+      redirect_uri: CALLBACK,
+      code_verifier: proof.verifier,
+      client_id: app.clientId,
+    });
+    expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
+    expect(exchanged.body.scope?.split(" ").sort()).toEqual(
+      REQUEST.split(" ").sort(),
+    );
+
+    const device = await register(REQUEST);
+    const screen = await deviceScreen(device, REQUEST);
+    const approved = await approveDeviceWith(screen, asDrawn(screen.html));
+    expect(approved.status).toBe(200);
+    await approved.body?.cancel();
+    const minted = await poll(device, screen);
+    expect(minted.status, JSON.stringify(minted.body)).toBe(200);
+    expect(minted.body.scope?.split(" ").sort()).toEqual(
+      REQUEST.split(" ").sort(),
+    );
+  });
+
+  it("offers nothing to choose where the request names only offline_access", async () => {
+    for (const [page, html] of await bothPages("offline_access")) {
+      expect(visibleText(html), page).not.toContain("Choose…");
+      expect(
+        readControls(html).filter((c) => c.tag === "select"),
+        page,
+      ).toEqual([]);
+    }
+  });
+
+  it("offers nothing to choose where the app's standing consent covers every scope, on both pages", async () => {
     const app = await register(REQUEST);
     const first = await consentScreen(app, REQUEST);
-    // The witness: the same request, before anything is held, offers the choice.
-    expect(offeredValues(first.html, "access")).toEqual(["full", "choose"]);
-    const approved = await decide(
+    // The witness: the same request, before anything is held, offers choices.
+    expect(visibleText(first.html)).toContain("Choose…");
+    const approved = await sentTo(
       server,
-      origin,
-      cookie,
-      first.consent,
-      true,
-      [],
-      [],
-      "full",
+      await approveWith(first.consent, asDrawn(first.html)),
     );
     expect(approved?.searchParams.get("code")).toBeTruthy();
 
@@ -1938,197 +2142,12 @@ describe("what the approval pages say under full access", () => {
       ["the consent screen", await browser.text()],
       ["the device approval page", device.html],
     ] as const) {
-      expect(offeredValues(html, "access"), page).toEqual([]);
-      expect(visibleText(html), page).not.toContain("Choose access");
+      expect(visibleText(html), page).not.toContain("Choose…");
+      expect(
+        readControls(html).filter((c) => c.tag === "select"),
+        page,
+      ).toEqual([]);
     }
-  });
-});
-
-describe("what full access on the approval pages grants", () => {
-  const booted = bootFor("approval-full-access");
-  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
-  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
-
-  const REQUEST = "core.note:read core.note:write core.task:read";
-
-  it("offers full access selected, and choosing access, on both pages", async () => {
-    for (const [page, html] of await bothPages(REQUEST)) {
-      expect(offeredValues(html, "access"), page).toEqual(["full", "choose"]);
-      expect(defaultSubmission(html, "access"), page).toEqual(["full"]);
-      expect(visibleText(html), page).toContain("Full access");
-      expect(visibleText(html), page).toContain("Choose access");
-    }
-  });
-
-  it("offers no choice of access where the request names nothing to choose", async () => {
-    for (const [page, html] of await bothPages("offline_access")) {
-      expect(offeredValues(html, "access"), page).toEqual([]);
-    }
-  });
-
-  it("issues a token for the whole request when the person approves with full access and posts no scope", async () => {
-    const app = await register(REQUEST);
-    const proof = pkce();
-    const landed = await sentTo(
-      server,
-      await authorize(
-        server,
-        authorizeQuery(app.clientId, REQUEST, proof),
-        cookie,
-      ),
-    );
-    const sent = await decide(
-      server,
-      origin,
-      cookie,
-      landed!,
-      true,
-      [],
-      [],
-      "full",
-    );
-    const exchanged = await token(server, {
-      grant_type: "authorization_code",
-      code: sent?.searchParams.get("code") ?? "",
-      redirect_uri: CALLBACK,
-      code_verifier: proof.verifier,
-      client_id: app.clientId,
-    });
-    expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
-    expect(exchanged.body.scope?.split(" ").sort()).toEqual([
-      "core.note:read",
-      "core.note:write",
-      "core.task:read",
-    ]);
-  });
-
-  it("witness: the same post without full access is a denial", async () => {
-    for (const access of [undefined, "everything"]) {
-      const app = await register(REQUEST);
-      const landed = await sentTo(
-        server,
-        await authorize(
-          server,
-          authorizeQuery(app.clientId, REQUEST, pkce()),
-          cookie,
-        ),
-      );
-      const sent = await decide(
-        server,
-        origin,
-        cookie,
-        landed!,
-        true,
-        [],
-        [],
-        access,
-      );
-      expect(sent?.searchParams.get("code"), String(access)).toBeNull();
-      expect(sent?.searchParams.get("error"), String(access)).toBe(
-        "access_denied",
-      );
-    }
-  });
-
-  it("reads the scopes a post carries when access is a value other than full, on both pages", async () => {
-    const app = await register(REQUEST);
-    const proof = pkce();
-    const landed = await sentTo(
-      server,
-      await authorize(
-        server,
-        authorizeQuery(app.clientId, REQUEST, proof),
-        cookie,
-      ),
-    );
-    const sent = await decide(
-      server,
-      origin,
-      cookie,
-      landed!,
-      true,
-      ["core.note:read"],
-      [],
-      "everything",
-    );
-    const exchanged = await token(server, {
-      grant_type: "authorization_code",
-      code: sent?.searchParams.get("code") ?? "",
-      redirect_uri: CALLBACK,
-      code_verifier: proof.verifier,
-      client_id: app.clientId,
-    });
-    expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
-    expect(exchanged.body.scope).toBe("core.note:read");
-
-    const device = await register(REQUEST);
-    const screen = await deviceScreen(device, REQUEST);
-    const denied = await decideDevice(screen, "approve", [], [], "everything");
-    await denied.body?.cancel();
-    expect((await poll(device, screen)).body.error).toBe("access_denied");
-  });
-
-  it("never grants a scope the request did not name, whatever the form adds", async () => {
-    const app = await register("core.note:read");
-    const proof = pkce();
-    const landed = await sentTo(
-      server,
-      await authorize(
-        server,
-        authorizeQuery(app.clientId, "core.note:read", proof),
-        cookie,
-      ),
-    );
-    const sent = await decide(
-      server,
-      origin,
-      cookie,
-      landed!,
-      true,
-      ["core.note:write", "keys.mint"],
-      [],
-      "full",
-    );
-    const exchanged = await token(server, {
-      grant_type: "authorization_code",
-      code: sent?.searchParams.get("code") ?? "",
-      redirect_uri: CALLBACK,
-      code_verifier: proof.verifier,
-      client_id: app.clientId,
-    });
-    expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
-    expect(exchanged.body.scope).toBe("core.note:read");
-  });
-
-  it("approves a device code for the whole request with full access and no scope", async () => {
-    const app = await register(REQUEST);
-    const screen = await deviceScreen(app, REQUEST);
-    const approved = await decideDevice(screen, "approve", [], [], "full");
-    expect(approved.status).toBe(200);
-    await approved.body?.cancel();
-    const minted = await poll(app, screen);
-    expect(minted.status, JSON.stringify(minted.body)).toBe(200);
-    expect(minted.body.scope?.split(" ").sort()).toEqual([
-      "core.note:read",
-      "core.note:write",
-      "core.task:read",
-    ]);
-  });
-
-  it("never grants a scope the device code did not carry, whatever the form adds", async () => {
-    const app = await register("core.note:read");
-    const screen = await deviceScreen(app, "core.note:read");
-    const approved = await decideDevice(
-      screen,
-      "approve",
-      ["keys.mint"],
-      [],
-      "full",
-    );
-    expect(approved.status).toBe(200);
-    await approved.body?.cancel();
-    const minted = await poll(app, screen);
-    expect(minted.body.scope).toBe("core.note:read");
   });
 });
 
@@ -2262,16 +2281,10 @@ describe("what the approval pages offer and grant an app that names no scope", (
 
   it("issues an app that names no scope a token that reads and writes items and links, and mints no key and reads no settings", async () => {
     const app = await registerNamingNone();
-    const { consent, proof } = await screenFor(app, undefined);
-    const sent = await decide(
+    const { html, consent, proof } = await screenFor(app, undefined);
+    const sent = await sentTo(
       server,
-      origin,
-      cookie,
-      consent,
-      true,
-      [],
-      [],
-      "full",
+      await approveWith(consent, asDrawn(html)),
     );
     const issued = await redeem(app, sent, proof);
     expect(issued.status, JSON.stringify(issued.body)).toBe(200);
@@ -2322,16 +2335,10 @@ describe("what the approval pages offer and grant an app that names no scope", (
 
   it("serves an app that names no scope every tool at /mcp, and each works within its content", async () => {
     const app = await registerNamingNone();
-    const { consent, proof } = await screenFor(app, undefined);
-    const sent = await decide(
+    const { html, consent, proof } = await screenFor(app, undefined);
+    const sent = await sentTo(
       server,
-      origin,
-      cookie,
-      consent,
-      true,
-      [],
-      [],
-      "full",
+      await approveWith(consent, asDrawn(html)),
     );
     const issued = await redeem(app, sent, proof);
     expect(issued.status, JSON.stringify(issued.body)).toBe(200);

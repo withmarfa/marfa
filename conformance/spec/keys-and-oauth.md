@@ -1702,7 +1702,7 @@ If a post to `/auth/consent` carries no `authorization_request`, or a `decision`
 
 ### `keys-and-oauth/consent-nothing-denies`
 
-Where a request names a scope other than `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, or with types chosen in place of all data or content and none of them turned on, and the post does not name `access` as `full` (`keys-and-oauth/approval-full-grants-request`), the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
+Where a request names a scope other than `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, or with types chosen in place of all data or content and none of them turned on, the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
 
 **Reason:** Approving with everything turned off is declining, so the app is told what declining tells it, and no consent is recorded for an app that can do nothing with it. What a post carries without a choice is not a choice: `offline_access`, and every scope the app holds when the approval commits. An app that comes back and has everything newly asked turned off is denied, and keeps what it holds. A request that names nothing else offers nothing to turn off, and approving it is a yes.
 
@@ -1710,7 +1710,7 @@ Where a request names a scope other than `offline_access` that the app's standin
 
 ### `keys-and-oauth/consent-ticked`
 
-When a person approves on the consent screen with only some of the scopes the request names chosen, and the post does not name `access` as `full`, the server MUST issue a token for exactly the scopes chosen, plus the reads `keys-and-oauth/approval-write-read` adds and the held scopes `keys-and-oauth/approval-held-now` adds.
+When a person approves on the consent screen with only some of the scopes the request names chosen, the server MUST issue a token for exactly the scopes chosen, plus the reads `keys-and-oauth/approval-write-read` adds and the held scopes `keys-and-oauth/approval-held-now` adds.
 
 **Reason:** Types chosen in place of all data or content are a narrowing of that scope, and `keys-and-oauth/authorize-narrowed-types` states them.
 
@@ -1992,39 +1992,55 @@ When a browser session that signed in more than fifteen minutes ago opens `/auth
 
 ## What the approval pages offer
 
-The consent screen at `/auth/consent` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, except the types chosen in place of all data or content, which are fields named `types` whose values are scopes that an all-data or content scope the request names covers, and the permissions, which are given by one admin level posted as `admin` and, under the level Custom, by fields named `powers` whose values are permissions the request names. So what a form posts is the request narrowed. Where a request names something to choose, a form also posts a field named `access`, whose value is `full` or `choose`.
+The consent screen at `/auth/consent` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, except the types chosen in place of all data or content, which are fields named `types` whose values are scopes that an all-data or content scope the request names covers, and the permissions, which are given by one admin level posted as `admin` and, under the level Custom, by fields named `powers` whose values are permissions the request names. So what a form posts is the request narrowed. A form also posts a field named `held`, whose value the server sets from the access the app held when the page was drawn.
 
-### `keys-and-oauth/approval-full-access`
+### `keys-and-oauth/approval-starts-at-asked`
 
-Where a request names a scope other than `offline_access` that the app's standing consent does not cover, the server MUST offer, on the consent screen and the device approval page, the access choices Full access and Choose access as a form field named `access` with the values `full` and `choose`, with Full access selected.
+Where a request names a scope other than `offline_access` that the app's standing consent does not cover, the server MUST start every choice on the consent screen and the device approval page at the most the request names for it: each type at the level asked, the admin level at `full` and each `powers` row at Allow.
 
-**Reason:** Most people want to give an app what it asked for. Full access says so in one choice, and Choose access keeps every control for the person who wants less. A request that names nothing else offers nothing to choose, so it carries no `access` field. Nor does a request whose every scope the app's standing consent already covers.
+**Reason:** Most people give an app what it asked for, so the page as drawn says yes to the whole request, and a person who wants less turns choices down (`keys-and-oauth/approval-as-drawn`).
 
-**Tests:** `compliance/approval-screens.test.ts › offers full access selected, and choosing access, on both pages`, `› offers no choice of access where the request names nothing to choose`, `› offers no choice of access where the app's standing consent covers every scope, on both pages`.
+**Tests:** `compliance/approval-screens.test.ts › starts every choice at what the request names, on both pages`.
 
-### `keys-and-oauth/approval-full-grants-request`
+### `keys-and-oauth/approval-as-drawn`
 
-When a person approves with `access` posted as `full`, the server MUST grant every scope the request names, whatever scopes and types the form carries.
+When a person approves on the consent screen or the device approval page with every field as the page drew it, the server MUST grant every scope the request names.
 
-**Reason:** Full access is a decision about the request, not about the form, so a form that carries stale or extra fields cannot narrow it. The rule for a recent sign-in (`keys-and-oauth/consent-recent-needed`, `keys-and-oauth/device-recent-needed`) applies to the scopes that result.
+**Reason:** The choices start at what the request names (`keys-and-oauth/approval-starts-at-asked`), and the levels are always posted, so a page approved without opening its choices grants the request. The rule for a recent sign-in (`keys-and-oauth/consent-recent-needed`, `keys-and-oauth/device-recent-needed`) applies to the scopes that result.
 
-**Tests:** `compliance/approval-screens.test.ts › issues a token for the whole request when the person approves with full access and posts no scope`, `› approves a device code for the whole request with full access and no scope`.
+**Tests:** `compliance/approval-screens.test.ts › grants the whole request for a page approved as drawn, on both pages`.
 
-### `keys-and-oauth/approval-full-never-wider`
+### `keys-and-oauth/approval-nothing-new`
 
-When a person approves with `access` posted as `full`, the server MUST NOT grant a scope the request does not name.
+Where every scope a request names other than `offline_access` is covered by the app's standing consent, the server MUST offer no choice on the consent screen or the device approval page.
 
-**Reason:** A form can carry any scope, so full access is read against the signed request and never against the form.
+**Reason:** There is nothing new to give, so the page shows what the app holds (`keys-and-oauth/approval-held-shown`) and asks only for a yes or a no. A request that names only `offline_access` offers nothing to choose either.
 
-**Tests:** `compliance/approval-screens.test.ts › never grants a scope the request did not name, whatever the form adds`, `› never grants a scope the device code did not carry, whatever the form adds`.
+**Tests:** `compliance/approval-screens.test.ts › offers nothing to choose where the app's standing consent covers every scope, on both pages`, `› offers nothing to choose where the request names only offline_access`.
 
-### `keys-and-oauth/approval-access-unstated`
+### `keys-and-oauth/approval-held-changed`
 
-Where an approval post carries no `access` field or a value other than `full`, the server MUST read the decision from the scopes, types, admin level and powers the post carries, as `keys-and-oauth/consent-ticked`, `keys-and-oauth/consent-nothing-denies` and `keys-and-oauth/device-nothing-denies` state.
+If an approval posted from the consent screen or the device approval page carries a `held` value other than the one the server sets for the access the app's standing consent holds when the approval commits, then the server MUST grant nothing and leave a device code pending.
 
-**Reason:** A post that does not say Full access can only narrow, so a script written before the choice existed keeps its meaning.
+**Reason:** Every choice on the page, and what Full access or Limited holds, was read against what the app held when the page was drawn. A page left open while the person narrows or disconnects the app in another tab would otherwise give back a power the person removed, or grant against a list the person never saw.
 
-**Tests:** `compliance/approval-screens.test.ts › witness: the same post without full access is a denial`, `› reads the scopes a post carries when access is a value other than full, on both pages`.
+**Tests:** `compliance/approval-screens.test.ts › draws the page again and restores no power the person removed while it was open, at Full and at Limited, on both pages`, `› draws the consent screen again and grants nothing once the app is disconnected while it is open`, `› gives back no held read through Read only beside the write once the app is disconnected`, `› draws the page again for a post with no held field from an app that holds access, and approves one from an app that holds none`.
+
+### `keys-and-oauth/approval-held-changed-page`
+
+When the server grants nothing for an approval as `keys-and-oauth/approval-held-changed` states, the server MUST answer `200` with the same page drawn for the access the app holds now, saying that the app's access changed after the page opened.
+
+**Reason:** The person decides again on what is true now, and the page drawn again carries the `held` value an approval of it needs.
+
+**Tests:** `compliance/approval-screens.test.ts › draws the page again and restores no power the person removed while it was open, at Full and at Limited, on both pages`, `› draws the consent screen again and grants nothing once the app is disconnected while it is open`.
+
+### `keys-and-oauth/approval-held-absent`
+
+Where an approval post carries no field named `held`, the server MUST read it as posted from a page drawn while the app held nothing.
+
+**Reason:** A post that does not say what the page showed is held to the narrowest page, so it never grants against access the app holds that the person did not see (`keys-and-oauth/approval-held-changed`).
+
+**Tests:** `compliance/approval-screens.test.ts › draws the page again for a post with no held field from an app that holds access, and approves one from an app that holds none`.
 
 ### `keys-and-oauth/approval-one-control`
 
@@ -2066,13 +2082,13 @@ Where a request names a scope that reaches types registered later, the server MU
 
 Where a request names a permission that the app's standing consent does not cover, the server MUST offer, on the consent screen and the device approval page, an admin level as a form field named `admin`, with the values `full`, `none` and `custom` and with `full` selected.
 
-**Reason:** The permissions look after the instance rather than reach what the owner keeps, so a person gives them as one level, as they give a type its level, and Custom chooses them one by one. The choices start from everything asked, as Full access does (`keys-and-oauth/approval-full-access`).
+**Reason:** The permissions look after the instance rather than reach what the owner keeps, so a person gives them as one level, as they give a type its level, and Custom chooses them one by one. The level starts at everything asked, as every choice does (`keys-and-oauth/approval-starts-at-asked`).
 
 **Tests:** `compliance/approval-screens.test.ts › offers the permissions a request names as one admin level at Full access, each row starting at Allow, on both pages`.
 
 ### `keys-and-oauth/approval-admin-limited`
 
-Where the permissions a request names that the app's standing consent does not cover include some, but not all, of `instance.read`, `blobs.manage` and `audit.read`, the server MUST also offer the admin level `limited` in the field named `admin`.
+The server MUST offer `limited` if and only if the newly requested permissions include at least one of `instance.read`, `blobs.manage` and `audit.read` and at least one permission outside that set.
 
 **Reason:** None of the three decides who gets in, sends data out or deletes data for good. Where Limited would give every power asked it is Full access, and where it would give none it is No access, so it is offered only where it differs from both.
 
@@ -2096,7 +2112,7 @@ Where a request names no permission that the app's standing consent does not cov
 
 ### `keys-and-oauth/approval-admin-grants`
 
-When a person approves on the consent screen or the device approval page with `admin` posted as `full`, `limited` or `none`, and the post does not name `access` as `full`, the server MUST add to what the post chooses every permission the request names for `full`, only those of them among `instance.read`, `blobs.manage` and `audit.read` for `limited`, and no permission for `none`.
+When a person approves on the consent screen or the device approval page with `admin` posted as `full`, `limited` or `none`, the server MUST add to what the post chooses every permission the request names for `full`, only those of them among `instance.read`, `blobs.manage` and `audit.read` for `limited`, and no permission for `none`.
 
 **Reason:** The page posts the level, and the server maps it, so the page decides nothing about what a level holds. The held permissions come from the standing consent (`keys-and-oauth/approval-held-now`), so No access keeps them.
 
@@ -2104,7 +2120,7 @@ When a person approves on the consent screen or the device approval page with `a
 
 ### `keys-and-oauth/approval-admin-custom`
 
-When a person approves on the consent screen or the device approval page with `admin` posted as `custom`, and the post does not name `access` as `full`, the server MUST add to what the post chooses exactly the permissions the fields named `powers` carry.
+When a person approves on the consent screen or the device approval page with `admin` posted as `custom`, the server MUST add to what the post chooses exactly the permissions the fields named `powers` carry.
 
 **Tests:** `compliance/approval-screens.test.ts › grants under Custom exactly the powers allowed`.
 
@@ -2118,11 +2134,11 @@ Where an approval post carries no `admin` field or a value other than `custom`, 
 
 ### `keys-and-oauth/approval-admin-beyond`
 
-If an approval posted from the consent screen or the device approval page, without `access` posted as `full`, names an `admin` value other than `full`, `limited`, `none` and `custom`, names `admin` where the request names no permission, or with `admin` posted as `custom` names a `powers` value that is not a permission the request names, then the server MUST answer `400` and grant nothing.
+If an approval posted from the consent screen or the device approval page names an `admin` value other than `full`, `limited`, `none` and `custom`, names `admin` where the request names no permission, names a permission in a field named `scopes`, or with `admin` posted as `custom` names a non-empty `powers` value that is not a permission the request names, then the server MUST answer `400` and grant nothing.
 
-**Reason:** As with a scope (`keys-and-oauth/approval-beyond-shown`), a form can only narrow the request, and a post asking for more than the page showed is refused whole.
+**Reason:** As with a scope (`keys-and-oauth/approval-beyond-shown`), a form can only narrow the request, and a post asking for more than the page showed is refused whole. A permission is given only by the admin level, so a permission posted as a scope would pass the level the person chose.
 
-**Tests:** `compliance/approval-screens.test.ts › refuses an admin level or a power the request did not name, and grants nothing`.
+**Tests:** `compliance/approval-screens.test.ts › refuses an admin level or a power the request did not name, or a permission posted as a scope, and grants nothing`.
 
 ### `keys-and-oauth/approval-held-shown`
 
@@ -2142,9 +2158,9 @@ While an app holds access to a type, the server MUST NOT offer, on the consent s
 
 While an app holds the read of an item type or of the profile and not its write, and a request names the write of it, the server MUST offer, on the consent screen or the device approval page, the choice read only, which posts no scope, beside the choice read and edit.
 
-**Reason:** The page offers no level below what the app holds, so without this choice a person who holds the read could not decline the write: the only choice left would be the write. Choosing the held read leaves the standing consent as it is and asks nothing new. It posts no scope even where the request names the read, so a screen left open while the person disconnects the app does not count the read as newly chosen.
+**Reason:** The page offers no level below what the app holds, so without this choice a person who holds the read could not decline the write: the only choice left would be the write. Choosing the held read leaves the standing consent as it is and asks nothing new. It posts no scope even where the request names the read.
 
-**Tests:** `compliance/approval-screens.test.ts › offers the held read beside the write, on both pages, for an item type's write asked while its read is held`, `› offers the held read beside the write, on both pages, for a type's write asked beside a wildcard read the app holds`, `› offers the held read beside the write, on both pages, for the profile's write asked while its read is held`, `› gives back no held read through Read only beside the write once the app is disconnected`.
+**Tests:** `compliance/approval-screens.test.ts › offers the held read beside the write, on both pages, for an item type's write asked while its read is held`, `› offers the held read beside the write, on both pages, for a type's write asked beside a wildcard read the app holds`, `› offers the held read beside the write, on both pages, for the profile's write asked while its read is held`.
 
 ### `keys-and-oauth/approval-never-lowers`
 
@@ -2158,9 +2174,9 @@ When a person approves on the consent screen or the device approval page, the se
 
 When a person approves on the consent screen or the device approval page, the server MUST add to the approval only the scopes the request names that the app's standing consent covers when the approval commits.
 
-**Reason:** The page posts the person's choices and the mechanisms, not the access the app holds. A screen left open while the person disconnects the app, in another tab, then gives nothing back: with the held scopes gone and nothing newly chosen the approval is a denial, and with a choice the app gets that choice and nothing it held.
+**Reason:** The page posts the person's choices and the mechanisms, not the access the app holds, and an approval from a page drawn on other access grants nothing (`keys-and-oauth/approval-held-changed`). Disconnecting the app also ends a device code still waiting for an answer, so a screen left open has no code to approve.
 
-**Tests:** `compliance/approval-screens.test.ts › adds the access the app still holds to what is approved on the consent screen`, `› adds the access the app still holds to what is approved on the device approval page`, `› gives back nothing the person ended, and denies where nothing new is chosen, on the consent screen`, `› refuses the device code of a screen left open once the app is disconnected, and grants nothing`.
+**Tests:** `compliance/approval-screens.test.ts › adds the access the app still holds to what is approved on the consent screen`, `› adds the access the app still holds to what is approved on the device approval page`, `› refuses the device code of a screen left open once the app is disconnected, and grants nothing`.
 
 ### `keys-and-oauth/approval-write-read`
 
@@ -3242,7 +3258,7 @@ When a client polls with a device code the person denied, the server MUST answer
 
 ### `keys-and-oauth/device-nothing-denies`
 
-Where a device code names a scope other than `offline_access` that the app's standing consent does not cover, when a person approves it with none of those scopes chosen and the post does not name `access` as `full`, the server MUST deny the code, so that the next poll of it is answered `400 access_denied`.
+Where a device code names a scope other than `offline_access` that the app's standing consent does not cover, when a person approves it with none of those scopes chosen, the server MUST deny the code, so that the next poll of it is answered `400 access_denied`.
 
 **Reason:** The same rule as `keys-and-oauth/consent-nothing-denies`, so a request is answered the same way on either page.
 
