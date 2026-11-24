@@ -912,6 +912,12 @@ mod tests {
             .unwrap()
             .key();
         let peer = || Peer {
+            entry: Registered {
+                dir: to.clone(),
+                folder: String::new(),
+                store: None,
+                root: None,
+            },
             root: to.clone(),
             root_dir: Some(Directory::open(&to).unwrap()),
             folder: None,
@@ -1039,6 +1045,12 @@ mod tests {
         )
         .unwrap();
         let peer = Peer {
+            entry: Registered {
+                dir: root.clone(),
+                folder: String::new(),
+                store: None,
+                root: None,
+            },
             root: root.clone(),
             root_dir: Some(Directory::open(&root).unwrap()),
             folder: None,
@@ -1086,6 +1098,12 @@ mod tests {
         std::fs::write(&shut, "---\nmarfa_id: n3\n---\nbody\n").unwrap();
         let _sealed = crate::test_folders::locked(&shut, 0o000);
         let peer = Peer {
+            entry: Registered {
+                dir: root.clone(),
+                folder: String::new(),
+                store: None,
+                root: None,
+            },
             root: root.clone(),
             root_dir: Some(Directory::open(&root).unwrap()),
             folder: None,
