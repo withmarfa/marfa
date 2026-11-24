@@ -1774,7 +1774,7 @@ When a subscription's `pending` deliveries have fallen so far that adding a new 
 
 ### `events/redeliver-accepted`
 
-When the credential that owns a subscription sends `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` for a `failed` delivery, the server MUST answer `202` with that delivery as `pending`, keeping its `id`, `status_code` and `attempt`.
+When the credential that owns a subscription sends `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` for a `failed` delivery whose redelivery would take the subscription past neither `webhook_backlog_deliveries` nor `webhook_backlog_bytes` (`events/redeliver-backlog`), the server MUST answer `202` with that delivery as `pending`, keeping its `id`, `status_code` and `attempt`.
 
 **Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`.
 
@@ -1828,7 +1828,7 @@ If a redelivery names a delivery the subscription does not hold, then the server
 
 ### `events/redeliver-once`
 
-When two redeliveries of one delivery arrive together, the server MUST accept one with `202` and answer the other `409 conflict`.
+When two redeliveries of one delivery arrive together and redelivering it would take the subscription past neither `webhook_backlog_deliveries` nor `webhook_backlog_bytes` (`events/redeliver-backlog`), the server MUST accept one with `202` and answer the other `409 conflict`.
 
 **Tests:** `compliance/webhook-delivery.test.ts › queues one transition when a redelivery is requested twice at once, and records one audit entry`.
 

@@ -186,7 +186,7 @@ While every recorded attempt to deliver to an active webhook subscription since 
 
 ### `instance/attention-webhook-clears`
 
-When an attempt to deliver to a subscription succeeds, or the subscription is pointed at another URL, turned off or deleted, the server MUST NOT include a concern of kind `webhook` for it in `GET /attention`.
+When a recorded attempt to deliver to a subscription succeeds, or the subscription is pointed at another URL, turned off or deleted, the server MUST NOT include a concern of kind `webhook` for it in `GET /attention`.
 
 **Tests:** `compliance/webhook-backlog.test.ts › clears a listed webhook from attention when it is pointed at another URL, turned off or deleted`, `› drains the backlog once the receiver answers, clears the webhook from attention and queues the next delivery`.
 
