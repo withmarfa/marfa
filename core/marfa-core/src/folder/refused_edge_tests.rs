@@ -477,12 +477,19 @@ fn a_refused_create_a_files_flag_shows_stays_with_its_reason() {
     ];
     for (n, (path, change)) in shown_by.into_iter().enumerate() {
         let refused = seeded(&fixture, &format!("refused-{n}"), ONE_TO_ONE, json!({}));
+        let line_refusal = matches!(change, state::Change::Edge { .. });
         flag_line(folder, path, change);
         let before = folder.status().unwrap();
 
         folder.drain().unwrap();
         assert!(in_queue(folder, &refused), "shown on {path}");
-        assert_eq!(folder.status().unwrap(), before);
+        // The edge stands, so a line's mark goes as the drain ends; a default
+        // edge's is the defaults' to settle.
+        if line_refusal {
+            assert_eq!(file_status(folder, path).flag, None, "the mark on {path}");
+        } else {
+            assert_eq!(folder.status().unwrap(), before);
+        }
 
         unflag(folder, path);
         folder.drain().unwrap();
@@ -748,6 +755,15 @@ fn the_queue_holds_one_refused_create_of_a_line_however_often_the_file_is_saved(
     .map(|row| row.id)
     .collect();
     assert_eq!(left, [each[3].clone()]);
+    let held = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        held.writes.refused.len(),
+        1,
+        "the file's record names the line once: {:?}",
+        held.writes.refused
+    );
     let file = file_status(folder, "a.md");
     assert_eq!(file.flag, Some("refused"));
     assert!(

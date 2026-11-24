@@ -2974,6 +2974,7 @@ impl Folder {
             let gave_way = self.settle_placements(&mut report, watched)?;
             self.keep_wait(&report)?;
             self.hold_refused()?;
+            self.clear_refusals_the_copy_has_answered()?;
             Ok(gave_way)
         })();
         let drained = |report, (gave_way, withdrawn)| Drained {
@@ -3123,9 +3124,7 @@ impl Folder {
                             change,
                             save,
                         };
-                        if !bound.writes.refused.contains(&refused) {
-                            bound.writes.refused.push(refused);
-                        }
+                        bound.writes.keep_refused(refused);
                     }
                     Some(
                         crate::model::Verdict::Accepted
@@ -3162,6 +3161,38 @@ impl Folder {
             if (&bound.writes, &bound.lines, bound.edit_line, &bound.held)
                 != (&was.0, &was.1, was.2, &was.3)
             {
+                state::bind(&conn, &bound)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Takes off a file the refusal of an edge its line asked for once the
+    /// copy holds that edge as the server gave it, whoever made it.
+    fn clear_refusals_the_copy_has_answered(&self) -> Result<()> {
+        let conn = self.core.conn()?;
+        for mut bound in state::bound_refused(&conn)? {
+            let before = bound.writes.refused.len();
+            let item = bound.item_id.clone();
+            let mut standing = Vec::new();
+            for refused in std::mem::take(&mut bound.writes.refused) {
+                let answered = match &refused.change {
+                    state::Change::Edge { line, shown: true } => {
+                        let (from, to) = match line.end {
+                            marfa_rules::catalog::End::From => (&item, &line.other),
+                            marfa_rules::catalog::End::To => (&line.other, &item),
+                        };
+                        !crate::store::edge_as_server_gave(&conn, from, &line.edge_type, to)?
+                            .is_empty()
+                    }
+                    _ => false,
+                };
+                if !answered {
+                    standing.push(refused);
+                }
+            }
+            bound.writes.refused = standing;
+            if bound.writes.refused.len() != before {
                 state::bind(&conn, &bound)?;
             }
         }
@@ -3231,9 +3262,7 @@ impl Folder {
                             save,
                             reason: local_refusal_reason(&error),
                         };
-                        if !bound.writes.refused.contains(&refused) {
-                            bound.writes.refused.push(refused);
-                        }
+                        bound.writes.keep_refused(refused);
                     }
                     other => {
                         bound.writes.queued[at].id = other?.id;

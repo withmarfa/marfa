@@ -914,6 +914,14 @@ When a document write is refused, a device MUST flag the held file `refused` wit
 
 **Tests:** `device/folders-frontmatter.test.ts › flags a refused retype and keeps the file`.
 
+### `folder-documents/refused-edge-clears`
+
+When the working copy holds, as the server last gave it, the edge that a file's refused edge line asked for, a device MUST clear that refusal from the file, whether or not the file changed.
+
+**Reason:** the refusal says the edge was not made, and the edge now stands, so the mark would tell the person something untrue. A refusal of an edge the copy does not hold stands.
+
+**Tests:** `device/folders-cleared-answers.test.ts › clears a file's refused mark once the copy holds the edge its line names, and keeps it while it does not`.
+
 ### `folder-documents/refused-edit-follow`
 
 When a held file is renamed, reformatted, or changed without replacing its refused change, a device MUST retain the refusal on that file.
@@ -1983,6 +1991,14 @@ When a Markdown body comes to embed a local file the folder's query does not hol
 **Reason:** a file outside the query is in the folder only as a document's part (`folder-documents/embedded-outside-search`), and a folder of notes keeps its pictures beside them. A file the query holds is the folder's own, and only its `has-attachment` line attaches it. An embed already in the body when its attachment is taken away elsewhere does not attach the file again. A link to the file is no embed of it, so the folder keeps a document's embeds apart from its links in its record of the document.
 
 **Tests:** `device/folders-frontmatter.test.ts › references an embedded file, and attaches it only where the query does not hold it`, `› sends an embedded file with its file`.
+
+### `folder-documents/embed-edge-held-line`
+
+When a document's `has-attachment` line that was held resolves or is taken out, a device MUST create the `attached-to` edge for each file outside the folder's query that the body embedded while the line was held and that no edge attaches to the document.
+
+**Reason:** the embed was new to the body when the line held the attachments back, and reading the body again must not count it as already seen, or the file would stay unattached with nothing to show for it.
+
+**Tests:** `device/folders-frontmatter.test.ts › attaches an embedded file outside the query once the has-attachment line beside it resolves or is taken out`.
 
 ### `folder-documents/embed-attachment-line-kept`
 

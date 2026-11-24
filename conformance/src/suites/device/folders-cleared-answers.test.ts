@@ -202,6 +202,37 @@ describe("a folder's refused edge creates", () => {
     expect(after).toEqual(held);
   });
 
+  it("clears a file's refused mark once the copy holds the edge its line names, and keeps it while it does not", async () => {
+    const { made, edges, source, target } = await twoNotes(
+      "folder-refused-edge-mark-clears",
+    );
+    edit(made, "Source.md", /marfa_id:/, `about: "[[${target}]]"\nmarfa_id:`);
+    expect((await made.folder.push()).ok).toBe(true);
+    edit(made, "Source.md", "source", "source again");
+    expect((await made.folder.push()).ok).toBe(true);
+    expect(
+      (await statusOf(made, "Source.md")).flag,
+      "the witness: the mark stands while the copy lacks the edge",
+    ).toBe("refused");
+
+    edges.placing = undefined;
+    edges.create({
+      id: "01a00000-0000-7000-8000-0000000e0002",
+      from_id: source,
+      to_id: target,
+      edge_type: "about",
+    });
+    expect((await made.folder.push()).ok).toBe(true);
+    expect((await made.folder.push()).ok).toBe(true);
+    const file = await statusOf(made, "Source.md");
+    expect(
+      file.flag,
+      "the mark stayed beside the edge it names",
+    ).toBeUndefined();
+    expect(file.status).toBe("in_step");
+    expect(read(made, "Source.md")).toContain(`about: "[[${target}]]"`);
+  });
+
   it("holds one refused edge create of a line however often its file is saved, and the file keeps its reason", async () => {
     const { made, source, target } = await twoNotes(
       "folder-refused-edge-repeated",

@@ -7624,6 +7624,14 @@ If the server refuses a body's edge write, then a device MUST answer the link `r
 
 **Tests:** `device/body-edges-live.test.ts › reports a refused edge write against its link, and keeps the body`.
 
+### `device/body-name-refused-clears`
+
+When the working copy holds the `references` edge that a refused body link asked for, a device MUST answer the link with the item it names, not `refused`.
+
+**Reason:** the refusal says the edge was not made, and the edge now stands, whoever made it.
+
+**Tests:** `device/body-edges-live.test.ts › reports a refused edge write against its link, and keeps the body`.
+
 ### `device/body-links-read`
 
 When a caller reads an item's links and embeds, a device MUST answer each link and each embed of a file in its body, in the order of the body, with its text as typed, the name it reads and the item it names or the reason it names none.

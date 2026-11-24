@@ -77,6 +77,24 @@ pub struct Writes {
     pub unattached: Vec<String>,
 }
 
+impl Writes {
+    /// Holds a refusal in place of the one it supersedes, so a refusal that
+    /// stands while a file is saved again keeps one entry; a newer save's
+    /// entry is kept over an older refusal.
+    pub fn keep_refused(&mut self, refused: Refused) {
+        if self
+            .refused
+            .iter()
+            .any(|held| held.save > refused.save && refused.change.supersedes(&held.change))
+        {
+            return;
+        }
+        self.refused
+            .retain(|held| !refused.change.supersedes(&held.change));
+        self.refused.push(refused);
+    }
+}
+
 /// When an unchanged file held `edges` is judged again.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

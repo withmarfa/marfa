@@ -508,6 +508,16 @@ describe("links", () => {
         ?.verdict,
       "a refused edge left the queue without a discard",
     ).toBe("refused");
+
+    // Another device brings the item back and makes the edge: the link names it.
+    const restored = await client.restoreItem(target);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    await linkedElsewhere(host.id, target);
+    value(await device.catchUp());
+    expect(
+      value(await device.bodyLinks(host.id)).links[0].target,
+      "the link said refused beside the edge it asked for",
+    ).toEqual({ state: "item", id: target });
   });
 
   it("queues a body's edge to wait on the write that changed the body", async () => {
