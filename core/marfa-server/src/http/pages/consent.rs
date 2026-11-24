@@ -82,9 +82,8 @@ struct AdminRow {
     powers: Vec<PowerRow>,
     /// Without scripts every power row shows, and counts only under Custom.
     counts: String,
-    limited: Option<String>,
-    /// Without scripts nothing shows the line above, so a sentence says what Limited holds.
-    limited_by_level: Option<String>,
+    /// Shown under the box at Read Only, and always without scripts, since no choice shows it.
+    read_only: Option<String>,
     asked: String,
 }
 
@@ -245,16 +244,9 @@ fn admin_row(admin: &Admin, again: Option<&Post>) -> AdminRow {
                 .unwrap_or(AdminLevel::None),
         ),
     };
-    let titles = |powers: &[Permission]| -> Vec<String> {
-        powers
-            .iter()
-            .map(|power| words::lower_first(&power_title(*power)))
-            .collect()
-    };
-    let limited_powers = admin
-        .levels
-        .contains(&AdminLevel::Limited)
-        .then(|| titles(&powers_at(AdminLevel::Limited, &ordered, &[]).unwrap_or_default()));
+    let read_only = admin.levels.contains(&AdminLevel::ReadOnly).then(|| {
+        words::read_only_line(&powers_at(AdminLevel::ReadOnly, &ordered, &[]).unwrap_or_default())
+    });
     let asked = if ordered.len() >= words::POWER_COUNT {
         format!("all {}", words::POWER_COUNT)
     } else {
@@ -272,8 +264,7 @@ fn admin_row(admin: &Admin, again: Option<&Post>) -> AdminRow {
             })
             .collect(),
         counts: words::counts_when(words::ADMIN_TITLE, words::admin_level(AdminLevel::Custom)),
-        limited: limited_powers.as_deref().map(words::limited_line),
-        limited_by_level: limited_powers.as_deref().map(words::limited_by_level),
+        read_only,
         asked,
         powers: ordered
             .into_iter()
@@ -372,7 +363,7 @@ struct ConsentBody<'a> {
     admin: Option<AdminRow>,
     custom: &'static str,
     full: &'static str,
-    limited: &'static str,
+    read_only: &'static str,
     choose_types: &'static str,
 }
 
@@ -501,7 +492,7 @@ pub fn consent(view: &Consent) -> Result<Page> {
         admin,
         custom: AdminLevel::Custom.word(),
         full: AdminLevel::Full.word(),
-        limited: AdminLevel::Limited.word(),
+        read_only: AdminLevel::ReadOnly.word(),
         choose_types: CHOOSE_TYPES,
     })?;
     document(

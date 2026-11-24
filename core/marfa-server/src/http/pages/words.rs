@@ -1,6 +1,6 @@
 //! Words shared by both approval pages, so they cannot say the same thing two ways.
 
-use crate::app::access::Level;
+use crate::app::access::{Level, Permission};
 use crate::app::oauth::offer::{AdminLevel, AppShown, LevelRow, Reach};
 
 pub fn level(level: Level) -> &'static str {
@@ -28,7 +28,7 @@ pub const DONT_ALLOW: &str = "Don't Allow";
 pub fn admin_level(level: AdminLevel) -> &'static str {
     match level {
         AdminLevel::Full => "Full Access",
-        AdminLevel::Limited => "Limited",
+        AdminLevel::ReadOnly => "Read Only",
         AdminLevel::None => "No Access",
         AdminLevel::Custom => "Custom…",
     }
@@ -397,27 +397,43 @@ pub fn admin_gives(powers: &[String]) -> String {
     }
 }
 
-/// The line under the admin box at Limited, from the powers that level holds.
-pub fn limited_line(powers: &[String]) -> String {
-    format!("Only {}.", powers_list(powers))
-}
-
-/// Without scripts, what Limited holds, since no choice shows the line above.
-pub fn limited_by_level(powers: &[String]) -> String {
+/// What Read Only holds of the powers asked, said under the admin box, and in its place without
+/// scripts.
+pub fn read_only_line(powers: &[Permission]) -> String {
+    let held: Vec<&str> = powers
+        .iter()
+        .filter_map(|power| match power {
+            Permission::InstanceRead => Some("server health"),
+            Permission::AuditRead => Some("the activity log"),
+            _ => None,
+        })
+        .collect();
     format!(
-        "{} lets the app only {}.",
-        admin_level(AdminLevel::Limited),
-        powers_list(powers)
+        "{} is {}.",
+        admin_level(AdminLevel::ReadOnly),
+        and_list(&held)
     )
-}
-
-fn powers_list(powers: &[String]) -> String {
-    and_list(&powers.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_only_names_only_what_it_holds_of_the_powers_asked() {
+        assert_eq!(
+            read_only_line(&[Permission::InstanceRead, Permission::AuditRead]),
+            "Read Only is server health and the activity log."
+        );
+        assert_eq!(
+            read_only_line(&[Permission::InstanceRead]),
+            "Read Only is server health."
+        );
+        assert_eq!(
+            read_only_line(&[Permission::AuditRead]),
+            "Read Only is the activity log."
+        );
+    }
 
     #[test]
     fn an_app_namespace_row_says_whose_data_it_covers() {
