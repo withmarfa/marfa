@@ -1,0 +1,6 @@
+{% import "partials/parts.html" as parts %}{% call parts::head("Check the code", "It should match the code on your device.") %}{% endcall %}
+<form method="post" action="/auth/device/check">
+<input type="hidden" name="user_code" value="{{ view.typed }}">
+{% call parts::code_shown(view.user_code.as_str(), said.as_str(), hint="Don’t continue if someone sent you this code.") %}{% endcall %}
+{% call parts::actions() %}<a class="btn" href="/auth/device">Cancel</a><button type="submit" class="btn primary">It Matches</button>{% endcall %}
+</form>

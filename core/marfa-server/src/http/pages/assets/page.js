@@ -221,6 +221,27 @@
     });
   }
 
+  // A code field draws what is typed in its cells, as the server reads it: letters and digits,
+  // in capitals. The input stays the field, and the cell after the last character takes focus.
+  function watchCodes() {
+    for (const input of document.querySelectorAll(".code > .in")) {
+      const cells = [...input.parentElement.querySelectorAll(".cell")];
+      const draw = () => {
+        const typed = input.value
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, "")
+          .slice(0, cells.length);
+        const at = document.activeElement === input ? Math.min(typed.length, cells.length - 1) : -1;
+        cells.forEach((cell, index) => {
+          cell.textContent = typed[index] ?? "";
+          cell.classList.toggle("at", index === at);
+        });
+      };
+      for (const kind of ["input", "focus", "blur"]) input.addEventListener(kind, draw);
+      draw();
+    }
+  }
+
   // A computer puts the cursor in the first field to fill. A phone waits for a tap, because
   // focus would raise the keyboard over the page before it is read.
   function focusFirstField() {
@@ -612,5 +633,6 @@
   watchPasskeys();
   watchPasskeyRemovals();
   watchPasskeyRenames();
+  watchCodes();
   focusFirstField();
 })();

@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use rusqlite::Connection;
 use serde_json::{Value, json};
 
 use super::client::GrantType;
@@ -22,6 +23,7 @@ use crate::app::auth::limits::{
     admit, device_code_lanes, device_lookup_lanes, device_owner_lanes, hold_to,
 };
 use crate::app::auth::return_to::encoded;
+use crate::app::auth::session::Session;
 use crate::app::catalog::{self, Snapshot};
 use crate::app::clock::Stamp;
 use crate::app::faults::DEVICE_OWNER_INSTANCE_LANE;
@@ -31,6 +33,7 @@ use crate::db::Write;
 
 const CODE_WRITE: &str = "auth.device_code.issued";
 pub const CONSENT_PATH: &str = "/auth/device/consent";
+pub const CHECK_PATH: &str = "/auth/device/check";
 
 pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answered<Value>> {
     hold_to(
@@ -104,6 +107,7 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
         interval_seconds: DEVICE_INTERVAL_SECONDS,
         last_polled_at: None,
         expires_at: now.plus_ms(DEVICE_CODE_SECONDS * MS_PER_SECOND)?,
+        checked_by: None,
     };
     let clock = app.clock.clone();
     let ip = visit.client_ip();
@@ -189,38 +193,119 @@ pub async fn look_up(app: &App, typed: &str) -> Result<Lookup> {
         .await
 }
 
+fn browser_session(owner: &Caller) -> Result<Session> {
+    owner
+        .session()
+        .cloned()
+        .ok_or_else(|| Refusal::internal("an approval has no browser session"))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NotOpen {
+    Code(Lookup),
+    SignInAgain,
+}
+
+impl From<NotOpen> for Blocked {
+    fn from(not_open: NotOpen) -> Self {
+        match not_open {
+            NotOpen::Code(lookup) => Blocked::Code(lookup),
+            NotOpen::SignInAgain => Blocked::SignInAgain,
+        }
+    }
+}
+
+/// A pending code this browser session may act on, given the code's `max_age` and the
+/// client's `prompt=login`.
+fn pending_for(
+    tx: &Connection,
+    found: Option<DeviceCode>,
+    session: &Session,
+    now: Stamp,
+) -> Result<std::result::Result<DeviceCode, NotOpen>> {
+    let lookup = looked_up(found.as_ref(), now);
+    let (Lookup::Pending, Some(code)) = (lookup, found) else {
+        return Ok(Err(NotOpen::Code(lookup)));
+    };
+    let after = reprompt::later(
+        code.signed_in_after,
+        store::login_after(tx, &code.client_id, &session.owner_id)?,
+    );
+    if !reprompt::began_since(session, after, now) {
+        return Ok(Err(NotOpen::SignInAgain));
+    }
+    Ok(Ok(code))
+}
+
+/// Only the browser session that confirmed the code may see or answer its approval page.
+/// A code that is not there reads the same, so the page tells nothing about codes.
+fn checked_here(found: Option<DeviceCode>, session: &Session) -> Option<DeviceCode> {
+    found.filter(|code| code.checked_by.as_deref() == Some(session.id.as_str()))
+}
+
+/// Whether the check page may ask this session to compare the code.
+pub async fn to_check(
+    app: &Arc<App>,
+    typed: &str,
+    owner: &Caller,
+) -> Result<std::result::Result<(), NotOpen>> {
+    let digest = digest_of_typed(app, typed)?;
+    let session = browser_session(owner)?;
+    let now = app.clock.instant();
+    app.db
+        .read(move |tx| {
+            let found = store::device_code_by_user_code(tx, &digest)?;
+            Ok(pending_for(tx, found, &session, now)?.map(|_| ()))
+        })
+        .await
+}
+
+/// Records that this browser session saw the code match the device's.
+pub async fn check(
+    app: &Arc<App>,
+    typed: &str,
+    owner: &Caller,
+) -> Result<std::result::Result<(), NotOpen>> {
+    let digest = digest_of_typed(app, typed)?;
+    let session = browser_session(owner)?;
+    let now = app.clock.instant();
+    app.db
+        .write(Write::own(), move |tx| {
+            let found = store::device_code_by_user_code(tx, &digest)?;
+            let code = match pending_for(tx, found, &session, now)? {
+                Ok(code) => code,
+                Err(not_open) => return Ok(Err(not_open)),
+            };
+            store::note_device_code_checked(tx, &code.digest, &session.owner_id, &session.id)?;
+            Ok(Ok(()))
+        })
+        .await
+}
+
 pub async fn screen(
     app: &Arc<App>,
     typed: &str,
     owner: &Caller,
 ) -> Result<std::result::Result<Box<Offer>, Blocked>> {
     let digest = digest_of_typed(app, typed)?;
-    let session = owner
-        .session()
-        .cloned()
-        .ok_or_else(|| Refusal::internal("an approval has no browser session"))?;
+    let session = browser_session(owner)?;
     let owner_id = session.owner_id.clone();
     let cache = app.catalog_handle();
     let now = app.clock.instant();
     app.db
         .write(Write::own(), move |tx| {
             let found = store::device_code_by_user_code(tx, &digest)?;
-            let lookup = looked_up(found.as_ref(), now);
-            let (Lookup::Pending, Some(code)) = (lookup, found) else {
-                return Ok(Err(Blocked::Code(lookup)));
+            let Some(found) = checked_here(found, &session) else {
+                return Ok(Err(Blocked::Unchecked));
             };
-            let after = reprompt::later(
-                code.signed_in_after,
-                store::login_after(tx, &code.client_id, &owner_id)?,
-            );
-            if !reprompt::began_since(&session, after, now) {
-                return Ok(Err(Blocked::SignInAgain));
-            }
+            let code = match pending_for(tx, Some(found), &session, now)? {
+                Ok(code) => code,
+                Err(not_open) => return Ok(Err(not_open.into())),
+            };
             let Some(client) = store::client(tx, &code.client_id)? else {
                 return Ok(Err(Blocked::ClientGone));
             };
             store::note_offered(tx, &client.id, now)?;
-            store::note_device_code_entered(tx, &code.digest, &owner_id)?;
             let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
             let registries = Registries::of(&catalog);
             let named = narrow(&code.scopes, &registries.allowed()).kept;
@@ -244,6 +329,8 @@ pub enum Blocked {
     ClientGone,
     /// The code's `max_age` asks for a browser session begun since.
     SignInAgain,
+    /// This browser session has not confirmed the code matches the device's.
+    Unchecked,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -252,6 +339,7 @@ pub enum Answer {
     Denied,
     Code(Lookup),
     SignInAgain,
+    Unchecked,
 }
 
 /// Reads again inside the write so an answer lands only on a pending code.
@@ -268,22 +356,16 @@ pub async fn answer(
     app.write(owner, GRANT_WRITE, move |unit| {
         let tx = unit.tx();
         let now = unit.instant;
+        let session = browser_session(&unit.caller)?;
         let found = store::device_code_by_user_code(tx, &digest)?;
-        let lookup = looked_up(found.as_ref(), now);
-        let (Lookup::Pending, Some(code)) = (lookup, found) else {
-            return Ok(Answer::Code(lookup));
+        let Some(found) = checked_here(found, &session) else {
+            return Ok(Answer::Unchecked);
         };
-        let session = unit
-            .caller
-            .session()
-            .ok_or_else(|| Refusal::internal("an approval has no browser session"))?;
-        let after = reprompt::later(
-            code.signed_in_after,
-            store::login_after(tx, &code.client_id, &session.owner_id)?,
-        );
-        if !reprompt::began_since(session, after, now) {
-            return Ok(Answer::SignInAgain);
-        }
+        let code = match pending_for(tx, Some(found), &session, now)? {
+            Ok(code) => code,
+            Err(NotOpen::Code(lookup)) => return Ok(Answer::Code(lookup)),
+            Err(NotOpen::SignInAgain) => return Ok(Answer::SignInAgain),
+        };
         let (owner_id, signed_in) = (session.owner_id.clone(), session.created_at);
         let deny = |scopes: &ScopeSet| {
             store::decide_device_code(

@@ -635,6 +635,8 @@ pub struct DeviceCode {
     pub interval_seconds: i64,
     pub last_polled_at: Option<Stamp>,
     pub expires_at: Stamp,
+    /// The browser session that confirmed the code matches the device's.
+    pub checked_by: Option<String>,
 }
 
 fn device_code_of(row: &Row<'_>) -> rusqlite::Result<DeviceCode> {
@@ -651,6 +653,7 @@ fn device_code_of(row: &Row<'_>) -> rusqlite::Result<DeviceCode> {
         interval_seconds: row.get("interval_seconds")?,
         last_polled_at: row.get("last_polled_at")?,
         expires_at: row.get("expires_at")?,
+        checked_by: row.get("checked_by")?,
     })
 }
 
@@ -684,11 +687,25 @@ pub fn insert_device_code(tx: &Connection, code: &DeviceCode) -> Result<()> {
 /// Requesting a code takes no credential, so this bounds the whole instance.
 pub const MOST_UNENTERED_DEVICE_CODES: i64 = 1_000;
 
-/// The owner who entered the code on the verification page, before deciding on it.
-pub fn note_device_code_entered(tx: &Connection, digest: &str, owner_id: &str) -> Result<()> {
+/// The session that confirmed the code matches the device's, replacing any other.
+pub fn note_device_code_checked(
+    tx: &Connection,
+    digest: &str,
+    owner_id: &str,
+    session_id: &str,
+) -> Result<()> {
     tx.execute(
-        "UPDATE oauth_device_codes SET owner_id = ?2 WHERE device_code = ?1",
-        params![digest, owner_id],
+        "UPDATE oauth_device_codes SET owner_id = ?2, checked_by = ?3 WHERE device_code = ?1",
+        params![digest, owner_id, session_id],
+    )?;
+    Ok(())
+}
+
+/// Moves the codes one session confirmed to the session replacing it in the same browser.
+pub fn carry_device_checks(tx: &Connection, from: &str, to: &str) -> Result<()> {
+    tx.execute(
+        "UPDATE oauth_device_codes SET checked_by = ?2 WHERE checked_by = ?1",
+        params![from, to],
     )?;
     Ok(())
 }

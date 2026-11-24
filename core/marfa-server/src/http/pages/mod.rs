@@ -19,7 +19,7 @@ use axum::response::{IntoResponse, Response};
 use crate::app::refusal::{Refusal, Result};
 
 pub use consent::{Answering, Consent, consent};
-pub use device::{DeviceEntry, DeviceProblem, device_entry};
+pub use device::{DeviceCheck, DeviceEntry, DeviceProblem, device_check, device_entry};
 pub use notice::{AuthError, AuthErrorCode, Link, Notice, auth_error, notice};
 pub use passkeys::{OwnerPasskey, OwnerPasskeys, owner_passkeys};
 pub use setup::{

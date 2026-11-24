@@ -360,6 +360,12 @@ fn app_token(url: &str) -> String {
         .expect("the owner's sign-in sets a session cookie")
         .to_string();
     post(
+        &format!("{url}/auth/device/check"),
+        &[("Cookie", &cookie), ("Origin", &origin)],
+        form,
+        &format!("user_code={}", field(&code, "user_code")),
+    );
+    post(
         &format!("{url}/auth/device/consent"),
         &[("Cookie", &cookie), ("Origin", &origin)],
         form,

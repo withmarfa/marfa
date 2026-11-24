@@ -264,16 +264,24 @@ fn the_device_page_says_why_a_code_failed_and_how_long_codes_last() {
         .unwrap()
     };
     let plain = page(None);
-    assert!(plain.html().contains("Codes end after 10 minutes."));
+    assert!(plain.html().contains("A code lasts 10 minutes."));
     assert!(plain.html().contains("name=\"user_code\""));
+    assert!(!without_code(&plain).contains("aria-invalid"));
     let wrong = page(DeviceProblem::from_query(Some("invalid_code"), None));
-    assert!(wrong.html().contains(
-        "That code isn&#39;t right or has expired. Check it against your device, or start again \
-         there to get a new one."
-    ));
+    assert!(
+        wrong
+            .html()
+            .contains("That code isn’t right or has expired. Check your device.")
+    );
+    assert!(wrong.html().contains("class=\"code bad\""));
+    assert!(wrong.html().contains("aria-invalid=\"true\""));
     let expired = page(DeviceProblem::from_query(Some("expired_code"), None));
-    assert!(expired.html().contains("That code has expired."));
-    assert!(!expired.html().contains("isn&#39;t right"));
+    assert!(
+        expired
+            .html()
+            .contains("That code has expired. Start again on your device.")
+    );
+    assert!(!expired.html().contains("isn’t right"));
     let locked = page(DeviceProblem::from_query(
         Some("too_many_attempts"),
         Some("61"),
@@ -286,6 +294,40 @@ fn the_device_page_says_why_a_code_failed_and_how_long_codes_last() {
     let locked_without_wait = page(DeviceProblem::from_query(Some("too_many_attempts"), None));
     assert!(locked_without_wait.html().contains("Too many codes."));
     assert!(!without_code(&locked_without_wait).contains("minute"));
+}
+
+#[test]
+fn the_code_is_one_field_and_the_check_shows_it_to_compare() {
+    let entry = device_entry(&DeviceEntry {
+        user_code: "wdjb mjht".into(),
+        problem: DeviceProblem::from_query(Some("invalid_code"), None),
+    })
+    .unwrap();
+    let html = entry.html();
+    assert_eq!(html.matches("<input").count(), 1, "{html}");
+    assert!(html.contains("value=\"wdjb mjht\""));
+    assert!(html.contains("aria-describedby=\"code-note\""));
+    assert!(html.contains("<p class=\"err\" id=\"code-note\""));
+
+    let check = device_check(&DeviceCheck {
+        user_code: "WDJBMJHT".into(),
+        typed: "wdjb-mjht".into(),
+    })
+    .unwrap();
+    let html = check.html();
+    assert!(html.contains("<h1>Check the code</h1>"));
+    assert!(html.contains("It should match the code on your device."));
+    assert!(html.contains("<span class=\"said\">WDJB-MJHT</span>"));
+    let cells = html.matches("<span class=\"cell\">").count();
+    assert_eq!(cells, 8, "{html}");
+    assert!(html.contains(
+        "<span class=\"cell\">B</span><span class=\"dash\"></span><span class=\"cell\">M</span>"
+    ));
+    assert!(html.contains("Don’t continue if someone sent you this code."));
+    assert!(html.contains("<input type=\"hidden\" name=\"user_code\" value=\"wdjb-mjht\">"));
+    assert!(html.contains("action=\"/auth/device/check\""));
+    assert!(html.contains("<a class=\"btn\" href=\"/auth/device\">Cancel</a>"));
+    assert!(html.contains("class=\"btn primary\">It Matches</button>"));
 }
 
 #[test]

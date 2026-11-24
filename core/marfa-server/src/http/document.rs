@@ -117,6 +117,14 @@ const UNPUBLISHED: &[(&str, &str)] = &[
     ),
     ("GET /auth/device", "the device-code entry page"),
     ("POST /auth/device", "its form post"),
+    (
+        "GET /auth/device/check",
+        "the page that shows a device code to compare",
+    ),
+    (
+        "POST /auth/device/check",
+        "its confirmation that the code matches",
+    ),
     ("GET /auth/device/consent", "the device consent screen"),
     ("POST /auth/device/consent", "its decision"),
     ("GET /setup", "first-party owner setup page"),
