@@ -856,7 +856,7 @@ When the server withholds a row's value from the reading key, the server MUST se
 
 **Reason:** a filter, an order, a total or a cursor that read the value would tell the key which item it names.
 
-**Tests:** `compliance/table-rows-reads.test.ts › filters, sorts, totals and pages a withheld item id as no value`.
+**Tests:** `compliance/table-rows-reads.test.ts › filters, totals and pages a withheld item id as no value, and sorts every item id as no value for every reader`.
 
 ## Reading rows
 
@@ -904,7 +904,7 @@ When a caller sends `GET /items/{id}/tables/{table}/rows` with no `limit`, the s
 
 If a `cursor` was not answered for the same item, table, `filter`, `sort`, `direction` and, when `sort` names a column, the same `type` of that column, then the server MUST answer `400 validation_error` naming `cursor`.
 
-**Reason:** a position read as one kind of value cannot continue a page read as another, and a page that continued from it would end the walk with rows unread.
+**Reason:** a position read as one kind of value cannot continue a page read as another, and a page that continued from it would end the walk with rows unread. A cursor for a `sort` that names a column, answered by a server that sorted a value written as an item's ID by that ID, was answered for another order (`tables/rows-sort-item-id`), so it is refused the same way rather than repeat rows.
 
 **Tests:** `compliance/table-rows-reads.test.ts › pages a table's rows by id, continuing by a signed cursor`, `› refuses a cursor answered for the other direction`, `› refuses a cursor answered before the sorted column changed type`.
 
@@ -966,13 +966,13 @@ When a page of rows is sorted by a `datetime`, `date`, `number`, `integer` or `s
 
 **Tests:** `compliance/table-rows-reads.test.ts › sorts a value a forced change left of another type as no value`, `› sorts a date or datetime column by its own type after a forced change left other values`.
 
-### `tables/rows-order-item-id`
+### `tables/rows-sort-item-id`
 
-When a page of rows is sorted by a table's `order` column, the server MUST sort a value written as an item's ID as though the row held no value for the column, for every reader.
+When a page of rows is sorted by `values.<column>`, the server MUST sort a value written as an item's ID as though the row held no value for the column, for every reader.
 
-**Reason:** the order is kept once for every reader, and a key that may not read the item must not learn where its ID sorts. Such a value is left only by a column changed from `item` with `force=true`.
+**Reason:** the server may keep the order of a table's rows by a column once for every reader, and a key that may not read the item must not learn where its ID sorts. A page sorted by a column of type `item` is therefore in `id` order, and a column changed from `item` with `force=true` keeps the IDs it held.
 
-**Tests:** `compliance/table-rows-reads.test.ts › sorts an item id a forced change left in the order column as no value`.
+**Tests:** `compliance/table-rows-reads.test.ts › filters, totals and pages a withheld item id as no value, and sorts every item id as no value for every reader`, `› sorts an item id a forced change left in a column as no value, in the order column or another`.
 
 ### `tables/order-changed`
 
@@ -989,6 +989,30 @@ When a change to a type moves the order the server keeps for the rows of its ite
 **Reason:** a type can have any number of items with any number of tables, and one write that rewrote them all would hold every other write.
 
 **Tests:** `compliance/table-rows-reads.test.ts › rewrites the kept order of many small tables mostly in table-row-cleanup, sorting every page right meanwhile`.
+
+### `tables/sort-kept`
+
+When a page of a table's rows is sorted by a column that is not the table's `order`, the server MUST answer each later page of the table's rows sorted by that column in the order `tables/rows-sort` states, through every write to its rows.
+
+**Reason:** on a table with at least 20,000 rows, a requested sort can use kept keys after `table-row-cleanup` fills them. The server keeps up to 16 pairs of tables and columns across the instance. The declared `order` has its own index, and `item` columns sort by row ID. Other column sorts scan while a pair is filling or the cap prevents registration. A filter on an unindexed column can require scanning the whole table to find enough matches. A table that shrinks below 20,000 rows keeps its existing pairs.
+
+**Tests:** `compliance/table-rows-kept-sort.test.ts › keeps large table pages in order during key fills, row writes, and column changes`.
+
+### `tables/sort-kept-bounded`
+
+When the server starts or stops keeping the order of a table's rows by a column, the server MUST change the order it keeps of at most 1000 rows in each write and leave the rest to `table-row-cleanup`.
+
+**Reason:** a table can hold any number of rows, and one write that changed the order kept for all of them would hold every other write.
+
+**Tests:** `compliance/table-rows-kept-sort.test.ts › keeps large table pages in order during key fills, row writes, and column changes`.
+
+### `tables/columns-changed`
+
+When a type's change removes a column from a table or changes the type of one, the server MUST answer each page of the table's rows sorted by any column from then on in the order `tables/rows-sort` states.
+
+**Reason:** a removed or retyped column invalidates its kept keys. The server stops using those keys immediately, and `table-row-cleanup` removes them in pages. A sort by a retyped column uses its new type even before new keys are ready.
+
+**Tests:** `compliance/table-rows-kept-sort.test.ts › keeps large table pages in order during key fills, row writes, and column changes`.
 
 ### `tables/order-undo`
 

@@ -1,26 +1,27 @@
-//! The key a table keeps its rows in order by, as one SQL expression for writes, rebuilds and reads.
+//! The sort key of a column's value, as one SQL expression for writes, rebuilds and reads.
 
-/// The column a table names as its `order`, and that column's kind.
+/// A column and the kind its type declares, which the key of each row's value is made by.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Order {
+pub(crate) struct Sorted {
     pub column: String,
     pub kind: String,
 }
 
-impl Order {
-    pub(crate) fn of(table: &serde_json::Map<String, serde_json::Value>) -> Option<Order> {
+impl Sorted {
+    /// The column a table names as its `order`.
+    pub(crate) fn of(table: &serde_json::Map<String, serde_json::Value>) -> Option<Sorted> {
         let (column, kind) = marfa_rules::schema::order_of(table)?;
-        marfa_rules::schema::order_column_inlinable(&column).then_some(Order { column, kind })
+        marfa_rules::schema::order_column_inlinable(&column).then_some(Sorted { column, kind })
     }
 
-    /// What a table summary records once every row's key is this order's.
+    /// What a table summary records once every row holds this column's key.
     pub(crate) fn signature(&self) -> String {
         format!("{}:{}", self.kind, self.column)
     }
 
-    pub(crate) fn from_signature(signature: &str) -> Option<Order> {
+    pub(crate) fn from_signature(signature: &str) -> Option<Sorted> {
         let (kind, column) = signature.split_once(':')?;
-        Some(Order {
+        Some(Sorted {
             column: column.to_string(),
             kind: kind.to_string(),
         })
@@ -30,12 +31,12 @@ impl Order {
         format!("'$.{}'", self.column)
     }
 
-    /// The key of the value in `body`: a datetime as UTC milliseconds, NULL for none or another kind.
+    /// The key of the value in `body`, NULL for none or a value of another kind.
     pub(crate) fn value_key_sql(&self, body: &str) -> String {
-        marfa_rules::schema::order_value_key_sql(&self.kind, &self.column, body)
+        marfa_rules::schema::column_key_sql(&self.kind, &self.column, body)
     }
 
-    /// As [`Order::value_key_sql`], and NULL for a value `refs` holds as an item's id.
+    /// As [`Sorted::value_key_sql`], and NULL for a value `refs` holds as an item's id.
     pub(crate) fn key_sql(&self, body: &str, refs: &str) -> String {
         format!(
             "CASE WHEN json_extract({refs}, {}) IS NULL THEN {} END",
@@ -44,7 +45,7 @@ impl Order {
         )
     }
 
-    /// As [`Order::key_sql`], with [`NO_KEY`] for NULL, so the index holds every row of the table.
+    /// As [`Sorted::key_sql`], with [`NO_KEY`] for NULL, so the index holds every row of the table.
     pub(crate) fn stored_key_sql(&self, body: &str, refs: &str) -> String {
         format!("COALESCE({}, {NO_KEY})", self.key_sql(body, refs))
     }
@@ -59,10 +60,10 @@ mod tests {
     use rusqlite::types::Value as Bound;
     use serde_json::json;
 
-    use super::Order;
+    use super::Sorted;
 
     fn key(kind: &str, value: serde_json::Value, refs: Option<serde_json::Value>) -> Bound {
-        let order = Order {
+        let order = Sorted {
             column: "at".into(),
             kind: kind.into(),
         };

@@ -9,7 +9,6 @@ use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use marfa_rules::catalog::Catalog;
 use marfa_rules::filter::Expression;
 use marfa_rules::filter::sql::{self, Adding, Bind, Sink};
-use marfa_rules::query::column_sort_expression;
 use rusqlite::types::Value as Bound;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::Serialize;
@@ -1480,24 +1479,11 @@ impl Key {
         }
     }
 
-    fn expression(&self, values: &mut Vec<Value>) -> String {
+    fn expression(&self) -> String {
         match self {
             Key::Id => "NULL".into(),
             Key::Updated => "r.updated_at".into(),
-            Key::Column { name, kind }
-                if marfa_rules::schema::KEYED_KINDS.contains(&kind.as_str())
-                    && marfa_rules::schema::order_column_inlinable(name) =>
-            {
-                marfa_rules::schema::order_value_key_sql(kind, name, "r.body")
-            }
-            Key::Column { name, .. } => {
-                let text = column_sort_expression("r.body", "?");
-                values.extend(std::iter::repeat_n(
-                    Value::String(format!("$.{name}")),
-                    text.matches('?').count(),
-                ));
-                text
-            }
+            Key::Column { name, kind } => marfa_rules::schema::column_key_sql(kind, name, "r.body"),
             Key::Order { column, kind } => {
                 marfa_rules::schema::order_value_key_sql(kind, column, "r.body")
             }
@@ -1534,14 +1520,19 @@ fn scope(
     key: &Key,
     descending: bool,
 ) -> [u8; SCOPE_BYTES] {
-    let named = json!([
-        item,
-        table,
-        asked.filter,
-        key.label(),
-        descending,
-        key.kind()
-    ]);
+    let mut named = vec![
+        json!(item),
+        json!(table),
+        json!(asked.filter),
+        json!(key.label()),
+        json!(descending),
+        json!(key.kind()),
+    ];
+    // A column sort's cursor from before an item's id sorted as no value lacks this, and is refused.
+    if matches!(key, Key::Column { .. }) {
+        named.push(json!("item-ids-unkeyed"));
+    }
+    let named = Value::Array(named);
     let mut scope = [0; SCOPE_BYTES];
     scope.copy_from_slice(&Sha256::digest(named.to_string().as_bytes())[..SCOPE_BYTES]);
     scope
@@ -1648,7 +1639,7 @@ fn page_from_copy(
         .map(|cursor| opened(&scope, cursor))
         .transpose()?;
     let mut values: Vec<Value> = Vec::new();
-    let key_sql = key.expression(&mut values);
+    let key_sql = key.expression();
     let mut sql = format!(
         "SELECT * FROM (SELECT r.id, r.body, r.withheld, r.updated_at, {key_sql} AS k
            FROM table_rows r WHERE r.item_id = ? AND r.name = ?"
@@ -1909,8 +1900,8 @@ pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>)
 #[cfg(test)]
 mod tests {
     use super::{
-        OR_TERMS, Read, RowsAsked, SPAN_GAP, cursor_of, filter_of, opened, page_from_copy, plan,
-        totals_from_copy,
+        Key, OR_TERMS, Read, RowsAsked, SCOPE_BYTES, SPAN_GAP, cursor_of, filter_of, opened,
+        page_from_copy, plan, scope, totals_from_copy,
     };
     use crate::CoreError;
     use serde_json::{Map, Value, json};
@@ -2160,6 +2151,50 @@ mod tests {
             &asked(Some("values.at"), 2, Some(cursor)),
         )
         .expect_err("a cursor outlived a change to the type of its column");
+        assert!(error.to_string().contains("cursor"), "{error}");
+    }
+
+    #[test]
+    fn a_column_cursor_from_before_item_ids_sorted_as_no_value_is_refused() {
+        let (_dir, core) = copy_with(&mixed_offsets());
+        let definition = table(None, "string");
+        let sorted = asked(Some("values.at"), 2, None);
+        let key = Key::Column {
+            name: "at".to_string(),
+            kind: "string".to_string(),
+        };
+        let named = json!(["i", "t", sorted.filter, key.label(), false, key.kind()]);
+        let mut old = [0; SCOPE_BYTES];
+        old.copy_from_slice(&sha2::Sha256::digest(named.to_string().as_bytes())[..SCOPE_BYTES]);
+        let current = scope("i", "t", &sorted, &key, false);
+        let conn = core.conn().unwrap();
+        let resumed = |scope: &[u8; SCOPE_BYTES]| {
+            let cursor = cursor_of(scope, &Value::Null, "a");
+            page_from_copy(
+                &conn,
+                "i",
+                "t",
+                &definition,
+                &asked(Some("values.at"), 2, Some(cursor)),
+            )
+        };
+        // The witness: a cursor in the current scope is taken.
+        resumed(&current).expect("a cursor in the current scope");
+        // A cursor sorted by id keeps the scope it had.
+        let by_id = asked(Some("id"), 2, None);
+        let named = json!([
+            "i",
+            "t",
+            by_id.filter,
+            Key::Id.label(),
+            false,
+            Key::Id.kind()
+        ]);
+        assert_eq!(
+            scope("i", "t", &by_id, &Key::Id, false)[..],
+            sha2::Sha256::digest(named.to_string().as_bytes())[..SCOPE_BYTES]
+        );
+        let error = resumed(&old).expect_err("a cursor from before the rule was taken");
         assert!(error.to_string().contains("cursor"), "{error}");
     }
 

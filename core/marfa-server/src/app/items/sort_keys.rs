@@ -10,7 +10,7 @@ use crate::app::refusal::Result;
 pub const MIN_ITEMS: i64 = 20_000;
 
 /// Each pair costs every write to its type, so the number a server keeps is bounded.
-const MAX_PAIRS: i64 = 16;
+pub(crate) const MAX_PAIRS: i64 = 16;
 
 /// Item numbers one write walks, so no write holds the writer for more than a bounded range.
 const FILL_WINDOW: i64 = 10_000;

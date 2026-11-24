@@ -34,7 +34,8 @@ pub use evolution::{evolution_of, item_table_changes};
 pub use field::normalize_field;
 pub use icons::{icon_issue, is_icon_id};
 pub use order_key::{
-    TEXT_KEY_CLOSE, order_column_inlinable, order_value_key_sql, text_key_open, text_key_sql,
+    TEXT_KEY_CLOSE, column_key_sql, order_column_inlinable, order_value_key_sql, text_key_open,
+    text_key_sql,
 };
 pub use registration::{Early, SchemaVerdict, early_refusal, invalid_id_message};
 pub use registry::Registry;

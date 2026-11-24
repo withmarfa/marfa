@@ -613,7 +613,7 @@ describe("reading rows", () => {
     });
   });
 
-  it("filters, sorts, totals and pages a withheld item id as no value", async () => {
+  it("filters, totals and pages a withheld item id as no value, and sorts every item id as no value for every reader", async () => {
     counter += 1;
     const hiddenType = `user.rows-reads-hidden-${counter}-${ctx.runId}`;
     const shownType = `user.rows-reads-shown-${counter}-${ctx.runId}`;
@@ -715,7 +715,7 @@ describe("reading rows", () => {
       return seen;
     };
     expect(await paged(client)).toEqual([withHidden, withShown, without]);
-    expect(await paged(reader)).toEqual([withShown, withHidden, without]);
+    expect(await paged(reader)).toEqual([withHidden, withShown, without]);
   });
 });
 
@@ -1144,7 +1144,7 @@ describe("sorting by a table's order", () => {
     expect(instants.slice(3)).toEqual([loose[0]]);
   });
 
-  it("sorts an item id a forced change left in the order column as no value", async () => {
+  it("sorts an item id a forced change left in a column as no value, in the order column or another", async () => {
     counter += 1;
     const pointed = `user.rows-order-pointed-${counter}-${ctx.runId}`;
     expect(
@@ -1161,10 +1161,15 @@ describe("sorting by a table's order", () => {
     } as never);
     expect(target.status, JSON.stringify(target.error)).toBe(201);
     trackItem(ctx, target.data.item.id);
-    const columns = { name: { type: "string" }, about: { type: "item" } };
+    const columns = {
+      name: { type: "string" },
+      about: { type: "item" },
+      also: { type: "item" },
+    };
     const { type, item, table } = await ordered(columns, "name");
+    const to = target.data.item.id;
     const pointing = await write(item, [
-      { op: "put", values: { name: "m", about: target.data.item.id } },
+      { op: "put", values: { name: "m", about: to, also: to } },
     ]);
     const forced = await client.replaceType(
       type,
@@ -1174,7 +1179,11 @@ describe("sorting by a table's order", () => {
         tables: {
           lines: {
             ...table,
-            columns: { ...columns, about: { type: "string" } },
+            columns: {
+              ...columns,
+              about: { type: "string" },
+              also: { type: "string" },
+            },
             order: "about",
           },
         },
@@ -1183,8 +1192,8 @@ describe("sorting by a table's order", () => {
     );
     expect(forced.status, JSON.stringify(forced.error)).toBe(200);
     const plain = await write(item, [
-      { op: "put", values: { name: "z", about: "zzzzzzzz" } },
-      { op: "put", values: { name: "a", about: "00000000" } },
+      { op: "put", values: { name: "z", about: "zzzzzzzz", also: "zzzzzzzz" } },
+      { op: "put", values: { name: "a", about: "00000000", also: "00000000" } },
     ]);
     counter += 1;
     const key = await client.createKey({
@@ -1196,16 +1205,18 @@ describe("sorting by a table's order", () => {
     trackKey(ctx, key.data.id);
     const reader = new MarfaClient({ baseUrl: apiUrl, apiKey: key.data.key });
     for (const as of [client, reader]) {
-      expect(await walk(as, item, "values.about", "asc", 1)).toEqual([
-        plain[1],
-        plain[0],
-        pointing[0],
-      ]);
-      expect(await walk(as, item, "values.about", "desc", 1)).toEqual([
-        plain[0],
-        plain[1],
-        pointing[0],
-      ]);
+      for (const sort of ["values.about", "values.also"]) {
+        expect(await walk(as, item, sort, "asc", 1)).toEqual([
+          plain[1],
+          plain[0],
+          pointing[0],
+        ]);
+        expect(await walk(as, item, sort, "desc", 1)).toEqual([
+          plain[0],
+          plain[1],
+          pointing[0],
+        ]);
+      }
     }
     const shown = (await client.getRow(item, "lines", pointing[0]!)).data;
     expect(shown.values.about).toBe(target.data.item.id);

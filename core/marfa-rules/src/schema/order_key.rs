@@ -38,6 +38,17 @@ pub fn order_value_key_sql(kind: &str, column: &str, body: &str) -> String {
     }
 }
 
+/// NULL for an `item` column, whose values sort as none whoever reads them.
+pub fn column_key_sql(kind: &str, column: &str, body: &str) -> String {
+    if kind == super::ITEM_KIND || !order_column_inlinable(column) {
+        return "NULL".to_string();
+    }
+    if super::KEYED_KINDS.contains(&kind) {
+        return order_value_key_sql(kind, column, body);
+    }
+    crate::query::column_sort_expression(body, &format!("'$.{column}'"))
+}
+
 /// `v` as UTC milliseconds; the offset is applied here so every offset the time rule takes counts.
 fn instant_ms() -> String {
     let at = |local: &str| LOCAL_MS.replace("local", local);

@@ -9,10 +9,11 @@ use marfa_rules::schema::{
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
 
-use super::order::Order;
+use super::keys::{self, Filled, Keeping, Keyed};
 use super::search::{self, Indexing, Searched};
+use super::sort_key::Sorted;
 use super::store::{self, Ordering};
-use super::{item_tables, tables_by_name};
+use super::{Kept, item_tables, tables_by_name};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
 use crate::app::catalog::Catalog;
@@ -39,6 +40,10 @@ struct Tally {
     changes: i64,
     reordered: i64,
     reindexed: i64,
+    keyed: i64,
+    keys_removed: i64,
+    /// The most keys one write of the run kept or removed.
+    largest_key_page: i64,
     pages: i64,
 }
 
@@ -46,12 +51,22 @@ impl Tally {
     fn add(&mut self, page: &Page) {
         match page {
             Page::Removed(removed) => {
+                self.keys_removed += removed.keys;
+                self.largest_key_page = self.largest_key_page.max(removed.keys);
                 self.rows += removed.rows;
                 self.batches += removed.batches;
                 self.changes += removed.changes;
             }
             Page::Reordered(rows) => self.reordered += rows,
             Page::Reindexed(rows) => self.reindexed += rows,
+            Page::Filled(Filled::Keyed(rows)) => {
+                self.keyed += rows;
+                self.largest_key_page = self.largest_key_page.max(*rows);
+            }
+            Page::Filled(Filled::Removed(keys)) => {
+                self.keys_removed += keys;
+                self.largest_key_page = self.largest_key_page.max(*keys);
+            }
         }
         self.pages += 1;
     }
@@ -64,6 +79,9 @@ impl Tally {
                 "changes_removed": self.changes,
                 "reordered": self.reordered,
                 "reindexed": self.reindexed,
+                "keyed": self.keyed,
+                "keys_removed": self.keys_removed,
+                "largest_key_page": self.largest_key_page,
                 "pages": self.pages,
             }),
             again,
@@ -76,6 +94,7 @@ enum Page {
     Removed(store::Removed),
     Reordered(i64),
     Reindexed(i64),
+    Filled(Filled),
 }
 
 #[derive(Clone, Copy)]
@@ -83,6 +102,7 @@ enum Stage {
     Purged,
     Reordered,
     Reindexed,
+    Keyed,
     Orphaned,
     Expired,
 }
@@ -93,6 +113,7 @@ pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
         Stage::Purged,
         Stage::Reordered,
         Stage::Reindexed,
+        Stage::Keyed,
         Stage::Orphaned,
         Stage::Expired,
     ] {
@@ -109,6 +130,7 @@ pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
                         Stage::Reindexed => {
                             search::reindex_page(tx, CLEANUP_PAGE)?.map(Page::Reindexed)
                         }
+                        Stage::Keyed => keys::fill_page(tx, CLEANUP_PAGE)?.map(Page::Filled),
                         Stage::Orphaned => store::orphan_page(tx, CLEANUP_PAGE)?.map(Page::Removed),
                         Stage::Expired => {
                             match cutoff(tx, &live, ROW_LOG_RETENTION_DAYS, DAY_MS)? {
@@ -133,29 +155,37 @@ pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
     Ok(tally.report(false))
 }
 
-type Declared = BTreeMap<String, (Option<Order>, Searched)>;
+type Declared = BTreeMap<String, Kept>;
 
-/// What each table of an item of `type_id` holding `properties` keeps: its order and the columns
-/// it is searched by. An item's own table keeps no order.
 fn declared(catalog: &Catalog, type_id: &str, properties: &Map<String, Value>) -> Result<Declared> {
     if !catalog.types.contains(type_id) {
         return Ok(BTreeMap::new());
     }
     Ok(item_tables(&catalog.types, type_id, properties)?
         .into_iter()
-        .map(|table| (table.name, (table.order, table.searched)))
+        .map(|table| (table.name, table.kept))
         .collect())
+}
+
+pub(super) fn keyable(catalog: &Catalog, tx: &Transaction<'_>, table_seq: i64) -> Result<Keyed> {
+    let Some((type_id, properties, table)) = store::host_of_table(tx, table_seq)? else {
+        return Ok(Keyed::default());
+    };
+    Ok(declared(catalog, &type_id, &parsed(&properties)?)?
+        .remove(&table)
+        .map(|kept| kept.keyed)
+        .unwrap_or_default())
 }
 
 // The inline budget spans every table affected by the change.
 fn settle_order(
     tx: &Transaction<'_>,
     held: &Ordering,
-    order: Option<&Order>,
+    order: Option<&Sorted>,
     at: &str,
     rewritten: &mut i64,
 ) -> Result<()> {
-    let wanted = order.map(Order::signature);
+    let wanted = order.map(Sorted::signature);
     let settled = match &held.rebuilding {
         Some(target) => *target == wanted,
         None => held.ordered_by == wanted,
@@ -200,22 +230,57 @@ struct Rewritten {
     indexed: i64,
 }
 
-fn settle(
-    tx: &Transaction<'_>,
-    declared: &BTreeMap<String, (Option<Order>, Searched)>,
+struct Held {
     orderings: Vec<Ordering>,
     indexings: Vec<Indexing>,
+    keepings: Vec<Keeping>,
+}
+
+impl Held {
+    fn of_item(tx: &Transaction<'_>, seq: i64) -> Result<Held> {
+        Ok(Held {
+            orderings: store::orderings_of_item(tx, seq)?,
+            indexings: search::indexings_of_item(tx, seq)?,
+            keepings: keys::keepings_of_item(tx, seq)?,
+        })
+    }
+
+    fn of_type(tx: &Transaction<'_>, type_id: &str) -> Result<Held> {
+        Ok(Held {
+            orderings: store::orderings_of_type(tx, type_id)?,
+            indexings: search::indexings_of_type(tx, type_id)?,
+            keepings: keys::keepings_of_type(tx, type_id)?,
+        })
+    }
+}
+
+fn settle(
+    tx: &Transaction<'_>,
+    declared: &Declared,
+    held: Held,
     at: &str,
     rewritten: &mut Rewritten,
 ) -> Result<()> {
-    let none = (None, Searched::default());
-    for held in orderings {
-        let (order, _) = declared.get(&held.table).unwrap_or(&none);
-        settle_order(tx, &held, order.as_ref(), at, &mut rewritten.ordered)?;
+    let none = Kept::default();
+    for ordering in held.orderings {
+        let kept = declared.get(&ordering.table).unwrap_or(&none);
+        settle_order(
+            tx,
+            &ordering,
+            kept.order.as_ref(),
+            at,
+            &mut rewritten.ordered,
+        )?;
     }
-    for held in indexings {
-        let (_, searched) = declared.get(&held.table).unwrap_or(&none);
-        settle_index(tx, &held, searched, at, &mut rewritten.indexed)?;
+    for indexing in held.indexings {
+        let kept = declared.get(&indexing.table).unwrap_or(&none);
+        settle_index(tx, &indexing, &kept.searched, at, &mut rewritten.indexed)?;
+    }
+    for keeping in held.keepings {
+        let kept = declared.get(&keeping.table).unwrap_or(&none);
+        if keys::drop_unkept(tx, keeping.table_seq, &kept.keyed)? {
+            housekeeping::bring_forward(tx, CLEANUP_JOB, at)?;
+        }
     }
     Ok(())
 }
@@ -237,9 +302,7 @@ pub fn rekey_types(
                 if declared(before, type_id, &properties)? == wanted {
                     continue;
                 }
-                let orderings = store::orderings_of_item(tx, seq)?;
-                let indexings = search::indexings_of_item(tx, seq)?;
-                settle(tx, &wanted, orderings, indexings, at, &mut rewritten)?;
+                settle(tx, &wanted, Held::of_item(tx, seq)?, at, &mut rewritten)?;
             }
             continue;
         }
@@ -247,9 +310,7 @@ pub fn rekey_types(
         if declared(before, type_id, &none)? == wanted {
             continue;
         }
-        let orderings = store::orderings_of_type(tx, type_id)?;
-        let indexings = search::indexings_of_type(tx, type_id)?;
-        settle(tx, &wanted, orderings, indexings, at, &mut rewritten)?;
+        settle(tx, &wanted, Held::of_type(tx, type_id)?, at, &mut rewritten)?;
     }
     Ok(())
 }
@@ -263,13 +324,10 @@ pub fn rekey_item(
     at: &str,
 ) -> Result<()> {
     let wanted = declared(catalog, type_id, properties)?;
-    let orderings = store::orderings_of_item(tx, seq)?;
-    let indexings = search::indexings_of_item(tx, seq)?;
     settle(
         tx,
         &wanted,
-        orderings,
-        indexings,
+        Held::of_item(tx, seq)?,
         at,
         &mut Rewritten::default(),
     )
