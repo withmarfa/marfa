@@ -5,12 +5,12 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use serde_json::json;
 
-use super::{Browser, Fields, problem_answer};
+use super::{Browser, Fields, drawn_again, problem_answer};
 use crate::app::App;
 use crate::app::auth::Visit;
 use crate::app::oauth::authorize::{self, Decided, Screen};
 use crate::app::refusal::{Code, Refusal};
-use crate::http::answer::{Answer, json_answer};
+use crate::http::answer::{Answer, json_answer, names};
 use crate::http::auth::redirect;
 use crate::http::body::JsonBody;
 use crate::http::pages::{self, Answering, Consent, Notice};
@@ -52,6 +52,7 @@ pub async fn screen(
             let view = Consent {
                 offer: *offer,
                 answering: Answering::Authorization(query),
+                again: None,
             };
             Ok(pages::consent(&view)?.into_response())
         }
@@ -62,7 +63,7 @@ fn asks_for_json(headers: &HeaderMap) -> bool {
     headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|accept| accept.contains("application/json"))
+        .is_some_and(|accept| names(accept, "application/json"))
 }
 
 pub async fn decide(
@@ -80,7 +81,8 @@ pub async fn decide(
         Some("deny") => false,
         _ => return Err(Refusal::validation("Provide `decision` as approve or deny.").into()),
     };
-    match authorize::decide(&app, owner.as_ref(), link, approve, fields.post()).await? {
+    let post = fields.post();
+    match authorize::decide(&app, owner.as_ref(), link, approve, post.clone()).await? {
         Decided::Unverified => refused_link(false),
         Decided::Expired => refused_link(true),
         Decided::SignIn(location) => redirect(StatusCode::FOUND, &location),
@@ -88,5 +90,13 @@ pub async fn decide(
             Ok(json_answer(StatusCode::OK, &json!({ "url": url })))
         }
         Decided::Answered(location) => redirect(StatusCode::FOUND, &location),
+        Decided::Changed(offer) => {
+            let view = Consent {
+                offer: *offer,
+                answering: Answering::Authorization(link.to_string()),
+                again: Some(post),
+            };
+            drawn_again(&view, &headers)
+        }
     }
 }

@@ -114,12 +114,14 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
     let shown_return = if return_to == "/" { "" } else { &return_to };
     let username = field("username").trim();
     let password = field("password");
-    let failed = |error: &str, wait: &str| {
+    let failed = |error: &str, wait: &str, missing: [&str; 2]| {
         redirect(
             StatusCode::FOUND,
             &back_to_sign_in(&[
                 ("error", error),
                 ("retry_after_seconds", wait),
+                ("missing", missing[0]),
+                ("missing", missing[1]),
                 ("username", username),
                 ("return_to", shown_return),
                 ("authorization", field("authorization")),
@@ -127,7 +129,15 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
         )
     };
     if username.is_empty() || password.is_empty() {
-        return failed("missing_field", "");
+        let named = |empty: bool, name| if empty { name } else { "" };
+        return failed(
+            "missing_field",
+            "",
+            [
+                named(username.is_empty(), "username"),
+                named(password.is_empty(), "password"),
+            ],
+        );
     }
     let mark = device_mark(app, headers);
     let outcome =
@@ -135,7 +145,7 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
     let signed = match outcome {
         Ok(opened) => opened,
         Err(refusal) if refusal.code == Code::Unauthorized => {
-            return failed("invalid_credentials", "");
+            return failed("invalid_credentials", "", ["", ""]);
         }
         Err(refusal) if refusal.code == Code::RateLimited => {
             let wait = refusal
@@ -144,7 +154,7 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
                 .and_then(|details| details.get("retry_after_seconds"))
                 .map(Value::to_string)
                 .unwrap_or_default();
-            return failed("too_many_attempts", &wait);
+            return failed("too_many_attempts", &wait, ["", ""]);
         }
         Err(refusal) => return Err(refusal.into()),
     };

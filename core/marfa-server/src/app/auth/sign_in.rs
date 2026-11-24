@@ -767,7 +767,7 @@ mod tests {
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
         let app = App::start(settings).await.unwrap();
         let details = Details::new(username, None, None, PASSWORD.into()).unwrap();
-        claim::claim(&app, details, Proof::Local, Visit::default())
+        claim::claim(&app, details, Proof::Local, None, Visit::default())
             .await
             .unwrap();
         (dir, app)

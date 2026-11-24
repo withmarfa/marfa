@@ -14,55 +14,52 @@
   "rows": [
     {
       "pattern": "*",
-      "page": "All your data",
-      "cli": "All your data",
-      "level": "Read only"
+      "page": "Your items",
+      "cli": "Your items",
+      "level": "Read Only"
     },
     {
       "pattern": "core.note",
       "page": "Note",
       "cli": "core.note",
-      "level": "No access"
+      "level": "No Access"
     },
     {
       "pattern": "core.task",
       "page": "Task",
       "cli": "core.task",
-      "level": "Read and edit"
+      "level": "Read and Edit"
     },
     {
       "pattern": "edge.*",
       "page": "Links between items",
       "cli": "Links between items",
-      "level": "Read and edit"
+      "level": "Read and Edit"
     },
     {
       "pattern": "metadata",
       "page": "Definitions on your server",
       "cli": "Definitions on your server",
-      "level": "Read and edit"
+      "level": "Read and Edit"
     },
     {
       "pattern": "profile",
-      "page": "Profile",
-      "cli": "Profile",
-      "level": "Read only"
+      "page": "Your profile",
+      "cli": "Your profile",
+      "level": "Read Only"
     },
     {
       "pattern": "profile.name",
       "page": "Name",
       "cli": "Name",
-      "level": "Read and edit"
+      "level": "Read and Edit"
     },
     {
       "pattern": "app.cursor",
       "page": "app.cursor",
       "cli": "app.cursor",
-      "level": "Read and edit"
+      "level": "Read and Edit"
     }
   ],
-  "powers": [
-    "Make, see, edit and revoke keys",
-    "Delete items in the trash for good"
-  ]
+  "powers": ["Make keys", "Empty the trash"]
 }

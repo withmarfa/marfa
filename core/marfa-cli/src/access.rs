@@ -7,21 +7,21 @@ use serde_json::Value;
 
 /// The word for each level.
 pub const LEVELS: [(&str, &str); 3] = [
-    ("none", "No access"),
-    ("read", "Read only"),
-    ("write", "Read and edit"),
+    ("none", "No Access"),
+    ("read", "Read Only"),
+    ("write", "Read and Edit"),
 ];
 
 /// The title of a row that is not one item type, by its pattern.
 pub const ROWS: [(&str, &str); 15] = [
-    ("*", "All your data"),
+    ("*", "Your items"),
     ("content", "Your content"),
     ("user.*", "Your custom types"),
     ("core.*", "Built-in types"),
     ("common.*", "Shared types"),
     ("app.*", "Every app's own data"),
     ("edge.*", "Links between items"),
-    ("profile", "Profile"),
+    ("profile", "Your profile"),
     ("profile.name", "Name"),
     ("profile.username", "Username"),
     ("profile.email", "Email address"),
@@ -33,35 +33,20 @@ pub const ROWS: [(&str, &str); 15] = [
 
 /// The title of each named power, in the order a page lists them.
 pub const POWERS: [(&str, &str); 14] = [
-    ("keys.mint", "Make, see, edit and revoke keys"),
-    ("keys.manage", "See, edit, narrow and revoke every key"),
-    ("grants.manage", "See and disconnect other apps"),
-    ("config.manage", "See and change Marfa's settings"),
-    (
-        "instance.read",
-        "See health, metrics, storage and job status",
-    ),
-    (
-        "instance.maintain",
-        "Run housekeeping and update the server",
-    ),
-    ("schema.write", "Replace or remove type definitions"),
-    (
-        "blobs.manage",
-        "Read and add any file, and manage file storage",
-    ),
-    (
-        "webhooks.manage",
-        "Manage webhooks that send events to other services",
-    ),
-    ("connectors.manage", "See, manage and remove all connectors"),
+    ("keys.mint", "Make keys"),
+    ("keys.manage", "Manage every key"),
+    ("grants.manage", "Disconnect other apps"),
+    ("config.manage", "Change settings"),
+    ("instance.read", "See server health"),
+    ("instance.maintain", "Run housekeeping and updates"),
+    ("schema.write", "Replace or remove types"),
+    ("blobs.manage", "Manage files"),
+    ("webhooks.manage", "Manage webhooks"),
+    ("connectors.manage", "Manage connectors"),
     ("audit.read", "Read the activity log"),
-    ("items.purge", "Delete items in the trash for good"),
-    ("backups.manage", "See, take, adopt and restore backups"),
-    (
-        "sign_ins.manage",
-        "See, rename and end sign-ins and passkeys",
-    ),
+    ("items.purge", "Empty the trash"),
+    ("backups.manage", "Back up and restore"),
+    ("sign_ins.manage", "Manage sign-ins and passkeys"),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -146,7 +131,7 @@ impl Held {
             lines.push(format!("Powers: {}", held.join("; ")));
         }
         if lines.is_empty() {
-            lines.push(word(&LEVELS, "none").unwrap_or("No access").to_string());
+            lines.push(word(&LEVELS, "none").unwrap_or("No Access").to_string());
         }
         lines
     }
@@ -276,17 +261,17 @@ mod tests {
         assert_eq!(
             lines_for_key(&key),
             [
-                "core.note            Read and edit",
-                "core.task            Read only",
-                "core.event           No access",
-                "edge.parent-of       Read only",
-                "Links between items  Read and edit",
-                "Custom data types    Read and edit",
-                "Name                 Read and edit",
-                "Username             Read only",
-                "Email address        Read only",
-                "app.cursor           Read and edit",
-                "Powers: Make, see, edit and revoke keys; Read the activity log",
+                "core.note            Read and Edit",
+                "core.task            Read Only",
+                "core.event           No Access",
+                "edge.parent-of       Read Only",
+                "Links between items  Read and Edit",
+                "Custom data types    Read and Edit",
+                "Name                 Read and Edit",
+                "Username             Read Only",
+                "Email address        Read Only",
+                "app.cursor           Read and Edit",
+                "Powers: Make keys; Read the activity log",
             ]
         );
     }
@@ -299,7 +284,7 @@ mod tests {
         });
         assert_eq!(
             lines_for_key(&key),
-            ["All your data  Read only", "core.note      No access"]
+            ["Your items  Read Only", "core.note   No Access"]
         );
     }
 
@@ -313,14 +298,14 @@ mod tests {
             "metadata_permissions": {},
             "profile_permissions": {},
         });
-        assert_eq!(lines_for_key(&key), ["No access"]);
+        assert_eq!(lines_for_key(&key), ["No Access"]);
     }
 
     #[test]
     fn an_app_scope_for_all_data_reads_as_one_row() {
         assert_eq!(
             lines_for_scope("offline_access *:read"),
-            ["All your data  Read only"]
+            ["Your items  Read Only"]
         );
     }
 
@@ -331,11 +316,11 @@ mod tests {
                 "core.note:write core.task:read edge.parent-of:read profile.avatar:write keys.mint"
             ),
             [
-                "core.note       Read and edit",
-                "core.task       Read only",
-                "edge.parent-of  Read only",
-                "Avatar          Read and edit",
-                "Powers: Make, see, edit and revoke keys",
+                "core.note       Read and Edit",
+                "core.task       Read Only",
+                "edge.parent-of  Read Only",
+                "Avatar          Read and Edit",
+                "Powers: Make keys",
             ]
         );
     }
@@ -344,25 +329,25 @@ mod tests {
     fn the_write_of_a_pattern_is_its_level_beside_its_read() {
         assert_eq!(
             lines_for_scope("core.note:read core.note:write"),
-            ["core.note  Read and edit"]
+            ["core.note  Read and Edit"]
         );
         assert_eq!(
             lines_for_scope("core.note:write core.note:read"),
-            ["core.note  Read and edit"]
+            ["core.note  Read and Edit"]
         );
     }
 
     #[test]
     fn mechanisms_alone_hold_no_access() {
-        assert_eq!(lines_for_scope("offline_access"), ["No access"]);
-        assert_eq!(lines_for_scope(""), ["No access"]);
+        assert_eq!(lines_for_scope("offline_access"), ["No Access"]);
+        assert_eq!(lines_for_scope(""), ["No Access"]);
     }
 
     #[test]
     fn a_literal_the_words_do_not_know_is_named_as_it_is_written() {
         assert_eq!(
             lines_for_scope("metadata.widgets:read"),
-            ["metadata.widgets  Read only"]
+            ["metadata.widgets  Read Only"]
         );
     }
 

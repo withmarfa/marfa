@@ -10,9 +10,11 @@ use std::path::Path;
 use axum::http::StatusCode;
 
 use super::*;
-use crate::app::access::Level;
+use crate::app::access::{Level, Permission};
 use crate::app::connector_sign_in::Failure;
-use crate::app::oauth::offer::{AppShown, Choice, Held, LevelRow, Offer, Power, Reach};
+use crate::app::oauth::offer::{
+    Admin, AdminLevel, AppShown, Choice, Held, LevelRow, Offer, Post, Reach,
+};
 
 const FOLDER_VARIABLE: &str = "MARFA_WRITE_PAGE_PREVIEW";
 
@@ -21,13 +23,57 @@ const SHOW_WRONG_PASSWORD: &str =
     r#"document.querySelector('[data-confirm-error="password"]').hidden = false;"#;
 const OPEN_DETAILS: &str =
     r#"for (const details of document.querySelectorAll("details")) details.open = true;"#;
-const SHOW_HANDOFF_FAILED: &str =
-    r#"document.querySelector("[data-handoff-failed]").hidden = false;"#;
+const SHOW_HANDOFF_FAILED: &str = r#"document.querySelector("[data-hint]").hidden = true; document.querySelector("[data-late-problem]").hidden = false;"#;
+const MISMATCH_BY_SCRIPT: &str = r#"const form = document.querySelector("form[id$=-form]"); form.elements.namedItem("password").value = "harbour-kitchen-lewes"; form.elements.namedItem("confirm_password").value = "harbour-kitchen-leeds"; form.dispatchEvent(new Event("submit", { cancelable: true }));"#;
 const SHOW_HANDOFF_WORKING: &str =
     r#"document.querySelector("[data-handoff-working]").hidden = false;"#;
 const SHOW_PASSKEY_ERROR: &str = r#"const error = document.querySelector("[data-passkey-error]"); error.textContent = "Something went wrong. Try again."; error.hidden = false;"#;
-const CHOOSE: &str = r#"const radio = document.querySelector("input[name=access][value=choose]"); radio.checked = true; radio.dispatchEvent(new Event("change"));"#;
-const EACH_TYPE: &str = r#"const all = document.querySelector("select[data-types-switch]"); all.value = "choose-types"; all.dispatchEvent(new Event("change"));"#;
+const SHOW_PASSKEY_LINK: &str =
+    r#"document.querySelector('[data-passkey="confirm"]').hidden = false;"#;
+const OPEN_CHOOSE: &str = r#"document.querySelector("details.choose").open = true;"#;
+/// Picks a pop-up's option by the row's title and the option's words, as a person would.
+const PICK: &str = r#"const pick = (title, word) => { const label = [...document.querySelectorAll("label")].find((one) => one.textContent === title); const select = document.getElementById(label.htmlFor); const option = [...select.options].find((one) => one.text === word); select.value = option.value; select.dispatchEvent(new Event("change")); };"#;
+const ITEMS_EACH_TYPE: &str = r#"pick("Your items", "Each Type…");"#;
+const ITEMS_READ_ONLY: &str = r#"pick("Your items", "Read Only");"#;
+const ITEMS_NO_ACCESS: &str = r#"pick("Your items", "No Access");"#;
+const PROFILE_DONT_ALLOW: &str = r#"pick("Your profile", "Don't Allow");"#;
+const ADMIN_LIMITED: &str = r#"pick("Settings, keys and more", "Limited");"#;
+const ADMIN_NONE: &str = r#"pick("Settings, keys and more", "No Access");"#;
+const ADMIN_CUSTOM: &str = r#"pick("Settings, keys and more", "Custom…");"#;
+/// Board U12: the types of the Round 4 board, a few of them at a level of their own.
+const BOARD_TYPES: [&str; 28] = [
+    "Album",
+    "Article",
+    "Audio",
+    "Book",
+    "Bookmark",
+    "Collection",
+    "Conversation",
+    "Entity",
+    "Episode",
+    "Event",
+    "File",
+    "Film",
+    "Game",
+    "Highlight",
+    "Image",
+    "Job",
+    "Media",
+    "Message",
+    "Note",
+    "Person",
+    "Place",
+    "Project",
+    "Series",
+    "Song",
+    "Table",
+    "Task",
+    "Video",
+    "Web Page",
+];
+const BOARD_TYPE_LEVELS: &str = r#"for (const [title, word] of [["Conversation", "No Access"], ["Message", "No Access"], ["Game", "No Access"], ["Song", "No Access"], ["Album", "No Access"], ["Film", "Read Only"], ["Series", "Read Only"], ["Episode", "Read Only"], ["Person", "Read Only"], ["Place", "Read Only"]]) pick(title, word);"#;
+/// Board U13: Limited's three powers and Back up and restore are allowed, every other power is not.
+const BOARD_POWERS: &str = r#"const allowed = ["See server health", "Manage files", "Read the activity log", "Back up and restore"]; for (const title of ["Make keys", "Manage every key", "Disconnect other apps", "Change settings", "See server health", "Run housekeeping and updates", "Replace or remove types", "Manage files", "Manage webhooks", "Manage connectors", "Read the activity log", "Empty the trash", "Back up and restore", "Manage sign-ins and passkeys"]) pick(title, allowed.includes(title) ? "Allow" : "Don't Allow");"#;
 
 /// One page in one state. `board` is the Round 4 board it is compared with, such as `U1`.
 struct State {
@@ -38,6 +84,8 @@ struct State {
     /// Runs after the page's own script, for a state that needs a click: a dialog open, a detail opened.
     after: &'static [&'static str],
     without_javascript: bool,
+    /// Draws the choices open in the markup, for a state that has no script to open them.
+    choose_open: bool,
 }
 
 impl State {
@@ -54,6 +102,7 @@ impl State {
             page: page.expect("a preview state did not render"),
             after: &[],
             without_javascript: false,
+            choose_open: false,
         }
     }
 
@@ -64,6 +113,11 @@ impl State {
 
     fn without_javascript(mut self) -> State {
         self.without_javascript = true;
+        self
+    }
+
+    fn choose_open(mut self) -> State {
+        self.choose_open = true;
         self
     }
 
@@ -78,6 +132,12 @@ impl State {
     /// no refresh to a `marfa://` address, and the preview's own script, if the state has one.
     fn document(&self) -> String {
         let mut html = self.page.html().to_owned();
+        if self.choose_open {
+            html = html.replace(
+                "<details class=\"choose\">",
+                "<details class=\"choose\" open>",
+            );
+        }
         if let Some(start) = html.find("<meta http-equiv=\"refresh\"")
             && let Some(length) = html[start..].find('>')
         {
@@ -108,7 +168,10 @@ fn sign_in_view() -> SignIn {
         return_to: "/".into(),
         authorization: None,
         app: None,
+        app_address: None,
         problem: None,
+        recovered: false,
+        passkey: true,
     }
 }
 
@@ -146,10 +209,24 @@ fn level_row(
         label: label.map(str::to_owned),
         description: None,
         covers: Vec::new(),
+        yes_or_no: false,
     }
 }
 
-fn all_data() -> LevelRow {
+fn type_row(id: &str, label: &str) -> LevelRow {
+    level_row(
+        Reach::Type,
+        id,
+        Some(label),
+        &[
+            (Level::Read, &format!("{id}:read")),
+            (Level::Write, &format!("{id}:write")),
+        ],
+        Level::None,
+    )
+}
+
+fn all_data_with(types: &[(&str, &str)]) -> LevelRow {
     let mut row = level_row(
         Reach::Type,
         "*",
@@ -157,39 +234,35 @@ fn all_data() -> LevelRow {
         &[(Level::Read, "*:read"), (Level::Write, "*:write")],
         Level::None,
     );
-    row.types = vec![
-        level_row(
-            Reach::Type,
-            "core.note",
-            Some("Notes"),
-            &[
-                (Level::Read, "core.note:read"),
-                (Level::Write, "core.note:write"),
-            ],
-            Level::None,
-        ),
-        level_row(
-            Reach::Type,
-            "core.task",
-            Some("Tasks"),
-            &[
-                (Level::Read, "core.task:read"),
-                (Level::Write, "core.task:write"),
-            ],
-            Level::None,
-        ),
-        level_row(
-            Reach::Type,
-            "user.recipe",
-            Some("Recipes"),
-            &[
-                (Level::Read, "user.recipe:read"),
-                (Level::Write, "user.recipe:write"),
-            ],
-            Level::None,
-        ),
-    ];
+    row.types = types
+        .iter()
+        .map(|(id, label)| type_row(id, label))
+        .collect();
     row
+}
+
+/// The all-items row with a type for each of the board's names.
+fn all_data_of_the_board() -> LevelRow {
+    let ids: Vec<String> = BOARD_TYPES
+        .iter()
+        .map(|label| format!("core.{}", label.to_lowercase().replace(' ', "-")))
+        .collect();
+    let types: Vec<(&str, &str)> = ids
+        .iter()
+        .zip(BOARD_TYPES)
+        .map(|(id, label)| (id.as_str(), label))
+        .collect();
+    all_data_with(&types)
+}
+
+fn all_data() -> LevelRow {
+    all_data_with(&[
+        ("core.note", "Note"),
+        ("core.task", "Task"),
+        ("core.event", "Event"),
+        ("core.person", "Person"),
+        ("user.recipe", "Recipe"),
+    ])
 }
 
 fn links() -> LevelRow {
@@ -215,7 +288,21 @@ fn definitions() -> LevelRow {
     )
 }
 
+/// Asks only to see the profile, so the choice is Allow or Don't Allow.
 fn profile_row() -> LevelRow {
+    LevelRow {
+        yes_or_no: true,
+        ..level_row(
+            Reach::Profile,
+            "profile",
+            None,
+            &[(Level::Read, "profile:read")],
+            Level::None,
+        )
+    }
+}
+
+fn profile_edit_row() -> LevelRow {
     level_row(
         Reach::Profile,
         "profile",
@@ -228,87 +315,198 @@ fn profile_row() -> LevelRow {
     )
 }
 
-fn power(literal: &str, cannot_be_undone: bool) -> Power {
-    Power {
-        literal: literal.into(),
-        cannot_be_undone,
+fn email_row() -> LevelRow {
+    LevelRow {
+        yes_or_no: true,
+        ..level_row(
+            Reach::Profile,
+            "profile.email",
+            None,
+            &[(Level::Read, "profile.email:read")],
+            Level::None,
+        )
+    }
+}
+
+fn admin_for(powers: &[&str]) -> Admin {
+    let powers: Vec<Permission> = powers
+        .iter()
+        .map(|word| Permission::from_word(word).expect("a permission"))
+        .collect();
+    Admin {
+        powers,
+        levels: vec![
+            AdminLevel::Full,
+            AdminLevel::Limited,
+            AdminLevel::None,
+            AdminLevel::Custom,
+        ],
+    }
+}
+
+/// All fourteen powers the page words.
+fn admin_all() -> Admin {
+    Admin {
+        powers: Permission::ALL
+            .into_iter()
+            .filter(|power| words::power(power.word()).is_some())
+            .collect(),
+        levels: vec![
+            AdminLevel::Full,
+            AdminLevel::Limited,
+            AdminLevel::None,
+            AdminLevel::Custom,
+        ],
     }
 }
 
 fn app(name: &str) -> AppShown {
     AppShown {
         name: name.into(),
-        client_id: "https://cardigan.example/client.json".into(),
-        document_host: Some("cardigan.example".into()),
-        destinations: vec!["cardigan.example".into()],
+        client_id: "marfa-mac".into(),
+        document_host: None,
+        destinations: Vec::new(),
         web_origins: Vec::new(),
     }
 }
 
-/// An app asking for everything the page can offer.
+/// A web app that sends the owner back to one address.
+fn web_app(name: &str) -> AppShown {
+    AppShown {
+        client_id: "https://cardigan.app/client.json".into(),
+        destinations: vec!["cardigan.app".into()],
+        ..app(name)
+    }
+}
+
+/// An app that asks for the items, the profile and admin access, nothing it holds already.
 fn offer() -> Offer {
     Offer {
-        app: app("Cardigan"),
-        full_access_choice: true,
-        data: vec![all_data(), links(), definitions()],
+        app: app("Marfa for Mac"),
+        asks_new: true,
+        data: vec![all_data()],
         profile: vec![profile_row()],
-        powers: vec![
-            power("keys.mint", false),
-            power("instance.read", false),
-            power("items.purge", true),
-            power("audit.read", false),
-        ],
+        admin: Some(admin_all()),
         held: Vec::new(),
         held_powers: Vec::new(),
         mechanisms: vec!["offline_access".into()],
         confirm: false,
+        fingerprint: String::new(),
         offers_edit: true,
         returning: false,
     }
 }
 
-fn consent_page(offer: Offer) -> Result<Page> {
-    consent(&Consent {
-        offer,
-        answering: Answering::Authorization("client_id=cardigan&state=1".into()),
-    })
-}
-
-fn device_consent_page(offer: Offer) -> Result<Page> {
-    consent(&Consent {
-        offer,
-        answering: Answering::Device("K7MP2XDV".into()),
-    })
-}
-
-fn only_some_things() -> Offer {
+/// An app that asks for everything the page can offer.
+fn everything() -> Offer {
     Offer {
-        app: AppShown {
-            web_origins: vec!["https://cardigan.example".into()],
-            ..app("Cardigan")
-        },
-        full_access_choice: false,
-        data: vec![level_row(
-            Reach::Type,
-            "core.note",
-            Some("Notes"),
-            &[(Level::Read, "core.note:read")],
-            Level::None,
-        )],
-        profile: Vec::new(),
-        powers: Vec::new(),
-        mechanisms: Vec::new(),
-        offers_edit: false,
+        data: vec![all_data(), links(), definitions()],
+        profile: vec![profile_edit_row()],
         ..offer()
     }
 }
 
+fn answer(offer: Offer) -> Consent {
+    Consent {
+        offer,
+        answering: Answering::Authorization("client_id=cardigan&state=1".into()),
+        again: None,
+    }
+}
+
+fn consent_page(offer: Offer) -> Result<Page> {
+    consent(&answer(offer))
+}
+
+fn device_consent_page(offer: Offer) -> Result<Page> {
+    consent(&Consent {
+        answering: Answering::Device("K7MP2XDV".into()),
+        ..answer(offer)
+    })
+}
+
+/// An app that asks for one thing.
+fn one_thing() -> Offer {
+    Offer {
+        data: vec![level_row(
+            Reach::Type,
+            "core.note",
+            Some("Note"),
+            &[
+                (Level::Read, "core.note:read"),
+                (Level::Write, "core.note:write"),
+            ],
+            Level::None,
+        )],
+        profile: Vec::new(),
+        admin: None,
+        mechanisms: Vec::new(),
+        ..offer()
+    }
+}
+
+/// A web app that asks for links and the owner's email.
+fn only_some_things() -> Offer {
+    Offer {
+        app: web_app("Cardigan"),
+        data: vec![links()],
+        profile: vec![email_row()],
+        admin: None,
+        mechanisms: Vec::new(),
+        offers_edit: true,
+        ..offer()
+    }
+}
+
+/// A web app with several addresses, which the owner is told about.
+fn several_addresses() -> Offer {
+    Offer {
+        app: AppShown {
+            document_host: Some("cardigan.dev".into()),
+            destinations: vec!["cardigan.app".into(), "login.cardigan.app".into()],
+            web_origins: vec!["https://cardigan.app".into()],
+            ..web_app("Cardigan")
+        },
+        ..offer()
+    }
+}
+
+fn held_everything() -> Vec<Held> {
+    vec![
+        Held {
+            reach: Reach::Type,
+            pattern: "*".into(),
+            level: Level::Write,
+            label: None,
+        },
+        Held {
+            reach: Reach::Profile,
+            pattern: "profile".into(),
+            level: Level::Read,
+            label: None,
+        },
+    ]
+}
+
+/// An app that holds the items and the profile and now asks for admin access.
 fn asking_for_more() -> Offer {
+    Offer {
+        data: Vec::new(),
+        profile: Vec::new(),
+        held: held_everything(),
+        fingerprint: "held".into(),
+        returning: true,
+        ..offer()
+    }
+}
+
+/// An app that holds some of the items and asks to change more of them.
+fn asking_for_more_items() -> Offer {
     Offer {
         data: vec![level_row(
             Reach::Type,
             "core.task",
-            Some("Tasks"),
+            Some("Task"),
             &[
                 (Level::Read, "core.task:read"),
                 (Level::Write, "core.task:write"),
@@ -316,15 +514,31 @@ fn asking_for_more() -> Offer {
             Level::Read,
         )],
         profile: Vec::new(),
-        powers: vec![power("audit.read", false)],
+        admin: Some(admin_for(&["audit.read"])),
         held: vec![Held {
             reach: Reach::Type,
             pattern: "core.note".into(),
             level: Level::Write,
-            label: Some("Notes".into()),
+            label: Some("Note".into()),
         }],
-        held_powers: vec![power("instance.read", false)],
+        held_powers: vec![Permission::InstanceRead],
+        fingerprint: "held".into(),
         returning: true,
+        ..offer()
+    }
+}
+
+/// An app that comes back asking for nothing it does not hold.
+fn nothing_new() -> Offer {
+    Offer {
+        asks_new: false,
+        data: Vec::new(),
+        profile: Vec::new(),
+        admin: None,
+        held: held_everything(),
+        fingerprint: "held".into(),
+        returning: true,
+        mechanisms: Vec::new(),
         ..offer()
     }
 }
@@ -369,7 +583,6 @@ fn details_view() -> SetupDetails {
     SetupDetails {
         name: String::new(),
         username: String::new(),
-        email: String::new(),
         errors: SetupFieldErrors::default(),
         notice: None,
         return_to: "/".into(),
@@ -399,7 +612,19 @@ fn states() -> Vec<State> {
             "sign-in-for-an-app",
             "Sign in, on the way to an app",
             sign_in(&SignIn {
+                app: Some("Marfa for Mac".into()),
+                authorization: Some("client_id=marfa-for-mac&state=1".into()),
+                return_to: "/oauth/authorize?client_id=marfa-for-mac".into(),
+                ..sign_in_view()
+            }),
+        ),
+        State::new(
+            None,
+            "sign-in-for-a-web-app",
+            "Sign in, on the way to a web app, which names where it is",
+            sign_in(&SignIn {
                 app: Some("Cardigan".into()),
+                app_address: Some("cardigan.example".into()),
                 authorization: Some("client_id=cardigan&state=1".into()),
                 return_to: "/oauth/authorize?client_id=cardigan".into(),
                 ..sign_in_view()
@@ -415,6 +640,52 @@ fn states() -> Vec<State> {
             }),
         ),
         State::new(
+            Some("U32"),
+            "sign-in-recovered",
+            "Sign in, after recovering",
+            sign_in(&SignIn {
+                recovered: true,
+                ..sign_in_view()
+            }),
+        ),
+        State::new(
+            None,
+            "sign-in-no-passkey",
+            "Sign in, an owner with no passkey that signs in here",
+            sign_in(&SignIn {
+                passkey: false,
+                ..sign_in_view()
+            }),
+        ),
+        State::new(
+            None,
+            "sign-in-without-javascript",
+            "Sign in, without JavaScript, where a passkey button stays hidden",
+            sign_in(&sign_in_view()),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "sign-in-wrong-without-javascript",
+            "Sign in, a wrong password, without JavaScript",
+            sign_in(&SignIn {
+                username: "mira".into(),
+                problem: Some(SignInProblem::InvalidCredentials),
+                ..sign_in_view()
+            }),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "sign-in-too-many-without-javascript",
+            "Sign in, too many attempts, without JavaScript",
+            sign_in(&SignIn {
+                problem: Some(SignInProblem::TooManyAttempts(wait)),
+                ..sign_in_view()
+            }),
+        )
+        .without_javascript(),
+        State::new(
             Some("U31"),
             "sign-in-wrong",
             "Sign in, a wrong password",
@@ -429,7 +700,23 @@ fn states() -> Vec<State> {
             "sign-in-empty-field",
             "Sign in, a field left empty",
             sign_in(&SignIn {
-                problem: Some(SignInProblem::MissingField),
+                problem: Some(SignInProblem::MissingField(Missing {
+                    username: true,
+                    password: true,
+                })),
+                ..sign_in_view()
+            }),
+        ),
+        State::new(
+            None,
+            "sign-in-empty-password",
+            "Sign in, a password left empty",
+            sign_in(&SignIn {
+                username: "mira".into(),
+                problem: Some(SignInProblem::MissingField(Missing {
+                    username: false,
+                    password: true,
+                })),
                 ..sign_in_view()
             }),
         ),
@@ -462,6 +749,24 @@ fn states() -> Vec<State> {
             }),
         ),
         State::new(
+            Some("U5"),
+            "forgot-password",
+            "Forgot your password?",
+            forgot_password(),
+        ),
+        State::new(
+            None,
+            "sign-in-wrong-long-username",
+            "Sign in, a wrong password for a long username",
+            sign_in(&SignIn {
+                username:
+                    "a-very-long-username-that-keeps-going-past-what-one-line-can-hold-1234567890"
+                        .into(),
+                problem: Some(SignInProblem::InvalidCredentials),
+                ..sign_in_view()
+            }),
+        ),
+        State::new(
             Some("U4"),
             "signed-in",
             "Signed in already, or just after claiming",
@@ -478,14 +783,34 @@ fn states() -> Vec<State> {
                 username: "mira".into(),
             }),
         ),
+        State::new(
+            None,
+            "signed-in-long-username",
+            "Signed in as a long, right-to-left username",
+            signed_in(&SignedIn {
+                username: format!(
+                    "{RIGHT_TO_LEFT} {RIGHT_TO_LEFT} {RIGHT_TO_LEFT} {RIGHT_TO_LEFT}"
+                ),
+                continue_to: "/".into(),
+            }),
+        ),
+        State::new(
+            None,
+            "its-address-long-username",
+            "Its address in a browser, signed in as a long, right-to-left username",
+            running(&Running {
+                username: format!(
+                    "{RIGHT_TO_LEFT} {RIGHT_TO_LEFT} {RIGHT_TO_LEFT} {RIGHT_TO_LEFT}"
+                ),
+            }),
+        ),
         // Recovery
         State::new(
             Some("U26"),
             "recover-code",
             "Recover: the recovery code",
             recovery_code(&RecoveryCode { problem: None }),
-        )
-        .after(&[OPEN_DETAILS]),
+        ),
         State::new(
             None,
             "recover-code-wrong",
@@ -495,12 +820,72 @@ fn states() -> Vec<State> {
             }),
         ),
         State::new(
-            Some("U27"),
-            "recover-new-password",
-            "Recover: a new password",
+            None,
+            "recover-code-none",
+            "Recover: nothing typed",
+            recovery_code(&RecoveryCode {
+                problem: Some(SetupCodeProblem::MissingCode),
+            }),
+        ),
+        State::new(
+            None,
+            "recover-code-session-ended",
+            "Recover: the session ended",
+            recovery_code(&RecoveryCode {
+                problem: Some(SetupCodeProblem::SessionEnded),
+            }),
+        ),
+        State::new(
+            None,
+            "recover-code-too-many",
+            "Recover: too many attempts",
+            recovery_code(&RecoveryCode {
+                problem: Some(SetupCodeProblem::TooManyAttempts(wait)),
+            }),
+        ),
+        State::new(
+            None,
+            "recover-code-without-javascript",
+            "Recover: the recovery code, without JavaScript",
+            recovery_code(&RecoveryCode { problem: None }),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "recover-new-password-hint",
+            "Recover: a new password, nothing typed",
             recover_password(&RecoverPassword {
                 error: None,
                 notice: None,
+            }),
+        ),
+        State::new(
+            Some("U27"),
+            "recover-new-password",
+            "Recover: a new password, and the two don't match",
+            recover_password(&RecoverPassword {
+                error: None,
+                notice: None,
+            }),
+        )
+        .after(&[MISMATCH_BY_SCRIPT]),
+        State::new(
+            None,
+            "recover-new-password-mismatch-without-javascript",
+            "Recover: the two passwords don't match, as the server answers, both empty",
+            recover_password(&RecoverPassword {
+                error: Some("The passwords don’t match.".into()),
+                notice: None,
+            }),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "recover-new-password-failed",
+            "Recover: something went wrong",
+            recover_password(&RecoverPassword {
+                error: None,
+                notice: Some("Something went wrong. Try again.".into()),
             }),
         ),
         State::new(
@@ -537,10 +922,29 @@ fn states() -> Vec<State> {
         State::new(
             Some("U34"),
             "claim-help",
-            "Claim, Can't find it? opened",
+            "Claim, Can’t find it? opened",
             setup_code(&claim_view()),
         )
         .after(&[OPEN_DETAILS]),
+        State::new(
+            None,
+            "claim-without-javascript",
+            "Claim without JavaScript. Open Can’t find it?",
+            setup_code(&claim_view()),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "claim-for-an-app-long-names",
+            "Claim, on the way to an app with a long, right-to-left name",
+            setup_code(&SetupCode {
+                app: Some(AskingApp {
+                    name: format!("{LONG_NAME} {RIGHT_TO_LEFT}"),
+                    host: "cardigan.example".into(),
+                }),
+                ..claim_for_an_app()
+            }),
+        ),
         State::new(
             Some("U35"),
             "claim-link-expired",
@@ -590,10 +994,66 @@ fn states() -> Vec<State> {
         ),
         State::new(
             None,
-            "create-account-for-an-app",
-            "Create your account, on the way to an app",
+            "create-account-without-javascript",
+            "Create your account, without JavaScript",
+            setup_details(&details_view()),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "create-account-passwords-differ",
+            "Create your account, the two passwords differ (checked by the page)",
             setup_details(&SetupDetails {
-                return_to: "/oauth/authorize?client_id=cardigan".into(),
+                name: "Mira Castell".into(),
+                username: "mira".into(),
+                ..details_view()
+            }),
+        )
+        .after(&[MISMATCH_BY_SCRIPT]),
+        State::new(
+            None,
+            "create-account-mismatch-without-javascript",
+            "Create your account, the two passwords differ, as the server answers, both empty",
+            setup_details(&SetupDetails {
+                name: "Mira Castell".into(),
+                username: "mira".into(),
+                errors: SetupFieldErrors {
+                    password: Some("The passwords don’t match.".into()),
+                    ..SetupFieldErrors::default()
+                },
+                ..details_view()
+            }),
+        )
+        .without_javascript(),
+        State::new(
+            None,
+            "create-account-long-names",
+            "Create your account, a long, right-to-left name and a long username problem",
+            setup_details(&SetupDetails {
+                name: format!("{RIGHT_TO_LEFT} {RIGHT_TO_LEFT} {RIGHT_TO_LEFT} {RIGHT_TO_LEFT}"),
+                username:
+                    "a-very-long-username-that-keeps-going-past-what-one-line-can-hold-1234567890"
+                        .into(),
+                errors: SetupFieldErrors {
+                    username: Some(
+                        "Use 1 to 64 letters a to z, numbers, dots, dashes and underscores.".into(),
+                    ),
+                    ..SetupFieldErrors::default()
+                },
+                ..details_view()
+            }),
+        ),
+        State::new(
+            None,
+            "create-account-password-problem",
+            "Create your account, a password the server refuses",
+            setup_details(&SetupDetails {
+                name: "Mira Castell".into(),
+                username: "mira".into(),
+                errors: SetupFieldErrors {
+                    password: Some("Password must be at least 8 characters.".into()),
+                    ..SetupFieldErrors::default()
+                },
                 ..details_view()
             }),
         ),
@@ -606,7 +1066,7 @@ fn states() -> Vec<State> {
                 username: "mira castell".into(),
                 errors: SetupFieldErrors {
                     username: Some(
-                        "Use letters a to z, numbers, dots, dashes and underscores.".into(),
+                        "Use 1 to 64 letters a to z, numbers, dots, dashes and underscores.".into(),
                     ),
                     ..SetupFieldErrors::default()
                 },
@@ -616,17 +1076,15 @@ fn states() -> Vec<State> {
         State::new(
             None,
             "create-account-every-problem",
-            "Create your account, a problem in every field and a notice",
+            "Create your account, a problem in every group and a notice",
             setup_details(&SetupDetails {
                 name: "Mira".into(),
                 username: "mira castell".into(),
-                email: "not an address".into(),
                 errors: SetupFieldErrors {
                     name: Some("That name is too long.".into()),
                     username: Some(
                         "Use letters a to z, numbers, dots, dashes and underscores.".into(),
                     ),
-                    email: Some("That doesn't look like an email address.".into()),
                     password: Some("Use at least 8 characters.".into()),
                 },
                 notice: Some("Something went wrong. Try again.".into()),
@@ -692,7 +1150,13 @@ fn states() -> Vec<State> {
             Some("U19"),
             "device-allow",
             "A device, allowing it",
-            device_consent_page(offer()),
+            device_consent_page(Offer {
+                app: AppShown {
+                    name: "marfa on mira-mbp".into(),
+                    ..app("")
+                },
+                ..offer()
+            }),
         ),
         // Allowing an app
         State::new(Some("U10"), "allow", "Allow an app", consent_page(offer())),
@@ -702,21 +1166,24 @@ fn states() -> Vec<State> {
             "Allow an app, choosing",
             consent_page(offer()),
         )
-        .after(&[CHOOSE]),
+        .after(&[OPEN_CHOOSE]),
         State::new(
             Some("U12"),
             "allow-each-type",
             "Allow an app, choosing a level for each type",
-            consent_page(offer()),
+            consent_page(Offer {
+                data: vec![all_data_of_the_board()],
+                ..offer()
+            }),
         )
-        .after(&[CHOOSE, EACH_TYPE]),
+        .after(&[PICK, OPEN_CHOOSE, ITEMS_EACH_TYPE, BOARD_TYPE_LEVELS]),
         State::new(
             Some("U13"),
             "allow-admin-custom",
             "Allow an app, choosing: every power",
             consent_page(offer()),
         )
-        .after(&[CHOOSE, OPEN_DETAILS]),
+        .after(&[PICK, OPEN_CHOOSE, ADMIN_CUSTOM, BOARD_POWERS]),
         State::new(
             Some("U14"),
             "allow-less",
@@ -738,64 +1205,122 @@ fn states() -> Vec<State> {
                 ..offer()
             }),
         )
-        .after(&[OPEN_CONFIRM_DIALOG]),
+        .after(&[OPEN_CONFIRM_DIALOG, SHOW_WRONG_PASSWORD, SHOW_PASSKEY_LINK]),
         State::new(
             Some("U42"),
             "allow-addresses",
             "A web app with more than one address",
+            consent_page(several_addresses()),
+        ),
+        State::new(
+            None,
+            "allow-one-thing",
+            "An app asking for one thing",
+            consent_page(one_thing()),
+        ),
+        State::new(
+            None,
+            "allow-everything",
+            "An app asking for everything",
+            consent_page(everything()),
+        ),
+        State::new(
+            None,
+            "allow-everything-choosing",
+            "An app asking for everything, choosing",
+            consent_page(everything()),
+        )
+        .after(&[OPEN_CHOOSE]),
+        State::new(
+            None,
+            "allow-more-items",
+            "An app asking for more items and one more power",
+            consent_page(asking_for_more_items()),
+        ),
+        State::new(
+            None,
+            "allow-more-choosing",
+            "An app asking for more than it has, choosing",
+            consent_page(asking_for_more_items()),
+        )
+        .after(&[OPEN_CHOOSE]),
+        State::new(
+            None,
+            "allow-nothing-new",
+            "An app returning with nothing new to allow",
+            consent_page(nothing_new()),
+        ),
+        State::new(
+            None,
+            "allow-one-address",
+            "A web app with one address, asking for one thing",
             consent_page(Offer {
-                app: AppShown {
-                    destinations: vec!["cardigan.example".into(), "app.cardigan.example".into()],
-                    web_origins: vec![
-                        "https://cardigan.example".into(),
-                        "https://app.cardigan.example".into(),
-                    ],
-                    ..app("Cardigan")
-                },
-                ..only_some_things()
+                app: web_app("Cardigan"),
+                ..one_thing()
             }),
         ),
         State::new(
             None,
-            "allow-nothing-to-choose",
-            "Allow an app, with nothing to choose between",
-            consent_page(Offer {
-                full_access_choice: false,
-                powers: Vec::new(),
-                ..only_some_things()
+            "allow-changed",
+            "Allow an app, drawn again after its access changed",
+            consent(&Consent {
+                again: Some(Post {
+                    held: "held".into(),
+                    scopes: vec!["core.task:write".into()],
+                    types: Vec::new(),
+                    admin: Some("full".into()),
+                    powers: Vec::new(),
+                }),
+                ..answer(Offer {
+                    confirm: true,
+                    ..asking_for_more_items()
+                })
             }),
         ),
+        State::new(
+            None,
+            "allow-level-read-only",
+            "Allow an app, items at Read Only",
+            consent_page(offer()),
+        )
+        .after(&[PICK, OPEN_CHOOSE, ITEMS_READ_ONLY]),
+        State::new(
+            None,
+            "allow-level-no-access",
+            "Allow an app, items at No Access and the profile at Don't Allow",
+            consent_page(offer()),
+        )
+        .after(&[PICK, OPEN_CHOOSE, ITEMS_NO_ACCESS, PROFILE_DONT_ALLOW]),
+        State::new(
+            None,
+            "allow-admin-limited",
+            "Allow an app, admin access at Limited",
+            consent_page(offer()),
+        )
+        .after(&[PICK, OPEN_CHOOSE, ADMIN_LIMITED]),
+        State::new(
+            None,
+            "allow-admin-none",
+            "Allow an app, admin access at No Access",
+            consent_page(offer()),
+        )
+        .after(&[PICK, OPEN_CHOOSE, ADMIN_NONE]),
         State::new(
             None,
             "allow-long-names",
             "Allow an app with a 100-character name, and a right-to-left one",
             consent_page(Offer {
                 app: app(LONG_NAME),
-                data: vec![
-                    level_row(
-                        Reach::Type,
-                        "core.note",
-                        Some(RIGHT_TO_LEFT),
-                        &[
-                            (Level::Read, "core.note:read"),
-                            (Level::Write, "core.note:write"),
-                        ],
-                        Level::None,
-                    ),
-                    level_row(
-                        Reach::Type,
-                        "user.long",
-                        Some(LONG_NAME),
-                        &[
-                            (Level::Read, "user.long:read"),
-                            (Level::Write, "user.long:write"),
-                        ],
-                        Level::None,
-                    ),
-                ],
-                ..only_some_things()
+                data: vec![all_data_with(&[
+                    ("core.note", RIGHT_TO_LEFT),
+                    ("user.long", LONG_NAME),
+                    ("user.recipe", "Recipe"),
+                    ("user.cookbook-recipe", "Recipe"),
+                ])],
+                ..offer()
             }),
-        ),
+        )
+        .after(&[PICK, OPEN_CHOOSE, ITEMS_EACH_TYPE]),
         State::new(
             None,
             "allow-without-javascript",
@@ -803,6 +1328,14 @@ fn states() -> Vec<State> {
             consent_page(offer()),
         )
         .without_javascript(),
+        State::new(
+            None,
+            "allow-choosing-without-javascript",
+            "Allow an app, choosing, without JavaScript",
+            consent_page(offer()),
+        )
+        .without_javascript()
+        .choose_open(),
         // Passkeys and password
         State::new(
             Some("U21"),

@@ -28,6 +28,7 @@ describe("the page policy", () => {
       ["/", 200, false],
       ["/auth/sign-in", 200, true],
       ["/auth/owner/passkeys", 200, true],
+      ["/auth/forgot-password", 200, false],
       ["/auth/device", 200, false],
       ["/no-such-page", 404, false],
     ] as const;

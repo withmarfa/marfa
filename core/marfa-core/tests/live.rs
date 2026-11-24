@@ -370,7 +370,7 @@ fn app_token(url: &str) -> String {
         &[("Cookie", &cookie), ("Origin", &origin)],
         form,
         &format!(
-            "user_code={}&decision=approve&access=full&scopes=core.note:read",
+            "user_code={}&decision=approve&scopes=core.note:read",
             field(&code, "user_code")
         ),
     );

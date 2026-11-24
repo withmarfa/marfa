@@ -1,5 +1,6 @@
 use askama::Template;
 
+use super::sign_in::unverified;
 use super::wait::Wait;
 use super::{Needs, Page, document, render_body};
 use crate::app::oauth::authorize::REQUEST_PATH;
@@ -20,14 +21,14 @@ impl SetupCodeProblem {
         match (self, recovering) {
             (SetupCodeProblem::MissingCode, false) => "Enter the setup code.".into(),
             (SetupCodeProblem::MissingCode, true) => "Enter the recovery code.".into(),
-            (SetupCodeProblem::WrongCode, false) => "That setup code isn't right, or Marfa has \
-                 replaced it since. Enter the newest code Marfa shows."
-                .into(),
+            (SetupCodeProblem::WrongCode, false) => {
+                "That code isn’t right. Use the newest code Marfa printed.".into()
+            }
             (SetupCodeProblem::WrongCode, true) => {
-                "That recovery code isn't right, or it was already used or has expired.".into()
+                "That code isn’t right, or it was used or has expired.".into()
             }
             (SetupCodeProblem::SessionEnded, false) => {
-                "Your setup session ended. Enter the setup code again to continue.".into()
+                "Your setup session ended. Enter the setup code again.".into()
             }
             (SetupCodeProblem::SessionEnded, true) => {
                 "Your recovery session ended. Restart Marfa for a new recovery code.".into()
@@ -40,6 +41,14 @@ impl SetupCodeProblem {
             }
             (SetupCodeProblem::Other, _) => "Something went wrong. Try again.".into(),
         }
+    }
+
+    /// The code field is drawn red only when the code itself is what needs changing.
+    fn marks_the_code(self) -> bool {
+        matches!(
+            self,
+            SetupCodeProblem::MissingCode | SetupCodeProblem::WrongCode
+        )
     }
 }
 
@@ -74,7 +83,8 @@ pub struct RecoveryCode {
 #[template(path = "setup_code.html")]
 struct SetupCodeBody<'a> {
     problem_message: Option<String>,
-    has_problem: bool,
+    code_invalid: bool,
+    unverified: String,
     return_to: &'a str,
     app: Option<&'a AskingApp>,
     connecting: bool,
@@ -84,7 +94,7 @@ struct SetupCodeBody<'a> {
 #[template(path = "recovery_code.html")]
 struct RecoveryCodeBody {
     problem_message: Option<String>,
-    has_problem: bool,
+    code_invalid: bool,
 }
 
 /// The page also takes a `/setup#handoff=` link: its script exchanges the
@@ -92,7 +102,8 @@ struct RecoveryCodeBody {
 pub fn setup_code(view: &SetupCode) -> Result<Page> {
     let body = render_body(&SetupCodeBody {
         problem_message: view.problem.map(|problem| problem.message(false)),
-        has_problem: view.problem.is_some(),
+        code_invalid: view.problem.is_some_and(SetupCodeProblem::marks_the_code),
+        unverified: unverified(view.app.as_ref().map(|app| app.host.as_str())),
         return_to: &view.return_to,
         app: view.app.as_ref(),
         connecting: connects_an_app(&view.return_to),
@@ -102,7 +113,7 @@ pub fn setup_code(view: &SetupCode) -> Result<Page> {
         &body,
         Needs {
             connect: true,
-            confirm_dialog: false,
+            confirm_dialog: None,
         },
     )
 }
@@ -110,7 +121,7 @@ pub fn setup_code(view: &SetupCode) -> Result<Page> {
 pub fn recovery_code(view: &RecoveryCode) -> Result<Page> {
     let body = render_body(&RecoveryCodeBody {
         problem_message: view.problem.map(|problem| problem.message(true)),
-        has_problem: view.problem.is_some(),
+        code_invalid: view.problem.is_some_and(SetupCodeProblem::marks_the_code),
     })?;
     document("Recover your account", &body, Needs::default())
 }
@@ -119,7 +130,6 @@ pub fn recovery_code(view: &RecoveryCode) -> Result<Page> {
 pub struct SetupFieldErrors {
     pub name: Option<String>,
     pub username: Option<String>,
-    pub email: Option<String>,
     pub password: Option<String>,
 }
 
@@ -128,7 +138,6 @@ pub struct SetupDetails {
     /// What was typed before. The password is never sent back.
     pub name: String,
     pub username: String,
-    pub email: String,
     pub errors: SetupFieldErrors,
     pub notice: Option<String>,
     /// Where the browser goes once the instance is claimed, as `kept` read it.
@@ -139,13 +148,18 @@ pub struct SetupDetails {
 #[template(path = "setup_details.html")]
 struct SetupDetailsBody<'a> {
     view: &'a SetupDetails,
-    connecting: bool,
+    /// One line under the profile group: the name's problem, else the username's.
+    profile_problem: Option<&'a str>,
 }
 
 pub fn setup_details(view: &SetupDetails) -> Result<Page> {
     let body = render_body(&SetupDetailsBody {
         view,
-        connecting: connects_an_app(&view.return_to),
+        profile_problem: view
+            .errors
+            .name
+            .as_deref()
+            .or(view.errors.username.as_deref()),
     })?;
     document("Create your account", &body, Needs::default())
 }

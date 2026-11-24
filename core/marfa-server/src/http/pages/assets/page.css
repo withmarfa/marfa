@@ -111,13 +111,8 @@ body {
   min-width: 0;
 }
 
-.col:has(.wide-page) {
-  flex-basis: 38rem;
-}
-
 @media (max-width: 600px) {
-  .col,
-  .col:has(.wide-page) {
+  .col {
     flex: 1 1 auto;
   }
 }
@@ -386,16 +381,33 @@ code {
   margin-top: 0.5rem;
 }
 
-.under a {
+.under a,
+.under .link {
   display: inline-flex;
   align-items: center;
 }
 
 @media (max-width: 600px) {
-  .under a {
+  .under a,
+  .under .link {
     min-height: 2.75rem;
     margin: -0.8125rem 0;
   }
+}
+
+/* A button drawn as a link: it acts, where a link goes. */
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  cursor: default;
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .hint {
@@ -599,6 +611,10 @@ code {
   .box > li {
     padding-block: 0.125rem;
   }
+
+  .box > li > .t {
+    padding-block: 0.25rem;
+  }
 }
 
 .box > li + li::before {
@@ -720,13 +736,8 @@ dialog .lede {
   color: var(--t2);
 }
 
-dialog .err + .fields,
 dialog .lede + .fields {
   margin-top: 1.125rem;
-}
-
-dialog .err {
-  margin-bottom: 0.75rem;
 }
 
 dialog .actions {
@@ -742,6 +753,107 @@ dialog .actions {
     padding: 1.5rem 1.25rem 2.25rem;
     border-radius: 1.125rem 1.125rem 0 0;
   }
+}
+
+/* Icons in rows and buttons, and sections: a heading over a box, and the line after it. */
+.box > li > .ic,
+.btn .ic {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.box > li > .ic {
+  color: var(--t2);
+}
+
+.btn .ic {
+  width: 1rem;
+  height: 1rem;
+}
+
+.box.sym > li + li::before {
+  left: 2.75rem;
+}
+
+.sec {
+  margin-top: 1.5rem;
+}
+
+.sec > h2 {
+  display: flex;
+  align-items: center;
+  min-height: 1.75rem;
+  margin-bottom: 0.375rem;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  font-weight: 600;
+  color: var(--t1);
+}
+
+.after {
+  margin-top: 0.5rem;
+  color: var(--t2);
+  font-size: 0.8125rem;
+}
+
+/* A command on a row's second line. */
+.box > li.two .m code {
+  padding: 0;
+  background: none;
+  color: var(--t1);
+  font-size: 0.78125rem;
+  line-height: 1.4;
+}
+
+/* A row that is a link: the whole row is the link, and a chevron says it goes to another page. */
+.box > li.link {
+  padding: 0;
+}
+
+.row-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  align-self: stretch;
+  min-height: 3rem;
+  padding: 0.375rem 0.875rem;
+  border-radius: 0.6875rem;
+  color: inherit;
+}
+
+.row-link:focus-visible {
+  outline-offset: -2px;
+}
+
+.row-link > .ic {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  color: var(--t2);
+}
+
+.row-link::after {
+  content: "";
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  background: var(--t2);
+  opacity: 0.7;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 6l6 6-6 6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+/* "Can't find it?" opens in place: the steps are a box, and the line after it comes from the page. */
+details .box {
+  margin-top: 0.75rem;
+  color: var(--t1);
+  font-size: 0.9375rem;
+}
+
+details .box + .hint {
+  margin-top: 0.5rem;
 }
 
 /* Reading aids: what an owner may open, and inline code. */
@@ -770,7 +882,42 @@ details p + p {
   margin-top: 0.5rem;
 }
 
-/* Parts the allow and passkeys pages still draw their own way. */
+/* "Can't find it?" sits under the field like a link under a group. */
+.fields + details {
+  font-size: 0.8125rem;
+}
+
+.fields + details > summary {
+  min-height: 1.125rem;
+}
+
+@media (max-width: 600px) {
+  .fields + details > summary {
+    min-height: 2.75rem;
+    margin: -0.8125rem 0;
+  }
+}
+
+.fields + .err,
+.box + .err,
+.fields + .note {
+  margin-top: 0.75rem;
+}
+
+.note + form {
+  margin-top: 1.25rem;
+}
+
+fieldset {
+  min-inline-size: 0;
+  border: 0;
+}
+
+legend {
+  padding: 0;
+}
+
+/* Parts the passkeys page still draws its own way. */
 .flow > * + * {
   margin-top: 1rem;
 }
@@ -797,9 +944,7 @@ details p + p {
   border-top: 1px solid var(--line);
 }
 
-.part h2,
-.wide-page h2,
-.wide-page h3 {
+.part h2 {
   font-size: 1.0625rem;
   line-height: 1.3;
   font-weight: 600;
@@ -809,248 +954,105 @@ details p + p {
   color: var(--t2);
 }
 
-.app-name {
-  font-weight: 600;
+/* A row under another row, and a row with a second line. */
+.box > li.sub .t {
+  padding-left: 1rem;
 }
 
-.device-check {
-  margin: 1.25rem 0 1rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  background: var(--well);
+.box > li.sub::before {
+  left: 1.875rem;
 }
 
-.device-check h2 {
-  margin: 0 0 0.25rem;
-  font-size: 1rem;
+.box > li.noted {
+  padding-block: 0.5625rem;
 }
 
-.device-check p {
-  margin: 0.25rem 0 0;
-}
-
-.device-check .user-code {
-  margin: 0.25rem 0 0.5rem;
-  font: 700 1.75rem/1.3 ui-monospace, "SF Mono", Menlo, monospace;
-  letter-spacing: 0.08em;
-}
-
-.facts,
-.held ul,
-.gives {
-  margin: 0 0 1rem;
-  padding-left: 1.25rem;
-}
-
-.facts,
-.gives {
-  list-style: disc;
+.box .m {
+  display: block;
   color: var(--t2);
+  font-size: 0.8125rem;
+  line-height: 1.0625rem;
 }
 
-.facts {
-  font-size: 0.9375rem;
+.box .m.ident {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.78125rem;
 }
 
-.held {
-  margin-bottom: 1.25rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
+.box > li.hint {
+  min-height: 0;
+  padding-block: 0.5rem;
 }
 
-.held h2 {
-  margin-bottom: 0.25rem;
-  font-size: 1rem;
-}
-
-.held ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.held li {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.held .level {
-  color: var(--t2);
-  white-space: nowrap;
-}
-
-fieldset.access {
-  min-width: 0;
-  margin: 0 0 1rem;
-  border: 0;
-}
-
-fieldset.access legend {
-  margin-bottom: 0.5rem;
-  padding: 0;
-  font-size: 1.0625rem;
-  font-weight: 600;
-}
-
-fieldset.access > p {
-  margin-bottom: 0.25rem;
-}
-
-.gives .danger,
-.line.danger {
-  color: var(--red);
-}
-
-.choice {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: 0.75rem;
-  align-items: start;
-  margin-top: 0.5rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--edge);
-  border-radius: 0.5rem;
-  cursor: default;
-}
-
-.choice:has(input:checked) {
-  border-color: var(--blue);
-  box-shadow: inset 0 0 0 1px var(--blue);
-}
-
-.choice:has(input:focus-visible) {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-}
-
-.choice input {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-  width: 1.125rem;
-  height: 1.125rem;
-  margin: 0.2rem 0 0;
-  accent-color: var(--blue);
-}
-
-.choice .name {
-  grid-column: 2;
-  font-weight: 600;
-}
-
-.choice .sub {
-  grid-column: 2;
-  color: var(--t2);
-  font-size: 0.9375rem;
-}
-
-.choose {
-  margin-bottom: 1rem;
-}
-
-.js .choose[data-needs-choice]:not(.open),
-.js .types:not(.open) {
+/* A part a choice shows or hides is shown by script only; without script every part shows,
+   and the sentences that depend on a choice give way to the ones that hold for all. */
+.js [data-shown-by]:not(.open),
+.js .without-script,
+html:not(.js) .when {
   display: none;
 }
 
-.choose h3 {
-  margin: 1.25rem 0 0.25rem;
-  font-size: 1rem;
+/* A line of sentences shows only while one of them does. */
+.js .after.whens:not(:has(.always, .when.open)),
+html:not(.js) .after.whens:not(:has(.always, .without-script)) {
+  display: none;
 }
 
-.choose .hint {
-  margin: 0 0 0.5rem;
+/* The allow page. */
+/* The sections carry their own space above, so the head leaves none below. */
+.head:has(~ .consent) {
+  margin-bottom: 0;
 }
 
-.types {
-  margin: 0 0 0 0.75rem;
-  padding-left: 0.75rem;
-  border-left: 2px solid var(--line);
+.consent .err[data-form-error] {
+  margin-top: 1rem;
 }
 
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.625rem 0;
-  border-top: 1px solid var(--line);
+/* Allow comes first in the markup, so Return sends it; it is drawn last. */
+.consent .actions .btn:not(.primary) {
+  order: 1;
 }
 
-.choose > .row:first-child,
-.types > .hint + .row {
-  border-top: 0;
+.consent .actions .btn.primary {
+  order: 2;
 }
 
-.row .text {
-  min-width: 0;
-}
-
-.row .title {
-  font-weight: 600;
-}
-
-.row .line,
-.row .ident {
-  color: var(--t2);
-  font-size: 0.875rem;
-}
-
-.row .ident {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-}
-
-.row input[type="checkbox"][role="switch"] {
-  appearance: none;
+/* Choose is a button drawn over the start of the actions while the choices are closed. */
+.consent .choose {
   position: relative;
-  flex: none;
-  width: 2.75rem;
-  height: 1.625rem;
-  margin: 0;
-  border: 1px solid var(--edge);
-  border-radius: 1rem;
-  background: var(--well);
-  cursor: default;
+  display: flow-root;
+  font-size: inherit;
 }
 
-.row input[type="checkbox"][role="switch"]::after {
-  content: "";
+.consent .choose:not([open]) > summary {
   position: absolute;
-  top: 0.125rem;
-  left: 0.125rem;
-  width: 1.25rem;
-  height: 1.25rem;
-  border-radius: 50%;
-  background: var(--t2);
-  transition: transform 0.15s;
+  top: 1.75rem;
+  left: 0;
+  z-index: 1;
 }
 
-.row input[type="checkbox"][role="switch"]:checked {
-  border-color: var(--blue);
-  background: var(--blue);
+.consent .choose[open] > summary {
+  display: none;
 }
 
-.row input[type="checkbox"][role="switch"]:checked::after {
-  background: var(--on-blue);
-  transform: translateX(1.125rem);
+.consent .choose > summary {
+  list-style: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .row input[type="checkbox"][role="switch"]::after {
-    transition: none;
-  }
+.consent .choose > summary::-webkit-details-marker {
+  display: none;
 }
 
-@media (max-width: 600px) {
-  .row:not(.power) {
-    flex-wrap: wrap;
-  }
+.consent .choose:not([open]) ~ .actions {
+  padding-left: 6rem;
+}
 
-  .row .pop {
-    width: 100%;
-  }
+.consent .choose > :not(summary) {
+  color: var(--t1);
+}
+
+.consent:has(.choose[open]) .glance {
+  display: none;
 }
 
 @media (forced-colors: active) {
@@ -1071,12 +1073,8 @@ fieldset.access > p {
     outline: 2px solid Highlight;
   }
 
-  .row input[type="checkbox"][role="switch"]:checked {
-    background: Highlight;
-  }
-
-  .row input[type="checkbox"][role="switch"]::after {
-    background: ButtonText;
+  .link {
+    color: LinkText;
   }
 
   .err::before,

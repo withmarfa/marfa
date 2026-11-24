@@ -5,6 +5,7 @@ import {
   stopServer,
 } from "../../../scripts/marfa-server.js";
 import {
+  asDrawn,
   offeredValues,
   readControls,
   visibleText,
@@ -20,6 +21,7 @@ import {
   connectMcp,
   toolNames,
 } from "../../utils/mcp.js";
+import { describedWords } from "../../utils/page-html.js";
 import { CALLBACK, pkce } from "../../utils/signed-in.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
@@ -40,13 +42,9 @@ const DEVICE_CODE_MS = 10 * 60_000;
 const SETUP_SESSION_MS = 15 * 60_000;
 const BUDGET_MS = 3 * FRESH_SERVER_TIMEOUT_MS;
 
-const CODE_PLACE = "in its terminal, or in its host's log";
-const APPROVAL_AFTER =
-  "After you create your account, you choose what the app can access, or turn it down.";
-const APPROVAL_NEXT =
-  "Next, you choose what the app can access, or turn it down.";
-const WRONG_CODE =
-  "That setup code isn't right, or Marfa has replaced it since. Enter the newest code Marfa shows.";
+const CODE_PLACE = "in Marfa’s terminal, or its host’s log";
+const APP_CONNECTS = "Then the app can connect.";
+const WRONG_CODE = "That code isn’t right. Use the newest code Marfa printed.";
 const DEVICE_EXPIRED = "That code has expired. Start again on your device.";
 
 interface Instance {
@@ -199,24 +197,6 @@ function carried(html: string): string[] {
   return offeredValues(html, "return_to");
 }
 
-/** The words of each element the field with this id names in `aria-describedby`. */
-function describedWords(html: string, fieldId: string): string[] {
-  const field = new RegExp(`<input\\b[^>]*\\sid="${fieldId}"[^>]*>`, "i").exec(
-    html,
-  )?.[0];
-  const ids = /\saria-describedby="([^"]*)"/i.exec(field ?? "")?.[1] ?? "";
-  return ids
-    .split(/\s+/)
-    .filter((id) => id !== "")
-    .map((id) => {
-      const element = new RegExp(
-        `<(\\w+)\\b[^>]*\\sid="${id}"[^>]*>([\\s\\S]*?)</\\1>`,
-        "i",
-      ).exec(html);
-      return visibleText(element?.[2] ?? "");
-    });
-}
-
 /** The hidden fields a page's form posts beside what the person types. */
 function hiddenFields(html: string): [string, string][] {
   return readControls(html)
@@ -312,7 +292,7 @@ async function claimThrough(
   expect(codePage.status).toBe(200);
   const codeHtml = await codePage.text();
   expect(visibleText(codeHtml)).toContain(CODE_PLACE);
-  expect(visibleText(codeHtml)).toContain(APPROVAL_AFTER);
+  expect(visibleText(codeHtml)).toContain(APP_CONNECTS);
   expect(carried(codeHtml)).toEqual([back]);
 
   const exchanged = await browser.post("/setup/exchange", [
@@ -329,14 +309,13 @@ async function claimThrough(
   expect(details.status).toBe(200);
   const detailsHtml = await details.text();
   expect(detailsHtml).toContain('id="owner-form"');
-  expect(visibleText(detailsHtml)).toContain(APPROVAL_NEXT);
   expect(carried(detailsHtml)).toEqual([back]);
 
   return browser.post("/setup/claim", [
     ["username", OWNER.username],
     ["password", OWNER.password],
+    ["confirm_password", OWNER.password],
     ["name", ""],
-    ["email", ""],
     ["return_to", back],
   ]);
 }
@@ -403,7 +382,7 @@ describe("claiming in the sign-in page an app opens", () => {
         const decided = await browser.post("/auth/consent", [
           ["decision", "approve"],
           ["authorization_request", consentUrl.search.slice(1)],
-          ["access", "full"],
+          ...asDrawn(await consent.text()),
         ]);
         const landed = new URL(location(decided));
         expect(`${landed.origin}${landed.pathname}`).toBe(CALLBACK);
@@ -459,7 +438,7 @@ describe("claiming in the sign-in page an app opens", () => {
         const approved = await browser.post("/auth/device/consent", [
           ["user_code", flow.userCode],
           ["decision", "approve"],
-          ["access", "full"],
+          ...asDrawn(await consent.text()),
         ]);
         expect(approved.status).toBe(200);
 
@@ -498,6 +477,7 @@ describe("claiming in the sign-in page an app opens", () => {
         const claimed = await browser.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", back],
         ]);
         expect(location(claimed)).toBe(back);
@@ -591,7 +571,7 @@ async function pollDevice(
 
 describe("the setup code page an app opens", () => {
   it(
-    "names an app beside the host it sends the person back to, with the caution, and names no app that sends them to the loopback",
+    "names an app beside the host it sends the person back to, marked unverified, and names no app that sends them to the loopback",
     async () => {
       await withInstance({}, async (instance) => {
         const signInFor = async (
@@ -634,15 +614,14 @@ describe("the setup code page an app opens", () => {
           "https://notes.example/callback",
         );
         expect(web).toContain(
-          "Web Notes at notes.example is asking to connect to this Marfa.",
+          "Then Web Notes (unverified, notes.example) can connect.",
         );
-        expect(web).toContain("Marfa hasn't verified this app.");
-        expect(web).toContain(APPROVAL_AFTER);
+        expect(web).not.toContain(APP_CONNECTS);
 
         const loopback = await signInFor("Local Notes", CALLBACK);
         expect(loopback).not.toContain("Local Notes");
-        expect(loopback).not.toContain("is asking to connect");
-        expect(loopback).toContain(APPROVAL_AFTER);
+        expect(loopback).not.toContain("(unverified");
+        expect(loopback).toContain(APP_CONNECTS);
       });
     },
     BUDGET_MS,
@@ -703,6 +682,7 @@ describe("return_to through setup", () => {
         const claim = await browser.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", AUTHORIZE],
         ]);
         expect(claim.status).toBe(401);
@@ -743,6 +723,7 @@ describe("return_to through setup", () => {
         const claimed = await browser.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", foreign],
         ]);
         expect(location(claimed)).toBe("/auth/sign-in");
@@ -873,6 +854,7 @@ describe("a claim another tab or a refused sign-in finished", () => {
         const claimed = await first.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", AUTHORIZE],
         ]);
         expect(location(claimed)).toBe(AUTHORIZE);
@@ -881,6 +863,7 @@ describe("a claim another tab or a refused sign-in finished", () => {
           await second.post("/setup/claim", [
             ["username", "another"],
             ["password", "another owner password"],
+            ["confirm_password", "another owner password"],
             ["return_to", AUTHORIZE],
           ]),
           await second.post("/setup/exchange", [
@@ -1022,6 +1005,7 @@ describe("a claim another tab or a refused sign-in finished", () => {
         const claimed = await browser.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", AUTHORIZE],
         ]);
         expect(location(claimed)).toBe(throughSignIn(AUTHORIZE));

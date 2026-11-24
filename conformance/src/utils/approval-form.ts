@@ -151,6 +151,37 @@ export function offeredValues(html: string, name: string): string[] {
   return [...new Set(out.filter((v) => v !== ""))];
 }
 
+/** The access the app held when the page was drawn, which its form posts as `held`. */
+export function heldOn(html: string): string {
+  return defaultSubmission(html, "held")[0] ?? "";
+}
+
+/**
+ * What a person posts who allows everything the page offers: every scope it
+ * offers, the admin level it starts at, which holds every power asked, and
+ * the access the page was drawn on.
+ */
+export function everythingOffered(html: string): [string, string][] {
+  return [
+    ["held", heldOn(html)],
+    ...offeredValues(html, "scopes").map((v): [string, string] => [
+      "scopes",
+      v,
+    ]),
+    ...defaultSubmission(html, "admin").map((v): [string, string] => [
+      "admin",
+      v,
+    ]),
+  ];
+}
+
+/** What a browser posts from the page if the person changes nothing. */
+export function asDrawn(html: string): [string, string][] {
+  return ["held", "scopes", "types", "admin", "powers"].flatMap((name) =>
+    defaultSubmission(html, name).map((v): [string, string] => [name, v]),
+  );
+}
+
 export interface RowRead {
   control: ControlRead;
   /** The text a person reads beside the control: everything since the control before it. */

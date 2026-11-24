@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { signInOwnerWithPassword } from "../client/owner-session.js";
+import { asDrawn } from "./approval-form.js";
 import type { FreshServer } from "./fresh-server.js";
 import { TEST_OWNER } from "./target.js";
 
@@ -128,9 +129,31 @@ export async function sentTo(
   return body.url === undefined ? undefined : new URL(body.url, server.apiUrl);
 }
 
+/** Posts individual permissions through Custom and the remaining scopes through scopes. */
+export function chosenFields(
+  chosen: readonly string[],
+  held?: string,
+): [string, string][] {
+  const isPermission = (s: string) => !s.includes(":") && s.includes(".");
+  const powers = chosen.filter(isPermission);
+  return [
+    ...(held === undefined ? [] : [["held", held] as [string, string]]),
+    ...chosen
+      .filter((s) => !isPermission(s))
+      .map((s): [string, string] => ["scopes", s]),
+    ...(powers.length === 0
+      ? []
+      : [
+          ["admin", "custom"] as [string, string],
+          ...powers.map((p): [string, string] => ["powers", p]),
+        ]),
+  ];
+}
+
 /**
  * The person's decision on the consent screen `consent` is the address of,
- * posting the scopes they chose, answered as the server answered it.
+ * posting what they chose as `chosenFields` does, answered as the server
+ * answered it.
  */
 export function decideResponse(
   server: FreshServer,
@@ -140,7 +163,7 @@ export function decideResponse(
   approve: boolean,
   scopes: readonly string[],
   types: readonly string[] = [],
-  access?: string,
+  held?: string,
 ): Promise<Response> {
   return fetch(`${server.apiUrl}/auth/consent`, {
     method: "POST",
@@ -153,8 +176,7 @@ export function decideResponse(
     body: new URLSearchParams([
       ["decision", approve ? "approve" : "deny"],
       ["authorization_request", consent.search.slice(1)],
-      ...(access === undefined ? [] : [["access", access] as [string, string]]),
-      ...scopes.map((s): [string, string] => ["scopes", s]),
+      ...chosenFields(scopes, held),
       ...types.map((t): [string, string] => ["types", t]),
     ]),
   });
@@ -162,7 +184,8 @@ export function decideResponse(
 
 /**
  * The person's decision on the consent screen `consent` is the address of,
- * posting the scopes they chose. Answers where the server sends them.
+ * posting what they chose as `chosenFields` does. Answers where the server
+ * sends them.
  */
 export async function decide(
   server: FreshServer,
@@ -172,7 +195,7 @@ export async function decide(
   approve: boolean,
   scopes: readonly string[],
   types: readonly string[] = [],
-  access?: string,
+  held?: string,
 ): Promise<URL | undefined> {
   return sentTo(
     server,
@@ -184,8 +207,39 @@ export async function decide(
       approve,
       scopes,
       types,
-      access,
+      held,
     ),
+  );
+}
+
+/**
+ * The person approves the consent screen `consent` is the address of without
+ * changing anything on it, as a browser posts it. Answers where the server
+ * sends them.
+ */
+export async function approveAsDrawn(
+  server: FreshServer,
+  origin: string,
+  cookie: string,
+  consent: URL,
+): Promise<URL | undefined> {
+  const page = await fetch(consent, { headers: { cookie } });
+  return sentTo(
+    server,
+    await fetch(`${server.apiUrl}/auth/consent`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        cookie,
+        origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams([
+        ["decision", "approve"],
+        ["authorization_request", consent.search.slice(1)],
+        ...asDrawn(await page.text()),
+      ]),
+    }),
   );
 }
 
@@ -216,8 +270,8 @@ export interface TokenAnswer {
 
 /**
  * The code an accepted authorization sends to the redirect URI, with the
- * verifier that redeems it: through the consent screen when no consent
- * covers the request, at once when one does.
+ * verifier that redeems it: through the consent screen, approved as drawn,
+ * when no consent covers the request, at once when one does.
  */
 export async function codeFor(
   server: FreshServer,
@@ -233,9 +287,7 @@ export async function codeFor(
   );
   const silent = landed?.href.startsWith(CALLBACK) === true;
   if (!silent && landed !== undefined) {
-    landed = await decide(server, origin, cookie, landed, true, [
-      ...new Set(scope.split(" ")),
-    ]);
+    landed = await approveAsDrawn(server, origin, cookie, landed);
   }
   const code = landed?.searchParams.get("code");
   if (code === null || code === undefined) {

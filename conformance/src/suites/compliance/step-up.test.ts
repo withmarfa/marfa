@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createServer, type RequestListener, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { offeredValues } from "../../utils/approval-form.js";
+import { everythingOffered } from "../../utils/approval-form.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -16,6 +16,7 @@ import {
   authorize,
   authorizeQuery,
   CALLBACK,
+  chosenFields,
   decide,
   issuerOrigin,
   pkce,
@@ -275,13 +276,13 @@ function checkPage(userCode: string, cookie: string): Promise<Response> {
 function deviceDecision(
   userCode: string,
   cookie: string,
-  scopes: readonly string[],
+  fields: readonly [string, string][],
 ): Promise<Response> {
-  const form = new URLSearchParams({
-    user_code: userCode,
-    decision: "approve",
-  });
-  for (const scope of scopes) form.append("scopes", scope);
+  const form = new URLSearchParams([
+    ["user_code", userCode],
+    ["decision", "approve"],
+    ...fields,
+  ]);
   return fetch(`${server.apiUrl}/auth/device/consent`, {
     method: "POST",
     redirect: "manual",
@@ -302,8 +303,11 @@ async function approveDevice(userCode: string, cookie: string): Promise<void> {
     { redirect: "manual", headers: { cookie } },
   );
   expect(page.status, page.headers.get("location") ?? "").toBe(200);
-  const offered = offeredValues(await page.text(), "scopes");
-  const approved = await deviceDecision(userCode, cookie, offered);
+  const approved = await deviceDecision(
+    userCode,
+    cookie,
+    everythingOffered(await page.text()),
+  );
   await approved.body?.cancel();
   expect(approved.status).toBe(200);
 }
@@ -802,7 +806,11 @@ describe("max_age at the device authorization endpoint", () => {
     );
     // The session could not confirm the code, so its decision is sent to the
     // check step.
-    const decided = await deviceDecision(userCode, stale, SCOPE.split(" "));
+    const decided = await deviceDecision(
+      userCode,
+      stale,
+      chosenFields(SCOPE.split(" ")),
+    );
     expect(decided.status).toBe(302);
     expect(
       new URL(decided.headers.get("location")!, server.apiUrl).pathname,

@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use serde_json::{Value, json};
 
 use super::client::GrantType;
-use super::clients::{self, Asking, ceiling_lacks, destinations_digest, judge, registries_in};
+use super::clients::{self, Asking, ceiling_lacks, destinations_digest, judge};
 use super::grant::{self, DEVICE_SOURCE, GRANT_CREATED, GRANT_WRITE};
 use super::offer::{self, Decision, Offer, Post, Request};
 use super::reprompt;
@@ -333,12 +333,14 @@ pub enum Blocked {
     Unchecked,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Answer {
     Approved,
     Denied,
     Closed(NotOpen),
     Unchecked,
+    /// The page was built on access the app no longer holds as it did; this is the page now.
+    Changed(Box<Offer>),
 }
 
 /// Reads again inside the write so an answer lands only on a pending code.
@@ -381,7 +383,8 @@ pub async fn answer(
         }
         let client = store::client(tx, &code.client_id)?
             .ok_or_else(|| Refusal::new(RefusalCode::InvalidClient, "This app is gone."))?;
-        let registries = registries_in(unit, &cache)?;
+        let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
+        let registries = Registries::of(&catalog);
         let named = narrow(&code.scopes, &registries.allowed()).kept;
         let held = store::held_scopes(tx, &client.id, &owner_id)?;
         let choosable = registries.choosable_types();
@@ -397,6 +400,11 @@ pub async fn answer(
                 return Err(Refusal::validation(
                     "This post chooses what the request did not offer.",
                 ));
+            }
+            Decision::Changed => {
+                store::note_offered(tx, &client.id, now)?;
+                let offer = offer::build(&client, &request).named(&catalog);
+                return Ok(Answer::Changed(Box::new(offer)));
             }
         };
         if destinations_digest(&shared, &client)? != code.destinations {

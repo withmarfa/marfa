@@ -254,9 +254,15 @@ impl Instance {
         landed.query().unwrap().to_string()
     }
 
-    async fn decide(&self, link: &str, scopes: &[&str]) -> Reply {
+    /// Posts `chosen` as a person sets it on the consent page `link` draws now, or on the notice
+    /// a link the server refuses draws.
+    async fn decide(&self, link: &str, chosen: &[&str]) -> Reply {
+        let page = self
+            .send(get(&format!("/auth/consent?{link}"), Some(&self.cookie)))
+            .await
+            .text;
         let mut fields = vec![("decision", "approve"), ("authorization_request", link)];
-        fields.extend(scopes.iter().map(|scope| ("scopes", *scope)));
+        fields.extend(chosen_on(&page, chosen));
         self.send(post_form("/auth/consent", Some(&self.cookie), &fields))
             .await
     }
@@ -365,15 +371,19 @@ impl Instance {
 
     async fn device_approved(&self, client: &str, scope: &str) -> String {
         let asked = self.device_asked(client, scope).await;
-        let checked = self
-            .device_checked(text_at(&asked, "user_code"), &self.cookie)
-            .await;
+        let user_code = text_at(&asked, "user_code");
+        let checked = self.device_checked(user_code, &self.cookie).await;
         assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
-        let mut fields = vec![
-            ("user_code", text_at(&asked, "user_code")),
-            ("decision", "approve"),
-        ];
-        fields.extend(scope.split(' ').map(|scope| ("scopes", scope)));
+        let path = format!(
+            "/auth/device/consent?{}",
+            encoded(&[("user_code", user_code)])
+        );
+        let page = self.send(get(&path, Some(&self.cookie))).await;
+        assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+        let page = page.text;
+        let chosen: Vec<&str> = scope.split(' ').collect();
+        let mut fields = vec![("user_code", user_code), ("decision", "approve")];
+        fields.extend(chosen_on(&page, &chosen));
         let reply = self
             .send(post_form(
                 "/auth/device/consent",
@@ -382,6 +392,11 @@ impl Instance {
             ))
             .await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
+        assert!(
+            reply.text.contains("Your device is connected"),
+            "{}",
+            reply.text
+        );
         text_at(&asked, "device_code").to_string()
     }
 
@@ -437,6 +452,41 @@ impl Instance {
         let reply = self.authorize(client, scope, CALLBACK).await;
         assert!(code_in(&reply).is_some(), "{:?}", reply.location());
     }
+}
+
+/// The `held` value an approval page's form posts.
+fn held_on(page: &str) -> &str {
+    let marker = "name=\"held\" value=\"";
+    page.find(marker).map_or("", |at| {
+        let rest = &page[at + marker.len()..];
+        &rest[..rest.find('"').unwrap_or(0)]
+    })
+}
+
+fn is_permission(scope: &str) -> bool {
+    !scope.contains(':') && scope.contains('.')
+}
+
+/// The fields a page posts for `chosen`: its `held` value, each scope as `scopes` and, where the
+/// page offers an admin level, each permission as a Custom row.
+fn chosen_on<'a>(page: &'a str, chosen: &[&'a str]) -> Vec<(&'static str, &'a str)> {
+    let mut fields = vec![("held", held_on(page))];
+    fields.extend(
+        chosen
+            .iter()
+            .filter(|scope| !is_permission(scope))
+            .map(|scope| ("scopes", *scope)),
+    );
+    if page.contains("name=\"admin\"") {
+        fields.push(("admin", "custom"));
+        fields.extend(
+            chosen
+                .iter()
+                .filter(|scope| is_permission(scope))
+                .map(|scope| ("powers", *scope)),
+        );
+    }
+    fields
 }
 
 fn code_in(reply: &Reply) -> Option<String> {
@@ -1943,7 +1993,7 @@ fn hidden_field(page: &str, name: &str) -> Option<String> {
 }
 
 const APP_NAME: &str = "a fixture app";
-const CAUTION: &str = "hasn't verified this app";
+const CAUTION: &str = "(unverified";
 
 #[tokio::test]
 async fn the_sign_in_page_names_the_app_only_for_a_link_the_instance_signed() {
@@ -2343,6 +2393,111 @@ async fn a_narrowing_the_same_set_in_any_order_changes_nothing() {
     );
     let exchanged = instance.exchange(&client, &unspent).await;
     assert_eq!(exchanged.status, StatusCode::OK, "{}", exchanged.text);
+}
+
+fn post_accepting(
+    path: &str,
+    accept: Option<&str>,
+    cookie: &str,
+    fields: &[(&str, &str)],
+) -> Request<Body> {
+    let mut request = post_form(path, Some(cookie), fields);
+    if let Some(accept) = accept {
+        request
+            .headers_mut()
+            .insert(header::ACCEPT, accept.parse().unwrap());
+    }
+    request
+}
+
+/// An approval answered with its page drawn again: a page for a caller that takes one, the JSON
+/// conflict for a caller that takes only JSON.
+async fn drawn_again(instance: &Instance, path: &str, fields: &[(&str, &str)]) {
+    let changed = "This app's access changed after this page opened.";
+    let pages = [
+        None,
+        Some("text/html"),
+        Some("application/json, text/html"),
+        Some("application/json;q=0, text/html"),
+    ];
+    for accept in pages {
+        let reply = instance
+            .send(post_accepting(path, accept, &instance.cookie, fields))
+            .await;
+        assert_eq!(
+            reply.status,
+            StatusCode::CONFLICT,
+            "{accept:?} {}",
+            reply.text
+        );
+        let kind = reply.headers.get(header::CONTENT_TYPE).unwrap();
+        assert!(
+            kind.to_str().unwrap().starts_with("text/html"),
+            "{accept:?}"
+        );
+        assert!(reply.text.contains(changed), "{accept:?} {}", reply.text);
+        assert!(reply.text.contains("name=\"held\""), "{accept:?}");
+    }
+    for accept in [
+        "Application/JSON",
+        "application/json, text/html;q=0",
+        "TEXT/HTML;Q=0.0, Application/Json;q=0.5",
+    ] {
+        let json = instance
+            .send(post_accepting(path, Some(accept), &instance.cookie, fields))
+            .await;
+        assert_eq!(json.status, StatusCode::CONFLICT, "{accept} {}", json.text);
+        assert_eq!(
+            json.json()["error"]["code"],
+            "conflict",
+            "{accept} {}",
+            json.text
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_approval_from_a_page_built_on_other_held_access_is_answered_409_with_the_page() {
+    let instance = Instance::signed_in().await;
+    let both = "core.note:read core.task:read";
+    let client = instance.register(both).await;
+    instance.tokens(&client, NOTES).await;
+    let link = instance.consent_link(&client, both).await;
+    let stale = [
+        ("decision", "approve"),
+        ("authorization_request", link.as_str()),
+        ("held", ""),
+        ("scopes", "core.task:read"),
+    ];
+    drawn_again(&instance, "/auth/consent", &stale).await;
+    assert!(
+        !instance.grant_of(&client).await["scopes"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("core.task:read"))
+    );
+    // The witness: the page as it is drawn now approves.
+    let approved = instance.decide(&link, &["core.task:read"]).await;
+    assert!(code_in(&approved).is_some(), "{}", approved.text);
+
+    let device = instance.register_device(both).await;
+    instance.device_approved(&device, NOTES).await;
+    let asked = instance.device_asked(&device, both).await;
+    let checked = instance
+        .device_checked(text_at(&asked, "user_code"), &instance.cookie)
+        .await;
+    assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
+    let stale = [
+        ("user_code", text_at(&asked, "user_code")),
+        ("decision", "approve"),
+        ("held", ""),
+        ("scopes", "core.task:read"),
+    ];
+    drawn_again(&instance, "/auth/device/consent", &stale).await;
+    refused_as(
+        &instance.poll(&device, text_at(&asked, "device_code")).await,
+        "authorization_pending",
+    );
 }
 
 #[tokio::test]
