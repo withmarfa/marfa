@@ -8,11 +8,12 @@ use std::sync::Arc;
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::from_fn;
+use axum::response::IntoResponse;
 
 use super::Routes;
-use super::answer::{Answer, Stopped, json_answer};
+use super::answer::{Answer, Stopped, json_answer, names};
 use super::auth::origin::{self, Source};
 use super::caller::browser_owner;
 use super::cors;
@@ -23,7 +24,8 @@ use crate::app::access::Caller;
 use crate::app::auth::own_origins;
 use crate::app::oauth::Problem;
 use crate::app::oauth::offer::Post;
-use crate::app::refusal::Refusal;
+use crate::app::refusal::{Code, Refusal};
+use crate::http::pages::{self, Consent};
 
 /// A cross-site form is refused before the session is read.
 struct Browser(Option<Caller>);
@@ -53,6 +55,24 @@ fn require_own_form(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
     }
 }
 
+/// A caller that asked for JSON alone gets a refusal; any other gets the page drawn again.
+fn drawn_again(view: &Consent, headers: &HeaderMap) -> Answer {
+    let accept = headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if names(accept, "application/json") && !names(accept, "text/html") {
+        return Err(Refusal::new(
+            Code::Conflict,
+            "This app's access changed after this page opened. Check what to allow, then try again.",
+        )
+        .into());
+    }
+    Ok(pages::consent(view)?
+        .with_status(StatusCode::CONFLICT)
+        .into_response())
+}
+
 struct Fields(Vec<(String, String)>);
 
 impl Fields {
@@ -73,9 +93,11 @@ impl Fields {
 
     fn post(&self) -> Post {
         Post {
-            access: self.get("access").map(str::to_string),
+            held: self.get("held").unwrap_or_default().to_string(),
             scopes: self.all("scopes"),
             types: self.all("types"),
+            admin: self.get("admin").map(str::to_string),
+            powers: self.all("powers"),
         }
     }
 }
@@ -98,6 +120,10 @@ pub fn doors() -> Routes {
         .route("/oauth/revoke", post(token::revoke))
         .route("/oauth/device-authorization", post(device::code))
         .route("/auth/device", post(device::enter))
+        .route(
+            "/auth/device/check",
+            get(device::check_screen).post(device::check),
+        )
         .route(
             "/auth/device/consent",
             get(device::screen).post(device::answer),

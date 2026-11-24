@@ -1,20 +1,17 @@
-{% import "partials/parts.html" as parts %}{% call parts::head("Claim this Marfa", "This Marfa doesn't have an owner yet. Enter the setup code to become its owner.") %}{% endcall %}
-{% if let Some(app) = app %}<p><bdi class="app-name">{{ app.name }}</bdi> at <bdi>{{ app.host }}</bdi> is asking to connect to this Marfa.</p>
-{% include "partials/app_caution.html" %}
-{% endif %}{% if connecting %}<p>After you create your account, you choose what the app can access, or turn it down.</p>
-{% endif %}<p class="notice" role="status" data-handoff-working hidden>Checking your setup link.</p>
-<p class="err" role="alert" data-handoff-failed hidden>That setup link has expired or was already used. Enter the setup code, or run <code>marfa setup open</code> again for a new link.</p>
-<form method="post" action="/setup/exchange">
+{% import "partials/parts.html" as parts %}{% if let Some(app) = app %}{% call parts::head_with("Claim this Marfa") %}Enter the setup code to become its owner. Then <bdi>{{ app.name }}</bdi> ({{ unverified }}) can connect.{% endcall %}{% else if connecting %}{% call parts::head("Claim this Marfa", "Enter the setup code to become its owner. Then the app can connect.") %}{% endcall %}{% else %}{% call parts::head("Claim this Marfa", "Enter the setup code to become its owner.") %}{% endcall %}{% endif %}
+<p class="note" role="status" data-handoff-working hidden>Checking your setup link.</p>
+<form method="post" action="/setup/exchange" novalidate>
 <input type="hidden" name="return_to" value="{{ return_to }}">
 <div class="fields">
-{% call parts::group(note="code-note", hint="Marfa shows the setup code where it runs: in its terminal, or in its host's log.", problem=problem_message.as_deref().unwrap_or_default()) %}
-{% call parts::field("code", "Setup code", name="code", capitalize="characters", mono=true, invalid=has_problem, note="code-note") %}{% endcall %}
+{% call parts::group(note="code-note", hint="It’s in Marfa’s terminal, or its host’s log.", problem=problem_message.as_deref().unwrap_or_default(), late_problem="That setup link has expired or was already used. Enter the setup code.") %}
+{% call parts::field("code", "Setup code", name="code", capitalize="characters", mono=true, invalid=code_invalid, note="code-note") %}{% endcall %}
 {% endcall %}
 </div>
 <details>
-<summary>Can't find the code?</summary>
-<p>Marfa makes a new setup code each time it starts without an owner, and only the newest one works.</p>
-<p>To make a new one, run <code>marfa setup code</code> on the computer that runs Marfa. To skip typing it, run <code>marfa setup open</code> instead. It opens a link that works once.</p>
+<summary>Can’t find it?</summary>
+{% call parts::box_of_rows() %}<li class="two"><span class="t"><span>Make a new code, where Marfa runs</span><span class="m"><code>marfa setup code</code></span></span></li>
+<li class="two"><span class="t"><span>Or open a link instead of typing it</span><span class="m"><code>marfa setup open</code></span></span></li>{% endcall %}
+<p class="hint">Only the newest code works.</p>
 </details>
 {% call parts::actions() %}<button type="submit" class="btn primary">Continue</button>{% endcall %}
 </form>

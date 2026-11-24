@@ -791,7 +791,7 @@ mod presented_tests {
     async fn a_door_that_asks_no_credential_refuses_a_body_past_its_cap_declared_or_streamed() {
         let instance = start().await;
         let doors = open_body_doors(&instance);
-        assert_eq!(doors.len(), 15, "the witness: {doors:?}");
+        assert_eq!(doors.len(), 16, "the witness: {doors:?}");
         let mut wrong = Vec::new();
         for (method, path) in &doors {
             let cap = open_cap(path);

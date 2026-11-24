@@ -8,6 +8,10 @@ use crate::app::refusal::{Refusal, Result};
 const SESSION_ON_HTTPS: &str = "__Host-marfa_session";
 const SESSION: &str = "marfa_session";
 const SETUP: &str = "marfa_setup";
+const RECOVERED: &str = "marfa_recovered";
+/// The page that reads and clears it.
+const RECOVERED_PATH: &str = "/auth/sign-in";
+const RECOVERED_MAX_AGE: i64 = 120;
 const PASSKEY_ON_HTTPS: &str = "__Host-marfa_passkey_challenge";
 const PASSKEY: &str = "marfa_passkey_challenge";
 const DEVICE_ON_HTTPS: &str = "__Host-marfa_device";
@@ -61,6 +65,25 @@ pub fn setup_ended(address: &Address) -> Result<HeaderValue> {
     value(format!(
         "{SETUP}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0{secure}"
     ))
+}
+
+/// Left by a completed recovery for the sign-in page to read once.
+pub fn recovered(address: &Address) -> Result<HeaderValue> {
+    let secure = secure(address);
+    value(format!(
+        "{RECOVERED}=1; Path={RECOVERED_PATH}; HttpOnly; SameSite=Strict; Max-Age={RECOVERED_MAX_AGE}{secure}"
+    ))
+}
+
+pub fn recovered_ended(address: &Address) -> Result<HeaderValue> {
+    let secure = secure(address);
+    value(format!(
+        "{RECOVERED}=; Path={RECOVERED_PATH}; HttpOnly; SameSite=Strict; Max-Age=0{secure}"
+    ))
+}
+
+pub fn holds_recovered(headers: &HeaderMap) -> bool {
+    read(headers, RECOVERED).is_some()
 }
 
 fn passkey_name(address: &Address) -> &'static str {

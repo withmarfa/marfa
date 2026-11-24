@@ -2,17 +2,20 @@ use std::sync::Arc;
 
 use axum::extract::{Request, State};
 use axum::http::header::ACCEPT;
-use axum::http::{HeaderMap, Uri};
+use axum::http::request::Parts;
+use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 
-use super::{cookies, require_safe_transport};
+use super::{cookies, redirect, require_safe_transport, with_cookie};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::auth::claim;
 use crate::app::auth::owner;
-use crate::app::auth::return_to::{HOME, kept};
+use crate::app::auth::passkeys;
+use crate::app::auth::return_to::{HOME, encoded, kept};
 use crate::app::oauth::authorize::app_named;
+use crate::app::oauth::device::CHECK_PATH;
 use crate::app::oauth::redirect::shown_destination;
 use crate::app::oauth::signed_link::{self, Verified};
 use crate::app::refusal::{Code, Refusal, Result};
@@ -76,26 +79,39 @@ fn return_to_in(app: &App, pairs: &[(String, String)]) -> String {
 pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
     require_safe_transport(&app)?;
     let (parts, _) = request.into_parts();
+    let recovered = cookies::holds_recovered(&parts.headers);
+    let page = sign_in_page(&app, &parts, recovered).await?;
+    if !recovered {
+        return Ok(page);
+    }
+    // A completed recovery is told once, whatever the page that answers.
+    Ok(with_cookie(
+        page,
+        cookies::recovered_ended(&app.addresses().sign_in())?,
+    ))
+}
+
+async fn sign_in_page(app: &Arc<App>, parts: &Parts, recovered: bool) -> Result<Response> {
     let pairs = query::pairs(&parts.uri)?;
     let field = |name: &str| first(&pairs, name);
-    let return_to = return_to_in(&app, &pairs);
+    let return_to = return_to_in(app, &pairs);
     let link = field("authorization")
         .or(parts.uri.query())
         .unwrap_or_default()
         .to_string();
-    let sent = authorization(&app, &link);
-    if !claim::is_claimed(&app).await? {
+    let sent = authorization(app, &link);
+    if !claim::is_claimed(app).await? {
         let view = SetupCode {
             problem: None,
-            app: asking_app(&app, sent.as_ref()).await?,
+            app: asking_app(app, sent.as_ref()).await?,
             return_to,
         };
         return Ok(pages::setup_code(&view)?.into_response());
     }
     if field("prompt") != Some("login") && sent.is_none() {
-        let caller = browser_owner(&parts, &app).await?;
+        let caller = browser_owner(parts, app).await?;
         if caller.as_ref().and_then(Caller::session).is_some()
-            && let Some(found) = owner::find(&app).await?
+            && let Some(found) = owner::find(app).await?
         {
             let view = SignedIn {
                 username: found.username,
@@ -104,16 +120,30 @@ pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
             return Ok(pages::signed_in(&view)?.into_response());
         }
     }
-    let app_name = match &sent {
-        Some(link) => app_named(&app, link).await?,
-        None => None,
+    let (app_name, app_address) = match &sent {
+        Some(link) => (
+            app_named(app, link).await?,
+            link.get("redirect_uri").and_then(shown_destination),
+        ),
+        None => (None, None),
     };
     let view = SignIn {
         username: shown(field("username")),
         return_to,
         authorization: sent.map(|_| link),
         app: app_name,
-        problem: SignInProblem::from_query(field("error"), field("retry_after_seconds")),
+        app_address,
+        recovered,
+        problem: SignInProblem::from_query(
+            field("error"),
+            field("retry_after_seconds"),
+            &pairs
+                .iter()
+                .filter(|(name, _)| name == "missing")
+                .map(|(_, value)| value.as_str())
+                .collect::<Vec<_>>(),
+        ),
+        passkey: passkeys::signs_in_here(app).await?,
     };
     Ok(pages::sign_in(&view)?.into_response())
 }
@@ -137,7 +167,6 @@ pub async fn setup(State(app): State<Arc<App>>, headers: HeaderMap, uri: Uri) ->
         pages::setup_details(&SetupDetails {
             name: String::new(),
             username: String::new(),
-            email: String::new(),
             errors: SetupFieldErrors::default(),
             notice: None,
             return_to,
@@ -170,6 +199,10 @@ async fn recovery_page(app: &App, headers: &HeaderMap) -> Result<pages::Page> {
     pages::notice(&Notice::already_claimed(HOME))
 }
 
+pub async fn forgot_password() -> Answer {
+    Ok(pages::forgot_password()?.into_response())
+}
+
 pub async fn error(uri: Uri) -> Answer {
     let pairs = query::pairs(&uri)?;
     let view = AuthError {
@@ -178,14 +211,22 @@ pub async fn error(uri: Uri) -> Answer {
     Ok(pages::auth_error(&view)?.into_response())
 }
 
+/// A link carrying a code goes to the page that asks the owner to compare it, never past it.
 pub async fn device(uri: Uri) -> Answer {
     let pairs = query::pairs(&uri)?;
+    let problem =
+        DeviceProblem::from_query(first(&pairs, "error"), first(&pairs, "retry_after_seconds"));
+    let user_code = shown(first(&pairs, "user_code"));
+    let user_code = user_code.trim();
+    if problem.is_none() && !user_code.is_empty() {
+        return redirect(
+            StatusCode::FOUND,
+            &format!("{CHECK_PATH}?user_code={}", encoded(user_code)),
+        );
+    }
     let view = DeviceEntry {
-        user_code: shown(first(&pairs, "user_code")),
-        problem: DeviceProblem::from_query(
-            first(&pairs, "error"),
-            first(&pairs, "retry_after_seconds"),
-        ),
+        user_code: user_code.to_string(),
+        problem,
     };
     Ok(pages::device_entry(&view)?.into_response())
 }
@@ -259,7 +300,6 @@ pub async fn exchange_refused(app: &App, refusal: &Refusal, form: &CodeForm) -> 
 pub struct Typed {
     pub name: String,
     pub username: String,
-    pub email: String,
 }
 
 impl Typed {
@@ -268,7 +308,6 @@ impl Typed {
         Typed {
             name: text("name"),
             username: text("username"),
-            email: text("email"),
         }
     }
 }
@@ -281,7 +320,6 @@ fn field_errors(refusal: &Refusal) -> Option<SetupFieldErrors> {
         match error.get("path")?.as_str()? {
             "name" => found.name = Some(message),
             "username" => found.username = Some(message),
-            "email" => found.email = Some(message),
             "password" => found.password = Some(message),
             _ => return None,
         }
@@ -316,7 +354,6 @@ fn details_page(refusal: &Refusal, typed: Typed, return_to: String) -> Result<Op
     let view = SetupDetails {
         name: typed.name,
         username: typed.username,
-        email: typed.email,
         errors,
         notice,
         return_to,
@@ -389,10 +426,10 @@ mod tests {
     fn a_refusal_names_the_fields_it_found_wrong() {
         let refusal = Refusal::validation("Invalid owner details.").with_detail(
             "errors",
-            serde_json::json!([{ "path": "email", "message": "Enter a valid email address." }]),
+            serde_json::json!([{ "path": "username", "message": "Use 1 to 64 letters." }]),
         );
         let found = field_errors(&refusal).unwrap();
-        assert_eq!(found.email.as_deref(), Some("Enter a valid email address."));
+        assert_eq!(found.username.as_deref(), Some("Use 1 to 64 letters."));
         assert!(found.name.is_none() && found.password.is_none());
         let unknown = Refusal::validation("x").with_detail(
             "errors",

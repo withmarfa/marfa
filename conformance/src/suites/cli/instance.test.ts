@@ -1,4 +1,5 @@
 import { signInOwnerWithPassword } from "../../client/owner-session.js";
+import { checkDeviceCode } from "../../utils/device-check.js";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
@@ -744,6 +745,7 @@ describe("the instance from the terminal", () => {
     };
     const origin = new URL(code.verification_uri_complete).origin;
     const cookie = await signInOwnerWithPassword(origin, origin, TEST_OWNER);
+    await checkDeviceCode(origin, origin, cookie, code.user_code);
     const form = new URLSearchParams({
       user_code: code.user_code,
       decision: "approve",

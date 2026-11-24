@@ -1,9 +1,9 @@
 {% import "partials/parts.html" as parts %}{% call parts::dialog("confirm-dialog", "Confirm it's you", text_id="confirm-text") %}
-<p id="confirm-text" class="lede">Enter your password to allow this.</p>
+<p id="confirm-text" class="lede">{{ line }}</p>
 <div class="fields" data-confirm-fields>
 <div>
 <div class="group">
-{% call parts::field("confirm-password", "Password", name="password", kind="password", autocomplete="current-password", note="confirm-note") %}{% endcall %}
+{% call parts::field("confirm-password", "Password", name="password", kind="password", autocomplete="current-password") %}{% endcall %}
 </div>
 <div class="under">
 <p class="hint" id="confirm-note" aria-live="polite" data-note data-hint=""></p>

@@ -388,7 +388,7 @@ mod tests {
                 "https://marfa.example",
                 Some("offline_access core.note:write keys.mint")
             ),
-            "signed in to https://marfa.example; the token is in the keychain\n  core.note  Read and edit\n  Powers: Make, see, edit and revoke keys"
+            "signed in to https://marfa.example; the token is in the keychain\n  core.note  Read and Edit\n  Powers: Make keys"
         );
         assert_eq!(
             signed_in_text("https://marfa.example", None),

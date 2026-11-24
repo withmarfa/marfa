@@ -625,14 +625,18 @@ jobs:
 
       # Before the stop, because `marfa:down` clears the state directory and
       # the log is in it.
+      - name: Stage the server log without its setup proof
+        if: failure()
+        working-directory: conformance
+        run: pnpm marfa:stage-logs --state "$RUNNER_TEMP/marfa-mcp" --to "$RUNNER_TEMP/server-logs"
+
       - name: Keep the server log
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: marfa-mcp-server-log
           path: |
-            ${{ runner.temp }}/marfa-mcp/server.log
-            ${{ runner.temp }}/marfa-mcp/server.stderr
+            ${{ runner.temp }}/server-logs/
           if-no-files-found: ignore
 
       # The server was spawned detached, so nothing else reaps it.
@@ -1036,6 +1040,11 @@ jobs:
 
       # Before the stop, because `marfa:down` clears the state directory and
       # the log is in it.
+      - name: Stage the server log without its setup proof
+        if: always()
+        working-directory: conformance
+        run: pnpm marfa:stage-logs --state "$RUNNER_TEMP/marfa" --to "$RUNNER_TEMP/server-logs"
+
       - name: Keep the server log
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1044,9 +1053,7 @@ jobs:
           overwrite: true
           retention-days: 3
           path: |
-            ${{ runner.temp }}/marfa/server.log
-            ${{ runner.temp }}/marfa/server.stderr
-            ${{ runner.temp }}/marfa/fresh-server-logs/
+            ${{ runner.temp }}/server-logs/
           if-no-files-found: ignore
 
       # The detached server must be reaped even when the selection fails.
@@ -1121,6 +1128,11 @@ jobs:
           path: ${{ runner.temp }}/rust-contract-report/vitest.json
           if-no-files-found: error
           retention-days: 3
+      - name: Stage the server log without its setup proof
+        if: always()
+        working-directory: conformance
+        run: pnpm marfa:stage-logs --state "$RUNNER_TEMP/marfa" --to "$RUNNER_TEMP/server-logs"
+
       - name: Keep the server log
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1129,9 +1141,7 @@ jobs:
           overwrite: true
           retention-days: 3
           path: |
-            ${{ runner.temp }}/marfa/server.log
-            ${{ runner.temp }}/marfa/server.stderr
-            ${{ runner.temp }}/marfa/fresh-server-logs/
+            ${{ runner.temp }}/server-logs/
           if-no-files-found: ignore
       - name: Stop the server
         if: always()
@@ -1405,15 +1415,18 @@ jobs:
 
       # Before the stop, because `marfa:down` clears the state directory and
       # the log is in it.
+      - name: Stage the server log without its setup proof
+        if: failure()
+        working-directory: conformance
+        run: pnpm marfa:stage-logs --state "$RUNNER_TEMP/marfa" --to "$RUNNER_TEMP/server-logs"
+
       - name: Keep the server log
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust-contract-macos-server-log-${{ matrix.slug }}
           path: |
-            ${{ runner.temp }}/marfa/server.log
-            ${{ runner.temp }}/marfa/server.stderr
-            ${{ runner.temp }}/marfa/fresh-server-logs/
+            ${{ runner.temp }}/server-logs/
           if-no-files-found: ignore
 
       - name: Stop the server

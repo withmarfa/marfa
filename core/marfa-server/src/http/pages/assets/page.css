@@ -17,8 +17,6 @@
   --red: #c3161c;
   --red-fill: rgb(255 56 60 / 0.1);
   --red-ring: rgb(195 22 28 / 0.1);
-  --caution: #7a4b00;
-  --caution-wash: #fff4dc;
   --scrim: rgb(0 0 0 / 0.22);
   --shadow: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 24px 64px rgb(0 0 0 / 0.22);
   --shadow-menu: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 10px 32px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.06);
@@ -52,8 +50,6 @@
     --red: #ff8a84;
     --red-fill: rgb(255 69 58 / 0.18);
     --red-ring: rgb(255 138 132 / 0.25);
-    --caution: #f4c76a;
-    --caution-wash: #38290b;
     --scrim: rgb(0 0 0 / 0.5);
     --shadow: 0 0 0 0.5px rgb(255 255 255 / 0.14), 0 24px 64px rgb(0 0 0 / 0.6);
     --shadow-menu: 0 0 0 0.5px rgb(255 255 255 / 0.18), 0 10px 32px rgb(0 0 0 / 0.5);
@@ -113,13 +109,8 @@ body {
   min-width: 0;
 }
 
-.col:has(.wide-page) {
-  flex-basis: 38rem;
-}
-
 @media (max-width: 600px) {
-  .col,
-  .col:has(.wide-page) {
+  .col {
     flex: 1 1 auto;
   }
 }
@@ -215,12 +206,6 @@ code {
   width: var(--small);
   padding: 0;
   border-radius: 50%;
-}
-
-.btn .ic {
-  width: 1rem;
-  height: 1rem;
-  flex: none;
 }
 
 .btn:disabled {
@@ -405,12 +390,20 @@ code {
 }
 
 .under a,
-.link {
+.under .link {
   display: inline-flex;
   align-items: center;
 }
 
-/* A control that does something and reads as a link. */
+@media (max-width: 600px) {
+  .under a,
+  .under .link {
+    min-height: 2.75rem;
+    margin: -0.8125rem 0;
+  }
+}
+
+/* A button drawn as a link: it acts, where a link goes. */
 .link {
   padding: 0;
   border: 0;
@@ -420,12 +413,9 @@ code {
   cursor: default;
 }
 
-@media (max-width: 600px) {
-  .under a,
-  .under .link {
-    min-height: 2.75rem;
-    margin: -0.8125rem 0;
-  }
+.link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 /* A line a script fills in has nothing to show until it has something to say. */
@@ -466,6 +456,155 @@ code {
     center / contain no-repeat;
 }
 
+/* A short code in cells. Without the script, or in forced colors, a typed code shows in its input instead. */
+.code {
+  position: relative;
+}
+
+.code .cells {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.code .cell {
+  position: relative;
+  display: flex;
+  flex: 0 1 2.75rem;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 3.25rem;
+  border: 1px solid var(--edge);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  color: var(--t1);
+  font: 500 1.375rem/1 ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.code .dash {
+  flex: none;
+  width: 0.625rem;
+  height: 2px;
+  margin: 0 0.1875rem;
+  border-radius: 1px;
+  background: var(--t2);
+  opacity: 0.7;
+}
+
+.code.shown .cell {
+  border-color: transparent;
+  background: var(--well);
+}
+
+.code.bad .cell {
+  border-color: var(--red);
+}
+
+.code .said {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.code .in {
+  height: 3.25rem;
+  padding: 0 0.875rem;
+  font: 500 1.375rem/1 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.code .in ~ .cells {
+  display: none;
+}
+
+@media (forced-colors: none) {
+  .js .code:not(.plain) .in ~ .cells {
+    display: flex;
+  }
+
+  .js .code:not(.plain) .in {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    height: 100%;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    color: transparent;
+    caret-color: transparent;
+  }
+
+  .js .code:not(.plain) .in::selection {
+    background: transparent;
+  }
+
+  .js .code:not(.plain) .in:focus-visible {
+    outline: none;
+  }
+}
+
+.code .cell.at {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.code.bad .cell.at {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px var(--red-ring);
+}
+
+.code .cell.at:empty::after {
+  content: "";
+  width: 1.5px;
+  height: 1.5rem;
+  background: var(--t1);
+}
+
+.code .cell.at:not(:empty)::after {
+  content: "";
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  left: 0.25rem;
+  width: 1.5px;
+  background: var(--t1);
+}
+
+.code .cell.at.end:not(:empty)::after {
+  right: 0.25rem;
+  left: auto;
+}
+
+.code .cell.picked {
+  background: color-mix(in srgb, Highlight 30%, var(--bg));
+}
+
+.code + .hint,
+.code + .err {
+  margin-top: 0.625rem;
+}
+
+@media (max-width: 600px) {
+  .code .cells {
+    gap: 0.3125rem;
+  }
+
+  .code .cell {
+    flex-basis: 2.25rem;
+    height: 3rem;
+    font-size: 1.25rem;
+  }
+
+  .code .in {
+    height: 3rem;
+  }
+}
+
 /* A note under a box. */
 .note {
   margin-top: 0.875rem;
@@ -492,6 +631,10 @@ code {
 @media (max-width: 600px) {
   .box > li {
     padding-block: 0.125rem;
+  }
+
+  .box > li > .t {
+    padding-block: 0.25rem;
   }
 }
 
@@ -529,127 +672,6 @@ code {
 
 .box > li.quiet {
   color: var(--t2);
-}
-
-/* Rows that start with an icon: the dividers line up with the words. */
-.box > li > .ic,
-.row-button .ic {
-  flex: none;
-  width: 1.125rem;
-  height: 1.125rem;
-  color: var(--t2);
-}
-
-.box.sym > li + li::before {
-  left: 2.75rem;
-}
-
-/* Adding is the box's last row, the whole row a button, never a button in the section's heading. */
-.box > li.act {
-  padding: 0;
-  color: var(--t2);
-}
-
-.row-button {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  width: 100%;
-  min-height: 3rem;
-  padding: 0.375rem 0.875rem;
-  border: 0;
-  border-radius: 0 0 0.6875rem 0.6875rem;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: start;
-  cursor: default;
-}
-
-.row-button:focus-visible {
-  outline-offset: -2px;
-}
-
-.row-button:disabled {
-  opacity: 0.38;
-}
-
-/* Sections: a heading over a box, and the lines after it. */
-.sec + .sec {
-  margin-top: 1.5rem;
-}
-
-.sec > h2 {
-  display: flex;
-  align-items: center;
-  min-height: 1.75rem;
-  margin-bottom: 0.375rem;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--t1);
-}
-
-.after {
-  margin-top: 0.5rem;
-  color: var(--t2);
-  font-size: 0.8125rem;
-}
-
-.sec form .err {
-  margin-top: 0.5rem;
-}
-
-/* A row's menu: a popover the script places beside its button. */
-.menu {
-  inset: auto;
-  min-width: 9.375rem;
-  margin: 0;
-  padding: 0.3125rem;
-  border: 0;
-  border-radius: 0.625rem;
-  background: var(--bg);
-  box-shadow: var(--shadow-menu);
-  color: var(--t1);
-  font-size: 0.875rem;
-  overflow: visible;
-}
-
-.menu:popover-open {
-  display: flex;
-  flex-direction: column;
-}
-
-.menu button {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  padding: 0.3125rem 0.625rem;
-  border: 0;
-  border-radius: 0.375rem;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: start;
-  cursor: default;
-}
-
-.menu button:hover,
-.menu button:focus-visible {
-  background: var(--fill);
-}
-
-.menu button:focus-visible {
-  outline-offset: -2px;
-}
-
-.menu .danger {
-  color: var(--red);
-}
-
-@media (max-width: 600px) {
-  .menu button {
-    min-height: 2.75rem;
-  }
 }
 
 /* Pop-up: a real select, one width so a column of them lines up. */
@@ -775,6 +797,196 @@ html:not(.js) dialog[data-inline] {
   color: inherit;
 }
 
+/* Icons in rows and buttons, and sections: a heading over a box, and the line after it. */
+.box > li > .ic,
+.row-button .ic,
+.btn .ic {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.box > li > .ic,
+.row-button .ic {
+  color: var(--t2);
+}
+
+.btn .ic {
+  width: 1rem;
+  height: 1rem;
+}
+
+.box.sym > li + li::before {
+  left: 2.75rem;
+}
+
+.sec {
+  margin-top: 1.5rem;
+}
+
+.sec > h2 {
+  display: flex;
+  align-items: center;
+  min-height: 1.75rem;
+  margin-bottom: 0.375rem;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  font-weight: 600;
+  color: var(--t1);
+}
+
+.after {
+  margin-top: 0.5rem;
+  color: var(--t2);
+  font-size: 0.8125rem;
+}
+
+.sec form .err {
+  margin-top: 0.5rem;
+}
+
+/* Adding is the box's last row, the whole row a button, never a button in the section's heading. */
+.box > li.act {
+  padding: 0;
+  color: var(--t2);
+}
+
+.row-button {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.375rem 0.875rem;
+  border: 0;
+  border-radius: 0 0 0.6875rem 0.6875rem;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: default;
+}
+
+.row-button:focus-visible {
+  outline-offset: -2px;
+}
+
+.row-button:disabled {
+  opacity: 0.38;
+}
+
+/* A row's menu: a popover the script places beside its button. */
+.menu {
+  inset: auto;
+  min-width: 9.375rem;
+  margin: 0;
+  padding: 0.3125rem;
+  border: 0;
+  border-radius: 0.625rem;
+  background: var(--bg);
+  box-shadow: var(--shadow-menu);
+  color: var(--t1);
+  font-size: 0.875rem;
+  overflow: visible;
+}
+
+.menu:popover-open {
+  display: flex;
+  flex-direction: column;
+}
+
+.menu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 0.3125rem 0.625rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: default;
+}
+
+.menu button:hover,
+.menu button:focus-visible {
+  background: var(--fill);
+}
+
+.menu button:focus-visible {
+  outline-offset: -2px;
+}
+
+.menu .danger {
+  color: var(--red);
+}
+
+@media (max-width: 600px) {
+  .menu button {
+    min-height: 2.75rem;
+  }
+}
+
+/* A command on a row's second line. */
+.box > li.two .m code {
+  padding: 0;
+  background: none;
+  color: var(--t1);
+  font-size: 0.78125rem;
+  line-height: 1.4;
+}
+
+/* A row that is a link: the whole row is the link, and a chevron says it goes to another page. */
+.box > li.link {
+  padding: 0;
+}
+
+.row-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  align-self: stretch;
+  min-height: 3rem;
+  padding: 0.375rem 0.875rem;
+  border-radius: 0.6875rem;
+  color: inherit;
+}
+
+.row-link:focus-visible {
+  outline-offset: -2px;
+}
+
+.row-link > .ic {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  color: var(--t2);
+}
+
+.row-link::after {
+  content: "";
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  background: var(--t2);
+  opacity: 0.7;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 6l6 6-6 6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+/* "Can't find it?" opens in place: the steps are a box, and the line after it comes from the page. */
+details .box {
+  margin-top: 0.75rem;
+  color: var(--t1);
+  font-size: 0.9375rem;
+}
+
+details .box + .hint {
+  margin-top: 0.5rem;
+}
+
 /* Reading aids: what an owner may open, and inline code. */
 details {
   font-size: 0.9375rem;
@@ -801,278 +1013,147 @@ details p + p {
   margin-top: 0.5rem;
 }
 
-/* Parts the allow page still draws its own way. */
-.notice + :not(.notice) {
-  margin-top: 0.75rem;
+/* "Can't find it?" sits under the field like a link under a group. */
+.fields + details {
+  font-size: 0.8125rem;
 }
 
-.notice {
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-}
-
-.notice.caution {
-  border-color: var(--caution);
-  background: var(--caution-wash);
-  color: var(--caution);
-}
-
-.wide-page h2,
-.wide-page h3 {
-  font-size: 1.0625rem;
-  line-height: 1.3;
-  font-weight: 600;
-}
-
-.app-name {
-  font-weight: 600;
-}
-
-.device-check {
-  margin: 1.25rem 0 1rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  background: var(--well);
-}
-
-.device-check h2 {
-  margin: 0 0 0.25rem;
-  font-size: 1rem;
-}
-
-.device-check p {
-  margin: 0.25rem 0 0;
-}
-
-.device-check .user-code {
-  margin: 0.25rem 0 0.5rem;
-  font: 700 1.75rem/1.3 ui-monospace, "SF Mono", Menlo, monospace;
-  letter-spacing: 0.08em;
-}
-
-.facts,
-.held ul,
-.gives {
-  margin: 0 0 1rem;
-  padding-left: 1.25rem;
-}
-
-.facts,
-.gives {
-  list-style: disc;
-  color: var(--t2);
-}
-
-.facts {
-  font-size: 0.9375rem;
-}
-
-.held {
-  margin-bottom: 1.25rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-}
-
-.held h2 {
-  margin-bottom: 0.25rem;
-  font-size: 1rem;
-}
-
-.held ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.held li {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.held .level {
-  color: var(--t2);
-  white-space: nowrap;
-}
-
-fieldset.access {
-  min-width: 0;
-  margin: 0 0 1rem;
-  border: 0;
-}
-
-fieldset.access legend {
-  margin-bottom: 0.5rem;
-  padding: 0;
-  font-size: 1.0625rem;
-  font-weight: 600;
-}
-
-fieldset.access > p {
-  margin-bottom: 0.25rem;
-}
-
-.gives .danger,
-.line.danger {
-  color: var(--red);
-}
-
-.choice {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: 0.75rem;
-  align-items: start;
-  margin-top: 0.5rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--edge);
-  border-radius: 0.5rem;
-  cursor: default;
-}
-
-.choice:has(input:checked) {
-  border-color: var(--blue);
-  box-shadow: inset 0 0 0 1px var(--blue);
-}
-
-.choice:has(input:focus-visible) {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-}
-
-.choice input {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-  width: 1.125rem;
-  height: 1.125rem;
-  margin: 0.2rem 0 0;
-  accent-color: var(--blue);
-}
-
-.choice .name {
-  grid-column: 2;
-  font-weight: 600;
-}
-
-.choice .sub {
-  grid-column: 2;
-  color: var(--t2);
-  font-size: 0.9375rem;
-}
-
-.choose {
-  margin-bottom: 1rem;
-}
-
-.js .choose[data-needs-choice]:not(.open),
-.js .types:not(.open) {
-  display: none;
-}
-
-.choose h3 {
-  margin: 1.25rem 0 0.25rem;
-  font-size: 1rem;
-}
-
-.choose .hint {
-  margin: 0 0 0.5rem;
-}
-
-.types {
-  margin: 0 0 0 0.75rem;
-  padding-left: 0.75rem;
-  border-left: 2px solid var(--line);
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.625rem 0;
-  border-top: 1px solid var(--line);
-}
-
-.choose > .row:first-child,
-.types > .hint + .row {
-  border-top: 0;
-}
-
-.row .text {
-  min-width: 0;
-}
-
-.row .title {
-  font-weight: 600;
-}
-
-.row .line,
-.row .ident {
-  color: var(--t2);
-  font-size: 0.875rem;
-}
-
-.row .ident {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-}
-
-.row input[type="checkbox"][role="switch"] {
-  appearance: none;
-  position: relative;
-  flex: none;
-  width: 2.75rem;
-  height: 1.625rem;
-  margin: 0;
-  border: 1px solid var(--edge);
-  border-radius: 1rem;
-  background: var(--well);
-  cursor: default;
-}
-
-.row input[type="checkbox"][role="switch"]::after {
-  content: "";
-  position: absolute;
-  top: 0.125rem;
-  left: 0.125rem;
-  width: 1.25rem;
-  height: 1.25rem;
-  border-radius: 50%;
-  background: var(--t2);
-  transition: transform 0.15s;
-}
-
-.row input[type="checkbox"][role="switch"]:checked {
-  border-color: var(--blue);
-  background: var(--blue);
-}
-
-.row input[type="checkbox"][role="switch"]:checked::after {
-  background: var(--on-blue);
-  transform: translateX(1.125rem);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .row input[type="checkbox"][role="switch"]::after {
-    transition: none;
-  }
+.fields + details > summary {
+  min-height: 1.125rem;
 }
 
 @media (max-width: 600px) {
-  .row:not(.power) {
-    flex-wrap: wrap;
+  .fields + details > summary {
+    min-height: 2.75rem;
+    margin: -0.8125rem 0;
   }
+}
 
-  .row .pop {
-    width: 100%;
-  }
+.fields + .err,
+.box + .err,
+.fields + .note {
+  margin-top: 0.75rem;
+}
+
+.note + form {
+  margin-top: 1.25rem;
+}
+
+fieldset {
+  min-inline-size: 0;
+  border: 0;
+}
+
+legend {
+  padding: 0;
+}
+
+/* A row under another row, and a row with a second line. */
+.box > li.sub .t {
+  padding-left: 1rem;
+}
+
+.box > li.sub::before {
+  left: 1.875rem;
+}
+
+.box > li.noted {
+  padding-block: 0.5625rem;
+}
+
+.box .m {
+  display: block;
+  color: var(--t2);
+  font-size: 0.8125rem;
+  line-height: 1.0625rem;
+}
+
+.box .m.ident {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.78125rem;
+}
+
+.box > li.hint {
+  min-height: 0;
+  padding-block: 0.5rem;
+}
+
+/* A part a choice shows or hides is shown by script only; without script every part shows,
+   and the sentences that depend on a choice give way to the ones that hold for all. */
+.js [data-shown-by]:not(.open),
+.js .without-script,
+html:not(.js) .when {
+  display: none;
+}
+
+/* A line of sentences shows only while one of them does. */
+.js .after.whens:not(:has(.always, .when.open)),
+html:not(.js) .after.whens:not(:has(.always, .without-script)) {
+  display: none;
+}
+
+/* The allow page. */
+/* The sections carry their own space above, so the head leaves none below. */
+.head:has(~ .consent) {
+  margin-bottom: 0;
+}
+
+.consent .err[data-form-error] {
+  margin-top: 1rem;
+}
+
+/* Allow comes first in the markup, so Return sends it; it is drawn last. */
+.consent .actions .btn:not(.primary) {
+  order: 1;
+}
+
+.consent .actions .btn.primary {
+  order: 2;
+}
+
+/* Choose is a button drawn over the start of the actions while the choices are closed. */
+.consent .choose {
+  position: relative;
+  display: flow-root;
+  font-size: inherit;
+}
+
+.consent .choose:not([open]) > summary {
+  position: absolute;
+  top: 1.75rem;
+  left: 0;
+  z-index: 1;
+}
+
+.consent .choose[open] > summary {
+  display: none;
+}
+
+.consent .choose > summary {
+  list-style: none;
+}
+
+.consent .choose > summary::-webkit-details-marker {
+  display: none;
+}
+
+.consent .choose:not([open]) ~ .actions {
+  padding-left: 6rem;
+}
+
+.consent .choose > :not(summary) {
+  color: var(--t1);
+}
+
+.consent:has(.choose[open]) .glance {
+  display: none;
 }
 
 @media (forced-colors: active) {
   .btn,
   .pop select,
-  .in {
+  .in,
+  .code .cell {
     border: 1px solid ButtonText;
   }
 
@@ -1086,12 +1167,8 @@ fieldset.access > p {
     outline: 2px solid Highlight;
   }
 
-  .row input[type="checkbox"][role="switch"]:checked {
-    background: Highlight;
-  }
-
-  .row input[type="checkbox"][role="switch"]::after {
-    background: ButtonText;
+  .link {
+    color: LinkText;
   }
 
   .err::before,

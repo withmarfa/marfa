@@ -19,14 +19,16 @@ use axum::response::{IntoResponse, Response};
 use crate::app::refusal::{Refusal, Result};
 
 pub use consent::{Answering, Consent, consent};
-pub use device::{DeviceEntry, DeviceProblem, device_entry};
+pub use device::{DeviceCheck, DeviceEntry, DeviceProblem, device_check, device_entry};
 pub use notice::{AuthError, AuthErrorCode, Link, Notice, auth_error, notice};
 pub use passkeys::{OwnerPasskey, OwnerPasskeys, PasswordProblem, owner_passkeys};
 pub use setup::{
     AskingApp, RecoverPassword, RecoveryCode, SetupCode, SetupCodeProblem, SetupDetails,
     SetupFieldErrors, recover_password, recovery_code, setup_code, setup_details,
 };
-pub use sign_in::{Running, SignIn, SignInProblem, SignedIn, running, sign_in, signed_in};
+pub use sign_in::{
+    Missing, Running, SignIn, SignInProblem, SignedIn, forgot_password, running, sign_in, signed_in,
+};
 pub use wait::Wait;
 
 const STYLE: &str = include_str!("assets/page.css");
@@ -84,8 +86,8 @@ impl IntoResponse for Page {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Needs {
     pub connect: bool,
-    /// The page can open the "Confirm it's you" dialog. It implies `connect`.
-    pub confirm_dialog: bool,
+    /// The page can open the "Confirm it's you" dialog, with this line under its title. It implies `connect`.
+    pub confirm_dialog: Option<&'static str>,
 }
 
 #[derive(Template)]
@@ -96,7 +98,7 @@ struct Base<'a> {
     style: &'static str,
     script: &'static str,
     body: &'a str,
-    confirm_dialog: bool,
+    confirm_dialog: Option<&'static str>,
     opens: Option<&'a str>,
 }
 
@@ -113,7 +115,7 @@ fn document(title: &str, body: &str, needs: Needs) -> Result<Page> {
 /// `opens` is an address the browser goes to as soon as the page loads, by a refresh the policy allows.
 fn document_opening(title: &str, body: &str, needs: Needs, opens: Option<&str>) -> Result<Page> {
     let nonce = new_nonce()?;
-    let connect = needs.connect || needs.confirm_dialog;
+    let connect = needs.connect || needs.confirm_dialog.is_some();
     let html = Base {
         title,
         nonce: &nonce,

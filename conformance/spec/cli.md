@@ -2080,7 +2080,7 @@ When the server refuses a request the CLI sends under a revoked key, the CLI MUS
 
 ### `cli/access-words-cli`
 
-Where the CLI prints what a key or an app holds in its readable output, the CLI MUST name each level of access it prints as "Read and edit", "Read only" or "No access", and each permission by the title the approval pages use.
+Where the CLI prints what a key or an app holds in its readable output, the CLI MUST name each level of access it prints as "Read and Edit", "Read Only" or "No Access", and each permission by the title the approval pages use.
 
 **Tests:** `cli/access-words.test.ts › prints what a key holds in the words the approval pages use`.
 

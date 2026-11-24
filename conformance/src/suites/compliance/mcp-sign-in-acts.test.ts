@@ -27,12 +27,12 @@ import {
 import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { testAuthenticator } from "../../utils/passkey-authenticator.js";
 import {
+  approveAsDrawn,
   authorize,
   authorizeQuery,
   CALLBACK,
   codeFor,
   connect,
-  decide,
   pkce,
   registerApp,
   sentTo,
@@ -749,13 +749,11 @@ describe("marfa_end_sign_in ends an app", () => {
       ),
     );
     expect(asked?.href.startsWith(added)).toBe(false);
-    const landed = await decide(
+    const landed = await approveAsDrawn(
       server,
       home.origin,
       ownerCookie,
       asked!,
-      true,
-      APP_SCOPE.split(" "),
     );
     expect(landed?.href.startsWith(added)).toBe(true);
     const refused = await stale({ id: owner.grantId, confirm: shown.confirm });
@@ -773,13 +771,11 @@ describe("marfa_end_sign_in ends an app", () => {
         ownerCookie,
       ),
     );
-    const approved = await decide(
+    const approved = await approveAsDrawn(
       server,
       home.origin,
       ownerCookie,
       again!,
-      true,
-      APP_SCOPE.split(" "),
     );
     expect(approved?.searchParams.get("code")).toBeTruthy();
     const done = await preview({ id: owner.grantId, confirm: refused.confirm });

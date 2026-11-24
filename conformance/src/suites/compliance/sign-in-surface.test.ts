@@ -1,5 +1,9 @@
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
-import { pageField, visibleText } from "../../utils/page-html.js";
+import {
+  markedInvalid,
+  pageField,
+  visibleText,
+} from "../../utils/page-html.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { ErrorResponse } from "../../client/types.js";
 import {
@@ -29,6 +33,7 @@ const FOREIGN = "https://foreign.example";
 const FORM_DOORS = [
   "/auth/sign-in",
   "/auth/device",
+  "/auth/device/check",
   "/auth/device/consent",
   "/auth/consent",
 ];
@@ -121,6 +126,15 @@ describe("the sign-in surface", () => {
     );
     expect(unnamed.status).toBe(302);
     expect(unnamed.headers.get("location")).toContain("error=missing_code");
+    const unnamedCheck = await postForm(
+      "/auth/device/check",
+      { user_code: "ABCD-EFGH" },
+      { [CLIENT_HEADER]: "192.0.2.1" },
+    );
+    expect(unnamedCheck.status).toBe(302);
+    expect(
+      new URL(unnamedCheck.headers.get("location") ?? "", origin).pathname,
+    ).toBe("/auth/sign-in");
   });
 
   it("refuses a sign-in that says neither Origin nor Referer, as a form or as JSON, and sets no cookie", async () => {
@@ -349,7 +363,7 @@ describe("the sign-in surface", () => {
     expect((await signIn(OWNER.password, "198.51.100.20")).status).toBe(200);
   });
 
-  it("limits anonymous device code entry per address and owner consent per owner", async () => {
+  it("limits anonymous device code entry per address and the owner's checks per owner", async () => {
     const enter = async (code: string, address: string) => {
       const response = await postForm(
         "/auth/device",
@@ -384,7 +398,7 @@ describe("the sign-in surface", () => {
     expect(cookie).toBeDefined();
     const screen = async (code: string, address: string) => {
       const response = await fetch(
-        `${server!.apiUrl}/auth/device/consent?user_code=${code}`,
+        `${server!.apiUrl}/auth/device/check?user_code=${code}`,
         {
           headers: { cookie: cookie!, [CLIENT_HEADER]: address },
           redirect: "manual",
@@ -392,10 +406,10 @@ describe("the sign-in surface", () => {
       );
       return response.headers.get("location") ?? "";
     };
-    const decide = (code: string, address: string) =>
+    const confirm = (code: string, address: string) =>
       postForm(
-        "/auth/device/consent",
-        { user_code: code, decision: "approve" },
+        "/auth/device/check",
+        { user_code: code },
         { origin, cookie: cookie!, [CLIENT_HEADER]: address },
       );
     const browser = "203.0.113.31";
@@ -403,14 +417,14 @@ describe("the sign-in surface", () => {
       expect(await screen(`YY${String(100000 + i)}`, browser)).toContain(
         "error=invalid_code",
       );
-      expect((await decide(`YY${String(200000 + i)}`, browser)).status).toBe(
-        404,
-      );
+      const confirmed = await confirm(`YY${String(200000 + i)}`, browser);
+      expect(confirmed.status).toBe(302);
+      expect(confirmed.headers.get("location")).toContain("error=invalid_code");
     }
     expect(await screen("YY999999", browser)).toContain(
       "error=too_many_attempts",
     );
-    const refused = await decide("YY999998", browser);
+    const refused = await confirm("YY999998", browser);
     expect(refused.status).toBe(302);
     expect(refused.headers.get("location")).toContain(
       "error=too_many_attempts",
@@ -515,7 +529,7 @@ describe("the pages a person reads at sign-in", () => {
     expect(page).not.toContain("not-the-password");
   });
 
-  it("tells a locked-out person how long to wait, in whole minutes rounded up, and that a passkey still signs in", async () => {
+  it("tells a locked-out person how long to wait, in whole minutes rounded up, and names no passkey when the owner has none", async () => {
     // The wait the page names is the one the real lock set: lock an address,
     // follow the form's redirect, and read the page it lands on.
     const guesser = "203.0.113.60";
@@ -537,11 +551,9 @@ describe("the pages a person reads at sign-in", () => {
     expect(real).toContain(
       `Try again in ${String(minutes)} ${minutes === 1 ? "minute" : "minutes"}`,
     );
-    // The sentence itself: every sign-in page holds the word "passkey" in the
-    // passkey button, so the word alone proves nothing.
-    expect(real).toMatch(
-      /Try again in \d+ minutes?, or sign in with a passkey/,
-    );
+    // This instance signs in at an address that cannot hold a passkey.
+    expect(real).toMatch(/Try again in \d+ minutes?\./);
+    expect(real.toLowerCase()).not.toContain("passkey");
 
     // Whole minutes, rounded up, for waits either side of a minute.
     for (const [retryAfter, said] of [
@@ -605,22 +617,22 @@ describe("the pages a person reads at sign-in", () => {
       );
     const wrong = await said("invalid_code");
     expect(wrong).toContain(
-      "That code isn't right or has expired. Check it against your device, or start again there to get a new one.",
+      "That code isn’t right or has expired. Check your device.",
     );
     // The witness: the other error is the one that says only expired.
     const expired = await said("expired_code");
     expect(expired).toContain(
-      "That code has expired. Start connecting again in the app or on the device to get a new one.",
+      "That code has expired. Start again on your device.",
     );
-    expect(expired).not.toContain("isn't right");
+    expect(expired).not.toContain("isn’t right");
   });
 
   it("says how long codes last", async () => {
     const plain = visibleText(
       await (await fetch(`${server!.apiUrl}/auth/device`)).text(),
     );
-    expect(plain).toContain("Codes end after 10 minutes.");
-    expect(plain).not.toContain("isn't right");
+    expect(plain).toContain("A code lasts 10 minutes.");
+    expect(plain).not.toContain("isn’t right");
   });
 
   it("names the app an authorization sent the person for, and no app for a link edited after signing", async () => {
@@ -628,8 +640,8 @@ describe("the pages a person reads at sign-in", () => {
     expect(signInUrl.pathname).toBe("/auth/sign-in");
     const named = visibleText(await (await fetch(signInUrl)).text());
     expect(named).toContain("Conformance Notes");
-    // An app that registered itself is flagged as the consent page flags it.
-    expect(named).toContain("hasn't verified this app");
+    // An app that registered itself is marked unverified beside its name.
+    expect(named).toContain("(unverified");
 
     const edited = new URL(signInUrl);
     edited.searchParams.set("scope", "core.note:write");
@@ -662,6 +674,57 @@ describe("the pages a person reads at sign-in", () => {
         "password",
       ),
     ).toBeDefined();
+  });
+
+  it("marks only the fields a sign-in form was sent without, and lets the form reach the server empty", async () => {
+    const page = await (await fetch(`${server!.apiUrl}/auth/sign-in`)).text();
+    expect(/<form\b[^>]*\snovalidate[\s>]/i.test(page)).toBe(true);
+    expect(/<input id="username"[^>]*\srequired/i.test(page)).toBe(true);
+    expect(/<input id="password"[^>]*\srequired/i.test(page)).toBe(true);
+
+    const marked = async (username: string, password: string) => {
+      const sent = await postForm(
+        "/auth/sign-in",
+        { username, password, return_to: "/" },
+        { origin, [CLIENT_HEADER]: "192.0.2.61" },
+      );
+      expect(sent.status).toBe(302);
+      const landed = await (
+        await fetch(new URL(sent.headers.get("location")!, server!.apiUrl))
+      ).text();
+      expect(visibleText(landed)).toContain(
+        "Enter your username and your password.",
+      );
+      return ["username", "password"].filter((id) => markedInvalid(landed, id));
+    };
+    expect(await marked("   ", OWNER.password)).toEqual(["username"]);
+    expect(await marked(OWNER.username, "")).toEqual(["password"]);
+    expect(await marked("", "")).toEqual(["username", "password"]);
+  });
+
+  it("answers a page that says how to reset the owner's password, without a sign-in and without printing the private socket's path", async () => {
+    const reply = await fetch(`${server!.apiUrl}/auth/forgot-password`, {
+      headers: { accept: "text/html" },
+    });
+    expect(reply.status).toBe(200);
+    const text = visibleText(await reply.text());
+    expect(text).toContain("marfa --socket PATH owner recover");
+    expect(text).toContain("MARFA_OWNER_RECOVERY=true");
+    expect(text).toContain("Enter Recovery Code");
+    // The witness: the server has a private socket whose path a page could have
+    // printed, and which the page does not.
+    const socket = server!.controlSocket;
+    expect(socket).toContain("/");
+    expect(text).not.toContain(socket);
+    // A query on the address changes nothing, and nor does a session.
+    expect(
+      (await fetch(`${server!.apiUrl}/auth/forgot-password?stray=1`)).status,
+    ).toBe(200);
+    const signedIn = await fetch(`${server!.apiUrl}/auth/forgot-password`, {
+      headers: { cookie: await sessionCookie("192.0.2.55") },
+    });
+    expect(signedIn.status).toBe(200);
+    expect(visibleText(await signedIn.text())).toBe(text);
   });
 
   it("tells a link edited after it was signed that it is invalid, not that it has expired", async () => {

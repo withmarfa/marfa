@@ -1,16 +1,17 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { signInOwnerWithPassword } from "../client/owner-session.js";
-import { offeredValues } from "./approval-form.js";
+import { everythingOffered } from "./approval-form.js";
+import { checkDeviceCode } from "./device-check.js";
 import { parseEnvFile, redactSetupProof, TEST_OWNER } from "./target.js";
 import {
   groupOf,
@@ -345,7 +346,10 @@ export function keepStatusLog(state: string): void {
   const log = join(state, "server.log");
   if (destination !== undefined && destination !== "" && existsSync(log)) {
     mkdirSync(destination, { recursive: true });
-    copyFileSync(log, join(destination, `${basename(state)}.log`));
+    writeFileSync(
+      join(destination, `${basename(state)}.log`),
+      redactSetupProof(readFileSync(log, "utf8")),
+    );
   }
 }
 
@@ -753,14 +757,20 @@ export interface DeviceFlow {
   /** One poll of the token door, as an app makes it: no credential. */
   poll(): Promise<DevicePoll>;
   /**
-   * The owner signs in on the sign-in surface's own origin and approves
-   * everything the consent screen offers.
+   * The owner signs in on the sign-in surface's own origin, confirms the code
+   * on the check page and approves everything the consent screen offers.
    */
   approve(): Promise<void>;
-  /** The owner signs in and denies the code on the consent screen. */
+  /** The owner signs in, confirms the code and denies it on the consent screen. */
   deny(): Promise<void>;
   /** The code a device's own request carries. */
   deviceCode: string;
+  /** The code the device shows the person. */
+  userCode: string;
+  /** The link carrying the code, `verification_uri_complete`. */
+  link: string;
+  /** The sign-in surface's origin, where the person enters and approves the code. */
+  origin: string;
 }
 
 /**
@@ -855,6 +865,9 @@ export async function startDeviceFlow(
     registeredScope: registered.scope,
     interval: code.interval,
     deviceCode: code.device_code,
+    userCode: code.user_code,
+    link: code.verification_uri_complete,
+    origin,
     async poll() {
       const response = await fetch(discovery.token_endpoint, {
         method: "POST",
@@ -874,6 +887,7 @@ export async function startDeviceFlow(
       const cookie = await ownerSession();
       // Redirects are not followed, so a refusal, such as the per-address
       // lookup limit, fails here rather than as a pending poll later.
+      await checkDeviceCode(origin, origin, cookie, code.user_code);
       const consent = await fetch(
         `${origin}/auth/device/consent?user_code=${encodeURIComponent(code.user_code)}`,
         { headers: { cookie }, redirect: "manual" },
@@ -884,14 +898,12 @@ export async function startDeviceFlow(
         );
       }
       const html = await consent.text();
-      const form = new URLSearchParams({
-        user_code: code.user_code,
-        decision: "approve",
-      });
       // The owner approves everything the device asked for.
-      for (const scope of offeredValues(html, "scopes")) {
-        form.append("scopes", scope);
-      }
+      const form = new URLSearchParams([
+        ["user_code", code.user_code],
+        ["decision", "approve"],
+        ...everythingOffered(html),
+      ]);
       const approved = await fetch(`${origin}/auth/device/consent`, {
         method: "POST",
         redirect: "manual",
@@ -902,14 +914,20 @@ export async function startDeviceFlow(
         },
         body: form,
       });
-      if (approved.status !== 200) {
+      // A page drawn again or a denial is not an approval.
+      const answer = await approved.text();
+      if (
+        approved.status !== 200 ||
+        !answer.includes("Your device is connected")
+      ) {
         throw new Error(
-          `the owner's approval was refused: ${String(approved.status)}`,
+          `the owner's approval was not taken: ${String(approved.status)}`,
         );
       }
     },
     async deny() {
       const cookie = await ownerSession();
+      await checkDeviceCode(origin, origin, cookie, code.user_code);
       const denied = await fetch(`${origin}/auth/device/consent`, {
         method: "POST",
         redirect: "manual",

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { offeredValues } from "../../utils/approval-form.js";
+import { everythingOffered, heldOn } from "../../utils/approval-form.js";
+import { checkDeviceCode } from "../../utils/device-check.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -197,7 +198,7 @@ async function connect(app: App, cookie: string): Promise<string> {
 async function consentPage(
   app: App,
   cookie: string,
-): Promise<{ page: URL; verifier: string }> {
+): Promise<{ page: URL; verifier: string; held: string }> {
   const proof = pkce();
   const landed = await sentTo(
     server,
@@ -211,7 +212,8 @@ async function consentPage(
     ),
   );
   expect(landed?.pathname, String(landed)).toBe("/auth/consent");
-  return { page: landed!, verifier: proof.verifier };
+  const html = await (await fetch(landed!, { headers: { cookie } })).text();
+  return { page: landed!, verifier: proof.verifier, held: heldOn(html) };
 }
 
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
@@ -249,23 +251,26 @@ async function askDevice(clientId: string): Promise<DeviceCode> {
   return (await response.json()) as DeviceCode;
 }
 
+/** The check step, which sends a browser that must sign in again to the sign-in page. */
 function devicePage(userCode: string, cookie: string): Promise<Response> {
   return fetch(
-    `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+    `${server.apiUrl}/auth/device/check?user_code=${encodeURIComponent(userCode)}`,
     { redirect: "manual", headers: { cookie } },
   );
 }
 
 async function approveDevice(userCode: string, cookie: string): Promise<void> {
-  const shown = await devicePage(userCode, cookie);
+  await checkDeviceCode(server.apiUrl, origin, cookie, userCode);
+  const shown = await fetch(
+    `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+    { redirect: "manual", headers: { cookie } },
+  );
   expect(shown.status, shown.headers.get("location") ?? "").toBe(200);
-  const form = new URLSearchParams({
-    user_code: userCode,
-    decision: "approve",
-  });
-  for (const scope of offeredValues(await shown.text(), "scopes")) {
-    form.append("scopes", scope);
-  }
+  const form = new URLSearchParams([
+    ["user_code", userCode],
+    ["decision", "approve"],
+    ...everythingOffered(await shown.text()),
+  ]);
   const decided = await fetch(`${server.apiUrl}/auth/device/consent`, {
     method: "POST",
     redirect: "manual",
@@ -562,7 +567,7 @@ describe("renewing the sign-in the settings tool asked for", () => {
     toolResult(await settingsCall(renewed, { [SWITCH]: false }));
 
     const third = await askDevice(clientId);
-    // The witness: the device consent still sends the older browser to sign in.
+    // The witness: the device check step still sends the older browser to sign in.
     const older = await devicePage(third.user_code, stale);
     await older.body?.cancel();
     expect(older.status).toBe(302);
@@ -579,7 +584,16 @@ describe("renewing the sign-in the settings tool asked for", () => {
     // The witness: before the refusal, approving an open consent page gives a code.
     const before = await consentPage(app, stale);
     expectCodeAtOnce(
-      await decide(server, origin, stale, before.page, true, SCOPE.split(" ")),
+      await decide(
+        server,
+        origin,
+        stale,
+        before.page,
+        true,
+        SCOPE.split(" "),
+        [],
+        before.held,
+      ),
       "before",
     );
     const open = await consentPage(app, stale);
@@ -587,7 +601,16 @@ describe("renewing the sign-in the settings tool asked for", () => {
     expectRenewalAsked(await settingsCall(access, { [SWITCH]: true }));
 
     const back = expectSignInAsked(
-      await decide(server, origin, stale, open.page, true, SCOPE.split(" ")),
+      await decide(
+        server,
+        origin,
+        stale,
+        open.page,
+        true,
+        SCOPE.split(" "),
+        [],
+        open.held,
+      ),
       "the page opened before the refusal",
     );
     expect(back.startsWith("/auth/consent?"), back).toBe(true);
@@ -601,6 +624,8 @@ describe("renewing the sign-in the settings tool asked for", () => {
           open.page,
           true,
           SCOPE.split(" "),
+          [],
+          open.held,
         ),
         "after the sign-in",
       ),

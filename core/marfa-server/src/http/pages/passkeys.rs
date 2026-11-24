@@ -117,7 +117,7 @@ pub fn owner_passkeys(view: &OwnerPasskeys) -> Result<Page> {
         &body,
         Needs {
             connect: true,
-            confirm_dialog: true,
+            confirm_dialog: Some("Enter your password to continue."),
         },
     )
 }

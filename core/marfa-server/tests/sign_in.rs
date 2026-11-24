@@ -86,23 +86,6 @@ fn post_signed_in(path: &str, body: &Value, cookie: &str) -> Request<Body> {
     request
 }
 
-/// What a browser sends for a form on a page: the fields as a form, and a page asked for.
-fn page_form(path: &str, fields: &[(&str, &str)], cookie: &str) -> Request<Body> {
-    let mut body = form_urlencoded::Serializer::new(String::new());
-    for (name, value) in fields {
-        body.append_pair(name, value);
-    }
-    Request::builder()
-        .method(Method::POST)
-        .uri(path)
-        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .header(header::ACCEPT, "text/html")
-        .header(header::ORIGIN, ORIGIN)
-        .header(header::COOKIE, cookie)
-        .body(Body::from(body.finish()))
-        .unwrap()
-}
-
 /// A use of the session at the one door it counts on: the passkey page's list.
 fn on_the_passkey_list(cookie: &str) -> Request<Body> {
     Request::builder()
@@ -767,7 +750,7 @@ async fn a_form_sign_out_shows_the_signed_out_notice_and_ends_the_cookie() {
     let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
     let ended = send(
         instance.public.clone(),
-        page_form("/auth/sign-out", &[], &cookie),
+        post_form("/auth/sign-out", &[], &cookie),
     )
     .await;
     assert_eq!(ended.status, StatusCode::OK);
@@ -790,7 +773,7 @@ async fn change_from_the_page(instance: &Instance, cookie: &str, fields: [&str; 
     let [current, new, again] = fields;
     send(
         instance.public.clone(),
-        page_form(
+        post_form(
             "/auth/owner/password",
             &[
                 ("current_password", current),
@@ -1057,4 +1040,373 @@ async fn the_passkeys_page_marks_only_the_fields_a_problem_is_about() {
     );
     assert!(invalid("?problem=something_else").await.is_empty());
     assert!(invalid("").await.is_empty());
+}
+
+/// A browser's form post, which asks for a page.
+fn post_form(path: &str, fields: &[(&str, &str)], cookie: &str) -> Request<Body> {
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(fields)
+        .finish();
+    Request::builder()
+        .method(Method::POST)
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(header::ACCEPT, "text/html")
+        .header(header::ORIGIN, ORIGIN)
+        .header(header::COOKIE, cookie)
+        .body(Body::from(body))
+        .unwrap()
+}
+
+async fn page_of(router: Router, request: Request<Body>) -> (StatusCode, String) {
+    let response = router.oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// A setup session cookie, made the way a person's browser makes one: with the setup code.
+async fn setup_session(router: &Router, private: &Router) -> String {
+    let issued = send(private.clone(), post("/_control/setup/code", &json!({}))).await;
+    let code = json!({ "code": issued.body["code"] });
+    let exchanged = send(router.clone(), post("/setup/exchange", &code)).await;
+    assert_eq!(exchanged.status, StatusCode::OK);
+    exchanged.cookie().unwrap()
+}
+
+const MISMATCH: &str = "The passwords don’t match.";
+
+#[tokio::test]
+async fn a_claim_form_whose_passwords_differ_is_refused_and_claims_nothing() {
+    let dir = TempDir::new().unwrap();
+    let app = boot(&dir).await;
+    let (router, private) = (public(app.clone()), control(app.clone()));
+    let setup = setup_session(&router, &private).await;
+    let form = |confirm: &'static str| {
+        post_form(
+            "/setup/claim",
+            &[
+                ("username", USERNAME),
+                ("name", ""),
+                ("password", "first-password"),
+                ("confirm_password", confirm),
+            ],
+            &setup,
+        )
+    };
+
+    let (status, page) = page_of(router.clone(), form("first-passwrod")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(page.contains(MISMATCH), "{page}");
+    assert!(page.contains("id=\"owner-form\""));
+    assert!(page.contains(&format!("value=\"{USERNAME}\"")));
+    assert!(!page.contains("first-pass"), "a password came back");
+    assert!(!claim::is_claimed(&app).await.unwrap());
+
+    // The witness: the same form with the passwords alike claims, and a blank name is the username.
+    let (status, _) = page_of(router, form("first-password")).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(claim::is_claimed(&app).await.unwrap());
+    let owner = marfa_server::app::auth::owner::find(&app)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(owner.name, USERNAME);
+}
+
+#[tokio::test]
+async fn the_forgot_password_page_answers_to_anyone_and_prints_no_path() {
+    let instance = Instance::claimed().await;
+    let socket = instance.dir.path().join("s.sock");
+    let get = |path: &str, cookie: Option<&str>| {
+        let mut request = Request::builder().uri(path);
+        if let Some(cookie) = cookie {
+            request = request.header(header::COOKIE, cookie);
+        }
+        request.body(Body::empty()).unwrap()
+    };
+
+    let (status, page) = page_of(instance.public.clone(), get("/auth/forgot-password", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("owner recover"), "{page}");
+    assert!(page.contains("MARFA_OWNER_RECOVERY=true"), "{page}");
+    assert!(!page.contains(socket.to_str().unwrap()), "{page}");
+    assert!(
+        !page.contains(instance.dir.path().to_str().unwrap()),
+        "{page}"
+    );
+    // The witness: the page names the socket by a word, and the sign-in page links here.
+    assert!(page.contains("socket PATH"), "{page}");
+    let (_, sign_in) = page_of(instance.public.clone(), get("/auth/sign-in", None)).await;
+    assert!(
+        sign_in.contains("href=\"/auth/forgot-password\""),
+        "{sign_in}"
+    );
+
+    // A signed-in person is answered the same page.
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let (status, again) = page_of(
+        instance.public.clone(),
+        get("/auth/forgot-password", Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(again.contains("owner recover"), "{again}");
+}
+
+#[tokio::test]
+async fn a_claim_sent_as_json_needs_no_confirmation_and_a_blank_name_is_the_username() {
+    let dir = TempDir::new().unwrap();
+    let app = boot(&dir).await;
+    let router = control(app.clone());
+    let claim_body = json!({ "username": USERNAME, "password": PASSWORD, "name": "  " });
+    let reply = send(router, post("/_control/setup/claim", &claim_body)).await;
+    assert_eq!(reply.status, StatusCode::CREATED);
+    assert_eq!(reply.body["name"], USERNAME);
+}
+
+#[tokio::test]
+async fn a_recovery_form_is_judged_for_its_owner_and_its_proof_before_its_passwords() {
+    let form = |password: &'static str, confirm: Option<&'static str>| {
+        let mut fields = vec![("password", password)];
+        fields.extend(confirm.map(|confirm| ("confirm_password", confirm)));
+        post_form("/setup/recover", &fields, "")
+    };
+
+    // No owner: whatever the passwords are, there is nothing to recover.
+    let dir = TempDir::new().unwrap();
+    let app = boot_with(
+        &dir,
+        &[
+            ("MARFA_TEST_HOOKS", "true"),
+            ("MARFA_SIGN_IN_ADDRESS", ORIGIN),
+            ("MARFA_OWNER_RECOVERY", "true"),
+        ],
+    )
+    .await;
+    let unowned = public(app);
+    for confirm in [Some("second-passwrod"), Some("second-password"), None] {
+        let (status, _) = page_of(unowned.clone(), form("second-password", confirm)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{confirm:?}");
+    }
+
+    // An owner and no proof standing: the ended proof is said before a mismatch.
+    let instance = Instance::claimed_with(&[
+        ("MARFA_TEST_HOOKS", "true"),
+        ("MARFA_SIGN_IN_ADDRESS", ORIGIN),
+        ("MARFA_OWNER_RECOVERY", "true"),
+    ])
+    .await;
+    for confirm in [Some("second-passwrod"), Some("second-password")] {
+        let (status, page) =
+            page_of(instance.public.clone(), form("second-password", confirm)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{confirm:?}");
+        assert!(page.contains("recovery session ended"), "{page}");
+    }
+    assert!(instance.sign_in(PASSWORD).await.status.is_success());
+}
+
+#[tokio::test]
+async fn a_form_that_sets_a_password_must_repeat_it() {
+    let dir = TempDir::new().unwrap();
+    let app = boot(&dir).await;
+    let (router, private) = (public(app.clone()), control(app.clone()));
+    let setup = setup_session(&router, &private).await;
+    let claim_form = |extra: &[(&str, &str)]| {
+        let mut fields = vec![
+            ("username", USERNAME),
+            ("name", ""),
+            ("password", "first-password"),
+        ];
+        fields.extend_from_slice(extra);
+        post_form("/setup/claim", &fields, &setup)
+    };
+
+    // The page leaves the confirmation out: nothing is claimed.
+    let (status, page) = page_of(router.clone(), claim_form(&[])).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(page.contains(MISMATCH), "{page}");
+    assert!(!claim::is_claimed(&app).await.unwrap());
+
+    // A claim that also holds a field it does not declare is refused for that field first.
+    let mut undeclared = claim_form(&[("confirm_password", "first-passwrod"), ("bogus", "1")]);
+    undeclared
+        .headers_mut()
+        .insert(header::ACCEPT, "application/json".parse().unwrap());
+    let (status, body) = page_of(router.clone(), undeclared).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("unknown_body_fields"), "{body}");
+    assert!(body.contains("bogus"), "{body}");
+
+    // A session that has ended is said before a mismatch.
+    let ended = post_form(
+        "/setup/claim",
+        &[
+            ("username", USERNAME),
+            ("password", "first-password"),
+            ("confirm_password", "first-passwrod"),
+        ],
+        "marfa_setup=gone",
+    );
+    let (status, _) = page_of(router.clone(), ended).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(!claim::is_claimed(&app).await.unwrap());
+
+    // The witness: the same form with the confirmation alike claims.
+    let (status, _) = page_of(
+        router,
+        claim_form(&[("confirm_password", "first-password")]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(claim::is_claimed(&app).await.unwrap());
+}
+
+#[tokio::test]
+async fn a_start_without_an_owner_issues_a_setup_link_beside_its_code() {
+    let dir = TempDir::new().unwrap();
+    let app = boot(&dir).await;
+    app.record_bound(ORIGIN.trim_start_matches("http://").parse().unwrap());
+    claim::announce_at_start(&app).await.unwrap();
+    let held = |kind: &'static str| {
+        app.db.read(move |tx| {
+            Ok(tx.query_row(
+                "SELECT count(*) FROM setup_proof WHERE kind = ?1",
+                [kind],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+    };
+    assert_eq!(
+        (held("code").await.unwrap(), held("ticket").await.unwrap()),
+        (1, 1)
+    );
+    assert_eq!(
+        claim::handoff_link(&app, "abc"),
+        format!("{ORIGIN}/setup#handoff=abc")
+    );
+    let claimed = Instance::claimed().await;
+    claim::announce_at_start(&claimed.app).await.unwrap();
+    let tickets: i64 = claimed
+        .app
+        .db
+        .read(|tx| {
+            Ok(tx.query_row(
+                "SELECT count(*) FROM setup_proof WHERE kind = 'ticket'",
+                [],
+                |row| row.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(tickets, 0);
+}
+
+#[tokio::test]
+async fn a_start_offers_its_link_only_where_the_setup_page_can_take_it() {
+    let notice = |extra: &'static [(&'static str, &'static str)], listening: bool| async move {
+        let dir = TempDir::new().unwrap();
+        let mut pairs = vec![("MARFA_TEST_HOOKS", "true")];
+        pairs.extend_from_slice(extra);
+        let app = boot_with(&dir, &pairs).await;
+        if listening {
+            app.record_bound("127.0.0.1:8600".parse().unwrap());
+        }
+        let line = claim::claim_notice(&app).await.unwrap().unwrap();
+        let tickets: i64 = app
+            .db
+            .read(|tx| {
+                Ok(tx.query_row(
+                    "SELECT count(*) FROM setup_proof WHERE kind = 'ticket'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        (line, tickets)
+    };
+
+    // The witness: an address the page serves on carries the link, and its ticket is held.
+    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", ORIGIN)], true).await;
+    assert!(line.contains("setup code: "), "the notice lost its code");
+    assert!(
+        line.contains(&format!("{ORIGIN}/setup#handoff=")),
+        "the loopback notice has no link"
+    );
+    assert_eq!(tickets, 1);
+    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", "https://marfa.example")], true).await;
+    assert!(
+        line.contains("https://marfa.example/setup#handoff="),
+        "the https notice has no link"
+    );
+    assert_eq!(tickets, 1);
+
+    // A control-only start has no public listener, so no address it holds can open the page.
+    let control_only: [&'static [(&'static str, &'static str)]; 2] = [
+        &[
+            ("MARFA_CONTROL_ONLY", "true"),
+            ("MARFA_PORT", "0"),
+            ("MARFA_SIGN_IN_ADDRESS", "https://marfa.example"),
+        ],
+        &[("MARFA_CONTROL_ONLY", "true"), ("MARFA_PORT", "8600")],
+    ];
+    for extra in control_only {
+        let (line, tickets) = notice(extra, false).await;
+        assert!(line.contains("setup code: "), "the notice lost its code");
+        assert!(
+            !line.contains("handoff") && !line.contains("link"),
+            "a control-only start printed a link"
+        );
+        assert_eq!(tickets, 0);
+    }
+
+    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", "http://marfa.example")], true).await;
+    assert!(line.contains("setup code: "), "the notice lost its code");
+    assert!(
+        !line.contains("handoff") && !line.contains("link"),
+        "a plain http address printed a link"
+    );
+    assert_eq!(tickets, 0);
+}
+
+#[tokio::test]
+async fn a_form_sign_in_with_a_field_empty_names_only_that_field() {
+    let instance = Instance::claimed().await;
+    let sent = |username: &str, password: &str| {
+        let fields = form_urlencoded::Serializer::new(String::new())
+            .append_pair("username", username)
+            .append_pair("password", password)
+            .finish();
+        Request::builder()
+            .method(Method::POST)
+            .uri("/auth/sign-in")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(header::ORIGIN, ORIGIN)
+            .body(Body::from(fields))
+            .unwrap()
+    };
+    let missing = |reply: &Reply| {
+        assert_eq!(reply.status, StatusCode::FOUND);
+        let location = reply.headers[header::LOCATION].to_str().unwrap();
+        let (_, query) = location.split_once('?').unwrap();
+        let pairs: Vec<(String, String)> = form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
+        assert!(pairs.contains(&("error".into(), "missing_field".into())));
+        pairs
+            .into_iter()
+            .filter(|(name, _)| name == "missing")
+            .map(|(_, value)| value)
+            .collect::<Vec<_>>()
+    };
+    for (username, password, named) in [
+        ("   ", PASSWORD, vec!["username"]),
+        ("", PASSWORD, vec!["username"]),
+        (USERNAME, "", vec!["password"]),
+        ("  ", "", vec!["username", "password"]),
+    ] {
+        let reply = send(instance.public.clone(), sent(username, password)).await;
+        assert_eq!(missing(&reply), named, "{username:?} {password:?}");
+    }
 }
