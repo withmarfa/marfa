@@ -159,8 +159,7 @@ pub enum WatchError<E> {
     CredentialRefused(CoreError),
     /// The server's changes stopped reaching the directory.
     FollowEnded(CoreError),
-    /// Another Marfa instance answers at the folder's server, `server`, which holds
-    /// neither the folder nor its key, so no retry can reach the folder.
+    /// The instance at this address differs from the one that filled the copy.
     InstanceChanged { server: String },
     /// The directory could not be watched.
     Unwatchable(String),
@@ -193,8 +192,8 @@ pub fn credential_refused_said(server: &str, said: &CoreError) -> String {
 /// What a watch says when another instance answers at its folder's server.
 pub fn instance_changed_said(server: &str) -> String {
     format!(
-        "the server at {server} now answers as another Marfa instance, which does not hold \
-         this folder or its key, so the watch stopped this folder; to follow the folder there, \
+        "the server at {server} now answers as another Marfa instance. The watch stopped this \
+         folder because its working copy belongs to the previous instance. To follow it there, \
          run `marfa folders remove` on the directory, which keeps its files, then move the \
          directory aside, add it again with `marfa folders add` and `--folder` with the \
          folder's ID, `--from` with the moved directory and a key for that instance, and push \

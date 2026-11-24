@@ -1084,7 +1084,7 @@ If a confirmed folder has unanswered or blocked queued writes, and no server at 
 
 If a confirmed folder that has unanswered or blocked queued writes is removed while the server at its address answers as another Marfa instance, or cannot be asked after a server there answered as another Marfa instance since its copy's last hydration began, then a device MUST remove its state and leave its files as they are.
 
-**Reason:** the other instance holds neither the folder nor its key, so no write the copy holds can be sent to it, and a directory added again with a key for that instance sends the changes once they are made in it again.
+**Reason:** the queued writes belong to the previous instance. Adding the folder again creates a working copy for the replacement instance.
 
 **Tests:** `device/folders.test.ts › removes a folder whose server answers as another instance while writes wait, and answers the folder's ID, how many writes were not sent and each file holding a change by kind`, `› removes a folder whose writes wait where its server cannot be asked, after another instance answered there`, `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`.
 

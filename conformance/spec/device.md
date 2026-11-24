@@ -8354,7 +8354,7 @@ A refusal the CLI reports carries one `code`, a lowercase snake case word. The f
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
 | `usage`                  | The command line or the profile file was wrong.                                                                               |
 | `watch`                  | The folder watch failed.                                                                                                      |
-| `instance_changed`       | A folder's server answers as another Marfa instance, which holds neither the folder nor its key.                              |
+| `instance_changed`       | A folder's server answers as a different instance from the one that filled its working copy.                                  |
 | `install`                | The service manager, Docker, Tailscale or the server did not do what `marfa server` needs.                                    |
 | `no_store`               | The command names no working copy, or none is at the path it names.                                                           |
 | `no_credential`          | No credential is held for the server.                                                                                         |

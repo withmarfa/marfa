@@ -130,7 +130,7 @@ When a folder watch hydration receives an answer no retry can change, the CLI MU
 
 If the server at a watched folder's address answers as another Marfa instance than the one the folder's working copy names, then a device MUST end that folder's watch.
 
-**Reason:** The other instance holds neither the folder nor its key, so no retry can reach the folder, and a watch that went on would ask the server again without end.
+**Reason:** the working copy belongs to the previous instance. Even when a restore preserves the folder ID, the two instances can have different histories.
 
 **Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
 
@@ -146,7 +146,7 @@ If a folder's watch ends because its server answers as another Marfa instance, t
 
 If `folders watch` of one directory ends because the folder's server answers as another Marfa instance, then the CLI MUST exit 4 with the code `instance_changed`.
 
-**Reason:** Exit 3 tells a script to try again, and no retry reaches a folder the other instance does not hold.
+**Reason:** exit 3 asks a script to retry. Retrying against the same replacement instance cannot resume the previous instance's working copy.
 
 **Tests:** `device/folders.test.ts › ends a watch of one folder whose server answers as another instance with exit 4 and the code instance_changed, as its status does`.
 

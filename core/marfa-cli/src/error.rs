@@ -46,8 +46,7 @@ pub enum CliError {
     #[error("{0}")]
     /// A watch that ended; the answer is the server's, where one ended it.
     Watch(String, Option<Box<ServerAnswer>>),
-    /// A folder whose server answers as another Marfa instance, which holds
-    /// neither the folder nor its key, so no retry reaches it.
+    /// The folder's working copy belongs to a different instance.
     #[error("{}", marfa_core::folder::instance_changed_said(.0))]
     InstanceChanged(String),
     #[error("output closed")]
