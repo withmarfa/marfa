@@ -26,6 +26,8 @@ interface Case {
   atLeast: number;
   /** When set, the listing holds this many, so a wider answer cannot pass. */
   exact?: number;
+  /** What the device's group keys must be, for a view that groups. */
+  groupKeys?: (keys: unknown[]) => void;
 }
 
 const cases: Case[] = [];
@@ -95,6 +97,9 @@ beforeAll(async () => {
                 body: "",
               }),
           ...(probe === undefined ? {} : { probe }),
+          ...(type === "core.media.book"
+            ? { progress: i % 2 === 0 ? "planned" : "finished" }
+            : {}),
         },
       }),
     );
@@ -224,13 +229,20 @@ beforeAll(async () => {
     settings: Record<string, unknown>,
     atLeast = 10,
     exact?: number,
+    groupKeys?: Case["groupKeys"],
   ) => {
     const query = {
       types: ["core.note", "core.entity", "core.media.book"],
       filter,
       ...((settings.query as Record<string, unknown> | undefined) ?? {}),
     };
-    cases.push({ name, settings: { ...settings, query }, atLeast, exact });
+    cases.push({
+      name,
+      settings: { ...settings, query },
+      atLeast,
+      exact,
+      groupKeys,
+    });
   };
   add("no sort", {});
   add("title ascending", { sort: [asc("title")] });
@@ -305,6 +317,53 @@ beforeAll(async () => {
   add("contains a number", { query: marks("contains 5") }, 6, 6);
   add("contains a boolean", { query: marks("contains true") }, 4, 4);
 
+  const grouped = (
+    name: string,
+    settings: Record<string, unknown>,
+    groupKeys: Case["groupKeys"],
+  ) => add(name, settings, 10, undefined, groupKeys);
+  const presence = (by: string) => ({ group: { by, bucket: "presence" } });
+  const bothPresences = (keys: unknown[]) =>
+    expect(keys).toEqual([false, true]);
+  grouped(
+    "presence of a property",
+    presence("properties.probe"),
+    bothPresences,
+  );
+  grouped("presence of tags", presence("tags"), (keys) =>
+    expect(keys).toEqual([true]),
+  );
+  grouped("presence of an edge", presence("edge[parent-of]"), bothPresences);
+  grouped(
+    "presence of a backref",
+    presence("backref[parent-of]"),
+    bothPresences,
+  );
+  grouped(
+    "presence with a hidden group",
+    {
+      group: { by: "properties.probe", bucket: "presence", hidden: [false] },
+    },
+    (keys) => expect(keys).toEqual([true]),
+  );
+  grouped("source", { group: { by: "source" } }, (keys) =>
+    expect(keys).toEqual([ctx.source]),
+  );
+  grouped(
+    "status group, with an order and a hidden null group",
+    {
+      group: {
+        by: "status_group",
+        order: ["completed", "not_started"],
+        hidden: [null],
+      },
+    },
+    (keys) => expect(keys).toEqual(["completed", "not_started"]),
+  );
+  grouped("status group", { group: { by: "status_group" } }, (keys) =>
+    expect(keys).toEqual(["not_started", "completed", null]),
+  );
+
   for (const item of cases) {
     const saved = await client.createView({
       title: `Parity ${item.name}`,
@@ -378,6 +437,13 @@ it("lists a view's items in the order the server does, for each sort and query",
       local.push(...page.data.map((row) => row.id));
     }
     expect(local, item.name).toEqual(remote);
+
+    if (item.groupKeys) {
+      const answer = value(await device.attempt(["views", "groups", id])) as {
+        data: { key: unknown; count: number }[];
+      };
+      item.groupKeys(answer.data.map((group) => group.key));
+    }
   }
   expect(counts).toEqual([]);
 });

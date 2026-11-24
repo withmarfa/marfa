@@ -511,6 +511,71 @@ describe("the view door", () => {
       "validation_error",
       "group.bucket",
     ],
+    [
+      { group: { by: "properties.due", bucket: "fortnight" } },
+      "validation_error",
+      "group.bucket",
+    ],
+    [
+      { sort: [{ by: "source", direction: "asc" }] },
+      "validation_error",
+      "sort.0.by",
+    ],
+    [
+      { sort: [{ by: "status_group", direction: "asc" }] },
+      "validation_error",
+      "sort.0.by",
+    ],
+    [
+      { group: { by: "created_at", bucket: "presence" } },
+      "validation_error",
+      "group.bucket",
+    ],
+    [
+      { group: { by: "title", bucket: "presence" } },
+      "validation_error",
+      "group.bucket",
+    ],
+    [
+      { group: { by: "status_group", bucket: "presence" } },
+      "validation_error",
+      "group.bucket",
+    ],
+    [
+      { group: { by: "status_group", bucket: "day" } },
+      "validation_error",
+      "group.bucket",
+    ],
+    [
+      { group: { by: "source", bucket: "presence" } },
+      "validation_error",
+      "group.bucket",
+    ],
+    [
+      { group: { by: "status_group", hidden: ["done"] } },
+      "validation_error",
+      "group.hidden.0",
+    ],
+    [
+      { group: { by: "status_group", order: ["completed", "done"] } },
+      "validation_error",
+      "group.order.1",
+    ],
+    [
+      { group: { by: "properties.due", bucket: "presence", hidden: ["true"] } },
+      "validation_error",
+      "group.hidden.0",
+    ],
+    [
+      { group: { by: "tags", bucket: "presence", order: [true, null] } },
+      "validation_error",
+      "group.order.1",
+    ],
+    [
+      { group: { by: "properties.due", bucket: "presence", hidden: [null] } },
+      "validation_error",
+      "group.hidden.0",
+    ],
     [{ query: { filter: "tags eq" } }, "validation_error", "query.filter"],
     [
       { query: { types: ["core.no-such-type"] } },
@@ -560,6 +625,26 @@ describe("the view door", () => {
       { group: { by: "edge[about]" } },
       { group: { by: "backref[about]" } },
       { group: { by: "properties.due", bucket: "month" } },
+      { group: { by: "properties.due", bucket: "presence" } },
+      { group: { by: "tags", bucket: "presence" } },
+      { group: { by: "edge[about]", bucket: "presence" } },
+      { group: { by: "backref[about]", bucket: "presence" } },
+      { group: { by: "source" } },
+      {
+        group: {
+          by: "status_group",
+          order: ["completed", null, "not_started", "in_progress", "canceled"],
+          hidden: [null],
+        },
+      },
+      {
+        group: {
+          by: "properties.due",
+          bucket: "presence",
+          order: [true, false],
+          hidden: [true],
+        },
+      },
     ]) {
       const r = await client.createView({ title: "taken", ...settings });
       expect(r.status, JSON.stringify([settings, r.error])).toBe(201);

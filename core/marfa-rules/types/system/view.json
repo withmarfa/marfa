@@ -19,7 +19,7 @@
     },
     "group": {
       "type": "object",
-      "description": "How the view groups its items: by a field or an edge, optionally in day, week, month or year buckets, with the group order and any hidden groups."
+      "description": "How the view groups its items: by a field, an edge, `source` or `status_group`, optionally in day, week, month or year buckets or by presence (whether a value is set), with the group order and any hidden groups."
     }
   },
   "required": [

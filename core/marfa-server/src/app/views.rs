@@ -1,3 +1,4 @@
+use marfa_rules::catalog::STATUS_GROUPS;
 use marfa_rules::folder::is_hidden;
 use marfa_rules::query::{EVERY_TYPE, StateFault, check_states};
 use marfa_rules::{filter, validation};
@@ -24,8 +25,11 @@ const OWN_FIELDS: [&str; 8] = [
 ];
 /// A sort names these and no other own field; a group does not name `last_activity_at`.
 const SORT_ONLY: [&str; 1] = ["last_activity_at"];
+/// A group names these and a sort does not.
+const GROUP_ONLY: [&str; 2] = ["source", "status_group"];
 const DATE_FIELDS: [&str; 3] = ["created_at", "updated_at", "occurred_at"];
-const BUCKETS: [&str; 4] = ["day", "week", "month", "year"];
+const DATE_BUCKETS: [&str; 4] = ["day", "week", "month", "year"];
+const PRESENCE: &str = "presence";
 const TIERS: [&str; 3] = ["library", "feed", "all"];
 const MAX_TITLE: usize = 500;
 const MAX_TYPES: usize = 100;
@@ -265,33 +269,98 @@ fn check_scalars(group: &Map<String, Value>, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// The values a closed grouping's `order` and `hidden` may hold.
+#[derive(Clone, Copy)]
+enum Closed {
+    StatusGroup,
+    Presence,
+}
+
+impl Closed {
+    fn takes(self, value: &Value) -> bool {
+        match self {
+            Self::StatusGroup => {
+                value.is_null()
+                    || value
+                        .as_str()
+                        .is_some_and(|name| STATUS_GROUPS.contains(&name))
+            }
+            Self::Presence => value.is_boolean(),
+        }
+    }
+
+    fn message(self) -> String {
+        match self {
+            Self::StatusGroup => format!(
+                "A status group value is {} or null.",
+                STATUS_GROUPS.join(", ")
+            ),
+            Self::Presence => "A presence value is true or false.".to_string(),
+        }
+    }
+}
+
+fn check_closed(group: &Map<String, Value>, name: &str, closed: Closed) -> Result<()> {
+    let values = group
+        .get(name)
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    match values.iter().position(|value| !closed.takes(value)) {
+        Some(index) => Err(at(&format!("group.{name}.{index}"), closed.message())),
+        None => Ok(()),
+    }
+}
+
+fn check_bucket(bucket: &Value, by: &str, catalog: &Catalog) -> Result<Option<Closed>> {
+    let Some(bucket) = bucket
+        .as_str()
+        .filter(|bucket| *bucket == PRESENCE || DATE_BUCKETS.contains(bucket))
+    else {
+        return Err(at(
+            "group.bucket",
+            "group.bucket is day, week, month, year or presence.",
+        ));
+    };
+    if bucket == PRESENCE {
+        if by != "tags" && !is_property(by) && !is_edge_field(by, catalog) {
+            return Err(at(
+                "group.bucket",
+                "A presence bucket groups tags, a property or an edge type.",
+            ));
+        }
+        return Ok(Some(Closed::Presence));
+    }
+    if !DATE_FIELDS.contains(&by) && !is_property(by) {
+        return Err(at("group.bucket", "A date bucket groups a date field."));
+    }
+    Ok(None)
+}
+
 fn check_group(value: &Value, catalog: &Catalog) -> Result<()> {
     let Some(group) = value.as_object() else {
         return Err(at("group", "group must be an object."));
     };
     let by = group.get("by").and_then(Value::as_str).unwrap_or_default();
-    if !is_group_field(by) && !is_edge_field(by, catalog) {
+    if !is_group_field(by) && !GROUP_ONLY.contains(&by) && !is_edge_field(by, catalog) {
         return Err(at(
             "group.by",
-            "A view groups by an own field, properties.<name>, or a registered edge type.",
+            "A view groups by an own field, source, status_group, properties.<name>, or a registered edge type.",
         ));
     }
-    if let Some(bucket) = group.get("bucket") {
-        if !bucket
-            .as_str()
-            .is_some_and(|bucket| BUCKETS.contains(&bucket))
-        {
-            return Err(at(
-                "group.bucket",
-                "group.bucket is day, week, month or year.",
-            ));
-        }
-        if !DATE_FIELDS.contains(&by) && !is_property(by) {
-            return Err(at("group.bucket", "A bucket groups a date field."));
-        }
+    let mut closed = match group.get("bucket") {
+        Some(bucket) => check_bucket(bucket, by, catalog)?,
+        None => None,
+    };
+    if by == "status_group" {
+        closed = Some(Closed::StatusGroup);
     }
     check_scalars(group, "order")?;
-    check_scalars(group, "hidden")
+    check_scalars(group, "hidden")?;
+    if let Some(closed) = closed {
+        check_closed(group, "order", closed)?;
+        check_closed(group, "hidden", closed)?;
+    }
+    Ok(())
 }
 
 pub fn check(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
