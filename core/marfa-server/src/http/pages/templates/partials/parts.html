@@ -32,4 +32,4 @@
 
 {# A dialog over the page, drawn as a sheet on a phone. With an `action` its form posts there, and `inline` draws it under the page's
    own content where there is no script to open it. #}
-{% macro dialog(id, title, text_id="", action="", inline=false) %}<dialog id="{{ id }}" aria-labelledby="{{ id }}-title"{% if !text_id.is_empty() %} aria-describedby="{{ text_id }}"{% endif %}{% if inline %} data-inline{% endif %}>{% if action.is_empty() %}<form method="dialog">{% else %}<form method="post" action="{{ action }}" novalidate data-handled>{% endif %}<h2 id="{{ id }}-title">{{ title }}</h2>{{ caller() }}</form></dialog>{% endmacro %}
+{% macro dialog(id, title, text_id="", action="", inline=false) %}<dialog id="{{ id }}" aria-labelledby="{{ id }}-title"{% if !text_id.is_empty() %} aria-describedby="{{ text_id }}"{% endif %}{% if inline %} data-inline{% endif %}>{% if action.is_empty() %}<form method="dialog" novalidate>{% else %}<form method="post" action="{{ action }}" novalidate data-handled>{% endif %}<h2 id="{{ id }}-title">{{ title }}</h2>{{ caller() }}</form></dialog>{% endmacro %}

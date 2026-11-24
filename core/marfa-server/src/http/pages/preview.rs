@@ -23,14 +23,14 @@ const SHOW_HANDOFF_FAILED: &str =
     r#"document.querySelector("[data-handoff-failed]").hidden = false;"#;
 const SHOW_HANDOFF_WORKING: &str =
     r#"document.querySelector("[data-handoff-working]").hidden = false;"#;
-const OPEN_FIRST_MENU: &str = r#"document.getElementById("more-a1").showPopover();"#;
+const OPEN_FIRST_MENU: &str = r#"requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById("more-a1").showPopover()));"#;
 const OPEN_CHANGE: &str = r#"document.querySelector("[data-change-password]").click();"#;
 const OPEN_ADD: &str = r#"document.querySelector('[data-passkey="add"]').click();"#;
 const OPEN_RENAME: &str =
     r#"document.querySelector('[data-passkey-row="a2"] [data-passkey-rename]').click();"#;
 const OPEN_REMOVE: &str =
     r#"document.querySelector('[data-passkey-row="a2"] [data-passkey-remove]').click();"#;
-const ASK_PASSWORD_TO_REMOVE: &str = r#"document.querySelector("[data-confirm-fields]").hidden = false; document.getElementById("confirm-text").textContent = "Enter your password to confirm it’s you."; document.getElementById("confirm-password").focus();"#;
+const ASK_PASSWORD_TO_REMOVE: &str = r#"document.querySelector("[data-confirm-fields]").hidden = false; document.getElementById("confirm-password").disabled = false; document.getElementById("confirm-text").textContent = "Enter your password to confirm it’s you."; document.getElementById("confirm-password").focus();"#;
 const REMOVE_FAILED: &str = r#"const lede = document.getElementById("confirm-text"); lede.textContent = "Something went wrong. Try again."; lede.classList.add("err");"#;
 const WRONG_CONFIRM_PASSWORD: &str = r#"const note = document.getElementById("confirm-note"); note.className = "err"; note.textContent = "That password isn’t right."; document.getElementById("confirm-password").setAttribute("aria-invalid", "true");"#;
 const FILL_NEW_PASSWORDS: &str = r#"for (const id of ["new-password", "new-password-again"]) document.getElementById(id).value = "allotment-lewes";"#;

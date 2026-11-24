@@ -15,10 +15,12 @@
         },
         body: JSON.stringify(data),
       });
+      const body = await response.json().catch(() => null);
       return {
         status: response.status,
         retryAfter: Number(response.headers.get("retry-after")),
-        body: await response.json().catch(() => null),
+        body,
+        field: body?.error?.details?.field,
       };
     } catch {
       return null;
@@ -35,14 +37,32 @@
     opener = null;
   }
 
-  /** Opens a dialog over the page. A phone does not put the cursor in a field, so no keyboard rises over the dialog. */
-  function openModal(dialog, from) {
+  /** Where focus goes in a dialog on a phone in place of a field: its title, read first. */
+  function titleOf(dialog) {
+    const title = dialog.querySelector("h2");
+    title.tabIndex = -1;
+    return title;
+  }
+
+  /**
+   * Opens a dialog over the page with focus on `first`. A phone puts focus on a button but never
+   * in a field, so no keyboard rises over the dialog before it is read.
+   */
+  function openModal(dialog, from, first) {
     openers.set(dialog, from ?? document.activeElement);
+    const fine = matchMedia("(pointer: fine)").matches;
+    const field = first instanceof HTMLInputElement;
+    const target = fine || (first && !field) ? first : titleOf(dialog);
+    // The dialog's own focusing reads `autofocus`, so nothing else is focused first.
+    target?.setAttribute("autofocus", "");
     dialog.showModal();
-    if (!matchMedia("(pointer: fine)").matches) {
-      dialog.tabIndex = -1;
-      dialog.focus();
-    }
+    target?.removeAttribute("autofocus");
+    if (fine && field) first.select();
+  }
+
+  /** A session that ended, such as by signing out in another tab, signs in again and comes back. */
+  function signInAgain() {
+    location.assign("/auth/sign-in?" + new URLSearchParams({ return_to: location.pathname }));
   }
 
   function watchFocusBack() {
@@ -144,6 +164,7 @@
   function showConfirmError(kind, waitSeconds) {
     const passkeys = document.querySelector('[data-passkey="confirm"]');
     const messages = {
+      empty: "Enter your password.",
       password: "That password isn’t right.",
       locked:
         "Too many attempts. Try again in " +
@@ -158,54 +179,100 @@
       return;
     }
     showNote(confirmNote, message);
-    if (kind === "password") confirmPassword.setAttribute("aria-invalid", "true");
-    else confirmPassword.removeAttribute("aria-invalid");
+    if (kind === "password" || kind === "empty") {
+      confirmPassword.setAttribute("aria-invalid", "true");
+    } else confirmPassword.removeAttribute("aria-invalid");
   }
 
-  function askForPassword() {
-    confirming.plain = false;
-    confirming.lede = confirming.passwordLede || confirming.lede;
-    confirmLede.textContent = confirming.lede;
+  /** A plain yes sends no password, so the field takes part only once the server asks for one. */
+  function showPasswordField(shown) {
+    confirmFields.hidden = !shown;
+    confirmPassword.disabled = !shown;
+  }
+
+  /** Turns a plain yes into a request for the password, and says where focus goes next. */
+  function askForPassword(use) {
+    use.plain = false;
+    use.lede = use.passwordLede || use.lede;
+    confirmLede.textContent = use.lede;
     confirmLede.classList.remove("err");
-    confirmFields.hidden = false;
-    confirmPassword.focus();
+    showPasswordField(true);
+    return matchMedia("(pointer: fine)").matches ? confirmPassword : titleOf(dialog);
   }
 
-  async function confirmed() {
-    if (confirming.run) {
-      const result = await confirming.run();
+  // Every control that answers the dialog waits for the answer to the one already sent.
+  function confirmControls() {
+    return [
+      ...dialog.querySelectorAll("button"),
+      ...(confirmFields.hidden ? [] : [confirmPassword]),
+    ];
+  }
+
+  /**
+   * Runs `step` for the dialog's current use with every control disabled, and drops its answer if
+   * the dialog has moved on. `step` returns where focus goes once the controls are enabled again.
+   */
+  async function answering(step) {
+    const use = confirming;
+    const current = () => confirming === use && dialog.open;
+    const controls = confirmControls();
+    setBusy(controls, true);
+    let next = null;
+    try {
+      next = await step(use, current);
+    } finally {
+      if (confirming === use) setBusy(controls, false);
+    }
+    if (current()) next?.focus();
+  }
+
+  async function confirmed(use, current) {
+    if (use.run) {
+      const result = await use.run();
+      if (!current()) return null;
+      if (result.ended) return signInAgain();
       if (!result.ok) {
         showConfirmError("other", 0);
-        return;
+        return confirmSubmit;
       }
     }
     dialog.close("confirmed");
+    return null;
   }
 
-  async function submitConfirmation(form) {
-    const buttons = submitsOf(form);
-    showConfirmError("none", 0);
-    setBusy(buttons, true);
-    try {
-      if (confirming.plain) {
-        const result = await confirming.run();
+  function submitConfirmation() {
+    return answering(async (use, current) => {
+      showConfirmError("none", 0);
+      if (use.plain) {
+        const result = await use.run();
+        if (!current()) return null;
         if (result.ok) dialog.close("confirmed");
-        else if (result.recentSignIn) askForPassword();
-        else showConfirmError("other", 0);
-        return;
+        else if (result.ended) signInAgain();
+        else if (result.recentSignIn) return askForPassword(use);
+        else {
+          showConfirmError("other", 0);
+          return confirmSubmit;
+        }
+        return null;
+      }
+      if (!confirmPassword.value) {
+        showConfirmError("empty", 0);
+        return confirmPassword;
       }
       const answer = await postJson("/auth/confirm", { password: confirmPassword.value });
+      if (!current()) return null;
       confirmPassword.value = "";
-      if (answer && answer.status === 200) await confirmed();
-      else if (answer && answer.status === 401) {
+      if (answer?.status === 200) return confirmed(use, current);
+      if (answer?.status === 401 && answer.field === "password") {
         showConfirmError("password", 0);
-        confirmPassword.focus();
-      } else if (answer && answer.status === 429)
+      } else if (answer?.status === 401) {
+        signInAgain();
+        return null;
+      } else if (answer?.status === 429) {
         showConfirmError("locked", answer.retryAfter || 60);
-      else showConfirmError("other", 0);
-    } finally {
-      setBusy(buttons, false);
-    }
+      } else showConfirmError("other", 0);
+      return confirmPassword;
+    });
   }
 
   /**
@@ -227,7 +294,9 @@
       confirmSubmit.textContent = options.button ?? confirmDefaults.button;
       confirmSubmit.classList.toggle("danger", Boolean(options.danger));
       confirmSubmit.classList.toggle("primary", !options.danger);
-      confirmFields.hidden = confirming.plain;
+      for (const button of dialog.querySelectorAll("button")) button.disabled = false;
+      delete dialog.dataset.busy;
+      showPasswordField(!confirming.plain);
       confirmPassword.value = "";
       showConfirmError("none", 0);
       dialog.addEventListener(
@@ -236,7 +305,7 @@
         { once: true },
       );
       dialog.returnValue = "";
-      openModal(dialog, from);
+      openModal(dialog, from, confirming.plain ? confirmSubmit : confirmPassword);
     });
   }
 
@@ -270,6 +339,10 @@
     if (response && dialog && (await isRecentSignInRefusal(response))) {
       if (await confirmItsYou({}, opening)) response = await send();
     }
+    if (response?.status === 401 && !form.hasAttribute("data-page")) {
+      signInAgain();
+      return;
+    }
     const text = response ? await response.text() : "";
     const isPage = (response?.headers.get("content-type") ?? "").includes(
       "text/html",
@@ -284,9 +357,12 @@
     const failure = form.querySelector("[data-form-error]");
     const done = form.querySelector("[data-form-done]");
     if (done) done.hidden = true;
+    if (isPage) {
+      showPage(text);
+      return;
+    }
     if (response && response.ok) {
-      if (isPage) showPage(text);
-      else if (done) {
+      if (done) {
         form.reset();
         if (failure) failure.hidden = true;
         done.hidden = false;
@@ -373,7 +449,7 @@
     const form = dialog.querySelector("form");
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      void submitConfirmation(form);
+      void submitConfirmation();
     });
   }
 
@@ -522,20 +598,21 @@
       }
     },
 
-    async confirm(button) {
-      setBusy([button], true);
-      showConfirmError("none", 0);
-      try {
-        const passkey = await askForAssertion();
-        if (!passkey) return;
-        const answer = await postJson("/auth/confirm", { passkey });
-        if (answer && answer.status === 200) await confirmed();
-        else showConfirmError("other", 0);
-      } catch {
-        showConfirmError("other", 0);
-      } finally {
-        setBusy([button], false);
-      }
+    confirm(button) {
+      return answering(async (use, current) => {
+        showConfirmError("none", 0);
+        try {
+          const passkey = await askForAssertion();
+          if (!passkey || !current()) return button;
+          const answer = await postJson("/auth/confirm", { passkey });
+          if (!current()) return null;
+          if (answer?.status === 200) return confirmed(use, current);
+          showConfirmError("other", 0);
+        } catch {
+          if (current()) showConfirmError("other", 0);
+        }
+        return button;
+      });
     },
 
     add(button) {
@@ -543,7 +620,7 @@
       const field = document.getElementById("passkey-name");
       field.value = "";
       showNote(document.getElementById("add-note"), "", field);
-      openModal(sheet, button);
+      openModal(sheet, button, field);
     },
   };
 
@@ -591,6 +668,10 @@
           event.submitter,
         );
         if (asked === CANCELLED) return;
+        if (asked?.status === 401) {
+          signInAgain();
+          return;
+        }
         if (!asked || asked.status !== 200) {
           showNote(note, asked?.body?.error?.message ?? SOMETHING_WENT_WRONG, field);
           return;
@@ -637,6 +718,15 @@
     return response && { response, status: response.status };
   }
 
+  /** Shows a passkey's new name in its row, and in the label of the row's menu. */
+  function showName(row, name) {
+    row.dataset.name = name;
+    row.querySelector(".name bdi").textContent = name;
+    for (const labelled of row.querySelectorAll(".more, .menu")) {
+      labelled.setAttribute("aria-label", "More for " + name);
+    }
+  }
+
   /** The rename dialog is shared by every row; the row it is for is kept while it is open. */
   function watchRenameDialog() {
     const sheet = document.getElementById("rename-dialog");
@@ -656,19 +746,24 @@
         sheet.close();
         return;
       }
+      const id = sheet.dataset.passkey;
       const buttons = [...submitsOf(form), ...cancelsOf(sheet)];
       showNote(note, "", field);
       setBusy(buttons, true);
-      let leaving = false;
       try {
         const answer = await withRecentSignIn(
-          () => sendPasskey("PATCH", sheet.dataset.passkey, { name }),
+          () => sendPasskey("PATCH", id, { name }),
           event.submitter,
         );
         if (answer === CANCELLED) return;
-        if (answer && answer.status === 200) {
-          leaving = true;
-          location.reload();
+        if (answer?.status === 401) {
+          signInAgain();
+          return;
+        }
+        if (answer?.status === 200) {
+          const row = document.querySelector('[data-passkey-row="' + CSS.escape(id) + '"]');
+          if (row) showName(row, name);
+          sheet.close();
           return;
         }
         const body = answer ? await answer.response.json().catch(() => null) : null;
@@ -680,7 +775,7 @@
           field,
         );
       } finally {
-        if (!leaving) setBusy(buttons, false);
+        setBusy(buttons, false);
       }
     });
   }
@@ -692,8 +787,7 @@
     sheet.dataset.name = row.dataset.name;
     field.value = row.dataset.name;
     showNote(document.getElementById("rename-note"), "", field);
-    openModal(sheet, from);
-    field.select();
+    openModal(sheet, from, field);
   }
 
   /**
@@ -703,10 +797,12 @@
   async function removePasskey(row, from) {
     const name = document.createElement("bdi");
     name.textContent = row.dataset.name;
+    const id = row.dataset.passkeyRow;
     const run = async () => {
-      const answer = await sendPasskey("DELETE", row.dataset.passkeyRow);
+      const answer = await sendPasskey("DELETE", id);
       return {
         ok: Boolean(answer && answer.response.ok),
+        ended: answer?.status === 401,
         recentSignIn: Boolean(answer && (await isRecentSignInRefusal(answer.response))),
       };
     };
@@ -726,7 +822,8 @@
   }
 
   // A row's menu is a popover the browser opens from its button; the page places it, closes it
-  // when the page moves and moves through it with the arrow keys.
+  // when the page scrolls, places it again when the window changes size and moves through it
+  // with the arrow keys.
   function placeMenu(menu, button) {
     const edge = 8;
     const at = button.getBoundingClientRect();
@@ -753,7 +850,7 @@
         leave = new AbortController();
         const hide = () => menu.hidePopover();
         addEventListener("scroll", hide, { passive: true, signal: leave.signal });
-        addEventListener("resize", hide, { signal: leave.signal });
+        addEventListener("resize", () => placeMenu(menu, button), { signal: leave.signal });
         placeMenu(menu, button);
         items[0].focus();
       });
@@ -799,11 +896,16 @@
     trigger.addEventListener("click", () => {
       form.reset();
       clear();
-      openModal(sheet, trigger);
+      openModal(sheet, trigger, current);
     });
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       clear();
+      if (!current.value) {
+        showNote(currentNote, "Enter your current password.", current);
+        current.focus();
+        return;
+      }
       if ([...next.value].length < 8) {
         showNote(newNote, "Use at least 8 characters.", next, again);
         next.focus();
@@ -826,9 +928,12 @@
           form.reset();
           sheet.close();
           reveal("[data-password-changed]", true);
-        } else if (status === 401) {
+        } else if (status === 401 && answer.field === "current_password") {
+          current.value = "";
           showNote(currentNote, "That password isn’t right.", current);
           current.focus();
+        } else if (status === 401) {
+          signInAgain();
         } else if (status === 429) {
           showNote(
             newNote,
