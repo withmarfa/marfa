@@ -1250,7 +1250,7 @@ When a restore reads an archive that lacks a field or a line kind added to the a
 
 **Reason:** a field or a line kind added within a version is optional to a reader of that version. An older build of the same version skips what it does not know (`archive/restore-unknown-field`, `archive/restore-unknown-line-kind`), and a newer build restores an archive written before the addition. What a restore must read comes only with a later version (`archive/archive-version`).
 
-**Tests:** waiting on #2978.
+**Tests:** `compliance/restore-release-archive.test.ts › restores everything the manifest of a version 4 archive from v0.0.104 counts, whatever version this build writes`, `compliance/restore-release-archive.test.ts › restores a note with its two versions, tags and extension, the edge to its file, the file's bytes and a trashed note`.
 
 ### `archive/restore-manifest`
 

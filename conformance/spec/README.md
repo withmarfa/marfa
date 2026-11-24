@@ -65,7 +65,7 @@ Within one 0.x minor release, five rules hold:
 4. **Every client names its contract version.** A device sends it in `X-Marfa-Contract` on every request but a read of the root or of `/health` (`device/contract-sent`), and the server refuses a request that names another (`instance/contract-request-other`).
 5. **A build opens what an earlier build of the same minor stored.** A server upgrades its database (`instance/upgrade-migrates-older`), a device upgrades its store (`device/schema-upgrade`) and a restore reads an archive of every version up to its own (`archive/restore-version`).
 
-The first two rules compare one release with another, so no fixture holds a single build to them: a change to `openapi.json` or to a statement is reviewed against them. The fixtures of `device/schema-upgrade` wait on issue #3065, so rule 5 has no fixture yet for the upgrade of a store. The upgrade of a database is held by a database a release wrote, frozen in the repository (`compliance/upgrade-from-release.test.ts`).
+The first two rules compare one release with another, so no fixture holds a single build to them: a change to `openapi.json` or to a statement is reviewed against them. The fixtures of `device/schema-upgrade` wait on issue #3065, so rule 5 has no fixture yet for the upgrade of a store. The upgrade of a database is held by a database a release wrote, frozen in the repository (`compliance/upgrade-from-release.test.ts`). A restore is held the same way by an archive a release wrote (`compliance/restore-release-archive.test.ts`).
 
 ## How a statement is written
 
