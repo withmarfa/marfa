@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { RowOperation } from "../../client/types.js";
 import {
@@ -8,7 +8,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 
-// A dedicated server lets the fixture hold cleanup without delaying other tests.
+// A server per attempt, so holding cleanup delays no other test and a retry inherits no fault.
 const HELD = "hold:housekeeping:table-row-cleanup";
 // A page read without kept keys fails, so one that answers under it was read from them.
 const SCANNED = "fail:table-rows-scan";
@@ -17,7 +17,7 @@ let server: FreshServer;
 let client: MarfaClient;
 let management: MarfaClient;
 
-beforeAll(async () => {
+beforeEach(async () => {
   server = await bootFreshServer("table-rows-kept-sort");
   client = new MarfaClient({
     baseUrl: server.apiUrl,
@@ -29,7 +29,7 @@ beforeAll(async () => {
   });
 }, FRESH_SERVER_TIMEOUT_MS);
 
-afterAll(async () => {
+afterEach(async () => {
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
@@ -113,6 +113,10 @@ async function settle(since: string): Promise<Cleaned[]> {
 
 const total = (runs: Cleaned[], of: "keyed" | "keys_removed") =>
   runs.reduce((sum, run) => sum + run[of], 0);
+
+/** Rows a batch puts or patches, whose keys it writes itself. */
+const written = (operations: readonly RowOperation[]) =>
+  operations.filter((operation) => operation.op !== "delete").length;
 
 it("keeps large table pages in order during key fills, row writes, and column changes", async () => {
   const type = `user.rows-kept-sort-${randomUUID()}`;
@@ -215,6 +219,7 @@ it("keeps large table pages in order during key fills, row writes, and column ch
     await sorted(column, values);
     await server.waitForHold(HELD);
     await change([...operations]);
+    const rows = labels.size;
     await sorted(column, values);
     const begun = await client.listRows(item, "lines", {
       sort: `values.${column}`,
@@ -228,8 +233,9 @@ it("keeps large table pages in order during key fills, row writes, and column ch
       limit: 1,
     });
     expect(filling.status).toBe(500);
-    expect(total(await settle(sortedAt), "keyed")).toBeGreaterThanOrEqual(
-      count,
+    // The change keyed the rows it wrote while the pair filled.
+    expect(total(await settle(sortedAt), "keyed")).toBe(
+      rows - written(operations),
     );
     const from = {
       seen: begun.data.data.map((r) => r.id),
@@ -277,13 +283,15 @@ it("keeps large table pages in order during key fills, row writes, and column ch
   await server.setFault(HELD);
   const resortedAt = new Date().toISOString();
   await sorted("score", scores);
-  await change([
+  await server.waitForHold(HELD);
+  const retyped: RowOperation[] = [
     { op: "patch", id: ids[6]!, values: { score: "b" } },
     { op: "patch", id: ids[7]!, values: { score: "a" } },
-  ]);
+  ];
+  await change(retyped);
   await sorted("score", scores);
-  expect(total(await settle(resortedAt), "keyed")).toBeGreaterThanOrEqual(
-    count,
+  expect(total(await settle(resortedAt), "keyed")).toBe(
+    labels.size - written(retyped),
   );
   await change([{ op: "patch", id: ids[8]!, values: { score: "c" } }]);
   await server.setFault(`${SCANNED}=lines@always`);
