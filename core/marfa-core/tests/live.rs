@@ -33,6 +33,30 @@ fn seed(args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
+/// The server's own event frames after `cursor`, each with its id, type and the start of its
+/// data, so a failure names what arrived.
+fn events_after(cursor: &str) -> String {
+    let server = server();
+    let output = Command::new("curl")
+        .args(["-sN", "--max-time", "3", "-H"])
+        .arg(format!("Authorization: Bearer {}", server.key))
+        .arg("-H")
+        .arg(format!("Last-Event-ID: {cursor}"))
+        .arg(format!("{}/events", server.url))
+        .output()
+        .expect("curl runs");
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| {
+            ["id:", "event:", "data:"]
+                .iter()
+                .any(|k| line.starts_with(k))
+        })
+        .map(|line| line.chars().take(240).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn nonce() -> String {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     format!("zq{}{}", now.as_secs(), now.subsec_micros())
@@ -227,9 +251,13 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
         "the purge left the row in the store, where the server has deleted it"
     );
 
+    let cursor_before = core.status().unwrap().event_cursor.unwrap_or_default();
     let quiet = core.catch_up().unwrap();
-    assert_eq!(quiet.applied, 0, "{quiet:?}");
-    assert_eq!(quiet.skipped, 0, "{quiet:?}");
+    assert!(
+        quiet.applied == 0 && quiet.skipped == 0,
+        "{quiet:?}; the server's events after cursor {cursor_before}:\n{}",
+        events_after(&cursor_before)
+    );
 
     let status = core.status().unwrap();
     assert_eq!(status.slice_tier, Some(SliceTier::Library));
