@@ -114,6 +114,9 @@ impl Directory {
     pub(crate) fn clear(&self) -> io::Result<()> {
         unsupported()
     }
+    pub(crate) fn clear_except(&self, _: &Path) -> io::Result<()> {
+        unsupported()
+    }
     pub(crate) fn entries(&self) -> io::Result<Vec<OsString>> {
         unsupported()
     }

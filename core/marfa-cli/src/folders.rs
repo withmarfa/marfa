@@ -27,7 +27,13 @@ pub enum FoldersCommand {
     /// `folders create` makes. Needs read on `system.folder`. Warns on
     /// standard error, once, and goes on, if the directory is in iCloud Drive,
     /// a cloud service's synced location or a network file system, or if git
-    /// tracks it.
+    /// tracks it. Where the directory holds the record `folders remove` left of
+    /// a sync with another instance, the add says, for each file it names,
+    /// what the first sync will do: a file whose item the instance holds as a
+    /// restored backup left it is sent as an edit of that version; one whose
+    /// item the instance changed since is merged from the last version both
+    /// held, keeping both edits; and one whose item the instance lacks, or
+    /// whose shared version cannot be told, is not sent and waits.
     Add {
         /// The directory. It is made if it is not there.
         dir: PathBuf,
@@ -40,15 +46,6 @@ pub enum FoldersCommand {
         /// the add says what the first sync will do and waits for a go-ahead.
         #[arg(long)]
         yes: bool,
-        /// Read the removal record from a directory you moved aside. Lists
-        /// files whose items have lower versions on this instance, files
-        /// missing from the moved directory, and files with no item in the
-        /// folder on this instance. If the record is missing or unreadable,
-        /// the add continues and reports why it could not compare the files.
-        /// The moved directory must differ from the directory being added
-        /// and must no longer follow a folder.
-        #[arg(long, value_name = "DIR")]
-        from: Option<PathBuf>,
     },
     /// List the directories on this machine that follow a folder, as its
     /// registry holds them. The
@@ -65,10 +62,11 @@ pub enum FoldersCommand {
         #[command(flatten)]
         page: crate::commands::PageArgs,
     },
-    /// Stop following a folder and keep its files. If the first sync was confirmed,
-    /// the command writes a record under `.marfa` for `folders add
-    /// --from`. Empty administrative directories remain.
-    /// Refused while writes wait, except for a first sync still
+    /// Make a directory stop following its folder: its own state under
+    /// `.marfa` goes, and its files stay as plain files. Empty administrative directories
+    /// remain. Where the first sync was confirmed, `.marfa/removed.json` stays,
+    /// recording the version and content each file last synced, written before
+    /// anything is removed; the command is refused where it cannot be written. Refused while writes wait, except for a first sync still
     /// waiting to be confirmed, which this cancels, and except where another
     /// Marfa instance answers at the folder's server, which none of them can
     /// reach: the command then names each file holding a change the folder
@@ -163,12 +161,6 @@ pub enum FoldersCommand {
         /// the script's.
         #[arg(long)]
         confirm_additions: bool,
-        /// Copy the files that `folders add --from` listed as older on the
-        /// instance into this directory, then push. Reports files it skips
-        /// because the item's version changed, the local file changed, or
-        /// the moved directory no longer holds the file.
-        #[arg(long, conflicts_with = "send_only")]
-        send_newer: bool,
     },
     /// List the files the directory keeps whose items its folder's query does not match,
     /// as the last pull left them, and with `--remove` take them away. A file
@@ -314,15 +306,7 @@ pub fn run(
 ) -> Result<Exit, CliError> {
     let mut exit = Exit::Done;
     let done = match command {
-        FoldersCommand::Add {
-            dir,
-            folder,
-            yes,
-            from,
-        } => {
-            if let Some(from) = &from {
-                refuse_from(&dir, from)?;
-            }
+        FoldersCommand::Add { dir, folder, yes } => {
             let session = named.session()?;
             let folder = folder_id(&folder, || {
                 let request = crate::remote::request::Request::get(&["folders"]);
@@ -333,6 +317,8 @@ pub fn run(
             say_replaced(&folder);
             storage::warn(&folder);
             storage::warn_git(&folder);
+            // Read before the first sync's plan, which queues its writes.
+            let foresight = folder.restore_foresight()?;
             // Told what the first sync will do before it can, unless the
             // person said to go ahead.
             let (mut plan, mut confirmed, mut unread) = (None, true, None);
@@ -358,36 +344,31 @@ pub fn run(
                     confirmed = true;
                 }
             }
-            let compared = from
-                .as_deref()
-                .map(|from| folder.compare_removed(from))
-                .transpose()?;
-            let mut answer = serde_json::json!({
-                "dir": folder.root(),
-                "folder": folder.folder_id(),
-                "first_sync": first_sync_json(plan.as_ref(), confirmed, unread.as_deref()),
-            });
-            if let Some(compared) = &compared {
-                answer["from"] = serde_json::to_value(compared)?;
-            }
-            output::report(&answer, json, || {
-                let mut lines = vec![format!(
-                    "{} follows the folder {}",
-                    folder.root().display(),
-                    printable(folder.folder_id())
-                )];
-                lines.extend(first_sync_lines(&dir, plan.as_ref(), confirmed));
-                if let Some(error) = &unread {
-                    lines.push(format!(
-                        "the first sync waits for confirmation, but the directory could not be read for it now: {}; `folders push` tries again",
-                        printable(&error.to_string())
-                    ));
-                }
-                if let Some(compared) = &compared {
-                    lines.extend(compared_lines(folder.root(), compared));
-                }
-                lines.join("\n")
-            })
+            output::report(
+                &serde_json::json!({
+                    "dir": folder.root(),
+                    "folder": folder.folder_id(),
+                    "first_sync": first_sync_json(plan.as_ref(), confirmed, unread.as_deref()),
+                    "restore": foresight,
+                }),
+                json,
+                || {
+                    let mut lines = vec![format!(
+                        "{} follows the folder {}",
+                        folder.root().display(),
+                        printable(folder.folder_id())
+                    )];
+                    lines.extend(first_sync_lines(&dir, plan.as_ref(), confirmed));
+                    lines.extend(foresight_lines(&dir, &foresight));
+                    if let Some(error) = &unread {
+                        lines.push(format!(
+                            "the first sync waits for confirmation, but the directory could not be read for it now: {}; `folders push` tries again",
+                            printable(&error.to_string())
+                        ));
+                    }
+                    lines.join("\n")
+                },
+            )
         }
         FoldersCommand::Inventory { page } => {
             let request = crate::remote::request::Request::get(&["folders"])
@@ -601,7 +582,6 @@ pub fn run(
             dir,
             send_only: true,
             confirm_additions,
-            ..
         } => {
             let folder = working(&dir, Some(named.session()?))?;
             if confirm_additions {
@@ -637,6 +617,7 @@ pub fn run(
                     lines.extend(settings_lines(&settings, None));
                     lines.push(describe_scan(&scanned));
                     lines.extend(flagged_lines(&scanned.flagged));
+                    lines.extend(restored_lines(&scanned.restored));
                     lines.extend(embed_lines(&scanned.embeds));
                     lines.extend(rebuilt_line(rebuilt.as_ref()));
                     lines.extend(drain_lines(&folder, &drained));
@@ -652,17 +633,11 @@ pub fn run(
             dir,
             send_only: false,
             confirm_additions,
-            send_newer,
         } => {
             let folder = working(&dir, Some(named.session()?))?;
             if confirm_additions {
                 folder.allow_additions()?;
             }
-            let newer = if send_newer && !folder.awaiting_confirmation()? {
-                Some(folder.send_newer()?)
-            } else {
-                None
-            };
             let SyncReport {
                 hydrated,
                 settings,
@@ -691,62 +666,59 @@ pub fn run(
                     Some(error),
                 ),
             };
-            let mut answer = serde_json::json!({
-                "hydrated": hydrated,
-                "settings": settings,
-                "scan": scanned,
-                "drain": drained,
-                "rebuilt": rebuilt,
-                "catch_up": caught,
-                "pull": pulled,
-                "beneath": beneath,
-            });
-            if let Some(newer) = &newer {
-                answer["send_newer"] = serde_json::to_value(newer)?;
-            }
-            output::report(&answer, json, || {
-                let mut lines = newer
-                    .as_ref()
-                    .map(|newer| newer_lines(&dir, newer.as_deref()))
-                    .unwrap_or_default();
-                if let Some(hydrated) = &hydrated {
-                    lines.push(format!(
-                        "read {} item(s) from the server first",
-                        hydrated.items
-                    ));
-                }
-                lines.extend(settings_lines(
-                    &settings,
-                    pulled.as_ref().map(|pulled| &pulled.settings),
-                ));
-                lines.push(describe_scan(&scanned));
-                let flagged = marfa_core::folder::merged_flagged(
-                    &scanned.flagged,
-                    pulled.iter().flat_map(|pulled| &pulled.flagged),
-                );
-                if let Some(pulled) = &pulled {
-                    lines.extend(uncarried_line(&pulled.uncarried));
-                    if pulled.paused > 0 {
-                        lines.push(paused_line(pulled.paused, true));
+            output::report(
+                &serde_json::json!({
+                    "hydrated": hydrated,
+                    "settings": settings,
+                    "scan": scanned,
+                    "drain": drained,
+                    "rebuilt": rebuilt,
+                    "catch_up": caught,
+                    "pull": pulled,
+                    "beneath": beneath,
+                }),
+                json,
+                || {
+                    let mut lines = Vec::new();
+                    if let Some(hydrated) = &hydrated {
+                        lines.push(format!(
+                            "read {} item(s) from the server first",
+                            hydrated.items
+                        ));
                     }
-                }
-                lines.extend(flagged_lines(&flagged));
-                lines.extend(embed_lines(
-                    scanned
-                        .embeds
-                        .iter()
-                        .chain(pulled.iter().flat_map(|pulled| &pulled.embeds)),
-                ));
-                lines.extend(rebuilt_line(rebuilt.as_ref()));
-                lines.extend(drain_lines(&folder, &drained));
-                lines.extend(beneath_line(beneath.as_ref()));
-                if let Some(error) = &failed {
-                    lines.push(format!(
-                        "could not catch up: {}",
-                        printable(&error.to_string())
+                    lines.extend(settings_lines(
+                        &settings,
+                        pulled.as_ref().map(|pulled| &pulled.settings),
                     ));
-                }
-                lines.push(match &pulled {
+                    lines.push(describe_scan(&scanned));
+                    let flagged = marfa_core::folder::merged_flagged(
+                        &scanned.flagged,
+                        pulled.iter().flat_map(|pulled| &pulled.flagged),
+                    );
+                    if let Some(pulled) = &pulled {
+                        lines.extend(uncarried_line(&pulled.uncarried));
+                        if pulled.paused > 0 {
+                            lines.push(paused_line(pulled.paused, true));
+                        }
+                    }
+                    lines.extend(flagged_lines(&flagged));
+                    lines.extend(restored_lines(&scanned.restored));
+                    lines.extend(embed_lines(
+                        scanned
+                            .embeds
+                            .iter()
+                            .chain(pulled.iter().flat_map(|pulled| &pulled.embeds)),
+                    ));
+                    lines.extend(rebuilt_line(rebuilt.as_ref()));
+                    lines.extend(drain_lines(&folder, &drained));
+                    lines.extend(beneath_line(beneath.as_ref()));
+                    if let Some(error) = &failed {
+                        lines.push(format!(
+                            "could not catch up: {}",
+                            printable(&error.to_string())
+                        ));
+                    }
+                    lines.push(match &pulled {
                         Some(pulled) if pulled.root_gone.is_some() => describe_pull(pulled),
                         Some(pulled) => format!(
                             "{} file(s) written{}",
@@ -757,8 +729,9 @@ pub fn run(
                         ),
                         None => "nothing written: the folder's items could not be read from the server, and the next push tries again".into(),
                     });
-                lines.join("\n")
-            })
+                    lines.join("\n")
+                },
+            )
         }
         FoldersCommand::Unmatched { dir, remove, yes } => unmatched(&dir, remove, yes, json),
         FoldersCommand::Kept { dir, discard, yes } => kept(&dir, discard, yes, json),
@@ -1296,6 +1269,27 @@ fn working(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> {
     Ok(folder)
 }
 
+/// Says each file a removal record decided to send, and from which version.
+pub fn restored_lines(restored: &[marfa_core::folder::SentByRecord]) -> Vec<String> {
+    restored
+        .iter()
+        .map(|file| {
+            let path = printable(&file.path);
+            if file.over_restored {
+                format!(
+                    "{path} is sent as an edit of version {}, which the instance holds as the restore left it",
+                    file.base
+                )
+            } else {
+                format!(
+                    "{path} changed on the instance since the restore; it is sent as an edit of version {}, the last both held, so the instance merges the two and keeps both edits where they clash",
+                    file.base
+                )
+            }
+        })
+        .collect()
+}
+
 pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
     flagged
         .iter()
@@ -1575,34 +1569,35 @@ struct FolderStatus<'a> {
 
 /// What `folders remove` says of a folder whose state went, and where
 /// another instance at its server never received changes the folder held,
-/// each file that holds one and how to send them to that instance.
+/// What `folders remove` says of a folder whose state went, and where
+/// another instance answers at its server, how to follow the folder there.
 fn removed_said(dir: &Path, folder: &str, removed: &marfa_core::folder::Removed) -> String {
-    use marfa_core::folder::{Recorded, UnsentChange};
+    use marfa_core::folder::UnsentChange;
     let unsent = &removed.unsent;
     let shown = dir.display();
     let folder = printable(folder);
     let mut said = vec![format!(
         "{shown} no longer follows the folder {folder}; its files stay"
     )];
-    if let Some(Recorded::NotWritten(reason)) = &removed.recorded {
+    if let Some(files) = removed.recorded {
         said.push(format!(
-            "the record of what this folder sent could not be written into {}: {}; a directory added in its place with `--from` cannot name what this folder sent",
-            dir.join(".marfa").display(),
-            printable(reason)
+            "{} records what this folder last synced of {files} file(s)",
+            dir.join(".marfa").join("removed.json").display()
         ));
     }
     if !removed.instance_changed {
         return said.join("\n");
     }
     let cause = "another Marfa instance answers at the folder's server";
-    let held = !unsent.files.is_empty();
-    said.push(match (unsent.writes, held) {
-        (0, false) => format!("{cause}, and no change waited to be sent to it"),
-        (0, true) => format!("{cause}, and these files hold changes this folder could not send to it:"),
-        (writes, true) => format!(
+    said.push(match (unsent.writes, unsent.files.is_empty()) {
+        (0, true) => format!("{cause}, and no change waited to be sent to it"),
+        (0, false) => {
+            format!("{cause}, and these files hold changes this folder could not send to it:")
+        }
+        (writes, false) => format!(
             "{writes} write(s) could not be sent, because {cause}; these files hold the changes this folder could not send:"
         ),
-        (writes, false) => {
+        (writes, true) => {
             format!("{writes} write(s) could not be sent, because {cause}; no file holds their changes")
         }
     });
@@ -1629,154 +1624,69 @@ fn removed_said(dir: &Path, folder: &str, removed: &marfa_core::folder::Removed)
         said.push(line);
     }
     let word = crate::hint::shell_word(&shown.to_string());
-    let aside = crate::hint::shell_word(&format!("{shown}.before-restore"));
-    said.push(if held {
+    said.extend([
+        "To follow the folder on that instance:".to_string(),
         format!(
-            "The changes to changed, new and moved files stay in the files in {shown}, but a \
-             deletion or a move is in no file. To send them to that instance:"
-        )
-    } else {
-        "To send that instance what this folder sent after the backup it was restored from:"
-            .to_string()
-    });
-    let mut steps = vec![format!(
-        "If {aside} already exists, choose an unused name for it throughout these steps. \
-         Run `mv {word} {aside}`, then, with a key for that instance, `marfa folders add {word} \
-         --folder {folder} --from {aside}` and `marfa folders push {word}`. The add names each \
-         file whose item that instance holds at an older version than this folder last sent it."
-    )];
-    if held {
-        steps.push(
-            "In the new directory, delete each deleted file again and move each moved file again \
-             from where it was."
-                .to_string(),
-        );
-        steps.push(format!(
-            "Copy only the changed, new and moved files back in from {aside}."
-        ));
-    }
-    steps.push(format!(
-        "Run `marfa folders push {word} --send-newer`, which sends the version in {aside} of \
-         each file the add named, and then `marfa folders push {word}` until `marfa folders \
-         status {word}` shows nothing waiting: a deleted file's item is deleted only once the \
-         folder's grace for a rename has passed."
-    ));
-    for (number, step) in steps.iter().enumerate() {
-        said.push(format!("  {}. {step}", number + 1));
-    }
+            "  1. With a key for that instance, run `marfa folders add {word} --folder {folder}` \
+             on this same directory. The add reads the record above and says, for each file, \
+             whether that instance still holds it as the backup left it, in which case this \
+             directory's version is sent, or changed it since, in which case both edits are kept."
+        ),
+        format!(
+            "  2. Run `marfa folders push {word}`. Delete again each file named deleted above, \
+             which the push writes back from that instance, and push again until `marfa folders \
+             status {word}` shows nothing waiting: a deleted file's item is deleted only once the \
+             folder's grace for a rename has passed."
+        ),
+    ]);
     said.join("\n")
 }
 
-/// `--from` names a directory moved aside, never the one being added, which
-/// a first sync would send from with no check of what its files were sent
-/// as.
-fn refuse_from(dir: &Path, from: &Path) -> Result<(), CliError> {
-    let same = match (std::fs::canonicalize(dir), std::fs::canonicalize(from)) {
-        (Ok(dir), Ok(from)) => dir == from,
-        _ => std::path::absolute(dir).ok() == std::path::absolute(from).ok(),
-    };
-    if same {
-        return Err(CliError::Usage(format!(
-            "--from names the directory being added; move {} aside first, add a new directory in its place, and name the moved one with --from",
-            from.display()
-        )));
-    }
-    if Folder::is_at(from) {
-        return Err(CliError::Usage(format!(
-            "{} follows a folder; --from names a directory a folder was removed from",
-            from.display()
-        )));
-    }
-    Ok(())
-}
-
-fn compared_lines(dir: &Path, compared: &marfa_core::folder::Compared) -> Vec<String> {
-    let from = compared.from.display();
-    if let Some(reason) = &compared.unknown {
-        return vec![format!(
-            "nothing is known of what {from} sent: {}",
-            printable(reason)
-        )];
-    }
-    let mut lines = Vec::new();
-    if compared.older.is_empty() {
-        lines.push(format!(
-            "the instance holds no item at an older version than {from} last sent"
-        ));
-    } else {
-        let word = crate::hint::shell_word(&dir.display().to_string());
-        lines.push(format!(
-            "the instance holds these files' items at an older version than {from} last sent; once `marfa folders push {word}` has written the instance's files, `marfa folders push {word} --send-newer` sends the version in {from}:"
-        ));
-        for older in &compared.older {
-            lines.push(format!(
-                "  {}: sent as version {}, held at version {}{}",
-                printable(&older.path),
-                older.sent,
-                older.held,
-                if older.changed {
-                    "; changed in the moved directory since, which is the version sent"
-                } else {
-                    ""
-                }
-            ));
+/// What `folders add` says of the removal record it found in the directory.
+fn foresight_lines(dir: &Path, foresight: &marfa_core::folder::Foresight) -> Vec<String> {
+    use marfa_core::folder::{Foreseen, Known};
+    match &foresight.known {
+        Known::None | Known::SameInstance => return Vec::new(),
+        Known::Unknown(reason) => {
+            return vec![format!(
+                "nothing is known of what {} last synced: {}",
+                dir.display(),
+                printable(reason)
+            )];
         }
+        Known::OtherInstance => {}
     }
-    if !compared.absent.is_empty() {
-        lines.push(format!(
-            "the folder on the instance holds no item for these files in {from}; copy one into {} to send it as a new item:",
-            dir.display()
-        ));
-        lines.extend(
-            compared
-                .absent
-                .iter()
-                .map(|path| format!("  {}", printable(path))),
-        );
+    let mut lines = vec![format!(
+        "{} last synced with another instance than the one at this server",
+        dir.display()
+    )];
+    if foresight.files.is_empty() {
+        lines.push("  every file it recorded is as that instance holds it".into());
     }
-    if !compared.gone.is_empty() {
-        lines.push(format!(
-            "these files are no longer in {from}, so nothing of them is sent:"
-        ));
-        lines.extend(
-            compared
-                .gone
-                .iter()
-                .map(|path| format!("  {}", printable(path))),
-        );
+    for file in &foresight.files {
+        let path = printable(&file.path);
+        lines.push(match &file.outcome {
+            Foreseen::Send { held, sent } => format!(
+                "  {path}: the instance holds version {held} as the backup left it, and this folder last sent version {sent}; the next push sends this file as an edit of version {held}"
+            ),
+            Foreseen::Both { held, shared } => format!(
+                "  {path}: changed on the instance since the restore (now version {held}); where the file differs, the next push sends it as an edit of version {shared}, the last both held, and both edits are kept"
+            ),
+            Foreseen::Absent => format!(
+                "  {path}: the instance holds no item for it; it is not sent, and taking out its marfa_id line sends it as a new item"
+            ),
+            Foreseen::Unsure { reason } => format!(
+                "  {path}: not sent, and the instance's version is not written over it, because {}",
+                printable(reason)
+            ),
+            Foreseen::Gone => format!("  {path}: no longer in the directory; nothing is sent"),
+            Foreseen::Unreadable { reason } => format!(
+                "  {path}: cannot be read ({}); it is decided once it can be",
+                printable(reason)
+            ),
+        });
     }
     lines
-}
-
-fn newer_lines(dir: &Path, newer: Option<&[marfa_core::folder::SentNewer]>) -> Vec<String> {
-    use marfa_core::folder::NewerOutcome;
-    let Some(newer) = newer else {
-        return vec![
-            "--send-newer: no `folders add --from` named a file to send, so none was written"
-                .into(),
-        ];
-    };
-    let word = crate::hint::shell_word(&dir.display().to_string());
-    newer
-        .iter()
-        .map(|file| {
-            let path = printable(&file.path);
-            match &file.outcome {
-                NewerOutcome::Queued => format!("{path}: copied from the moved directory for this push"),
-                NewerOutcome::Already => format!("{path}: holds the moved directory's version already"),
-                NewerOutcome::Gone => format!("{path}: no longer in the moved directory; nothing sent"),
-                NewerOutcome::ChangedThere { read, held } => format!(
-                    "{path}: not sent, because the instance changed its item after the add read it (version {read}, now {held}); compare the two and keep the one you want"
-                ),
-                NewerOutcome::ChangedHere => format!(
-                    "{path}: not sent, because its file here changed after the folder wrote it; it is tried again at the next `--send-newer`"
-                ),
-                NewerOutcome::NotWritten => format!(
-                    "{path}: not sent, because the instance's file is not written here yet; run `marfa folders push {word}`, then `--send-newer` again"
-                ),
-            }
-        })
-        .collect()
 }
 
 /// A copy the instance change expired is said by its cause; every other

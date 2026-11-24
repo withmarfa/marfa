@@ -57,7 +57,7 @@ pub use every::{
     follows, watch_every,
 };
 pub use handover::{HANDOVER_WAIT, held_by_another, not_handed_over};
-pub use removed_record::{Compared, NewerOutcome, Older, Recorded, Removed, SentNewer};
+pub use removed_record::{Foreseen, ForeseenFile, Foresight, Known, Removed, SentByRecord};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
 pub use storage::StorageCause;
 #[cfg(unix)]
@@ -299,6 +299,8 @@ pub struct ScanReport {
     /// folder's `outside_query` is `hold`.
     pub held_outside: usize,
     pub warnings: Vec<Flagged>,
+    /// Files sent as the removal record decided.
+    pub restored: Vec<SentByRecord>,
     /// Why the pass read nothing, where the folder's directory is gone.
     pub root_gone: Option<String>,
     /// Why links by name wait though the server answered, where they do: it
@@ -320,6 +322,7 @@ impl ScanReport {
     /// The walk a quick pass handed its sweep to: what the quick pass sent
     /// is added, and the walk reports the rest.
     pub(super) fn absorb_quick(&mut self, quick: ScanReport) {
+        self.restored.extend(quick.restored.iter().cloned());
         self.created += quick.created;
         self.updated += quick.updated;
         self.renamed += quick.renamed;
@@ -330,6 +333,7 @@ impl ScanReport {
     /// A rescan of the same sync: what it made is added, and what it holds
     /// back is what it reports.
     pub(super) fn absorb_rescan(&mut self, later: ScanReport) {
+        self.restored.extend(later.restored.iter().cloned());
         self.created += later.created;
         self.updated += later.updated;
         self.renamed += later.renamed;
@@ -809,16 +813,19 @@ impl Folder {
                 waiting.len()
             )));
         };
-        // Nothing was agreed with the server before the first sync.
-        let record = if self.awaiting_confirmation()? {
+        // Nothing was agreed with the server before the first sync. The
+        // record is durable before anything is cleared.
+        let recorded = if self.awaiting_confirmation()? {
             None
         } else {
-            Some(self.sent_record())
+            Some(self.write_removal_record()?)
         };
-        if let Some(registry) = Registry::located() {
-            registry.unregister(&self.root, elsewhere::listed_store(&self.core).as_deref())?;
+        if let Err(error) = self.unlist_for_removal() {
+            if recorded.is_some() {
+                self.drop_removal_record();
+            }
+            return Err(error);
         }
-        self.refuse_if_gone()?;
         let Folder {
             root,
             state_dir,
@@ -827,25 +834,26 @@ impl Folder {
         } = self;
         drop(core);
         swap_root(&root, "replace-root-before-cleanup");
-        state_dir.clear().map_err(|error| {
-            CoreError::Store(format!(
-                "cannot remove {}: {error}",
-                root.join(STATE_DIR).display()
-            ))
-        })?;
-        let recorded = record.map(|record| {
-            match record.and_then(|(bytes, files)| {
-                removed_record::write(&state_dir, &bytes).map(|()| files)
-            }) {
-                Ok(files) => Recorded::Written(files),
-                Err(error) => Recorded::NotWritten(error.to_string()),
-            }
-        });
+        state_dir
+            .clear_except(Path::new(removed_record::RECORD))
+            .map_err(|error| {
+                CoreError::Store(format!(
+                    "cannot remove {}: {error}",
+                    root.join(STATE_DIR).display()
+                ))
+            })?;
         Ok(Removed {
             unsent,
             instance_changed,
             recorded,
         })
+    }
+
+    fn unlist_for_removal(&self) -> Result<()> {
+        if let Some(registry) = Registry::located() {
+            registry.unregister(&self.root, elsewhere::listed_store(&self.core).as_deref())?;
+        }
+        self.refuse_if_gone()
     }
 
     /// Whether the copy's origin answers as another instance: asked of its
@@ -858,9 +866,7 @@ impl Folder {
                 crate::store::meta_get(&conn, crate::store::META_SERVER_ORIGIN)?,
             )
         };
-        let Some(http) = recorded
-            .then_some(origin)
-            .flatten()
+        let Some(http) = origin
             .and_then(|origin| crate::http::Http::new(&origin, "").ok())
         else {
             return Ok(recorded);

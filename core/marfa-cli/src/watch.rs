@@ -884,6 +884,7 @@ fn standing(
                 )
             }))
             .chain(folders::flagged_lines(flagged))
+            .chain(folders::restored_lines(&scanned.restored))
             .chain(folders::embed_lines(embeds))
             .collect()
     } else {

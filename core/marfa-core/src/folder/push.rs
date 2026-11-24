@@ -3,7 +3,7 @@ use super::{
     HashSet, Item, ItemState, Kept, LOCAL_ADMISSION_REFUSAL, Map, Names, Path, Resolver, Result,
     Retitle, Scanned, Settings, Value, blank, bytes_of, bytes_type, carries_frontmatter, document,
     executable, fields, identity, local_admission_refusal, local_properties_refusal, name_of,
-    names, placement, pull, state, title_of,
+    names, placement, pull, removed_record, state, title_of,
 };
 
 fn named_item(queued: crate::model::QueuedWrite, key: &str) -> Result<String> {
@@ -469,6 +469,7 @@ impl Folder {
         bound: Option<&state::Bound>,
         file: &Scanned,
         retitle: Option<&Retitle>,
+        basis: Option<&removed_record::Basis>,
         catalog: &Catalog,
         edge_types: &EdgeTypes,
         work: &mut Vec<EdgeWork>,
@@ -526,7 +527,12 @@ impl Folder {
                 }
                 None => false,
             };
-        let standing = match file.line {
+        // Another instance's version line is no base: the removal record
+        // decided the version both last held.
+        let standing = match (basis, file.line) {
+            (Some(removed_record::Basis::Exact(_)), _) => Standing::Current,
+            (Some(removed_record::Basis::Merge(base)), _) => Standing::Behind(*base),
+            (_, line) => match line {
             _ if untaken.is_some() => Standing::Spent,
             Some(line) if line == held.version || current_but_line => Standing::Current,
             // Behind only by the file's own edit, which it holds.
@@ -535,6 +541,7 @@ impl Folder {
             }
             Some(line) if line < held.version => Standing::Behind(line),
             _ => Standing::Lineless,
+            },
         };
         let whole = standing == Standing::Current;
         let own = own_changes(&read.lines, standing, &held, bound, file.line);
@@ -731,6 +738,13 @@ impl Folder {
                         item_id,
                         &edit,
                         crate::Based::AsRead,
+                        crate::Body::Folder,
+                    )
+                } else if matches!(basis, Some(removed_record::Basis::Exact(_))) {
+                    self.core.write_update(
+                        item_id,
+                        &edit,
+                        crate::Based::Exact,
                         crate::Body::Folder,
                     )
                 } else {

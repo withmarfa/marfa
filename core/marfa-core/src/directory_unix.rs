@@ -285,8 +285,16 @@ impl Directory {
     }
 
     pub(crate) fn clear(&self) -> io::Result<()> {
+        self.clear_except(Path::new(""))
+    }
+
+    /// `clear`, but for the entry `kept`.
+    pub(crate) fn clear_except(&self, kept: &Path) -> io::Result<()> {
         for name in self.entries()? {
             let name = Path::new(&name);
+            if name == kept {
+                continue;
+            }
             match self.entry_kind(name)? {
                 fs::FileType::Directory => self.clear_tree(name)?,
                 _ => self.unlink(name)?,

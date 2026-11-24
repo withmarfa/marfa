@@ -1,48 +1,46 @@
-//! Folder removal records and recovery after a restore.
+//! The record a removal leaves in `.marfa`, and what a folder added again in
+//! the same directory decides from it when another instance answers.
 
 use std::collections::HashMap;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::io::{Read, Write};
+use std::path::Path;
 
 use rustix::fs::{Mode, OFlags};
 use serde::{Deserialize, Serialize};
 
-use super::{Folder, STATE_DIR, retained, state};
+use super::{Folder, retained, state};
 use crate::directory::Directory;
-use crate::model::ItemState;
-use crate::{Result, store};
+use crate::model::Item;
+use crate::{CoreError, Result, store};
 
 pub const RECORD: &str = "removed.json";
+/// How a held file's reason starts.
+pub(super) const RESTORED_ELSEWHERE: &str =
+    "this folder last synced it with another instance, and ";
+pub(super) const AS_NEW: &str =
+    "; to send it as a new item, take out its marfa_id line, or delete it to keep the instance's";
+const STAGED: &str = "removed.json.tmp";
 const FORMAT: u32 = 1;
-/// The files a directory's add named older, with the version it read.
-const META_NEWER: &str = "folder_newer_elsewhere";
+/// Far above a record of a million files.
+const LIMIT: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Record {
     format: u32,
     folder: String,
-    /// The instance the folder's copy was filled from.
-    instance: Option<String>,
+    /// The instance the folder last synced with.
+    instance: String,
     files: Vec<Sent>,
 }
 
-/// A file's item as the folder last agreed it with its server.
+/// A file's item as its server last acknowledged it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Sent {
     path: String,
     item: String,
     version: i64,
-    hash: String,
-}
-
-/// Whether the removal wrote its record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Recorded {
-    /// The record names this many files.
-    Written(usize),
-    /// Why it could not be written. The removal stands.
-    NotWritten(String),
+    /// `None` where a change to the file was never acknowledged.
+    hash: Option<String>,
 }
 
 /// What a removal did besides deleting the folder's state.
@@ -51,337 +49,440 @@ pub struct Removed {
     pub unsent: super::UnsentChanges,
     /// Whether another instance answers at the folder's server.
     pub instance_changed: bool,
-    /// `None` for a folder whose first sync still waited.
-    pub recorded: Option<Recorded>,
+    /// How many files the record names; `None` where the first sync waited,
+    /// which agreed nothing with the server.
+    pub recorded: Option<usize>,
 }
 
-/// The result of comparing a removal record with the destination instance.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct Compared {
-    /// The removed directory.
-    pub from: PathBuf,
-    /// Why the removal record and the instance could not be compared.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unknown: Option<String>,
-    /// Files whose recorded version exceeds the version on the instance.
-    pub older: Vec<Older>,
-    /// Files whose item the folder on the instance does not hold.
-    pub absent: Vec<String>,
-    /// Files the record names that are no longer in the removed directory.
-    pub gone: Vec<String>,
-}
-
+/// What a folder knows of the record in its own `.marfa`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Older {
-    pub path: String,
-    pub item: String,
-    /// The version the folder last sent.
-    pub sent: i64,
-    /// The version the instance holds.
-    pub held: i64,
-    /// Whether the file changed after the folder last sent it.
-    pub changed: bool,
+#[serde(rename_all = "snake_case", tag = "record", content = "reason")]
+pub enum Known {
+    None,
+    /// A record that cannot be read, or one of another folder.
+    Unknown(String),
+    /// The folder last synced with the instance that answers now.
+    SameInstance,
+    /// The folder last synced with another instance.
+    OtherInstance,
 }
 
-/// One file `--send-newer` took up.
+/// What the first sync does with a file the record names, decided before
+/// the sync runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SentNewer {
-    pub path: String,
-    pub outcome: NewerOutcome,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NewerOutcome {
-    /// Written into the directory, for the push to send.
-    Queued,
-    /// The directory's file holds these bytes already.
-    Already,
-    /// Not in the removed directory any more; nothing sent.
+#[serde(rename_all = "snake_case", tag = "outcome")]
+pub enum Foreseen {
+    /// The instance holds the item as the restore left it, an earlier
+    /// version than the folder sent: the file is sent as an edit of it.
+    Send { held: i64, sent: i64 },
+    /// The instance changed the item since the restore: a file that differs
+    /// is merged from the last version both hold, keeping both edits.
+    Both { held: i64, shared: i64 },
+    /// The folder on the instance holds no item for the file.
+    Absent,
+    /// The record cannot tell which version both hold.
+    Unsure { reason: String },
     Gone,
-    /// The instance changed the item after the add read it; nothing sent.
-    ChangedThere { read: i64, held: i64 },
-    /// The directory's file of the item was changed after it was written;
-    /// nothing sent.
-    ChangedHere,
-    /// The directory holds no file of the item yet; a push writes it.
-    NotWritten,
+    Unreadable { reason: String },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Newer {
-    from: PathBuf,
-    files: Vec<Pending>,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ForeseenFile {
+    pub path: String,
+    #[serde(flatten)]
+    pub outcome: Foreseen,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Pending {
-    path: String,
-    item: String,
-    read: i64,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Foresight {
+    #[serde(flatten)]
+    pub known: Known,
+    pub files: Vec<ForeseenFile>,
+}
+
+/// A file a scan sent as the removal record decided, named in its report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SentByRecord {
+    pub path: String,
+    /// The version the edit names.
+    pub base: i64,
+    /// Whether the instance still held that version as the restore left it.
+    pub over_restored: bool,
+}
+
+/// How the first sync sends a file whose item the record names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Basis {
+    /// As an edit of the current version, which the server refuses once the
+    /// item moves past it.
+    Exact(i64),
+    /// As an edit of an earlier version both hold, which the server merges.
+    Merge(i64),
+    Unsure(String),
+}
+
+/// A record of another instance, as a scan reads it.
+pub(super) struct Evidence {
+    /// When the instance that answers now was made, in Unix milliseconds.
+    born: Option<i64>,
+    files: HashMap<String, Sent>,
+}
+
+impl Evidence {
+    pub(super) fn names(&self, item: &str) -> bool {
+        self.files.contains_key(item)
+    }
+
+    pub(super) fn items(&self) -> impl Iterator<Item = &str> {
+        self.files.keys().map(String::as_str)
+    }
 }
 
 impl Folder {
-    /// Builds the record before removal clears the bindings.
-    pub(super) fn sent_record(&self) -> Result<(Vec<u8>, usize)> {
+    /// Writes the record and makes it durable, before the removal clears
+    /// anything. Answers how many files it names.
+    pub(super) fn write_removal_record(&self) -> Result<usize> {
         let conn = self.core.conn()?;
+        let instance = store::meta_get(&conn, store::META_INSTANCE_ID)?.unwrap_or_default();
         let bound = state::every_bound(&conn)?;
         let ids: Vec<String> = bound.iter().map(|row| row.item_id.clone()).collect();
         let versions: HashMap<String, i64> = store::items_by_ids(&conn, &ids)?
             .into_iter()
             .map(|item| (item.id, item.version))
             .collect();
-        let files: Vec<Sent> = bound
-            .into_iter()
-            .filter_map(|row| {
-                Some(Sent {
-                    version: *versions.get(&row.item_id)?,
-                    path: row.path,
-                    item: row.item_id,
-                    hash: row.content_hash,
-                })
-            })
-            .collect();
+        let mut files = Vec::new();
+        for row in bound {
+            // Version 0 is a create the server never answered.
+            let Some(&version) = versions.get(&row.item_id).filter(|version| **version > 0)
+            else {
+                continue;
+            };
+            let hash = (!store::item_waits(&conn, &row.item_id)?).then_some(row.content_hash);
+            files.push(Sent {
+                path: row.path,
+                item: row.item_id,
+                version,
+                hash,
+            });
+        }
+        drop(conn);
         let count = files.len();
-        let record = Record {
+        let bytes = serde_json::to_vec(&Record {
             format: FORMAT,
             folder: self.folder.clone(),
-            instance: store::meta_get(&conn, store::META_INSTANCE_ID)?,
+            instance,
             files,
-        };
-        Ok((serde_json::to_vec_pretty(&record)?, count))
+        })?;
+        durable_write(&self.state_dir, &bytes).map_err(|error| {
+            CoreError::Store(format!(
+                "cannot write the removal record into {}: {error}; nothing was removed",
+                self.root.join(super::STATE_DIR).display()
+            ))
+        })?;
+        Ok(count)
     }
 
-    /// Compares the removal record and saves candidates for `send_newer`.
-    pub fn compare_removed(&self, from: &Path) -> Result<Compared> {
-        let from = std::path::absolute(from).map_err(super::io_error)?;
-        let mut compared = Compared {
-            from: from.clone(),
-            ..Compared::default()
+    pub(super) fn drop_removal_record(&self) {
+        let _ = self.state_dir.unlink(Path::new(RECORD));
+    }
+
+    /// What the record in `.marfa` says of the instance the copy follows.
+    fn read_evidence(&self) -> Result<(Known, Option<Record>)> {
+        let record = match read(&self.state_dir) {
+            Ok(None) => return Ok((Known::None, None)),
+            Ok(Some(record)) => record,
+            Err(reason) => return Ok((Known::Unknown(reason), None)),
         };
-        let record = match read(&from) {
-            Ok(record) if record.folder == self.folder => record,
-            Ok(record) => {
-                compared.unknown = Some(format!(
-                    "its record is of the folder {}, not this one",
+        if record.folder != self.folder {
+            return Ok((
+                Known::Unknown(format!(
+                    "its removal record is of the folder {}, not this one",
                     record.folder
-                ));
-                return Ok(compared);
-            }
-            Err(reason) => {
-                compared.unknown = Some(reason);
-                return Ok(compared);
-            }
-        };
-        if let Err(error) = self.resume().and_then(|_| self.catch_up()) {
-            compared.unknown = Some(format!("the instance could not be read: {error}"));
-            return Ok(compared);
+                )),
+                None,
+            ));
         }
-        let ids: Vec<String> = record.files.iter().map(|file| file.item.clone()).collect();
-        let held: HashMap<String, i64> = store::items_by_ids(&*self.core.conn()?, &ids)?
-            .into_iter()
-            .filter(|item| matches!(item.state, ItemState::Active | ItemState::Archived))
-            .map(|item| (item.id, item.version))
-            .collect();
-        let mut pending = Vec::new();
-        for file in record.files {
-            let Some(bytes) = file_at(&from, &file.path) else {
-                compared.gone.push(file.path);
-                continue;
-            };
-            let Some(&version) = held.get(&file.item) else {
-                compared.absent.push(file.path);
-                continue;
-            };
-            if version < file.version {
-                pending.push(Pending {
-                    path: file.path.clone(),
-                    item: file.item.clone(),
-                    read: version,
-                });
-                compared.older.push(Older {
-                    changed: state::hash(&bytes) != file.hash,
-                    path: file.path,
-                    item: file.item,
-                    sent: file.version,
-                    held: version,
-                });
-            }
-        }
-        let conn = self.core.conn()?;
-        if pending.is_empty() {
-            store::meta_delete(&conn, META_NEWER)?;
-        } else {
-            store::meta_set(
-                &conn,
-                META_NEWER,
-                &serde_json::to_string(&Newer {
-                    from,
-                    files: pending,
-                })?,
-            )?;
-        }
-        Ok(compared)
+        let now = store::meta_get(&*self.core.conn()?, store::META_INSTANCE_ID)?;
+        Ok(match now {
+            Some(now) if now == record.instance => (Known::SameInstance, None),
+            Some(_) => (Known::OtherInstance, Some(record)),
+            None => (
+                Known::Unknown("the instance it follows has not been read yet".into()),
+                None,
+            ),
+        })
     }
 
-    /// Copies eligible files for the next scan. Returns `None` if no candidates were saved.
-    pub fn send_newer(&self) -> Result<Option<Vec<SentNewer>>> {
-        self.refuse_if_gone()?;
-        self.refuse_while_waiting()?;
-        let Some(newer) = store::meta_get(&*self.core.conn()?, META_NEWER)?
-            .and_then(|json| serde_json::from_str::<Newer>(&json).ok())
-        else {
+    /// The record's files, where the folder last synced with another instance.
+    pub(super) fn restore_evidence(&self) -> Result<Option<Evidence>> {
+        let (_, record) = self.read_evidence()?;
+        let Some(record) = record else {
             return Ok(None);
         };
-        // Out of reach, the copy stands: the edit still names the version read.
-        match self.catch_up() {
-            Ok(_) => {}
-            Err(error) if error.is_environmental() => {}
-            Err(error) => return Err(error),
-        }
-        let mut said = Vec::new();
-        let mut left = Vec::new();
-        for file in newer.files {
-            let outcome = self.send_one(&newer.from, &file)?;
-            if matches!(
-                outcome,
-                NewerOutcome::NotWritten | NewerOutcome::ChangedHere
-            ) {
-                left.push(file.clone());
+        let born = store::meta_get(&*self.core.conn()?, store::META_INSTANCE_ID)?
+            .as_deref()
+            .and_then(born_ms);
+        Ok(Some(Evidence {
+            born,
+            files: record
+                .files
+                .into_iter()
+                .map(|file| (file.item.clone(), file))
+                .collect(),
+        }))
+    }
+
+    /// The version the file and the instance last both held, and how to send
+    /// the file from it. `line` is the file's version line.
+    pub(super) fn restored_basis(
+        &self,
+        evidence: &Evidence,
+        item: &Item,
+        line: Option<i64>,
+    ) -> Option<Basis> {
+        let sent = evidence.files.get(&item.id)?;
+        let file_base = line.map_or(sent.version, |line| line.min(sent.version));
+        let Some(born) = evidence.born else {
+            return Some(Basis::Unsure(
+                "the instance's ID does not say when it was made".into(),
+            ));
+        };
+        let shared = match self.shared_version(born, item) {
+            Ok(Some(shared)) => shared,
+            Ok(None) => {
+                return Some(Basis::Unsure(
+                    "the instance holds no version of it from before the restore".into(),
+                ));
             }
-            said.push(SentNewer {
-                path: file.path,
+            Err(error) => {
+                return Some(Basis::Unsure(format!(
+                    "the instance's history of it could not be read: {error}"
+                )));
+            }
+        };
+        let base = shared.min(file_base);
+        Some(if base < 1 {
+            Basis::Unsure("the file names no version the instance holds".into())
+        } else if base == item.version {
+            Basis::Exact(base)
+        } else {
+            Basis::Merge(base)
+        })
+    }
+
+    /// The newest version of `item` the instance holds from before it was
+    /// made: one its restore brought, which no later write changed. `None`
+    /// where the instance wrote every version itself.
+    fn shared_version(&self, born: i64, item: &Item) -> Result<Option<i64>> {
+        if before(&item.updated_at, born) {
+            return Ok(Some(item.version));
+        }
+        if !before(&item.created_at, born) {
+            return Ok(None);
+        }
+        let mut shared = 1;
+        // A snapshot is made when the version after it is written.
+        for (version, left_at) in self.core.http()?.version_history(&item.id)? {
+            if !before(&left_at, born) {
+                break;
+            }
+            shared = version + 1;
+        }
+        Ok(Some(shared.min(item.version)))
+    }
+
+    /// What the first sync will do with each file the record names. Reads
+    /// the instance first where a record of this folder is there.
+    pub fn restore_foresight(&self) -> Result<Foresight> {
+        if read(&self.state_dir).is_ok_and(|record| record.is_none()) {
+            return Ok(Foresight {
+                known: Known::None,
+                files: Vec::new(),
+            });
+        }
+        if let Err(error) = self.resume().and_then(|_| self.catch_up()) {
+            return Ok(Foresight {
+                known: Known::Unknown(format!("the instance could not be read: {error}")),
+                files: Vec::new(),
+            });
+        }
+        let (known, record) = self.read_evidence()?;
+        let (Some(record), Some(evidence)) = (record, self.restore_evidence()?) else {
+            return Ok(Foresight {
+                known,
+                files: Vec::new(),
+            });
+        };
+        let ids: Vec<String> = record.files.iter().map(|file| file.item.clone()).collect();
+        let held: HashMap<String, Item> = store::items_by_ids(&*self.core.conn()?, &ids)?
+            .into_iter()
+            .filter(|item| {
+                matches!(
+                    item.state,
+                    crate::model::ItemState::Active | crate::model::ItemState::Archived
+                )
+            })
+            .map(|item| (item.id.clone(), item))
+            .collect();
+        let mut files = Vec::new();
+        for sent in record.files {
+            let bytes = match plain_relative(&sent.path)
+                .and_then(|relative| self.root_dir.read(relative))
+            {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    files.push(ForeseenFile {
+                        path: sent.path,
+                        outcome: Foreseen::Gone,
+                    });
+                    continue;
+                }
+                Err(error) => {
+                    files.push(ForeseenFile {
+                        path: sent.path,
+                        outcome: Foreseen::Unreadable {
+                            reason: error.to_string(),
+                        },
+                    });
+                    continue;
+                }
+            };
+            let Some(item) = held.get(&sent.item) else {
+                files.push(ForeseenFile {
+                    path: sent.path,
+                    outcome: Foreseen::Absent,
+                });
+                continue;
+            };
+            let line = std::str::from_utf8(&bytes)
+                .ok()
+                .and_then(|text| version_in(text));
+            let outcome = match self.restored_basis(&evidence, item, line) {
+                Some(Basis::Exact(held))
+                    if held == sent.version
+                        && sent.hash.as_deref() == Some(state::hash(&bytes).as_str()) =>
+                {
+                    continue;
+                }
+                Some(Basis::Exact(held)) => Foreseen::Send {
+                    held,
+                    sent: sent.version,
+                },
+                Some(Basis::Merge(shared)) => Foreseen::Both {
+                    held: item.version,
+                    shared,
+                },
+                Some(Basis::Unsure(reason)) => Foreseen::Unsure { reason },
+                None => continue,
+            };
+            files.push(ForeseenFile {
+                path: sent.path,
                 outcome,
             });
         }
-        let conn = self.core.conn()?;
-        if left.is_empty() {
-            store::meta_delete(&conn, META_NEWER)?;
-        } else {
-            store::meta_set(
-                &conn,
-                META_NEWER,
-                &serde_json::to_string(&Newer {
-                    from: newer.from,
-                    files: left,
-                })?,
-            )?;
-        }
-        Ok(Some(said))
-    }
-
-    fn send_one(&self, from: &Path, file: &Pending) -> Result<NewerOutcome> {
-        let Some(mut bytes) = file_at(from, &file.path) else {
-            return Ok(NewerOutcome::Gone);
-        };
-        let (row, held) = {
-            let conn = self.core.conn()?;
-            (
-                state::bound_to_item(&conn, &file.item)?,
-                store::items_by_ids(&conn, std::slice::from_ref(&file.item))?
-                    .pop()
-                    .map(|item| item.version),
-            )
-        };
-        let held = held.unwrap_or_default();
-        if held != file.read {
-            return Ok(NewerOutcome::ChangedThere {
-                read: file.read,
-                held,
-            });
-        }
-        let Some(row) = row else {
-            return Ok(NewerOutcome::NotWritten);
-        };
-        let Ok(here) = self.root_dir.read(Path::new(&row.path)) else {
-            return Ok(NewerOutcome::NotWritten);
-        };
-        // The destination scan interprets this line as the edit's base version.
-        if let Ok(text) = std::str::from_utf8(&bytes)
-            && let Some(line) = retained::version_line(text)
-        {
-            let ending = if text[line.clone()].ends_with("\r\n") {
-                "\r\n"
-            } else {
-                "\n"
-            };
-            bytes = [
-                &text[..line.start],
-                &format!("{}: {}{ending}", super::fields::VERSION_FIELD, file.read),
-                &text[line.end..],
-            ]
-            .concat()
-            .into_bytes();
-        }
-        if here == bytes {
-            return Ok(NewerOutcome::Already);
-        }
-        let here_hash = state::hash(&here);
-        if here_hash != row.content_hash && row.written_hash.as_deref() != Some(&here_hash) {
-            return Ok(NewerOutcome::ChangedHere);
-        }
-        replace(&self.root_dir, Path::new(&row.path), &bytes).map_err(super::io_error)?;
-        Ok(NewerOutcome::Queued)
+        Ok(Foresight { known, files })
     }
 }
 
-pub(super) fn write(state_dir: &Directory, record: &[u8]) -> Result<()> {
-    replace(state_dir, Path::new(RECORD), record).map_err(super::io_error)
-}
-
-fn read(from: &Path) -> std::result::Result<Record, String> {
-    let path = from.join(STATE_DIR).join(RECORD);
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(format!(
-                "{} holds no record of what its folder sent",
-                from.display()
-            ));
-        }
-        Err(error) => {
-            return Err(format!(
-                "its record {} cannot be read: {error}",
-                path.display()
-            ));
-        }
-    };
-    match serde_json::from_slice::<Record>(&bytes) {
-        Ok(record) if record.format == FORMAT => Ok(record),
-        Ok(record) => Err(format!(
-            "its record {} is of format {}, which this build does not read",
-            path.display(),
-            record.format
-        )),
-        Err(error) => Err(format!(
-            "its record {} cannot be read: {error}",
-            path.display()
-        )),
-    }
-}
-
-/// A read error makes the file unavailable for comparison or sending.
-fn file_at(from: &Path, relative: &str) -> Option<Vec<u8>> {
-    if relative
-        .split('/')
-        .any(|part| part.is_empty() || part == "." || part == "..")
-    {
-        return None;
-    }
-    Directory::open(from).ok()?.read(Path::new(relative)).ok()
-}
-
-fn replace(dir: &Directory, relative: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let (parent, name) = dir.parent(relative, false)?;
-    let staged = PathBuf::from(format!(".marfa-{}-sending.tmp", std::process::id()));
-    let _ = parent.unlink(&staged);
-    let mut file = parent.open_file(
-        &staged,
+/// Stages the record, flushes it and its directory, then names it.
+fn durable_write(dir: &Directory, bytes: &[u8]) -> std::io::Result<()> {
+    let staged = Path::new(STAGED);
+    let _ = dir.unlink(staged);
+    let mut file = dir.open_file(
+        staged,
         OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
-        Mode::from_raw_mode(0o666),
+        Mode::from_raw_mode(0o600),
     )?;
     file.write_all(bytes)?;
     file.sync_all()?;
     drop(file);
-    parent.rename(&staged, &parent, Path::new(&name), false)
+    dir.rename(staged, dir, Path::new(RECORD), false)?;
+    dir.sync()
+}
+
+/// `Ok(None)` where there is no record. Follows no link, and reads only a
+/// regular file of a bounded size.
+fn read(dir: &Directory) -> std::result::Result<Option<Record>, String> {
+    let shown = Path::new(super::STATE_DIR).join(RECORD);
+    let unreadable = |error: &dyn std::fmt::Display| {
+        format!("its removal record {} cannot be read: {error}", shown.display())
+    };
+    let file = match dir.open_file(Path::new(RECORD), OFlags::RDONLY, Mode::empty()) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(unreadable(&error)),
+    };
+    let size = file.metadata().map_err(|error| unreadable(&error))?.len();
+    if size > LIMIT {
+        return Err(unreadable(&format!("it is larger than {LIMIT} bytes")));
+    }
+    let mut bytes = Vec::new();
+    file.take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| unreadable(&error))?;
+    match serde_json::from_slice::<Record>(&bytes) {
+        Ok(record) if record.format == FORMAT => Ok(Some(record)),
+        Ok(record) => Err(format!(
+            "its removal record {} is of format {}, which this build does not read",
+            shown.display(),
+            record.format
+        )),
+        Err(error) => Err(unreadable(&error)),
+    }
+}
+
+fn plain_relative(path: &str) -> std::io::Result<&Path> {
+    if path.is_empty()
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the record names a path outside the directory",
+        ));
+    }
+    Ok(Path::new(path))
+}
+
+fn version_in(text: &str) -> Option<i64> {
+    let range = retained::version_line(text)?;
+    let (_, value) = text[range].split_once(':')?;
+    value.trim().trim_matches(['"', '\'']).parse().ok()
+}
+
+/// When a UUIDv7 was made, in Unix milliseconds.
+fn born_ms(id: &str) -> Option<i64> {
+    let id = uuid::Uuid::parse_str(id).ok()?;
+    if id.get_version_num() != 7 {
+        return None;
+    }
+    let (seconds, nanos) = id.get_timestamp()?.to_unix();
+    i64::try_from(seconds)
+        .ok()?
+        .checked_mul(1000)?
+        .checked_add(i64::from(nanos / 1_000_000))
+}
+
+/// Whether `stamp` names a moment before `born`; a stamp that does not read
+/// is not.
+fn before(stamp: &str, born: i64) -> bool {
+    marfa_rules::time::read(stamp).is_ok_and(|at| at < born)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_version_seven_id_tells_when_it_was_made() {
+        let id = uuid::Uuid::now_v7().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let born = born_ms(&id).unwrap();
+        assert!((now - born).abs() < 5_000, "{born} against {now}");
+        assert_eq!(born_ms(&uuid::Uuid::new_v4().to_string()), None);
+    }
 }

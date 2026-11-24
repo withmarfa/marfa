@@ -6,6 +6,7 @@ use crate::Seen;
 use super::beneath::PendingBeneath;
 use super::default_edges::default_edges_of;
 use super::push::{admission_hold, file_item_draft, new_document};
+use super::removed_record::{self, AS_NEW, RESTORED_ELSEWHERE};
 use super::scoped::{Guard, Inventory, Looked, Plan, Reading, linked_elsewhere};
 use super::settings::OutsideQuery;
 use super::{
@@ -1230,6 +1231,9 @@ impl Folder {
         let mut work: Vec<EdgeWork> = Vec::new();
         let mut moved_since: Vec<(String, EdgeWork)> = Vec::new();
         let mut unsettled: HashSet<String> = HashSet::new();
+        let evidence = self.restore_evidence()?;
+        let whole_pass = scan.scope.is_none() && !scan.incomplete;
+        let mut record_waits = false;
 
         for (at, (file, claim)) in files.iter().zip(claims).enumerate() {
             if let Some(gone) = self.root_gone() {
@@ -1334,6 +1338,20 @@ impl Folder {
                     // Read again by the next pass, which counts the drop anew.
                     unsettled.insert(file.key.clone());
                 }
+                None if file
+                    .id
+                    .as_deref()
+                    .zip(evidence.as_ref())
+                    .is_some_and(|(id, evidence)| evidence.names(id)) =>
+                {
+                    record_waits = true;
+                    report.flagged.push(Flagged {
+                        path: file.key.clone(),
+                        flag: "waiting",
+                        reason: format!("{RESTORED_ELSEWHERE}the instance holds no item for its marfa_id, so it is not sent{AS_NEW}"),
+                        item: None,
+                    });
+                }
                 None => {
                     if self.queue_create(
                         file,
@@ -1356,17 +1374,48 @@ impl Folder {
                     item_id,
                     bound: None,
                 }) => {
+                    let basis = match (&evidence, self.core.get(&item_id)?) {
+                        (Some(evidence), Some(held)) => {
+                            self.restored_basis(evidence, &held, file.line)
+                        }
+                        _ => None,
+                    };
+                    if let Some(removed_record::Basis::Unsure(reason)) = &basis {
+                        record_waits = true;
+                        report.flagged.push(Flagged {
+                            path: file.key.clone(),
+                            flag: "waiting",
+                            reason: format!("{RESTORED_ELSEWHERE}{reason}, so it is not sent and the instance's version is not written over it{AS_NEW}"),
+                            item: None,
+                        });
+                        continue;
+                    }
                     if self.queue_update(
                         &item_id,
                         None,
                         file,
                         None,
+                        basis.as_ref(),
                         catalog,
                         edge_types,
                         &mut work,
                         &mut report.flagged,
                     )? {
                         report.updated += 1;
+                        if let Some(
+                            removed_record::Basis::Exact(base)
+                            | removed_record::Basis::Merge(base),
+                        ) = &basis
+                        {
+                            report.restored.push(removed_record::SentByRecord {
+                                path: file.key.clone(),
+                                base: *base,
+                                over_restored: matches!(
+                                    basis,
+                                    Some(removed_record::Basis::Exact(_))
+                                ),
+                            });
+                        }
                         report
                             .warnings
                             .extend(self.size_warning(file, &item_id, catalog)?);
@@ -1437,6 +1486,7 @@ impl Folder {
                         &item_id,
                         Some(&bound),
                         file,
+                        None,
                         None,
                         catalog,
                         edge_types,
@@ -1519,6 +1569,7 @@ impl Folder {
                         Some(&bound),
                         file,
                         sent_title,
+                        None,
                         catalog,
                         edge_types,
                         &mut work,
@@ -1543,6 +1594,23 @@ impl Folder {
         );
         // Without its stat, the next quick pass reads it again.
         scan.stats.retain(|(key, _)| !unsettled.contains(key));
+        if let Some(evidence) = &evidence
+            && whole_pass
+            && !record_waits
+        {
+            let carried: HashSet<&str> = files.iter().filter_map(|file| file.id.as_deref()).collect();
+            let conn = self.core.conn()?;
+            let mut settled = true;
+            for item in evidence.items() {
+                if carried.contains(item) && state::bound_to_item(&conn, item)?.is_none() {
+                    settled = false;
+                    break;
+                }
+            }
+            if settled {
+                self.drop_removal_record();
+            }
+        }
 
         Ok(ControlFlow::Continue(work))
     }

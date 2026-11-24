@@ -194,13 +194,11 @@ pub fn instance_changed_said(server: &str) -> String {
     format!(
         "the server at {server} now answers as another Marfa instance. The watch stopped this \
          folder because its working copy belongs to the previous instance. To follow it there, \
-         run `marfa folders remove` on the directory, which keeps its files, then move the \
-         directory aside, add it again with `marfa folders add` and `--folder` with the \
-         folder's ID, `--from` with the moved directory and a key for that instance, and push \
-         it; then redo there the changes `marfa folders remove` names, deleting and moving \
-         again the files it names as deleted or moved and copying the others back in from the \
-         moved directory, send what `marfa folders add` names with `marfa folders push \
-         --send-newer`, and push again until `marfa folders status` shows nothing waiting"
+         run `marfa folders remove` on the directory, which keeps its files and records what \
+         this folder last synced; add the same directory again with `marfa folders add` and \
+         `--folder` with the folder's ID and a key for that instance, and push it; then delete \
+         again each file `marfa folders remove` names as deleted, and push again until `marfa \
+         folders status` shows nothing waiting"
     )
 }
 
