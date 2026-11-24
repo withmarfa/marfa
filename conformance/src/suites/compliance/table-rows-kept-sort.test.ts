@@ -10,6 +10,8 @@ import {
 
 // A dedicated server lets the fixture hold cleanup without delaying other tests.
 const HELD = "hold:housekeeping:table-row-cleanup";
+// A page read without kept keys fails, so one that answers under it was read from them.
+const SCANNED = "fail:table-rows-scan";
 
 let server: FreshServer;
 let client: MarfaClient;
@@ -32,7 +34,12 @@ afterAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 type Held = Map<string, string | number | undefined>;
-type Cleaned = { keyed: number; keys_removed: number; pages: number };
+type Cleaned = {
+  keyed: number;
+  keys_removed: number;
+  largest_key_page: number;
+  pages: number;
+};
 
 async function write(item: string, operations: RowOperation[]) {
   const res = await client.writeRows(item, "lines", { operations });
@@ -44,9 +51,10 @@ async function walk(
   item: string,
   sort: string,
   direction: "asc" | "desc",
+  from?: { seen: string[]; cursor: string },
 ): Promise<string[]> {
-  const seen: string[] = [];
-  let cursor: string | undefined;
+  const seen: string[] = [...(from?.seen ?? [])];
+  let cursor: string | undefined = from?.cursor;
   do {
     const res = await client.listRows(item, "lines", {
       sort,
@@ -92,9 +100,7 @@ async function settle(since: string): Promise<Cleaned[]> {
       ) {
         expect(job.last_outcome).toBe("succeeded");
         const run = job.last_result as Cleaned;
-        expect(run.keyed + run.keys_removed).toBeLessThanOrEqual(
-          1_000 * run.pages,
-        );
+        expect(run.largest_key_page).toBeLessThanOrEqual(1_000);
         runs.set(job.last_started_at, run);
         if (run.keyed === 0 && run.keys_removed === 0) {
           return [...runs.values()];
@@ -211,10 +217,30 @@ it("keeps large table pages in order during key fills, row writes, and column ch
     await server.waitForHold(HELD);
     await change([...operations]);
     await sorted(column, values);
+    const begun = await client.listRows(item, "lines", {
+      sort: `values.${column}`,
+      direction: "desc",
+      limit: 1000,
+    });
+    expect(begun.status, JSON.stringify(begun.error)).toBe(200);
+    await server.setFault(`${SCANNED}=lines@always`);
+    const filling = await client.listRows(item, "lines", {
+      sort: `values.${column}`,
+      limit: 1,
+    });
+    expect(filling.status).toBe(500);
     expect(total(await settle(sortedAt), "keyed")).toBeGreaterThanOrEqual(
       count,
     );
+    const from = {
+      seen: begun.data.data.map((r) => r.id),
+      cursor: begun.data.next_cursor!,
+    };
+    expect(await walk(item, `values.${column}`, "desc", from)).toEqual(
+      expected(values, "desc"),
+    );
     await sorted(column, values);
+    await server.clearFault(SCANNED);
   }
 
   await change([
@@ -261,5 +287,7 @@ it("keeps large table pages in order during key fills, row writes, and column ch
     count,
   );
   await change([{ op: "patch", id: ids[8]!, values: { score: "c" } }]);
+  await server.setFault(`${SCANNED}=lines@always`);
   await sorted("score", scores);
+  await server.clearFault(SCANNED);
 }, 600_000);

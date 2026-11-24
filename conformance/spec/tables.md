@@ -904,7 +904,7 @@ When a caller sends `GET /items/{id}/tables/{table}/rows` with no `limit`, the s
 
 If a `cursor` was not answered for the same item, table, `filter`, `sort`, `direction` and, when `sort` names a column, the same `type` of that column, then the server MUST answer `400 validation_error` naming `cursor`.
 
-**Reason:** a position read as one kind of value cannot continue a page read as another, and a page that continued from it would end the walk with rows unread.
+**Reason:** a position read as one kind of value cannot continue a page read as another, and a page that continued from it would end the walk with rows unread. A cursor for a `sort` that names a column, answered by a server that sorted a value written as an item's ID by that ID, was answered for another order (`tables/rows-sort-item-id`), so it is refused the same way rather than repeat rows.
 
 **Tests:** `compliance/table-rows-reads.test.ts › pages a table's rows by id, continuing by a signed cursor`, `› refuses a cursor answered for the other direction`, `› refuses a cursor answered before the sorted column changed type`.
 
