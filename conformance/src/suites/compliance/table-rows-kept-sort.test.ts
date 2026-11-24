@@ -38,7 +38,6 @@ type Cleaned = {
   keyed: number;
   keys_removed: number;
   largest_key_page: number;
-  pages: number;
 };
 
 async function write(item: string, operations: RowOperation[]) {

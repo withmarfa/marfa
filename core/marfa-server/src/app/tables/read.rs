@@ -265,7 +265,7 @@ enum Key {
     Updated,
     /// A requested column that can be read by scanning or from kept keys.
     Column(Sorted),
-    /// A column no value of which has a key, so every row ties and `id` orders them.
+    /// Every row ties, so row IDs stay ascending in either direction.
     Unkeyed(Sorted),
     /// The column the table names as its `order`, whose key is stored with each row.
     Order(Sorted),
@@ -614,9 +614,7 @@ impl Kept<'_> {
     }
 }
 
-/// A page by the keys the server keeps, in the order [`scanned_page`] gives.
-///
-/// Each part is one range of an index, so a page reads the rows it answers however many tie.
+/// Separate ranges let a cursor seek past earlier ties in either direction.
 fn keyed_page(
     tx: &Transaction<'_>,
     asked: &Selected<'_>,
