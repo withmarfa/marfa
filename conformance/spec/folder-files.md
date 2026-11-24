@@ -2580,7 +2580,7 @@ When the person edits a retained copied source before its removal becomes possib
 
 When an item leaves a folder's query, a device MUST NOT remove that folder's file of the item because another registered directory holds the item.
 
-**Reason:** another directory's copy can trail the server, so it cannot say that it still holds the item. The directory that holds the item lets the file go instead (`folder-files/let-go-existing-peer`), from its own copy.
+**Reason:** another directory's copy can trail the server. Its last known membership does not establish that it still holds the item.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps both folders' files of an item both drop in one change ($cause, $first pushes first)`, `› lets go of another folder's unmatched copy of an item it keeps, but not one edited since that folder wrote it`.
 
@@ -2588,7 +2588,7 @@ When an item leaves a folder's query, a device MUST NOT remove that folder's fil
 
 When a pull holds an item and its directory has a file of the item, and a registered directory that follows another `system.folder` has a file of the item that its last pull kept as unmatched and that holds the bytes its folder last wrote, a device MUST remove that other directory's file.
 
-**Reason:** a directory removes another directory's file only while its own copy holds the item and its own file is on disk, so two directories cannot each remove the other's only file. A file that has an edit waiting, or that the other directory's copy holds again, stays.
+**Reason:** an unmatched list can outlast a change to the item. A file that has an edit waiting, or that the other directory's copy holds again, stays.
 
 **Tests:** `device/folders-one-mac.test.ts › lets go of another folder's unmatched copy of an item it keeps, but not one edited since that folder wrote it`, `› takes in a file another folder let go`, `› ends a folder's placement of an item whose file another folder took in or let go`, `› preserves ownership for an identical move destination ($mode, previous binding $previous)`.
 
@@ -2616,7 +2616,7 @@ When a directory's file is missing because another registered directory removed 
 
 While a document in a folder embeds an item or has it attached, a device MUST NOT remove that folder's file of the item because another registered directory holds the item.
 
-**Reason:** the file is that document's, not unmatched, and removed it would be written again beside the document at every pull.
+**Reason:** the next pull would write the attachment beside its document again.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again`.
 

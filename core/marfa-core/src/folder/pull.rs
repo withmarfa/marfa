@@ -490,9 +490,7 @@ impl Folder {
             .collect();
         let held = crate::store::items_by_ids(&*self.core.conn()?, &outside)?;
         let peers = Peers::of(self, None);
-        // A folder that has never synced writes no file, so what a pass
-        // would keep is not its to count. Each file is kept, unmatched,
-        // whatever other folder holds its item (`folder-setup/query-tier-departure-kept`).
+        // A first-sync plan has no previously written files to keep.
         let (files, documents): (Vec<Item>, Vec<Item>) = held
             .into_iter()
             .filter(|item| settings.holds_state(item.state) && planning.is_none())
@@ -836,8 +834,7 @@ impl Folder {
             pick: pick.as_ref(),
         };
         let mut refused = HashSet::new();
-        // Items whose take-in moved or tried to move a source in this pass,
-        // which tried its removal already.
+        // Take-in already attempted the source removal for these items.
         let mut taking = HashSet::new();
         let tried = |entry: &Placing<'_>, taken: usize, write: &PlacementWrite| {
             entry.taken.is_some() && (taken > 0 || matches!(write, PlacementWrite::Refused))
@@ -1904,14 +1901,7 @@ impl Folder {
         Ok(embedded.at.into_keys().collect())
     }
 
-    /// Lets go of each other folder's unmatched copy of an item this pull
-    /// keeps while this folder's own file of it is on disk, so the item's
-    /// file stays here. Each is recorded first, so that folder's scan reads
-    /// its file as moved, never as deleted.
-    ///
-    /// The list of items this pull kept as unmatched is written before this
-    /// runs, so two folders that each read the other's list cannot each take
-    /// the other's file.
+    /// The other directory uses the removal record when it next scans the missing file.
     fn let_go_copies(
         &self,
         work: &[(Item, bool)],
@@ -1941,8 +1931,7 @@ impl Folder {
                 {
                     let conn = self.core.conn()?;
                     context.same_copy(&conn)?;
-                    // Read again just before, so a pull of that folder since,
-                    // or a change to this folder's file, stops it.
+                    // Another pull may have changed the list since candidate selection.
                     if !peers.still_unmatched(&entry.label, &item.id)
                         || !state::bound_to_item(&conn, &item.id)?.is_some_and(|own| here(&own))
                     {

@@ -13,12 +13,9 @@ const META_STORE: &str = "folder_store";
 const META_LISTED_IN: &str = "folder_listed_in";
 /// The other folders it last found, kept for a registry that loses them.
 const META_OTHERS: &str = "folder_others";
-/// The other folders' unmatched copies it let go, until each of those
-/// folders has read its file gone.
 const META_LET_GO: &str = "folder_let_go";
 
-/// A copy one folder let go from another folder's directory: that folder's
-/// store, its path for the file and the item, and the bytes removed.
+/// Identifies an intended removal in the directory that owns the binding.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct LetGo {
     store: String,
@@ -216,8 +213,7 @@ impl Peer {
             .map(|ids| ids.into_iter().collect())
     }
 
-    /// Whether its last pull kept the item's file as unmatched, read once a
-    /// pass, at the first ask.
+    /// The cached list supplies candidates for this pass.
     fn unmatched(&self, item_id: &str) -> bool {
         self.unmatched
             .get_or_init(|| self.read_unmatched())
@@ -522,8 +518,7 @@ pub(super) enum Look {
 /// The other folders the registry lists, opened when first asked after.
 pub(super) struct Peers<'a> {
     of: &'a Folder,
-    /// This folder's store id, read when made, since a look may come while
-    /// this folder's store is held.
+    /// A scan may need the store ID while it holds its connection.
     store: Option<String>,
     doubt: Option<String>,
     loaded: OnceCell<(Vec<Peer>, Option<String>)>,
@@ -790,8 +785,7 @@ impl<'a> Peers<'a> {
         }
     }
 
-    /// Whether another folder let go of this folder's file at `path`, of
-    /// the item, holding `hash`: its file is that folder's now.
+    /// A matching record makes the scan treat the missing file as moved.
     pub(super) fn let_go_here(&self, path: &str, item_id: &str, hash: &str) -> bool {
         let Some(own) = &self.store else {
             return false;
@@ -810,9 +804,7 @@ impl<'a> Peers<'a> {
         })
     }
 
-    /// Records, in this folder's store, the copy at `label` it is about to
-    /// let go, so that folder's scan reads the file as moved, not deleted.
-    /// `None` where the other folder's store cannot be named.
+    /// Record the intent before the file can disappear from the other directory.
     pub(super) fn record_let_go(
         &self,
         label: &Path,
@@ -843,7 +835,6 @@ impl<'a> Peers<'a> {
         Ok(Some(record))
     }
 
-    /// Drops a record whose copy was not let go after all.
     pub(super) fn forget_let_go(&self, record: &LetGo) -> Result<()> {
         let conn = self.of.core.conn()?;
         let mut records = let_go_records(&conn);
@@ -851,8 +842,6 @@ impl<'a> Peers<'a> {
         set_let_go_records(&conn, &records)
     }
 
-    /// Drops each record the other folder no longer needs: it no longer
-    /// binds the path to the item, or a file is at the path again.
     pub(super) fn prune_let_go(&self) -> Result<()> {
         let records = let_go_records(&*self.of.core.conn()?);
         if records.is_empty() {
@@ -881,9 +870,6 @@ impl<'a> Peers<'a> {
         Ok(())
     }
 
-    /// Each other folder's file of the item that its last pull kept as
-    /// unmatched and that is still the bytes it wrote, with nothing of the
-    /// person's waiting on it: a copy the folder holding the item lets go.
     pub(super) fn unmatched_copies(
         &self,
         item_id: &str,
@@ -920,8 +906,6 @@ impl<'a> Peers<'a> {
             .collect()
     }
 
-    /// Whether the other folder whose directory holds `label` still keeps the
-    /// item unmatched, read now.
     pub(super) fn still_unmatched(&self, label: &Path, item_id: &str) -> bool {
         self.other_folders()
             .find(|peer| label.starts_with(&peer.root))

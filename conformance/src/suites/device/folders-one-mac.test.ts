@@ -951,7 +951,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
               status.value.files.find((file) => file.path === sourceKey)
                 ?.status,
           ).toBe("unmatched");
-          // The folder holding the item cannot let the source go.
           const repeated = await b.folder.pull();
           expect(repeated.ok, JSON.stringify(repeated)).toBe(true);
           if (!repeated.ok) return;
@@ -989,7 +988,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
           const released = await b.folder.pull();
           expect(released.ok && released.value.let_go).toBe(1);
           expect(existsSync(source)).toBe(false);
-          // The folder it left reads the file as let go at its next scan.
           expect((await a.folder.scan()).ok).toBe(true);
           expect(sourceState().trim()).toBe("");
           expect(sourceJournal().trim()).toBe("");
@@ -1210,9 +1208,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect((await b.folder.push()).ok).toBe(true);
     expect(edges.placements(b.settings.id).get(plan.id)).toBe("Plan.md");
 
-    // The other way round: the folder that holds it now hears first and
-    // writes a file of its own. The folder it left keeps its file, and the
-    // folder holding the item lets that copy go.
+    // This time the destination hears first.
     edges.events.push(
       copyItemEvent(
         String(edges.events.length + 2),
@@ -1386,7 +1382,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(idIn(b, "Plan.md")).toBe(plan.id);
     expect(idIn(b, "Brief.md")).toBe(brief.id);
 
-    // The folder the item left reads its file as moved, and trashes nothing.
     expect((await a.folder.push()).ok).toBe(true);
     await pastTheGrace();
     const swept = await a.folder.push();
@@ -1424,8 +1419,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     retag(["b"]);
     const left = await a.folder.push();
     expect(left.ok && left.value.pull?.unmatched).toBe(1);
-    // The first folder's query takes the item back, unchanged, before that
-    // folder pulls.
+    // The query takes the item back before this directory hears the change.
     a.settings.settings = {
       query: { types: ["core.note"], filter: 'tags contains "b"' },
     };
@@ -1493,7 +1487,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     for (const made of [a, b]) {
       expect(readFileSync(join(made.dir, "scan.png"))).toEqual(bytes);
     }
-    // The file folder's query no longer holds the image.
     b.settings.settings = {
       query: { types: ["core.file"], filter: 'tags contains "x"' },
     };
@@ -1589,9 +1582,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     ).toBe(false);
     expect(edges.placements(b.settings.id).get(plan.id)).toBe("Plan.md");
 
-    // The other way round: the folder holding the item writes its own file
-    // first and lets the other folder's copy go, and the folder it left
-    // ends its placement once its scan reads the file as let go.
+    // This time the destination writes its own copy first.
     retag(brief);
     expect((await b.folder.push()).ok).toBe(true);
     expect((await a.folder.push()).ok).toBe(true);
@@ -1867,7 +1858,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(writes(), "a write went out inside the grace").toBe(before);
     expect(edges.placements(a.settings.id).has(brief.id)).toBe(true);
 
-    // Past the grace, ending the placement fails, and the binding stays.
     await pastTheGrace();
     const failed = await withFault("end-placement-fails", () =>
       a.folder.push(),
@@ -2104,7 +2094,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       })();
       expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
       const unopposed = mode.startsWith("unopposed-");
-      // A file already the item's here lets the other folder's copy go.
       if ((unopposed && !retained) || mode === "already-present")
         expect(existsSync(source)).toBe(false);
       else expect(readFileSync(source)).toEqual(bytes);
@@ -2145,8 +2134,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
             status.value.files.find((file) => file.path === "photo.png")
               ?.item_id,
         ).toBe(previous ? gone.id : undefined);
-        // Bound as the item's file, it lets the other folder's unmatched
-        // copy go.
         const reconsidered = await b.folder.pull();
         expect(
           reconsidered.ok && [
@@ -2370,8 +2357,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       expect(left.value.pull?.let_go).toBe(0);
       if (leftFirst) await pastTheGrace();
       else {
-        // The folder holding the note lets the other folder's copies go: the
-        // note, then its image once the image is unmatched there too.
+        // The image becomes unmatched after the source releases the note.
         for (const kind of ["note", "image"]) {
           const kept = await b.folder.push();
           expect(
@@ -4879,8 +4865,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       const first = await b.folder.push();
       expect(first.ok && first.value.pull?.written).toBe(1);
       expect((await a.folder.push()).ok).toBe(true);
-      // The person saves the file in the folder it left just as the folder
-      // holding the item lets it go.
       const letGo = await withFault(fault, () => b.folder.push());
       expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
       if (!letGo.ok) return;
@@ -4892,9 +4876,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         readdirSync(a.dir).filter((name) => name.startsWith(".marfa-")),
         "a file moved out of its path was left under a name Marfa keeps",
       ).toEqual([]);
-      // The save landed after the pull chose to let the file go, which
-      // `› lets go of another folder's unmatched copy of an item it keeps, but not one edited since that folder wrote it`
-      // shows it does unsaved.
     },
   );
 });

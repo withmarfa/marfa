@@ -2922,9 +2922,7 @@ impl Folder {
         };
         let journaled: Vec<state::Journaled> =
             journaled.into_iter().filter(|row| !row.carried()).collect();
-        // Counted over every missing file, not only those past the grace, so
-        // files a watch meets a pass apart are one removal. A file another
-        // folder let go is no removal.
+        // Include files inside the grace period so consecutive watch passes count one batch.
         let mut removals = 0;
         for row in &journaled {
             let bound = state::bound_at(&*self.core.conn()?, &row.path)?;

@@ -165,8 +165,7 @@ pub struct FlaggedFile {
     pub path: String,
     pub flag: String,
     pub reason: String,
-    /// The item whose file a pull did not write, or could not let go to
-    /// another folder.
+    /// The item whose file a pull could not write or whose copy it could not remove.
     pub item: Option<String>,
 }
 
