@@ -137,6 +137,11 @@ socket() {
   esac
 }
 
+# A log is read by whoever reads the run, and holds proof that opens an unclaimed instance.
+redact_setup_proof() {
+  sed -E -e 's/(setup|recovery) code: [A-Z2-7-]+/\1 code: [redacted]/g' -e 's/(handoff=)[0-9A-Za-z_-]+/\1[redacted]/g'
+}
+
 # What `marfa server status --json` says, as one JSON object.
 status() { server status ${dir_args[@]+"${dir_args[@]}"} --json; }
 
@@ -145,7 +150,7 @@ holds() {
   local test=$1 said=$2 body
   body=$(cat)
   if ! jq -e --arg version "$version" --arg address "$address" "$test" <<< "$body" > /dev/null; then
-    echo "$body" | jq -c 'del(.log)' || echo "$body"
+    { echo "$body" | jq -c 'del(.log)' || echo "$body"; } | redact_setup_proof
     fail "$said"
   fi
 }
@@ -240,11 +245,6 @@ without_caddy_authority() {
 }
 
 # ---- leaving nothing behind --------------------------------------------------
-
-# A log is read by whoever reads the run, and holds proof that opens an unclaimed instance.
-redact_setup_proof() {
-  sed -E -e 's/(setup|recovery) code: [A-Z2-7-]+/\1 code: [redacted]/g' -e 's/(handoff=)[0-9A-Za-z_-]+/\1[redacted]/g'
-}
 
 show_logs() {
   echo "--- the end of the log of $name ($current)"
