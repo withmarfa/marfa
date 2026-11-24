@@ -617,6 +617,7 @@ pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
 
 #[derive(Default)]
 pub(super) struct Removed {
+    pub keys: i64,
     pub rows: i64,
     pub batches: i64,
     pub changes: i64,
@@ -632,7 +633,10 @@ pub(super) fn remove_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<Rem
     };
     let keys = super::keys::remove_keys(tx, table, limit)?;
     if keys > 0 {
-        return Ok(Some(Removed::default()));
+        return Ok(Some(Removed {
+            keys,
+            ..Removed::default()
+        }));
     }
     let mut statement = tx.prepare_cached(
         "SELECT seq, rows FROM row_batches WHERE table_seq = ?1 ORDER BY seq LIMIT ?2",
@@ -672,7 +676,7 @@ pub(super) fn remove_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<Rem
         return Ok(Some(Removed {
             batches,
             changes,
-            rows: 0,
+            ..Removed::default()
         }));
     }
     let ids: Vec<String> = tx
@@ -756,7 +760,7 @@ pub(super) fn expire_page(
     Ok(Some(Removed {
         batches,
         changes,
-        rows: 0,
+        ..Removed::default()
     }))
 }
 

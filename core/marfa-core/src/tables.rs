@@ -1520,14 +1520,19 @@ fn scope(
     key: &Key,
     descending: bool,
 ) -> [u8; SCOPE_BYTES] {
-    let named = json!([
-        item,
-        table,
-        asked.filter,
-        key.label(),
-        descending,
-        key.kind()
-    ]);
+    let mut named = vec![
+        json!(item),
+        json!(table),
+        json!(asked.filter),
+        json!(key.label()),
+        json!(descending),
+        json!(key.kind()),
+    ];
+    // A column sort's cursor from before an item's id sorted as no value lacks this, and is refused.
+    if matches!(key, Key::Column { .. }) {
+        named.push(json!("item-ids-unkeyed"));
+    }
+    let named = Value::Array(named);
     let mut scope = [0; SCOPE_BYTES];
     scope.copy_from_slice(&Sha256::digest(named.to_string().as_bytes())[..SCOPE_BYTES]);
     scope
@@ -1895,8 +1900,8 @@ pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>)
 #[cfg(test)]
 mod tests {
     use super::{
-        OR_TERMS, Read, RowsAsked, SPAN_GAP, cursor_of, filter_of, opened, page_from_copy, plan,
-        totals_from_copy,
+        Key, OR_TERMS, Read, RowsAsked, SCOPE_BYTES, SPAN_GAP, cursor_of, filter_of, opened,
+        page_from_copy, plan, scope, totals_from_copy,
     };
     use crate::CoreError;
     use serde_json::{Map, Value, json};
@@ -2146,6 +2151,50 @@ mod tests {
             &asked(Some("values.at"), 2, Some(cursor)),
         )
         .expect_err("a cursor outlived a change to the type of its column");
+        assert!(error.to_string().contains("cursor"), "{error}");
+    }
+
+    #[test]
+    fn a_column_cursor_from_before_item_ids_sorted_as_no_value_is_refused() {
+        let (_dir, core) = copy_with(&mixed_offsets());
+        let definition = table(None, "string");
+        let sorted = asked(Some("values.at"), 2, None);
+        let key = Key::Column {
+            name: "at".to_string(),
+            kind: "string".to_string(),
+        };
+        let named = json!(["i", "t", sorted.filter, key.label(), false, key.kind()]);
+        let mut old = [0; SCOPE_BYTES];
+        old.copy_from_slice(&sha2::Sha256::digest(named.to_string().as_bytes())[..SCOPE_BYTES]);
+        let current = scope("i", "t", &sorted, &key, false);
+        let conn = core.conn().unwrap();
+        let resumed = |scope: &[u8; SCOPE_BYTES]| {
+            let cursor = cursor_of(scope, &Value::Null, "a");
+            page_from_copy(
+                &conn,
+                "i",
+                "t",
+                &definition,
+                &asked(Some("values.at"), 2, Some(cursor)),
+            )
+        };
+        // The witness: a cursor in the current scope is taken.
+        resumed(&current).expect("a cursor in the current scope");
+        // A cursor sorted by id keeps the scope it had.
+        let by_id = asked(Some("id"), 2, None);
+        let named = json!([
+            "i",
+            "t",
+            by_id.filter,
+            Key::Id.label(),
+            false,
+            Key::Id.kind()
+        ]);
+        assert_eq!(
+            scope("i", "t", &by_id, &Key::Id, false)[..],
+            sha2::Sha256::digest(named.to_string().as_bytes())[..SCOPE_BYTES]
+        );
+        let error = resumed(&old).expect_err("a cursor from before the rule was taken");
         assert!(error.to_string().contains("cursor"), "{error}");
     }
 

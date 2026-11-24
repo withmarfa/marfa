@@ -301,20 +301,21 @@ pub(super) fn fill_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<Fille
         })?;
     if let Some(through) = &last {
         let sorted = Sorted { column, kind };
-        tx.prepare_cached(&format!(
-            "INSERT OR IGNORE INTO table_row_keys (table_seq, name, key, id) \
-             SELECT ?1, ?4, {}, id FROM table_rows WHERE table_seq = ?1 AND id > ?2 AND id <= ?3",
-            sorted.stored_key_sql("body", "refs")
-        ))?
-        .execute(params![table, after, through, sorted.column])?;
+        let keyed = tx
+            .prepare_cached(&format!(
+                "INSERT OR IGNORE INTO table_row_keys (table_seq, name, key, id) \
+                 SELECT ?1, ?4, {}, id FROM table_rows WHERE table_seq = ?1 AND id > ?2 AND id <= ?3",
+                sorted.stored_key_sql("body", "refs")
+            ))?
+            .execute(params![table, after, through, sorted.column])? as i64;
         tx.prepare_cached(
             "UPDATE table_sort_indexes SET filled_after = ?3 WHERE table_seq = ?1 AND name = ?2",
         )?
         .execute(params![table, sorted.column, through])?;
         if taken == limit {
-            return Ok(Some(Filled::Keyed(taken)));
+            return Ok(Some(Filled::Keyed(keyed)));
         }
-        return ready(tx, table, &sorted.column).map(|()| Some(Filled::Keyed(taken)));
+        return ready(tx, table, &sorted.column).map(|()| Some(Filled::Keyed(keyed)));
     }
     ready(tx, table, &column).map(|()| Some(Filled::Keyed(0)))
 }
@@ -453,7 +454,8 @@ mod tests {
         )
         .unwrap();
         forget(&tx, 1, "002001", &kept).unwrap();
-        assert_eq!(drain(&tx, 1_000), [1_000, 504]);
+        // Pages report the keys they wrote: `002000` was keyed by its own write.
+        assert_eq!(drain(&tx, 1_000), [999, 504]);
         assert_eq!(standing(&tx, 1, &a("number")).unwrap(), Standing::Ready);
         assert_eq!(count(&tx, "SELECT count(*) FROM table_row_keys"), rows - 1);
         let wrong = count(

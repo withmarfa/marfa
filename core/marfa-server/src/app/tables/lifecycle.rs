@@ -51,6 +51,8 @@ impl Tally {
     fn add(&mut self, page: &Page) {
         match page {
             Page::Removed(removed) => {
+                self.keys_removed += removed.keys;
+                self.largest_key_page = self.largest_key_page.max(removed.keys);
                 self.rows += removed.rows;
                 self.batches += removed.batches;
                 self.changes += removed.changes;
