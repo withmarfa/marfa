@@ -24,8 +24,12 @@ import { TEST_OWNER } from "../../utils/target.js";
  * enough that a held page outlasts it many times over. The caps are far above
  * what the fixtures send.
  */
-// The write budget leaves room for delays between the held page's heartbeats.
+// The server gives up on a write only after it has not heard from the holder for
+// the whole budget, so the budget is longer than a runner stall.
 const BUDGET_MS = 1000;
+// How long a queued write is watched: past the first moment the server decides
+// whether to keep it waiting.
+const WATCHED_MS = BUDGET_MS + 250;
 const PAGE = 20;
 const SCHEDULER_NEVER_POLLS_MS = "3600000";
 
@@ -117,6 +121,40 @@ async function release(page: { response: Promise<Response> }) {
   return page.response;
 }
 
+/**
+ * Admits `request`, then watches it past the write wait.
+ *
+ * The write wait runs on the server's real time, which a fixture cannot
+ * advance, so the witness is the server's own queue: at every look the write
+ * is still listed as waiting on the writer and has no answer.
+ */
+async function queuedPastBudget(action: string, request: Promise<Response>) {
+  const waiting = track(request);
+  await server.waitForQueuedWrite(action);
+  const admitted = performance.now();
+  do {
+    await server.waitForQueuedWrite(action, 1, 0);
+    expect(waiting.state.answered, `${action} was answered while queued`).toBe(
+      false,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  } while (performance.now() - admitted < WATCHED_MS);
+  return waiting;
+}
+
+/** Lets the page go, and checks that the write the page held up came after it. */
+async function releasedBefore(
+  page: { response: Promise<Response> },
+  waiting: { response: Promise<Response> },
+) {
+  const releasedAt = Date.now();
+  expect((await release(page)).status).toBe(200);
+  const written = await waiting.response;
+  expect(written.status).toBe(201);
+  const { item } = (await written.json()) as { item: { created_at: string } };
+  expect(Date.parse(item.created_at)).toBeGreaterThanOrEqual(releasedAt);
+}
+
 afterEach(async () => {
   await server.clearFault();
 });
@@ -186,20 +224,15 @@ describe("a write that waits behind a bulk page", () => {
       send("POST", "/items/bulk", notes(tag, "after", true)),
     );
 
-    const single = track(
+    const single = await queuedPastBudget(
+      "item.create",
       send("POST", "/items", {
         type: "core.note",
         properties: { title: "behind the page", body: "waited" },
       }),
     );
-    await server.waitForQueuedWrite("item.create");
-    // Held for twice the budget and not refused: the write waits on the
-    // page and is not given up on the budget alone.
-    await new Promise((resolve) => setTimeout(resolve, 2 * BUDGET_MS));
-    expect(single.state.answered).toBe(false);
 
-    expect((await release(page)).status).toBe(200);
-    expect((await single.response).status).toBe(201);
+    await releasedBefore(page, single);
   }, 120_000);
 
   it("lands after a best-effort page that holds the lock longer than the write wait", async () => {
@@ -209,23 +242,19 @@ describe("a write that waits behind a bulk page", () => {
       send("POST", "/items/bulk", notes(tag, "after", false)),
     );
 
-    const single = track(
+    const single = await queuedPastBudget(
+      "item.create",
       send("POST", "/items", {
         type: "core.note",
         properties: { title: "behind the best-effort page", body: "waited" },
       }),
     );
-    await server.waitForQueuedWrite("item.create");
-    await new Promise((resolve) => setTimeout(resolve, 2 * BUDGET_MS));
-    expect(single.state.answered).toBe(false);
 
-    expect((await release(page)).status).toBe(200);
-    expect((await single.response).status).toBe(201);
+    await releasedBefore(page, single);
   }, 120_000);
 
   it("counts a sign-in attempt after an atomic page that holds the lock longer than the write wait", async () => {
-    // A password attempt is counted before the password is checked, in a
-    // write of its own outside any transaction.
+    // A refused password is recorded in a write of its own.
     const origin = await issuerOrigin(server);
     const tag = unique("waiting-sign-in");
     await seed(tag);
@@ -233,7 +262,8 @@ describe("a write that waits behind a bulk page", () => {
       send("POST", "/items/bulk", notes(tag, "after", true)),
     );
 
-    const attempt = track(
+    const attempt = await queuedPastBudget(
+      "auth.sign_in.failed",
       fetch(`${server.apiUrl}/auth/sign-in`, {
         method: "POST",
         headers: { "content-type": "application/json", origin },
@@ -243,8 +273,6 @@ describe("a write that waits behind a bulk page", () => {
         }),
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 2 * BUDGET_MS));
-    expect(attempt.state.answered).toBe(false);
 
     expect((await release(page)).status).toBe(200);
     expect((await attempt.response).status).toBe(401);
