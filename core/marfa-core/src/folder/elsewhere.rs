@@ -548,8 +548,9 @@ impl<'a> Peers<'a> {
         self.loaded().1.as_deref()
     }
 
+    /// Directories following one folder can retain the same unmatched item.
     pub(super) fn carry(&self, item_id: &str) -> bool {
-        self.all().iter().any(|peer| {
+        self.other_folders().any(|peer| {
             peer.files()
                 .iter()
                 .any(|file| file.id.as_deref() == Some(item_id))

@@ -2336,9 +2336,11 @@ When a file bound to an item moves to another registered directory and the moved
 
 ### `folder-files/cross-folder-copy`
 
-When a file’s ID already appears in another directory and the receiving directory already binds that item or its query excludes the item, a device MUST admit the arriving file as a new item.
+When a file’s ID already appears in a registered directory that follows another `system.folder` and the receiving directory already binds that item or its query excludes the item, a device MUST admit the arriving file as a new item.
 
-**Tests:** `device/folders-one-mac.test.ts › tells a copy into another folder from a move`.
+**Reason:** Two directories that follow the same `system.folder` can both keep a file after the shared query stops matching its item (`folder-files/unmatched-same-folder-kept`), so a file returned from one to the other is read under `folder-files/narrowed-arrival-read`.
+
+**Tests:** `device/folders-one-mac.test.ts › tells a copy into another folder from a move`, `› reads a file returned to a narrowed directory while a directory of %s has the item's file`.
 
 ### `folder-files/cross-folder-member-adopted`
 
@@ -2370,11 +2372,11 @@ Where a folder's copy has a query, a device MUST hold every item that a file of 
 
 ### `folder-files/narrowed-arrival-read`
 
-Where a folder's copy has a query, when a scan finds a file whose `marfa_id` names an item the copy does not hold and the server holds that item for the folder's key, a device MUST send the file as an edit of that item, not as a new item.
+Where a folder's copy has a query, when a scan finds a file whose `marfa_id` names an item the copy does not hold, the server holds that item for the folder's key, and no registered directory that follows another `system.folder` has a file carrying that `marfa_id` (`folder-files/cross-folder-copy`), a device MUST send the file as an edit of that item, not as a new item.
 
 **Reason:** a narrowed copy leaves out items the folder does not show, so a file restored from a backup, copied from another Mac or moved from a directory that is not registered can name an item the server holds. A new item would duplicate it under another id.
 
-**Tests:** `device/folders-copy-shrink.test.ts › sends the file as an edit of the item its id names, not as a new item`, `› sends the same file as an edit from a copy that is not narrowed`.
+**Tests:** `device/folders-copy-shrink.test.ts › sends the file as an edit of the item its id names, not as a new item`, `› sends the same file as an edit from a copy that is not narrowed`, `device/folders-one-mac.test.ts › reads a file returned to a narrowed directory while a directory of %s has the item's file`.
 
 ### `folder-files/narrowed-arrival-read-batched`
 
