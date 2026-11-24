@@ -152,7 +152,10 @@ fn the_setup_code_is_logged_at_the_level_every_warning_uses() {
         .lines()
         .find(|line| line.contains("setup code"))
         .unwrap();
-    assert!(line.contains("\"level\":\"warn\""), "{line}");
+    assert!(
+        line.contains("\"level\":\"warn\""),
+        "the setup line is not logged as a warning"
+    );
 }
 
 #[test]
@@ -176,10 +179,13 @@ fn a_stale_shell_is_ignored_and_warned_of_by_name_alone() {
     ] {
         let found = warnings.iter().filter(|line| line.contains(name));
         let found: Vec<_> = found.filter(|line| line.contains(key)).collect();
-        assert_eq!(found.len(), 1, "{name}: {log}");
-        assert!(found[0].contains("/config"), "{log}");
+        assert_eq!(found.len(), 1, "{name} did not warn exactly once");
+        assert!(found[0].contains("/config"), "{name} does not name /config");
     }
-    assert!(!log.contains(STALE_VALUE), "{log}");
+    assert!(
+        !log.contains(STALE_VALUE),
+        "a warning repeated the stale value"
+    );
 }
 
 #[test]
@@ -201,7 +207,10 @@ fn a_socket_it_cannot_claim_stops_it_before_any_secret_is_made() {
     std::fs::write(control.join("s.sock"), "not a socket").unwrap();
     let (code, log) = everything_on_stdout(dir.path(), program(dir.path(), "false"));
     assert_eq!(code, Some(1));
-    assert!(log.contains("Control socket already exists"), "{log}");
+    assert!(
+        log.contains("Control socket already exists"),
+        "the refusal was not logged"
+    );
     assert!(!dir.path().join("marfa.secrets").exists());
 }
 
@@ -249,7 +258,7 @@ fn a_row_that_does_not_read_keeps_the_server_up_and_stays() {
             .filter(|line| line.contains("max_request_bytes"))
             .count(),
         1,
-        "{log}"
+        "the unreadable row was not logged exactly once"
     );
 
     let read = "SELECT value FROM settings WHERE key = 'max_request_bytes'";
