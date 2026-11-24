@@ -1588,6 +1588,7 @@ impl Folder {
             let outcome = judged.unwrap_or_else(|error| lines::Outcome {
                 links: pending.had_links.clone(),
                 embedded: pending.had_embeds.clone(),
+                unattached: pending.had_unattached.clone(),
                 lines: pending.had_lines.clone(),
                 held: Some(format!("{}{error}", state::EDGES_WAITING)),
                 refused: Vec::new(),
@@ -1615,6 +1616,7 @@ impl Folder {
                     }
                 });
                 writes.refused_lookups = outcome.refused_lookups;
+                writes.unattached = outcome.unattached;
                 let held = outcome.held;
                 let save = writes.save;
                 writes

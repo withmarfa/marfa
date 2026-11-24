@@ -71,6 +71,10 @@ pub struct Writes {
     /// its reason: not asked again until the file changes.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub refused_lookups: BTreeMap<String, String>,
+    /// Embedded files outside the query whose attachment waits on a held
+    /// `has-attachment` line, so each still counts as new to the body.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unattached: Vec<String>,
 }
 
 /// When an unchanged file held `edges` is judged again.
