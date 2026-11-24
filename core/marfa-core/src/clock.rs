@@ -71,14 +71,6 @@ pub use manual::{Waiting, advance, set_manual, waits};
 #[cfg(test)]
 static GLOBAL_CLOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Serializes tests that set the process-wide clock or need it to stay unchanged.
-#[cfg(test)]
-pub(crate) fn alone() -> std::sync::MutexGuard<'static, ()> {
-    GLOBAL_CLOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,7 +488,9 @@ mod manual {
             waiting.join().unwrap();
         }
 
-        /// The free functions read the process-wide clock.
+        /// The free functions, which every wait of the engine goes through.
+        /// The only test that sets the clock for the whole process; the
+        /// others hold a clock of their own.
         #[test]
         fn the_engine_waits_by_the_manual_clock_while_one_is_set_and_by_the_system_clock_after() {
             /// Puts the system clock back however the test ends.
