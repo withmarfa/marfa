@@ -1746,7 +1746,7 @@ If a delivery would take the `pending` deliveries of its subscription past `webh
 
 If a delivery would take the bytes of its subscription's `pending` payloads past `webhook_backlog_bytes`, 67108864 unless named, then the server MUST record that delivery `canceled`, unsent, with the `error` `The subscription held as many pending deliveries, or bytes, as the instance allows.`
 
-**Reason:** the bytes are the stored length of each payload, the delivery's own included, so one subscription's backlog is bounded on disk whatever size its events are.
+**Reason:** a few large payloads can use the byte allowance before the subscription reaches its delivery count limit.
 
 **Tests:** `compliance/webhook-backlog.test.ts › records a delivery past a subscription's pending bytes as canceled, with the reason`.
 

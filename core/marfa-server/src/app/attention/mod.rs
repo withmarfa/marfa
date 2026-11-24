@@ -573,10 +573,8 @@ async fn delivering(app: &Arc<App>) -> Result<Vec<Concern>> {
             failed_run: false,
             title: "A webhook's deliveries are failing".to_string(),
             description: format!(
-                "Every attempt to deliver to webhook {id} since {since} has failed. Its \
-                 deliveries wait for their retries, and once it holds \
-                 webhook_backlog_deliveries or webhook_backlog_bytes, new ones are recorded \
-                 canceled. Check its receiver, or turn the webhook off or delete it."
+                "Every delivery attempt to webhook {id} has failed since {since}. Check the \
+                 receiver and the webhook's delivery log. You can turn the webhook off or delete it."
             ),
             reference: id,
         })

@@ -1,5 +1,4 @@
--- What a subscription holds pending, kept by the triggers below so that no pass counts its rows,
--- and when every attempt since the last success began to fail.
+-- Keep backlog checks independent of the number of deliveries already queued.
 ALTER TABLE webhooks ADD COLUMN pending INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE webhooks ADD COLUMN pending_bytes INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE webhooks ADD COLUMN failing_since TEXT;

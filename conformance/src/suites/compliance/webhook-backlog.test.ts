@@ -13,13 +13,6 @@ import {
 import { DAY_MS, MINUTE_MS, movedClock } from "../../utils/moved-clock.js";
 import { waitFor } from "../../utils/wait.js";
 
-/**
- * What one subscription may hold pending while its receiver takes deliveries
- * and never answers. A server of its own, because the limits are the
- * instance's settings and the attention entry waits on a day the fixture
- * reaches by moving the clock, which stays paused so that no retry falls due
- * unless the fixture moves it.
- */
 const LIMIT = 3;
 const REASON =
   "The subscription held as many pending deliveries, or bytes, as the instance allows.";
@@ -31,14 +24,11 @@ let webhookId: string;
 
 interface Hook {
   url: string;
-  /** The bodies of the requests that reached the receiver. */
   bodies: string[];
-  /** Answers every request held so far, and each later one, with 200. */
   recover(): void;
   close(): Promise<void>;
 }
 
-/** A receiver that accepts each request and holds it open without answering. */
 async function startHook(): Promise<Hook> {
   const bodies: string[] = [];
   const held: ServerResponse[] = [];
@@ -118,7 +108,6 @@ async function configure(changes: Record<string, number>): Promise<void> {
   expect(patched.status, JSON.stringify(patched.error)).toBe(200);
 }
 
-/** Writes a note and answers its id, which its delivery's payload carries. */
 async function write(body: string): Promise<string> {
   const note = await writer().createItem({
     type: "core.note",
@@ -136,8 +125,7 @@ async function deliveries(): Promise<WebhookDelivery[]> {
   return listed.data.data;
 }
 
-/** The server schedules a write's deliveries after the write returns, so the
- *  listing is read once it holds `count` deliveries. */
+// Scheduling continues after the item write returns.
 const recorded = (count: number) =>
   waitFor(`${String(count)} deliveries to be recorded`, async () => {
     const rows = await deliveries();
@@ -160,8 +148,6 @@ const listedInAttention = async () =>
     (entry) => entry.kind === "webhook" && entry.reference === webhookId,
   );
 
-/** The cases below share one subscription, whose receiver never answers until
- *  the last case lets it recover. */
 describe("a webhook whose receiver never answers", () => {
   const unsent: string[] = [];
 

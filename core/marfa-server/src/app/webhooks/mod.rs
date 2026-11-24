@@ -142,11 +142,9 @@ pub fn forget_grant(tx: &Transaction<'_>, grant_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// How long every attempt to a subscription fails before the owner is told.
 pub const FAILING_MS: i64 = DAY_MS;
 
-/// Each active subscription whose attempts have all failed since at least `FAILING_MS` before
-/// `now_ms`, with when they began to fail.
+/// Returns active subscriptions whose first consecutive failure is at least a day old.
 pub fn failing(tx: &Transaction<'_>, now_ms: i64) -> Result<Vec<(String, Stamp)>> {
     let mut found = Vec::new();
     for (id, since) in store::failing(tx)? {

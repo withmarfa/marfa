@@ -7251,12 +7251,12 @@ export interface components {
              */
             inbound_backlog_bytes: number;
             /**
-             * @description The pending deliveries one webhook may hold. Past it, Marfa records each new delivery canceled, unsent, until the webhook's backlog falls below it.
+             * @description Maximum number of pending deliveries per webhook. Marfa records a new delivery as `canceled` if adding it would exceed this limit.
              * @default 10000
              */
             webhook_backlog_deliveries: number;
             /**
-             * @description The bytes of event payloads one webhook's pending deliveries may hold. Past it, Marfa records each new delivery canceled, unsent, until the webhook's backlog falls below it.
+             * @description Maximum total payload size in bytes for a webhook's pending deliveries. Marfa records a new delivery as `canceled` if adding its payload would exceed this total.
              * @default 67108864
              */
             webhook_backlog_bytes: number;
@@ -43668,12 +43668,12 @@ export interface operations {
                      */
                     inbound_backlog_bytes?: number;
                     /**
-                     * @description The pending deliveries one webhook may hold. Past it, Marfa records each new delivery canceled, unsent, until the webhook's backlog falls below it. Absent: the server's default applies.
+                     * @description Maximum number of pending deliveries per webhook. Marfa records a new delivery as `canceled` if adding it would exceed this limit. Absent: the server's default applies.
                      * @default 10000
                      */
                     webhook_backlog_deliveries?: number;
                     /**
-                     * @description The bytes of event payloads one webhook's pending deliveries may hold. Past it, Marfa records each new delivery canceled, unsent, until the webhook's backlog falls below it. Absent: the server's default applies.
+                     * @description Maximum total payload size in bytes for a webhook's pending deliveries. Marfa records a new delivery as `canceled` if adding its payload would exceed this total. Absent: the server's default applies.
                      * @default 67108864
                      */
                     webhook_backlog_bytes?: number;
@@ -44217,12 +44217,12 @@ export interface operations {
                      */
                     inbound_backlog_bytes?: number | null;
                     /**
-                     * @description The pending deliveries one webhook may hold. Past it, Marfa records each new delivery canceled, unsent, until the webhook's backlog falls below it. `null` removes it, so the server's default applies.
+                     * @description Maximum number of pending deliveries per webhook. Marfa records a new delivery as `canceled` if adding it would exceed this limit. `null` removes it, so the server's default applies.
                      * @default 10000
                      */
                     webhook_backlog_deliveries?: number | null;
                     /**
-                     * @description The bytes of event payloads one webhook's pending deliveries may hold. Past it, Marfa records each new delivery canceled, unsent, until the webhook's backlog falls below it. `null` removes it, so the server's default applies.
+                     * @description Maximum total payload size in bytes for a webhook's pending deliveries. Marfa records a new delivery as `canceled` if adding its payload would exceed this total. `null` removes it, so the server's default applies.
                      * @default 67108864
                      */
                     webhook_backlog_bytes?: number | null;

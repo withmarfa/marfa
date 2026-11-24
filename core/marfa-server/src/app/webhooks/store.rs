@@ -335,7 +335,7 @@ pub fn backlog(tx: &Transaction<'_>, webhook_id: &str) -> Result<(i64, i64)> {
         .query_row([webhook_id], |row| Ok((row.get(0)?, row.get(1)?)))?)
 }
 
-/// Each active subscription whose attempts have all failed since the time given, oldest first.
+/// Returns each active subscription's first consecutive failure, oldest first.
 pub fn failing(tx: &Transaction<'_>) -> Result<Vec<(String, String)>> {
     let mut statement = tx.prepare(
         "SELECT id, failing_since FROM webhooks WHERE active = 1 AND failing_since IS NOT NULL \
@@ -633,7 +633,6 @@ fn a_due_time_that_does_not_read_is_refused() {
     assert!(next_due(&tx, 0, &[]).is_err());
 }
 
-/// The key `k1`, for a test that keeps foreign keys.
 #[cfg(test)]
 const KEY: &str = "INSERT INTO api_keys (id, hash, label, source, permissions, \
      type_permissions, edge_permissions, extension_permissions, metadata_permissions, \

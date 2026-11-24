@@ -780,8 +780,8 @@ registry! {
     INBOUND_IN_FLIGHT_BYTES: u64 = "inbound_in_flight_bytes", BYTES, "104857600", "The most bytes of inbound webhook deliveries the server holds in memory at once. One source holds at most half.";
     INBOUND_BACKLOG_DELIVERIES: u64 = "inbound_backlog_deliveries", COUNT, "10000", "The unhandled deliveries one registration may hold before the server refuses more for it.";
     INBOUND_BACKLOG_BYTES: u64 = "inbound_backlog_bytes", BYTES, "1073741824", "The bytes of unhandled deliveries one registration may hold before the server refuses more for it.";
-    WEBHOOK_BACKLOG_DELIVERIES: u64 = "webhook_backlog_deliveries", COUNT, "10000", "The pending deliveries one webhook may hold. Past it, the server records each new delivery canceled, unsent, until the webhook's backlog falls below it.";
-    WEBHOOK_BACKLOG_BYTES: u64 = "webhook_backlog_bytes", BYTES, "67108864", "The bytes of event payloads one webhook's pending deliveries may hold. Past it, the server records each new delivery canceled, unsent, until the webhook's backlog falls below it.";
+    WEBHOOK_BACKLOG_DELIVERIES: u64 = "webhook_backlog_deliveries", COUNT, "10000", "Maximum number of pending deliveries per webhook. The server records a new delivery as canceled if adding it would exceed this limit.";
+    WEBHOOK_BACKLOG_BYTES: u64 = "webhook_backlog_bytes", BYTES, "67108864", "Maximum total payload size in bytes for a webhook's pending deliveries. The server records a new delivery as canceled if adding its payload would exceed this total.";
     INBOUND_RETAINED_DELIVERIES: u64 = "inbound_retained_deliveries", COUNT, "10000", "The most deliveries one registration retains across its live and retired endpoints.";
     INBOUND_RETAINED_BYTES: u64 = "inbound_retained_bytes", BYTES, "1073741824", "The most bytes of bodies, headers and queries one registration retains across its live and retired endpoints.";
     INBOUND_HANDLED_RETENTION_DAYS: u64 = "inbound_handled_retention_days", Rule::Whole { min: 0, max: 36_500 }, "7", "How many days a handled inbound delivery is kept after it was handled. 0 keeps it for ever.";
