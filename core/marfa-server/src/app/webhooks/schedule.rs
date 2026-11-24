@@ -285,8 +285,7 @@ impl Backlog {
         })
     }
 
-    /// Whether the subscription's pending deliveries, with `more` of them holding `bytes`,
-    /// pass either limit.
+    /// Redelivery has already updated the counts and passes zero for both additions.
     pub fn passed(
         &self,
         tx: &Transaction<'_>,

@@ -1808,7 +1808,7 @@ If a redelivery names a delivery of a subscription that is not active, then the 
 
 When the server answers a redelivery `409 conflict`, the server MUST carry in `details.reason` the first of these that holds: `webhook_inactive` if the subscription is not active, `credential_unavailable` if the credential that registered the subscription no longer holds `webhooks.manage` or is no longer live, `delivery_not_failed` if the delivery is not `failed`, `delivery_expired` if the delivery is older than the instance's audit retention, or `backlog_full` if the redelivery would take the subscription past a backlog limit (`events/redeliver-backlog`).
 
-**Reason:** the five refusals need different remedies, and a caller who is told only that the request collides cannot tell a switch to turn on from a delivery that cannot be sent again. A `failed` delivery keeps the event it was queued with, so no sixth refusal is needed for an event the log has since let go.
+**Reason:** callers need to distinguish conditions they can change, such as a full backlog, from a delivery that has expired.
 
 **Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhook-history.test.ts › refuses to redeliver a failed delivery older than the audit retention`, `compliance/webhooks-owner.test.ts › names a maker that no longer holds webhooks.manage as the reason a local redelivery is refused`, `compliance/webhook-backlog.test.ts › refuses a redelivery past a subscription's pending limit with 409 backlog_full, keeping the delivery failed`.
 
@@ -1816,7 +1816,7 @@ When the server answers a redelivery `409 conflict`, the server MUST carry in `d
 
 If a redelivery would take the `pending` deliveries of its subscription past `webhook_backlog_deliveries`, or the bytes of their payloads past `webhook_backlog_bytes`, then the server MUST answer `409 conflict`.
 
-**Reason:** a redelivered delivery is pending again, so it counts toward the same limits as a new one. The caller can redeliver it once fewer deliveries are pending.
+**Reason:** a redelivered delivery is pending again and counts toward the same limits as a new one.
 
 **Tests:** `compliance/webhook-backlog.test.ts › refuses a redelivery past a subscription's pending limit with 409 backlog_full, keeping the delivery failed`.
 

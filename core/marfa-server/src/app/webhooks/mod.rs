@@ -548,7 +548,7 @@ pub async fn redeliver(
             return Err(redelivery_refused(
                 "backlog_full",
                 "Sending this delivery again would exceed the webhook's pending delivery or \
-                 payload byte limit. Redeliver it once fewer deliveries are pending.",
+                 payload byte limit. Wait for space or raise the applicable limit.",
             ));
         }
         unit.audit("webhook_delivery", &delivery.id, Some(json!({ "webhook_id": id })))?;

@@ -18,7 +18,6 @@ const REASON =
   "Adding this delivery would exceed the subscription's pending delivery or payload byte limit.";
 /** The waits between the eight attempts of `events/retry-schedule`, in seconds. */
 const WAITS_S = [1, 5, 25, 125, 625, 3125, 15625];
-/** A note body that outweighs the rest of its payload. */
 const LARGE = "x".repeat(20_000);
 
 let server: FreshServer;
@@ -26,7 +25,6 @@ let clock: ReturnType<typeof movedClock>;
 let hook: Hook;
 let failing: Failing;
 let webhookId: string;
-/** Subscriptions to a receiver that fails every attempt at once: repointed, turned off and deleted. */
 let others: string[] = [];
 
 interface Hook {
@@ -367,8 +365,7 @@ describe("a webhook whose receiver never answers", () => {
       await waitFor("the held delivery to reach the receiver", async () =>
         hook.bodies.some((sent) => sent.includes(held)) ? true : undefined,
       );
-      // Each payload holds its body and less than half as much again, so the
-      // next fits alone and not beside the one still pending.
+      // Each payload fits alone under this limit.
       await configure({ webhook_backlog_bytes: 1.5 * LARGE.length });
       const before = withStatus(await deliveries(), "canceled").length;
       const id = await write(`past ${LARGE}`);
