@@ -66,7 +66,7 @@ pub(super) struct Peer {
     /// Its bindings by path, as item and bytes.
     bound: OnceCell<HashMap<String, (String, String)>>,
     catalog: OnceCell<Option<Catalog>>,
-    /// Its folder's settings as the server now holds them.
+    /// The first answer about this folder's settings in this pass.
     current: OnceCell<Option<Settings>>,
 }
 
@@ -283,8 +283,6 @@ impl Peer {
         })
     }
 
-    /// Whether its file of the item is on disk and is that item's, read now:
-    /// a document by its id line, bytes by the hash it bound.
     fn carries(&self, item_id: &str) -> bool {
         let (Some(bound), Some(root)) = (self.bound_to(item_id), &self.root_dir) else {
             return false;
@@ -579,8 +577,7 @@ impl<'a> Peers<'a> {
         self.loaded().1.as_deref()
     }
 
-    /// A directory of this folder can keep a file of the item too, so only
-    /// another folder's file makes a returning file a copy.
+    /// Directories following one folder can retain the same unmatched item.
     pub(super) fn carry(&self, item_id: &str) -> bool {
         self.other_folders().any(|peer| {
             peer.files()
@@ -768,9 +765,6 @@ impl<'a> Peers<'a> {
         }
     }
 
-    /// Whether another folder files the item: its copy holds the item or a
-    /// document it is attached to, its file of the item is on disk as
-    /// bound, and the server, asked now, says that folder's query holds it.
     pub(super) fn filed_elsewhere(&self, item_id: &str) -> bool {
         self.other_folders().any(|peer| {
             (peer.holds(item_id) == Some(true) || peer.holds_document_of(item_id))
@@ -779,8 +773,6 @@ impl<'a> Peers<'a> {
         })
     }
 
-    /// Whether the server says the other folder's current query holds the
-    /// item, or a document the item is attached to.
     fn proven(&self, peer: &Peer, item_id: &str) -> bool {
         let Some(settings) = self.current(peer) else {
             return false;
@@ -826,9 +818,6 @@ impl<'a> Peers<'a> {
             .as_ref()
     }
 
-    /// What the server lists of the item under `settings`; `None` where it
-    /// cannot say. The grammar has no grouping, so a filter joined by `OR`
-    /// is asked one condition at a time.
     fn query_holds(&self, settings: &Settings, item_id: &str) -> Option<bool> {
         if settings.pending_beneath().is_some() {
             return Some(false);
@@ -847,6 +836,7 @@ impl<'a> Peers<'a> {
                 let read = FilterExpression::decode(filter).ok()?;
                 match read.join {
                     FilterJoin::All => vec![read.conditions],
+                    // The filter grammar cannot group an OR inside an AND.
                     FilterJoin::Any => read.conditions.into_iter().map(|one| vec![one]).collect(),
                 }
             }

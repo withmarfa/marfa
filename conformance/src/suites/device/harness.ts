@@ -342,8 +342,7 @@ export function scriptHydration(
     /** A reading of a filter the scripted one does not read, such as a
      *  `status_group` term, which needs the catalog the fixture serves. */
     reading?: FilterReading;
-    /** Item events the listing reads its rows from, the latest of each item
-     *  in place of what the hydration served, as the server lists them. */
+    /** Events that update rows supplied by the fixture. */
     follow?: readonly SseFrame[];
   },
 ): void {
@@ -1073,7 +1072,6 @@ export async function folderHarness(
     /** A reading of a filter the scripted one does not read, as
      *  `scriptHydration` takes it. */
     reading?: FilterReading;
-    /** Item events the listing follows, as `scriptHydration` takes them. */
     follow?: readonly SseFrame[];
   } = {},
 ): Promise<FolderHarness> {

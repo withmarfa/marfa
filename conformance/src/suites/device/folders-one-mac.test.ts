@@ -1523,8 +1523,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       const behind =
         "a folder let a file go to another folder whose copy had not heard the change that drops the item there too";
       if (order === "the first folder pulls first") {
-        // The server already holds the change, so only the item the other
-        // folder still holds is let go, though that folder has not pulled.
         expect((await pushed(a))?.let_go, behind).toBe(1);
         expect((await pushed(b))?.let_go).toBe(0);
       } else if (order === "the second folder pulls first") {
@@ -1617,8 +1615,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         row.version += 1;
         event("item.updated", folderItem(row));
       };
-      // This folder hears its own query narrow, and nothing after; the other
-      // folder's copy hears nothing, so both copies hold the plan as before.
+      // Keep the peer's copy at its earlier version throughout the check.
       settle(a.settings, {
         query: { types: ["core.note"], filter: 'tags contains "c"' },
       });

@@ -1384,7 +1384,6 @@ impl Http {
             .map(drop)
     }
 
-    /// Whether a listing narrowed by `narrowing` holds the item `id`.
     pub(crate) fn lists_item(
         &self,
         declared: Option<&str>,
