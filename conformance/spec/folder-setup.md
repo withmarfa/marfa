@@ -1130,7 +1130,7 @@ When a device removes the state of a folder whose first sync was confirmed, a de
 
 When `folders add` is given `--from` a directory whose removal record names the folder being added, a device MUST name each file of that directory whose item the instance holds at a version below the one the record names, with both versions.
 
-**Reason:** a version number is the server's, so only a lower number shows that the instance lacks what the folder sent; an item the instance holds at the same or a higher number was not lost, or was changed there since, and is not named.
+**Reason:** a lower version identifies a file to compare after a restore. The restored instance can also have edits of its own at that lower version.
 
 **Tests:** `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`, `› sends no file whose item the instance changed after the add or holds at the same or a newer version, and names one it lacks or that is gone`, `› names no file a folder added back on the instance it was removed from sent, and says nothing is known of a directory with no record or one it cannot read`.
 

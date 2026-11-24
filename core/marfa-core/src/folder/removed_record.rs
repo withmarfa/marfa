@@ -1,7 +1,4 @@
-//! What a folder last sent, kept in its directory's `.marfa` once the folder
-//! is removed, so a directory added in its place can name each file whose
-//! item the instance holds at an older version and send it
-//! (`folder-setup/remove-records-sent`).
+//! Folder removal records and recovery after a restore.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -15,7 +12,6 @@ use crate::directory::Directory;
 use crate::model::ItemState;
 use crate::{Result, store};
 
-/// The record's name in the removed directory's `.marfa`.
 pub const RECORD: &str = "removed.json";
 const FORMAT: u32 = 1;
 /// The files a directory's add named older, with the version it read.
@@ -59,18 +55,15 @@ pub struct Removed {
     pub recorded: Option<Recorded>,
 }
 
-/// What the record in a removed directory says of the instance a directory
-/// was added for.
+/// The result of comparing a removal record with the destination instance.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Compared {
     /// The removed directory.
     pub from: PathBuf,
-    /// Why nothing is known: no record, one that cannot be read, one of
-    /// another folder, or a copy of the instance that could not be read.
+    /// Why the removal record and the instance could not be compared.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unknown: Option<String>,
-    /// Files whose item the instance holds at an older version than the
-    /// folder last sent.
+    /// Files whose recorded version exceeds the version on the instance.
     pub older: Vec<Older>,
     /// Files whose item the folder on the instance does not hold.
     pub absent: Vec<String>,
@@ -129,8 +122,7 @@ struct Pending {
 }
 
 impl Folder {
-    /// The record of every bound file whose item the copy holds, as the copy
-    /// last had it from the server.
+    /// Builds the record before removal clears the bindings.
     pub(super) fn sent_record(&self) -> Result<(Vec<u8>, usize)> {
         let conn = self.core.conn()?;
         let bound = state::every_bound(&conn)?;
@@ -160,8 +152,7 @@ impl Folder {
         Ok((serde_json::to_vec_pretty(&record)?, count))
     }
 
-    /// Reads the record in `from`'s `.marfa` against the copy, caught up
-    /// first, and keeps the older files for `send_newer`.
+    /// Compares the removal record and saves candidates for `send_newer`.
     pub fn compare_removed(&self, from: &Path) -> Result<Compared> {
         let from = std::path::absolute(from).map_err(super::io_error)?;
         let mut compared = Compared {
@@ -233,11 +224,7 @@ impl Folder {
         Ok(compared)
     }
 
-    /// Writes each file the add named older from the removed directory over
-    /// the directory's file of its item, where the instance still holds the
-    /// version the add read and the file is as the folder wrote it, so the
-    /// next scan sends it conditional on that version. Answers `None` where
-    /// no add named a file.
+    /// Copies eligible files for the next scan. Returns `None` if no candidates were saved.
     pub fn send_newer(&self) -> Result<Option<Vec<SentNewer>>> {
         self.refuse_if_gone()?;
         self.refuse_while_waiting()?;
@@ -309,8 +296,7 @@ impl Folder {
         let Ok(here) = self.root_dir.read(Path::new(&row.path)) else {
             return Ok(NewerOutcome::NotWritten);
         };
-        // The version line names the version read, so the scan sends the
-        // file whole, as an edit of that version.
+        // The destination scan interprets this line as the edit's base version.
         if let Ok(text) = std::str::from_utf8(&bytes)
             && let Some(line) = retained::version_line(text)
         {
@@ -339,8 +325,6 @@ impl Folder {
     }
 }
 
-/// Writes the record into the removed directory's `.marfa`, whose state the
-/// removal cleared.
 pub(super) fn write(state_dir: &Directory, record: &[u8]) -> Result<()> {
     replace(state_dir, Path::new(RECORD), record).map_err(super::io_error)
 }
@@ -351,7 +335,7 @@ fn read(from: &Path) -> std::result::Result<Record, String> {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Err(format!(
-                "{} holds no record of what its folder sent, as a directory removed by an earlier build does not",
+                "{} holds no record of what its folder sent",
                 from.display()
             ));
         }
@@ -376,8 +360,7 @@ fn read(from: &Path) -> std::result::Result<Record, String> {
     }
 }
 
-/// The bytes of the regular file at `relative` under `from`, following no
-/// link; `None` where there is none.
+/// A read error makes the file unavailable for comparison or sending.
 fn file_at(from: &Path, relative: &str) -> Option<Vec<u8>> {
     if relative
         .split('/')
@@ -388,7 +371,6 @@ fn file_at(from: &Path, relative: &str) -> Option<Vec<u8>> {
     Directory::open(from).ok()?.read(Path::new(relative)).ok()
 }
 
-/// Replaces the file at `relative` in `dir` in one step, as an editor saves.
 fn replace(dir: &Directory, relative: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let (parent, name) = dir.parent(relative, false)?;
     let staged = PathBuf::from(format!(".marfa-{}-sending.tmp", std::process::id()));

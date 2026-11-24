@@ -4995,7 +4995,7 @@ marfa folders add [OPTIONS] --folder <ID_OR_TITLE> <DIR>
 | --- | --- |
 | `--folder <ID_OR_TITLE>` | The folder to follow, by its `system.folder` ID, or by its title where exactly one folder the credential can read has that title. A value that is an ID is taken as one. |
 | `--yes` | Confirm the first sync without asking, for scripts. Without it, the add says what the first sync will do and waits for a go-ahead. |
-| `--from <DIR>` | A directory this folder was removed from, moved aside. Names each of its files whose item the instance holds at an older version than the folder last sent, which `folders push --send-newer` then sends; each whose item the folder on the instance does not hold; and each gone from it since the removal. Reads the record the removal left in its `.marfa`; where there is none, or it cannot be read, the add goes on and says nothing is known. Refused for the directory being added, or one a folder follows. |
+| `--from <DIR>` | Read the removal record from a directory you moved aside. Lists files whose items have lower versions on this instance, files missing from the moved directory, and files with no item in the folder on this instance. If the record is missing or unreadable, the add continues and reports why it could not compare the files. The moved directory must differ from the directory being added and must no longer follow a folder. |
 
 ### marfa folders list
 
@@ -5021,7 +5021,7 @@ marfa folders inventory [OPTIONS]
 
 ### marfa folders remove
 
-Make a directory stop following its folder: its own state under `.marfa` goes, but for a record of what it last sent, which `folders add --from` reads, and its files stay as plain files. Empty administrative directories remain. Refused while writes wait, except for a first sync still waiting to be confirmed, which this cancels, and except where another Marfa instance answers at the folder's server, which none of them can reach: the command then names each file holding a change the folder could not send, and how to send the changes there. Follows no symbolic link, and takes a path through one only where it is the path `folders list` shows. Where that path is gone, passes through a link, or holds state the registry does not show to be the directory's own, the directory is only taken off the list and nothing is deleted.
+Stop following a folder and keep its files. If the first sync was confirmed, the command writes a record under `.marfa` for `folders add --from`. Empty administrative directories remain. Refused while writes wait, except for a first sync still waiting to be confirmed, which this cancels, and except where another Marfa instance answers at the folder's server, which none of them can reach: the command then names each file holding a change the folder could not send, and how to send the changes there. Follows no symbolic link, and takes a path through one only where it is the path `folders list` shows. Where that path is gone, passes through a link, or holds state the registry does not show to be the directory's own, the directory is only taken off the list and nothing is deleted.
 
 ```text
 marfa folders remove [OPTIONS] <DIR>
@@ -5155,7 +5155,7 @@ marfa folders push [OPTIONS] <DIR>
 | --- | --- |
 | `--send-only` | Send what the directory holds and go no further: scan and drain, catch up with nothing and pull nothing, so no item's file is written into the directory or removed from it. A copy never hydrated hydrates first, which writes only the directory's store. A later push without this pulls what the server holds. Refused while the first sync waits to be confirmed. |
 | `--confirm-additions` | Send every new file this push finds, however many, in place of holding a drop of more than the folder's `addition_threshold` for `folders confirm`. For a script that no one is at; the decision is the script's. |
-| `--send-newer` | First write each file `folders add --from` named older over the directory's file of its item, so this push sends it as an edit of the version the add read. A file is left as it is, and said, where the instance changed the item since the add, the directory's file changed since the folder wrote it, or the file is gone from the moved directory. |
+| `--send-newer` | Copy the files that `folders add --from` listed as older on the instance into this directory, then push. Reports files it skips because the item's version changed, the local file changed, or the moved directory no longer holds the file. |
 
 ### marfa folders unmatched
 

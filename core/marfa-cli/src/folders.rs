@@ -40,14 +40,13 @@ pub enum FoldersCommand {
         /// the add says what the first sync will do and waits for a go-ahead.
         #[arg(long)]
         yes: bool,
-        /// A directory this folder was removed from, moved aside. Names each
-        /// of its files whose item the instance holds at an older version
-        /// than the folder last sent, which `folders push --send-newer` then
-        /// sends; each whose item the folder on the instance does not hold;
-        /// and each gone from it since the removal. Reads the record the
-        /// removal left in its `.marfa`; where there is none, or it cannot
-        /// be read, the add goes on and says nothing is known. Refused for
-        /// the directory being added, or one a folder follows.
+        /// Read the removal record from a directory you moved aside. Lists
+        /// files whose items have lower versions on this instance, files
+        /// missing from the moved directory, and files with no item in the
+        /// folder on this instance. If the record is missing or unreadable,
+        /// the add continues and reports why it could not compare the files.
+        /// The moved directory must differ from the directory being added
+        /// and must no longer follow a folder.
         #[arg(long, value_name = "DIR")]
         from: Option<PathBuf>,
     },
@@ -66,10 +65,10 @@ pub enum FoldersCommand {
         #[command(flatten)]
         page: crate::commands::PageArgs,
     },
-    /// Make a directory stop following its folder: its own state under
-    /// `.marfa` goes, but for a record of what it last sent, which `folders add --from`
-    /// reads, and its files stay as plain files. Empty administrative directories
-    /// remain. Refused while writes wait, except for a first sync still
+    /// Stop following a folder and keep its files. If the first sync was confirmed,
+    /// the command writes a record under `.marfa` for `folders add
+    /// --from`. Empty administrative directories remain.
+    /// Refused while writes wait, except for a first sync still
     /// waiting to be confirmed, which this cancels, and except where another
     /// Marfa instance answers at the folder's server, which none of them can
     /// reach: the command then names each file holding a change the folder
@@ -164,12 +163,10 @@ pub enum FoldersCommand {
         /// the script's.
         #[arg(long)]
         confirm_additions: bool,
-        /// First write each file `folders add --from` named older over the
-        /// directory's file of its item, so this push sends it as an edit of
-        /// the version the add read. A file is left as it is, and said, where
-        /// the instance changed the item since the add, the directory's file
-        /// changed since the folder wrote it, or the file is gone from the
-        /// moved directory.
+        /// Copy the files that `folders add --from` listed as older on the
+        /// instance into this directory, then push. Reports files it skips
+        /// because the item's version changed, the local file changed, or
+        /// the moved directory no longer holds the file.
         #[arg(long, conflicts_with = "send_only")]
         send_newer: bool,
     },
@@ -1643,7 +1640,8 @@ fn removed_said(dir: &Path, folder: &str, removed: &marfa_core::folder::Removed)
             .to_string()
     });
     let mut steps = vec![format!(
-        "Run `mv {word} {aside}`, then, with a key for that instance, `marfa folders add {word} \
+        "If {aside} already exists, choose an unused name for it throughout these steps. \
+         Run `mv {word} {aside}`, then, with a key for that instance, `marfa folders add {word} \
          --folder {folder} --from {aside}` and `marfa folders push {word}`. The add names each \
          file whose item that instance holds at an older version than this folder last sent it."
     )];
@@ -1764,7 +1762,7 @@ fn newer_lines(dir: &Path, newer: Option<&[marfa_core::folder::SentNewer]>) -> V
         .map(|file| {
             let path = printable(&file.path);
             match &file.outcome {
-                NewerOutcome::Queued => format!("{path}: the moved directory's version is sent"),
+                NewerOutcome::Queued => format!("{path}: copied from the moved directory for this push"),
                 NewerOutcome::Already => format!("{path}: holds the moved directory's version already"),
                 NewerOutcome::Gone => format!("{path}: no longer in the moved directory; nothing sent"),
                 NewerOutcome::ChangedThere { read, held } => format!(

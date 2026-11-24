@@ -213,7 +213,7 @@ describe("a directory whose server is now another instance", () => {
     const sent = await cli.run(["folders", "push", dir, "--send-newer"]);
     expect(sent.code, sent.stderr).toBe(0);
     expect(sent.stdout).toContain(
-      "Late.md: the moved directory's version is sent",
+      "Late.md: copied from the moved directory for this push",
     );
     const waiting = await cli.run(["folders", "status", dir]);
     expect(waiting.stdout).toContain("Dropped.md: waiting");

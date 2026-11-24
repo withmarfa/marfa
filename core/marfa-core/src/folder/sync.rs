@@ -247,8 +247,8 @@ impl Folder {
         }
     }
 
-    /// Takes the folder at `dir` off this machine: its own state under
-    /// `.marfa` goes, but for a record of what it last sent, and its files stay. Refused while writes wait, unless
+    /// Stops following the folder at `dir` and keeps its files. A confirmed
+    /// folder leaves a removal record under `.marfa`. Refused while writes wait, unless
     /// the first sync still waits to be confirmed or another instance
     /// answered at the folder's server (`Folder::remove`). No symbolic link is
     /// followed, and a path through one is taken only where it is the path
