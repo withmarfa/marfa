@@ -106,6 +106,14 @@ pub const MIGRATIONS: &[Migration] = &[
              WHERE name = 'checked_by')",
         ),
     },
+    Migration {
+        version: 15,
+        sql: include_str!("migrations/0015_webhook_backlog.sql"),
+        done: Some(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('webhooks') \
+             WHERE name = 'failing_since')",
+        ),
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

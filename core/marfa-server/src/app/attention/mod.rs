@@ -38,14 +38,16 @@ pub const HOUSEKEEPING: &str = "housekeeping";
 pub const CONNECTORS: &str = "connectors";
 pub const FOLDERS: &str = "folders";
 pub const KEYS: &str = "keys";
+pub const WEBHOOKS: &str = "webhooks";
 
 /// The checks a fault can name, each with how an unavailable entry names it.
-pub const CHECKS: [(&str, &str); 5] = [
+pub const CHECKS: [(&str, &str); 6] = [
     (HEALTH, "Health"),
     (HOUSEKEEPING, "Housekeeping"),
     (CONNECTORS, "Connectors"),
     (FOLDERS, "Folders"),
     (KEYS, "API keys"),
+    (WEBHOOKS, "Webhooks"),
 ];
 
 /// The event a new entry is announced by.
@@ -55,12 +57,13 @@ const FAULT: &str = "fault";
 const WRITE_ACTION: &str = "attention.check";
 
 /// The kinds of entry each check finds, kept as announced while the check cannot answer.
-const FOUND_BY: [(&str, &[&str]); 5] = [
+const FOUND_BY: [(&str, &[&str]); 6] = [
     (HEALTH, &["health", "backup"]),
     (HOUSEKEEPING, &["job"]),
     (CONNECTORS, &["connector"]),
     (FOLDERS, &["folder"]),
     (KEYS, &["key"]),
+    (WEBHOOKS, &["webhook"]),
 ];
 
 #[derive(Clone)]
@@ -91,6 +94,7 @@ impl Concern {
             "connector" => "A connector failed its last run, reports problems or has gone quiet.",
             "folder" => "A folder's sync needs a look.",
             "key" => "An API key expires within seven days.",
+            "webhook" => "Every attempt to deliver to a webhook has failed for a day.",
             "backup" => "The backups need a look.",
             "clock" => "The server's clock disagrees with the time it last trusted.",
             "setting" => "A secret setting must be set again.",
@@ -559,6 +563,26 @@ async fn ending(app: &Arc<App>, at: &str) -> Result<Vec<Concern>> {
         .collect())
 }
 
+async fn delivering(app: &Arc<App>) -> Result<Vec<Concern>> {
+    let now_ms = app.clock.now_ms();
+    let failing = app.db.read(move |tx| webhooks::failing(tx, now_ms)).await?;
+    Ok(failing
+        .into_iter()
+        .map(|(id, since)| Concern {
+            kind: "webhook",
+            failed_run: false,
+            title: "A webhook's deliveries are failing".to_string(),
+            description: format!(
+                "Every attempt to deliver to webhook {id} since {since} has failed. Its \
+                 deliveries wait for their retries, and once it holds \
+                 webhook_backlog_deliveries or webhook_backlog_bytes, new ones are recorded \
+                 canceled. Check its receiver, or turn the webhook off or delete it."
+            ),
+            reference: id,
+        })
+        .collect())
+}
+
 /// One check, bounded in time; a check that fails, runs out of time or is made to fail by a
 /// fault becomes one entry naming it.
 async fn checked<F>(app: &App, name: &'static str, check: F) -> (Vec<Concern>, bool)
@@ -659,12 +683,13 @@ const COVERED_JOBS: [&str; 2] = ["backup", "blob-replicate"];
 async fn gather(app: &Arc<App>) -> Gathered {
     let order = app.attention.begun.fetch_add(1, Ordering::AcqRel) + 1;
     let at = app.clock.stamp();
-    let (health, jobs, connectors, folders, keys) = tokio::join!(
+    let (health, jobs, connectors, folders, keys, hooks) = tokio::join!(
         checked(app, HEALTH, healthy(app)),
         checked(app, HOUSEKEEPING, jobs(app)),
         checked(app, CONNECTORS, connected(app, &at)),
         checked(app, FOLDERS, synced(app, &at)),
         checked(app, KEYS, ending(app, &at)),
+        checked(app, WEBHOOKS, delivering(app)),
     );
     let answered = [
         (HEALTH, health.1),
@@ -672,6 +697,7 @@ async fn gather(app: &Arc<App>) -> Gathered {
         (CONNECTORS, connectors.1),
         (FOLDERS, folders.1),
         (KEYS, keys.1),
+        (WEBHOOKS, hooks.1),
     ];
     let unknown = FOUND_BY
         .iter()
@@ -687,10 +713,19 @@ async fn gather(app: &Arc<App>) -> Gathered {
         .iter()
         .map(fault_concern)
         .collect();
-    let concerns = [health.0, clock, met, jobs, connectors.0, folders.0, keys.0]
-        .into_iter()
-        .flatten()
-        .collect();
+    let concerns = [
+        health.0,
+        clock,
+        met,
+        jobs,
+        connectors.0,
+        folders.0,
+        keys.0,
+        hooks.0,
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     app.attention.looked.fetch_max(order, Ordering::AcqRel);
     Gathered {
         concerns,

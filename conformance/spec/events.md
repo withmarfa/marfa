@@ -1730,7 +1730,39 @@ When a subscription is deleted, the server MUST send none of its pending deliver
 
 When the server settles a delivery unsent, the server MUST record it `canceled` with `succeeded` false, the reason in `error`, and the `status_code` and `attempt` it had.
 
-**Tests:** `compliance/webhook-delivery.test.ts › settles a pending delivery unsent when its subscription is repointed, turned off or deleted, and keeps its last answer`, `› settles a pending delivery unsent when the credential is narrowed away from its type`, `› settles a pending delivery unsent when its key no longer holds webhooks.manage`.
+**Tests:** `compliance/webhook-delivery.test.ts › settles a pending delivery unsent when its subscription is repointed, turned off or deleted, and keeps its last answer`, `› settles a pending delivery unsent when the credential is narrowed away from its type`, `› settles a pending delivery unsent when its key no longer holds webhooks.manage`, `compliance/webhook-backlog.test.ts › records a delivery past a subscription's pending limit as canceled, with the reason`.
+
+## What a subscription holds pending
+
+### `events/backlog-deliveries`
+
+If a delivery would take the `pending` deliveries of its subscription past `webhook_backlog_deliveries`, 10000 unless named, then the server MUST record that delivery `canceled`, unsent, with the `error` `The subscription held as many pending deliveries, or bytes, as the instance allows.`
+
+**Reason:** a receiver that never answers would otherwise hold a copy of every event's payload for its subscription without end. The delivery is still recorded, so the delivery log shows what the receiver missed and why.
+
+**Tests:** `compliance/webhook-backlog.test.ts › records a delivery past a subscription's pending limit as canceled, with the reason`, `› keeps the pending deliveries a lowered limit leaves over it, across a restart`.
+
+### `events/backlog-bytes`
+
+If a delivery would take the bytes of its subscription's `pending` payloads past `webhook_backlog_bytes`, 67108864 unless named, then the server MUST record that delivery `canceled`, unsent, with the `error` `The subscription held as many pending deliveries, or bytes, as the instance allows.`
+
+**Reason:** the bytes are the stored length of each payload, the delivery's own included, so one subscription's backlog is bounded on disk whatever size its events are.
+
+**Tests:** `compliance/webhook-backlog.test.ts › records a delivery past a subscription's pending bytes as canceled, with the reason`.
+
+### `events/backlog-keeps-pending`
+
+When `webhook_backlog_deliveries` or `webhook_backlog_bytes` is set below what a subscription holds pending, the server MUST keep each of its `pending` deliveries and go on attempting it.
+
+**Reason:** a limit bounds what is added. Settling older deliveries to make room would lose events the receiver was already owed.
+
+**Tests:** `compliance/webhook-backlog.test.ts › keeps the pending deliveries a lowered limit leaves over it, across a restart`, `› lists a webhook in attention once every attempt has failed for a day, and clears it once one succeeds`.
+
+### `events/backlog-drains`
+
+When a subscription's `pending` deliveries fall back within `webhook_backlog_deliveries` and `webhook_backlog_bytes`, the server MUST queue its next delivery `pending`.
+
+**Tests:** `compliance/webhook-backlog.test.ts › lists a webhook in attention once every attempt has failed for a day, and clears it once one succeeds`.
 
 ## Redelivery
 

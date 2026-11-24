@@ -17,6 +17,7 @@ use serde_json::{Map, Value, json};
 
 use super::access::{Caller, Maker, standing_maker};
 use super::catalog;
+use super::clock::Stamp;
 use super::events::fanout;
 use super::housekeeping::{self, DAY_MS};
 use super::outbound::{self, Asker, Reach};
@@ -39,6 +40,8 @@ const CANCEL_UNSELECTED: &str =
 const CANCEL_UNREAD: &str = "The credential the subscription belongs to may not read this event.";
 const CANCEL_CREDENTIAL: &str = "The credential the subscription belongs to no longer stands or no longer holds webhooks.manage.";
 const CANCEL_UNREADABLE: &str = "The event could not be read, so it was not sent.";
+const CANCEL_BACKLOG: &str =
+    "The subscription held as many pending deliveries, or bytes, as the instance allows.";
 
 /// Subscriptions one key, or one app's grant, may hold at once.
 pub const MAX_PER_MAKER: i64 = 100;
@@ -137,6 +140,22 @@ pub fn of_grant(tx: &Transaction<'_>, grant_id: &str) -> Result<Vec<Subscription
 pub fn forget_grant(tx: &Transaction<'_>, grant_id: &str) -> Result<()> {
     store::delete_for_grant(tx, grant_id)?;
     Ok(())
+}
+
+/// How long every attempt to a subscription fails before the owner is told.
+pub const FAILING_MS: i64 = DAY_MS;
+
+/// Each active subscription whose attempts have all failed since at least `FAILING_MS` before
+/// `now_ms`, with when they began to fail.
+pub fn failing(tx: &Transaction<'_>, now_ms: i64) -> Result<Vec<(String, Stamp)>> {
+    let mut found = Vec::new();
+    for (id, since) in store::failing(tx)? {
+        let since = Stamp::read(&since)?;
+        if now_ms.saturating_sub(since.ms()) >= FAILING_MS {
+            found.push((id, since));
+        }
+    }
+    Ok(found)
 }
 
 /// Settled deliveries created before `before`; a pending one is kept whatever its age.

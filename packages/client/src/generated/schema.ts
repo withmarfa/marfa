@@ -6508,11 +6508,11 @@ export interface components {
          */
         AttentionConcern: {
             /**
-             * @description health: degraded or down; job: last run failed; connector: failed, problems or quiet; folder: sync problems; key: expiring; backup: none, off or failing; setting: secret to set again; clock: ahead or behind; fault: met lately; unavailable: no answer.
+             * @description health: degraded or down; job: run failed; connector: failing or quiet; folder: sync problems; key: expiring; webhook: failing a day; backup: none, off or failing; setting: secret to set; clock: ahead or behind; fault: recent; unavailable: no answer.
              * @enum {string}
              */
-            kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "setting" | "clock" | "fault" | "unavailable";
-            /** @description The component, job, connector, folder or key ID, the check that couldn't answer, a backup concern such as `store`, a secret setting's key, `clock_ahead` or `clock_behind`, or a fault's kind and place, such as `database:POST /items/{id}`, or `other`. */
+            kind: "health" | "job" | "connector" | "folder" | "key" | "webhook" | "backup" | "setting" | "clock" | "fault" | "unavailable";
+            /** @description A component, job, connector, folder, key or webhook ID, a check that couldn't answer, a backup concern, like `store`, a secret setting's key, `clock_ahead` or `clock_behind`, a fault's kind and place, such as `database:POST /items/{id}`, or `other`. */
             reference: string;
             /** @description A short name for the concern. */
             title: string;
@@ -7250,6 +7250,16 @@ export interface components {
              * @default 1073741824
              */
             inbound_backlog_bytes: number;
+            /**
+             * @description The pending deliveries one webhook may hold. Past it, Marfa records each new delivery canceled, unsent, until the webhook's backlog falls below it.
+             * @default 10000
+             */
+            webhook_backlog_deliveries: number;
+            /**
+             * @description The bytes of event payloads one webhook's pending deliveries may hold. Past it, Marfa records each new delivery canceled, unsent, until the webhook's backlog falls below it.
+             * @default 67108864
+             */
+            webhook_backlog_bytes: number;
             /**
              * @description The most deliveries one registration retains across its live and retired endpoints.
              * @default 10000
@@ -8867,7 +8877,7 @@ export interface components {
              * @description The entry's `kind`, as `GET /attention` lists it.
              * @enum {string}
              */
-            kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "setting" | "clock" | "fault" | "unavailable";
+            kind: "health" | "job" | "connector" | "folder" | "key" | "webhook" | "backup" | "setting" | "clock" | "fault" | "unavailable";
             /** @description The entry's `reference`, as `GET /attention` lists it. */
             reference: string;
             /**
@@ -43658,6 +43668,16 @@ export interface operations {
                      */
                     inbound_backlog_bytes?: number;
                     /**
+                     * @description The pending deliveries one webhook may hold. Past it, Marfa records each new delivery canceled, unsent, until the webhook's backlog falls below it. Absent: the server's default applies.
+                     * @default 10000
+                     */
+                    webhook_backlog_deliveries?: number;
+                    /**
+                     * @description The bytes of event payloads one webhook's pending deliveries may hold. Past it, Marfa records each new delivery canceled, unsent, until the webhook's backlog falls below it. Absent: the server's default applies.
+                     * @default 67108864
+                     */
+                    webhook_backlog_bytes?: number;
+                    /**
                      * @description The most deliveries one registration retains across its live and retired endpoints. Absent: the server's default applies.
                      * @default 10000
                      */
@@ -44196,6 +44216,16 @@ export interface operations {
                      * @default 1073741824
                      */
                     inbound_backlog_bytes?: number | null;
+                    /**
+                     * @description The pending deliveries one webhook may hold. Past it, Marfa records each new delivery canceled, unsent, until the webhook's backlog falls below it. `null` removes it, so the server's default applies.
+                     * @default 10000
+                     */
+                    webhook_backlog_deliveries?: number | null;
+                    /**
+                     * @description The bytes of event payloads one webhook's pending deliveries may hold. Past it, Marfa records each new delivery canceled, unsent, until the webhook's backlog falls below it. `null` removes it, so the server's default applies.
+                     * @default 67108864
+                     */
+                    webhook_backlog_bytes?: number | null;
                     /**
                      * @description The most deliveries one registration retains across its live and retired endpoints. `null` removes it, so the server's default applies.
                      * @default 10000

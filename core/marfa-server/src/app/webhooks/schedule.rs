@@ -11,7 +11,7 @@ use crate::app::events::fanout::{self, Logged};
 use crate::app::events::{Filter, Judge, Judged};
 use crate::app::faults::{Faults, HOLD_WEBHOOK_SCHEDULE_QUEUED};
 use crate::app::item_links::Links;
-use crate::app::refusal::Result;
+use crate::app::refusal::{Refusal, Result};
 use crate::db::Pulse;
 
 /// Bounds each write transaction when crossing a backlog.
@@ -52,6 +52,8 @@ pub struct Context<'a> {
     pub pulse: &'a Pulse,
     pub at: &'a str,
     pub now_ms: i64,
+    /// The pending deliveries, and the bytes of their payloads, one subscription may hold.
+    pub backlog: (u64, u64),
 }
 
 struct Entitled {
@@ -242,10 +244,13 @@ fn queue(
             }
         }
         let id = uuid::Uuid::now_v7().to_string();
+        let unsent = past_backlog(tx, &subscription.id, payload.len(), context.backlog)?
+            .then_some(super::CANCEL_BACKLOG);
         let added = store::queue(
             tx,
             &Queued {
                 id: &id,
+                unsent,
                 webhook_id: &subscription.id,
                 event_id: logged.id,
                 event_type: &logged.event_type,
@@ -256,9 +261,25 @@ fn queue(
                 at: context.at,
             },
         )?;
-        queued += usize::from(added);
+        queued += usize::from(added && unsent.is_none());
     }
     Ok(queued)
+}
+
+/// Whether one more delivery of `bytes` would take the subscription past either limit.
+fn past_backlog(
+    tx: &Transaction<'_>,
+    webhook_id: &str,
+    bytes: usize,
+    (deliveries, most_bytes): (u64, u64),
+) -> Result<bool> {
+    let (pending, pending_bytes) = store::backlog(tx, webhook_id)?;
+    let (Ok(pending), Ok(pending_bytes)) = (u64::try_from(pending), u64::try_from(pending_bytes))
+    else {
+        return Err(Refusal::internal("a webhook's backlog count does not read"));
+    };
+    let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+    Ok(pending.saturating_add(1) > deliveries || pending_bytes.saturating_add(bytes) > most_bytes)
 }
 
 #[cfg(test)]

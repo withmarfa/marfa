@@ -20,6 +20,7 @@ use crate::app::outbound;
 use crate::app::refusal::{Code, Result};
 use crate::db::Write;
 use crate::log;
+use crate::settings::registry::{WEBHOOK_BACKLOG_BYTES, WEBHOOK_BACKLOG_DELIVERIES};
 use crate::telemetry::{Fault, Finished};
 
 /// Sockets the sender may hold open at once; each subscription still takes one turn at a time.
@@ -212,6 +213,7 @@ impl Sender {
                         catalog::Snapshot::Pending,
                     )?;
                     let links = app.item_links();
+                    let settings = app.settings.live();
                     schedule::pass(
                         tx,
                         &Context {
@@ -222,6 +224,10 @@ impl Sender {
                             pulse: &pulse,
                             at: &at,
                             now_ms: app.clock.now_ms(),
+                            backlog: (
+                                settings.get(WEBHOOK_BACKLOG_DELIVERIES),
+                                settings.get(WEBHOOK_BACKLOG_BYTES),
+                            ),
                         },
                     )
                     .map(Some)
