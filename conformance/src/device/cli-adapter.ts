@@ -1598,7 +1598,7 @@ export interface PullReport {
   /** Files left in place whose items left elsewhere in a large removal
    *  (`folder-guards/pull-removal-paused`). */
   paused: number;
-  /** Files another directory on the machine let go of, taken in here
+  /** Unmatched files taken in from another directory on the machine
    *  (`folder-files/take-in-file`). */
   taken: number;
   /** Items whose file was moved to another directory on the machine, so none

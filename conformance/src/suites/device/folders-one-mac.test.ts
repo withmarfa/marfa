@@ -968,11 +968,12 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
           listed.ok && listed.value.unmatched.map((file) => file.path),
         ).toContain(sourceKey);
         if (later === "edit") {
+          const beforeEdit = read(a, sourceKey);
+          expect(beforeEdit).toContain("kept source bytes\n");
           appendFileSync(source, "owner edit\n");
           const kept = await a.folder.pull();
           expect(kept.ok, JSON.stringify(kept)).toBe(true);
-          expect(read(a, sourceKey)).toContain("kept source bytes\n");
-          expect(read(a, sourceKey).endsWith("owner edit\n")).toBe(true);
+          expect(read(a, sourceKey)).toBe(beforeEdit + "owner edit\n");
           const scanned = await a.folder.scan();
           expect(scanned.ok && scanned.value.updated).toBe(1);
           const queued = await a.folder.device().queue();
@@ -1134,7 +1135,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     },
   );
 
-  it("takes in a file another folder let go", async () => {
+  it("takes in an unmatched file from another folder", async () => {
     const plan = {
       id: "01a00000-0000-7000-8000-0000000023a1",
       properties: { title: "Plan", body: "the plan\n" },
@@ -1159,8 +1160,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(existsSync(join(a.dir, "Plan.md"))).toBe(true);
     expect(existsSync(join(b.dir, "Plan.md"))).toBe(false);
 
-    // Retagged elsewhere: the first folder's query lets it go, the
-    // other's takes it.
     edges.events.push(
       copyItemEvent(
         String(edges.events.length + 2),
@@ -1176,13 +1175,13 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     if (!took.ok) return;
     expect(
       took.value.pull?.taken,
-      "the folder holding the item wrote a file of its own, where the one another folder let go was there to take in",
+      "the receiving folder wrote a new file while the unmatched source was available",
     ).toBe(1);
     expect(took.value.pull?.written).toBe(0);
     expect(existsSync(join(b.dir, "Plan.md"))).toBe(true);
     expect(
       existsSync(join(a.dir, "Plan.md")),
-      "the file stayed in the folder that let it go as well, so one item has a file in a folder that no longer holds it",
+      "the move left the source file in place",
     ).toBe(false);
     expect(idIn(b, "Plan.md")).toBe(plan.id);
     expect(sentCreates(b)).toEqual([]);
@@ -1559,7 +1558,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     if (!widened.ok) return;
     expect(
       widened.value.pull?.taken,
-      "the directory took in the other directory's file of the same folder, as if that folder had let it go",
+      "the directory took a file from another directory following the same folder",
     ).toBe(0);
     expect(widened.value.pull?.written).toBe(1);
     expect(idIn(a, "VB.md")).toBe(left.id);
@@ -2042,7 +2041,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         if (!again.ok) return;
         expect(
           [again.value.ended, again.value.written],
-          `the ${pass} pull ended the note's file because the other folder holds it, and wrote it again`,
+          `the ${pass} pull ended a placement or wrote a file again`,
         ).toEqual([0, 0]);
       }
       expect(readFileSync(join(a.dir, "scan.png"))).toEqual(bytes);
@@ -3503,7 +3502,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(idIn(b, "Filed here.md")).toBe(shared);
   });
 
-  it("does not take in a let-go file edited since its folder last read it", async () => {
+  it("leaves an edited unmatched file in its source folder", async () => {
     const plan = {
       id: "01a00000-0000-7000-8000-0000000041d1",
       properties: { title: "Plan", body: "the plan\n" },
@@ -3528,7 +3527,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       },
     };
     const { a, b, edges } = await onOneMac(
-      "let-go-edited",
+      "take-in-edited",
       { query: { types: ["core.note"], filter: 'tags contains "a"' } },
       {
         query: {
@@ -3584,7 +3583,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     if (!took.ok) return;
     expect(
       took.value.pull?.taken,
-      "a let-go file was taken in with an edit its folder had not read, so the edit is never sent",
+      "the receiving folder moved a file with an unscanned edit",
     ).toBe(0);
     expect(read(a, "Plan.md")).toContain("edited, not yet read\n");
 
@@ -3611,7 +3610,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     ).toBe(true);
     expect(
       racing.value.pull?.taken,
-      "a let-go file edited after the pull read it was taken in, its edit with it",
+      "the receiving folder moved a file edited after the pull read it",
     ).toBe(0);
     expect(read(a, "Brief.md")).toContain("edited mid-pull\n");
     expect(read(b, "Brief.md")).toContain("the brief\n");
@@ -3647,7 +3646,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     if (!pulled.ok) return;
     expect(
       pulled.value.pull?.taken,
-      "a file its folder was taking away by state was taken in, as though it had been let go",
+      "the receiving folder moved a file that left its source query by state",
     ).toBe(0);
     expect(pulled.value.pull?.written).toBe(1);
     expect(read(b, "Plan.md")).toContain("state: archived");

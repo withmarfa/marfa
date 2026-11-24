@@ -2352,7 +2352,7 @@ When a file arrives with an ID held by the receiving folder’s query and that d
 
 When a file arrives with an ID held only by another directory’s copy and no file elsewhere still carries it, a device MUST read and pin the item from the server before binding it as the same item.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › gives a fresh id to a moved file whose item the server will not show, and pins one it shows`, `device/folders-one-mac.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › gives a fresh id to a moved file whose item the server will not show, and pins one it shows`, `device/folders-one-mac.test.ts › takes in an unmatched file from another folder`.
 
 ### `folder-files/cross-folder-hidden-item`
 
@@ -2368,7 +2368,7 @@ Where a folder's copy has a query, a device MUST hold every item that a file of 
 
 **Reason:** a scan of another directory on the same machine tells a file moved from this directory by whether this directory's copy holds the file's item.
 
-**Tests:** `device/folders-copy-shrink.test.ts › keeps an item a file is bound to when an event takes it out of the query`, `device/folders-one-mac.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-copy-shrink.test.ts › keeps an item a file is bound to when an event takes it out of the query`, `device/folders-one-mac.test.ts › takes in an unmatched file from another folder`.
 
 ### `folder-files/narrowed-arrival-read`
 
@@ -2398,13 +2398,13 @@ Where a folder's copy has a query, when the server has answered that it shows no
 
 When a registered directory that follows another `system.folder` no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST take that file into its placement.
 
-**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-one-mac.test.ts › takes in an unmatched file from another folder`.
 
 ### `folder-files/take-in-file-taken-count`
 
 When a registered directory that follows another `system.folder` no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST count the file as `taken`.
 
-**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-one-mac.test.ts › takes in an unmatched file from another folder`.
 
 ### `folder-files/moved-unmatched-taken-back`
 
@@ -2424,7 +2424,7 @@ When a device takes a file back into the directory it left under `folder-files/m
 
 When another directory’s unmatched file of an item was edited since that folder last read it, a device MUST leave the source file for its own directory to send.
 
-**Tests:** `device/folders-one-mac.test.ts › does not take in a let-go file edited since its folder last read it`.
+**Tests:** `device/folders-one-mac.test.ts › leaves an edited unmatched file in its source folder`.
 
 ### `folder-files/take-in-state-excluded`
 
@@ -2452,7 +2452,7 @@ When a document in another registered directory embeds an item or has it attache
 
 When a document moves from another registered directory's query into a folder's query, and the other directory has a file of an item the document embeds or has attached, a device MUST take in that file for the folder the document moved to, as it takes in the document's own file.
 
-**Reason:** the other directory no longer writes the file once its document leaves, so a file written anew instead would leave the other directory's copy unmatched for good.
+**Reason:** taking the attachment with the document keeps them together. If the receiving directory writes its own copies first, the source attachment stays beside the source document.
 
 **Tests:** `device/folders-one-mac.test.ts › moves a note's attachment with the note to another notes folder when %s hears first`.
 
@@ -2570,7 +2570,7 @@ When an item leaves a folder's query for a reason other than its state and a reg
 
 **Reason:** no device can tell from the copies on one machine that the other directory's file will stay, so a removal here could take the person's last local copy. The person removes a duplicate with `marfa folders unmatched --remove`.
 
-**Tests:** `device/folders-one-mac.test.ts › keeps both folders' files as unmatched when one change drops the item from both, %s pulling first`, `› keeps a departing file as unmatched beside another folder's file of the item until the person removes it`, `› takes in a file another folder let go`, `› moves a note's attachment with the note to another notes folder when %s hears first`, `› takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders-one-mac.test.ts › keeps both folders' files as unmatched when one change drops the item from both, %s pulling first`, `› keeps a departing file as unmatched beside another folder's file of the item until the person removes it`, `› takes in an unmatched file from another folder`, `› moves a note's attachment with the note to another notes folder when %s hears first`, `› takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folder-files/unmatched-missing-not-rewritten`
 
