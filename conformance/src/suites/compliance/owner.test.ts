@@ -471,7 +471,14 @@ describe("claiming the one owner", () => {
           "content-type": "application/x-www-form-urlencoded",
           origin,
         },
-        body: new URLSearchParams({ ...fields, bogus: "1" }),
+        body: new URLSearchParams({
+          ...fields,
+          // Typed twice and not alike, so the key the page does not declare is judged first.
+          ...("password" in fields
+            ? { confirm_password: `${fields.password}!` }
+            : {}),
+          bogus: "1",
+        }),
       });
       expect(refused.status, `${path} as a form`).toBe(400);
       const { error } = await refused.json();
@@ -876,6 +883,7 @@ describe("signing the owner in at the claim", () => {
           name: "",
           username: "not a username",
           password: OWNER.password,
+          confirm_password: OWNER.password,
           email: "",
         });
         expect(refused.status).toBe(400);
@@ -887,6 +895,7 @@ describe("signing the owner in at the claim", () => {
           name: "",
           username: "Form.Owner",
           password: OWNER.password,
+          confirm_password: OWNER.password,
           email: "",
         });
         expect(claimed.status).toBe(303);

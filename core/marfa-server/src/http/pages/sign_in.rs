@@ -24,20 +24,24 @@ impl SignInProblem {
         })
     }
 
+    /// The sentence without its closing full stop, which the page sets after any advice.
     fn message(self) -> String {
         match self {
             SignInProblem::InvalidCredentials => {
-                "That username or password isn't right. Check them and try again.".into()
+                "That username or password isn't right. Check them and try again".into()
             }
-            SignInProblem::MissingField => "Enter your username and your password.".into(),
+            SignInProblem::MissingField => "Enter your username and your password".into(),
             SignInProblem::TooManyAttempts(Some(wait)) => {
-                format!("Too many attempts. Try again in {wait}, or sign in with a passkey.")
+                format!("Too many attempts. Try again in {wait}")
             }
-            SignInProblem::TooManyAttempts(None) => {
-                "Too many attempts. Try again later, or sign in with a passkey.".into()
-            }
-            SignInProblem::Other => "Something went wrong. Try again.".into(),
+            SignInProblem::TooManyAttempts(None) => "Too many attempts. Try again later".into(),
+            SignInProblem::Other => "Something went wrong. Try again".into(),
         }
+    }
+
+    /// A password lock does not close a passkey, so a lockout may say so.
+    fn names_a_passkey(self) -> bool {
+        matches!(self, SignInProblem::TooManyAttempts(_))
     }
 }
 
@@ -50,6 +54,8 @@ pub struct SignIn {
     pub authorization: Option<String>,
     pub app: Option<String>,
     pub problem: Option<SignInProblem>,
+    /// Whether the owner holds a passkey that signs in here, which decides if the page offers one.
+    pub passkey: bool,
 }
 
 #[derive(Template)]
@@ -58,6 +64,8 @@ struct SignInBody<'a> {
     view: &'a SignIn,
     problem_message: Option<String>,
     has_problem: bool,
+    /// Whether the lockout line adds "or use a passkey", which the page shows with the button.
+    passkey_advice: bool,
 }
 
 pub fn sign_in(view: &SignIn) -> Result<Page> {
@@ -65,6 +73,7 @@ pub fn sign_in(view: &SignIn) -> Result<Page> {
         view,
         problem_message: view.problem.map(SignInProblem::message),
         has_problem: view.problem.is_some(),
+        passkey_advice: view.passkey && view.problem.is_some_and(SignInProblem::names_a_passkey),
     })?;
     document(
         "Sign in",

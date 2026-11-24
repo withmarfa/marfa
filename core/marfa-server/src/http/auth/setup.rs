@@ -21,12 +21,23 @@ const EXCHANGE_FIELDS: [&str; 2] = ["ticket", "code"];
 const EXCHANGE_FORM_FIELDS: [&str; 3] = ["code", RETURN_TO, PURPOSE];
 const CLAIM_FIELDS: [&str; 5] = ["username", "password", "name", "email", "code"];
 const RECOVER_FIELDS: [&str; 2] = ["password", "code"];
+const RECOVER_FORM_FIELDS: [&str; 3] = ["password", "code", CONFIRM];
+/// A page's second password field. A script's body has none, so it is never asked for one.
+const CONFIRM: &str = "confirm_password";
 const AFTER_CLAIM: &str = "/auth/sign-in";
 /// Where the browser goes once the instance is claimed. Only the setup pages' forms carry it.
 const RETURN_TO: &str = "return_to";
 /// Only the recovery code form carries it, so a form without it holds a setup code.
 const PURPOSE: &str = "purpose";
 const RECOVERY: &str = "recovery";
+
+/// What a form's second password field held, which is nothing when the page left it out.
+fn take_confirmation(fields: &mut Map<String, Value>) -> String {
+    match fields.remove(CONFIRM) {
+        Some(Value::String(typed)) => typed,
+        _ => String::new(),
+    }
+}
 
 /// A form's `return_to` as `kept` reads it, taken out of the fields.
 fn take_return_to(app: &App, fields: &mut Map<String, Value>) -> String {
@@ -124,6 +135,7 @@ pub(super) async fn make_claim(
     headers: &HeaderMap,
     visit: Visit,
     fields: Map<String, Value>,
+    confirmation: Option<&str>,
 ) -> Result<(Owner, Vec<axum::http::HeaderValue>), Stopped> {
     let fields = only_declared(fields, &CLAIM_FIELDS)?;
     let text = |name: &str| fields.get(name).and_then(Value::as_str);
@@ -135,7 +147,7 @@ pub(super) async fn make_claim(
         password.clone(),
     )?;
     let proof = Proof::Presented(presented(headers, text("code")));
-    let owner = claim::claim(app, details, proof, visit.clone()).await?;
+    let owner = claim::claim(app, details, proof, confirmation, visit.clone()).await?;
     if origin::said(headers, &own_origins(app)) != Source::Own {
         return Ok((owner, Vec::new()));
     }
@@ -207,7 +219,9 @@ pub async fn claim(
     {
         fields.remove("email");
     }
-    let (owner, signed_in) = match make_claim(&app, &headers, visit, fields).await {
+    let confirmation = form.then(|| take_confirmation(&mut fields));
+    let claimed = make_claim(&app, &headers, visit, fields, confirmation.as_deref()).await;
+    let (owner, signed_in) = match claimed {
         Err(Stopped::Refused(refusal)) if browser && pages::wants_page(&headers) => {
             return Ok(pages::claim_refused(&refusal, typed, return_to)?);
         }
@@ -250,16 +264,17 @@ pub async fn recover(
         _ => return Err(not_our_page().into()),
     }
     let form = body.declares_form();
-    let fields = if form {
-        only_declared(body.form().await?, &RECOVER_FIELDS)?
+    let mut fields = if form {
+        only_declared(body.form().await?, &RECOVER_FORM_FIELDS)?
     } else {
         body.object(&RECOVER_FIELDS).await?
     };
     let browser = form && said == Source::Own;
+    let confirmation = form.then(|| take_confirmation(&mut fields));
     let text = |name: &str| fields.get(name).and_then(Value::as_str);
     let proof = presented(&headers, text("code"));
     let password = text("password").unwrap_or("").to_string();
-    match claim::recover(&app, proof, password, visit).await {
+    match claim::recover(&app, proof, password, confirmation.as_deref(), visit).await {
         Err(refusal) if browser && pages::wants_page(&headers) => {
             return Ok(pages::recover_refused(&refusal)?);
         }

@@ -60,7 +60,7 @@ If `POST /owner` carries a top-level body key the operation does not declare, th
 
 If `POST /setup/exchange` or `POST /setup/claim`, with a JSON body or a form, carries a key the setup page's request does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields` without consuming valid setup proof.
 
-**Reason:** these two doors are the browser's way to the same claim as `POST /owner`, which refuses an undeclared key, so a key dropped here would be a claim half performed and answered as success.
+**Reason:** these two doors are the browser's way to the same claim as `POST /owner`, which refuses an undeclared key, so a key dropped here would be a claim half performed and answered as success. A key the page does not declare is refused before the two passwords are compared.
 
 **Tests:** `compliance/owner.test.ts › refuses a key the setup doors do not declare, in a JSON or a form body, without consuming valid setup proof`, `compliance/claim-from-app.test.ts › refuses return_to in a JSON body on POST /setup/exchange and POST /setup/claim without spending the setup code`.
 
@@ -241,6 +241,78 @@ When a caller off the instance's machine claims, with a valid setup code, an ins
 When an instance with no owner and a stored sign-in address starts, the server MUST log its setup code with the setup page's full address, the sign-in address followed by `/setup`.
 
 **Tests:** `compliance/remote-claim.test.ts › stores MARFA_CLAIM_ADDRESS as the sign-in address of an instance with no owner, and names the full setup address in the setup code's line`.
+
+### `instance-claim/setup-code-shape`
+
+When the server issues a setup code or a recovery code, the server MUST make it twenty-five characters from `A` to `Z` and `2` to `7`, in five groups of five joined by hyphens.
+
+**Reason:** A code read off a log and typed by hand is easier to keep place in as groups, and twenty-five characters of five bits each are 125 bits for a guesser to find.
+
+**Tests:** `compliance/remote-claim.test.ts › is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once`, `› is the shape of a recovery code too`.
+
+### `instance-claim/setup-code-typed`
+
+When a claim carries a setup code typed in lowercase, with spaces or line breaks for hyphens or with none, the server MUST take it as the code it was made from.
+
+**Tests:** `compliance/remote-claim.test.ts › is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once`.
+
+### `instance-claim/setup-link-logged`
+
+When an instance with no owner starts with a public listener and a sign-in address that is `https` or names `localhost`, `127.0.0.1` or `[::1]`, the server MUST print, on the log line that holds its setup code, a link to its setup page in the form of `/setup#handoff=…` that carries a handoff ticket.
+
+**Reason:** A person with the log in front of them can open one link instead of copying the code. The ticket is a handoff ticket like the one `marfa setup open` gets, so `instance-claim/handoff-single-use` and `instance-claim/handoff-expiry` hold for it.
+
+**Tests:** `compliance/remote-claim.test.ts › is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once`, `› prints no setup link beside the code where the setup page cannot take one`.
+
+### `instance-claim/setup-link-not-logged`
+
+If an instance with no owner starts with a sign-in address that is `http` and does not name `localhost`, `127.0.0.1` or `[::1]`, then the server MUST NOT print a setup link on the log line that holds its setup code.
+
+**Reason:** The setup page refuses a plain `http` address off this machine, so a link to it would lead to a refusal. The setup code is still printed.
+
+**Tests:** `compliance/remote-claim.test.ts › prints no setup link beside the code where the setup page cannot take one`.
+
+### `instance-claim/claim-form-mismatch`
+
+If a form post to `POST /setup/claim` carries a `confirm_password` that differs from `password`, or carries none, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a claim form whose two passwords differ or are not repeated, with both password fields empty and nothing claimed`.
+
+### `instance-claim/claim-form-mismatch-none`
+
+If a form post to `POST /setup/claim` is refused because `confirm_password` differs from `password` or is missing, then the server MUST NOT create an owner.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a claim form whose two passwords differ or are not repeated, with both password fields empty and nothing claimed`.
+
+### `instance-claim/claim-form-mismatch-page`
+
+If a form post to `POST /setup/claim` that names the instance's own origin and asks for HTML is refused because `confirm_password` differs from `password` or is missing, then the server MUST answer the claim form again with "The passwords don't match." and with both password fields empty.
+
+**Reason:** A password typed twice and wrong is easier to retype than to correct, and a page that sent it back would hold it in the browser's history. A form that asks for JSON gets the error as JSON (`instance-claim/claim-form-mismatch`).
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a claim form whose two passwords differ or are not repeated, with both password fields empty and nothing claimed`.
+
+### `instance-claim/claim-form-mismatch-after-proof`
+
+If a form post to `POST /setup/claim` carries a `confirm_password` that differs from `password` while the setup session or code it was sent with has ended, then the server MUST answer `401 setup_proof_invalid`.
+
+**Reason:** Setup proof is judged before the passwords are compared, so a person whose session has ended is told so instead of being asked to retype passwords that cannot be used.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a claim form whose two passwords differ or are not repeated, with both password fields empty and nothing claimed`.
+
+### `instance-claim/form-mismatch-keeps-proof`
+
+If a form post to `POST /setup/claim` or `POST /setup/recover` is refused because `confirm_password` differs from `password` or is missing, then the server MUST keep the setup code, the setup session or the recovery code it was sent with, still able to claim or recover.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a claim form whose two passwords differ or are not repeated, with both password fields empty and nothing claimed`, `› refuses a recovery form whose two passwords differ or are not repeated, with both password fields empty, and keeps the password and the setup session for another try`.
+
+### `instance-claim/claim-script-no-confirmation`
+
+When a claim is sent as JSON without `confirm_password`, the server MUST NOT refuse it for that.
+
+**Reason:** Only a person typing into a form can mistype a password twice; a command line or script sends the one it holds.
+
+**Tests:** `compliance/remote-claim.test.ts › is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once`.
 
 ## Code attempts
 
@@ -581,6 +653,40 @@ If the new password sent to `POST /setup/recover` is shorter than 8 or longer th
 When `POST /setup/recover` refuses a new password with `400 validation_error`, the server MUST keep the recovery code it was sent with.
 
 **Tests:** `compliance/remote-claim.test.ts › refuses a new password the private socket's recovery refuses, and keeps the code for another try`.
+
+### `instance-claim/recover-form-mismatch`
+
+If a form post to `POST /setup/recover` carries a `confirm_password` that differs from `password`, or carries none, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a recovery form whose two passwords differ or are not repeated, with both password fields empty, and keeps the password and the setup session for another try`.
+
+### `instance-claim/recover-form-mismatch-kept`
+
+If a form post to `POST /setup/recover` is refused because `confirm_password` differs from `password` or is missing, then the server MUST keep the owner's password.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a recovery form whose two passwords differ or are not repeated, with both password fields empty, and keeps the password and the setup session for another try`.
+
+### `instance-claim/recover-form-mismatch-page`
+
+If a form post to `POST /setup/recover` that names the instance's own origin and asks for HTML is refused because `confirm_password` differs from `password` or is missing, then the server MUST answer the new password form again with "The passwords don't match." and with both password fields empty.
+
+**Reason:** A form that asks for JSON gets the error as JSON (`instance-claim/recover-form-mismatch`).
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a recovery form whose two passwords differ or are not repeated, with both password fields empty, and keeps the password and the setup session for another try`.
+
+### `instance-claim/recover-form-mismatch-after-proof`
+
+If a form post to `POST /setup/recover` carries a `confirm_password` that differs from `password` while the recovery code or session it was sent with has ended, then the server MUST answer `401 setup_proof_invalid`.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a recovery form whose two passwords differ or are not repeated, with both password fields empty, and keeps the password and the setup session for another try`.
+
+### `instance-claim/recover-form-mismatch-no-owner`
+
+While an instance has no owner, if a form post to `POST /setup/recover` carries a `confirm_password` that differs from `password`, then the server MUST answer `404 owner_not_found`.
+
+**Reason:** The owner's existence is judged before the passwords are compared (`instance-claim/recovery-no-owner`).
+
+**Tests:** `compliance/remote-claim.test.ts › prints no recovery code and creates no owner while the instance has none`.
 
 ### `instance-claim/recovery-attempt-limit`
 

@@ -40,6 +40,40 @@ When a registered owner passkey verifies a fresh challenge for the configured or
 
 **Tests:** `compliance/passkeys.test.ts › registers and lists independent owner credentials`.
 
+### `authentication/passkey-sign-in-offered`
+
+When the owner has a passkey for the instance's sign-in address, the server MUST offer sign-in with a passkey in the sign-in form that `GET /auth/sign-in` renders.
+
+**Tests:** `compliance/passkeys.test.ts › offers a passkey on the sign-in page, and names one when an owner is told to wait, once the owner has one for this address`.
+
+### `authentication/passkey-sign-in-not-offered`
+
+While the owner has no passkey for the instance's sign-in address, the server MUST NOT offer sign-in with a passkey in the sign-in form that `GET /auth/sign-in` renders.
+
+**Reason:** A button that cannot work sends a person down a path that ends in an error. A passkey belongs to the address it was made for, so one made for another address does not count.
+
+**Tests:** `compliance/passkeys.test.ts › offers no passkey on the sign-in page, nor names one when an owner is told to wait, until the owner has one`, `› offers no passkey once the sign-in address has moved to a host the passkey was not made for`.
+
+### `authentication/passkey-wait-line`
+
+When the sign-in page says the owner has made too many attempts and the owner has a passkey for the instance's sign-in address, the server MUST end the line with "or use a passkey".
+
+**Tests:** `compliance/passkeys.test.ts › offers a passkey on the sign-in page, and names one when an owner is told to wait, once the owner has one for this address`.
+
+### `authentication/passkey-wait-line-none`
+
+When the sign-in page says the owner has made too many attempts and the owner has no passkey for the instance's sign-in address, the server MUST NOT name a passkey in the line.
+
+**Tests:** `compliance/passkeys.test.ts › offers no passkey on the sign-in page, nor names one when an owner is told to wait, until the owner has one`, `› offers no passkey once the sign-in address has moved to a host the passkey was not made for`, `compliance/sign-in-surface.test.ts › tells a locked-out person how long to wait, in whole minutes rounded up, and names no passkey when the owner has none`.
+
+### `authentication/passkey-wait-line-hidden`
+
+When the sign-in page ends its too-many-attempts line with "or use a passkey", the server MUST send those words in an element marked `hidden`.
+
+**Reason:** The passkey button's group is hidden the same way, and the page's script shows both together, so a browser that cannot use a passkey, or has no script, never reads advice for a button it does not show.
+
+**Tests:** `compliance/passkeys.test.ts › offers a passkey on the sign-in page, and names one when an owner is told to wait, once the owner has one for this address`.
+
 ### `authentication/passkey-last-used`
 
 When a registered owner passkey signs the owner in, the server MUST set that passkey's `last_used_at` to the time of the sign-in.

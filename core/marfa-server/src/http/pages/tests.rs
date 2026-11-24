@@ -14,6 +14,7 @@ fn sign_in_view() -> SignIn {
         authorization: None,
         app: None,
         problem: None,
+        passkey: false,
     }
 }
 
@@ -123,6 +124,7 @@ fn a_hostile_value_is_text_in_text_and_in_an_attribute() {
         authorization: None,
         app: Some(HOSTILE.into()),
         problem: None,
+        passkey: false,
     })
     .unwrap();
     let html = page.html();
@@ -246,12 +248,43 @@ fn a_lockout_names_the_wait_only_when_it_was_given_one() {
     assert!(
         locked(Some("61"))
             .html()
-            .contains("Try again in 2 minutes, or sign in with a passkey.")
+            .contains("Try again in 2 minutes.")
     );
     let none = locked(None);
     assert!(none.html().contains("Too many attempts."));
     assert!(!without_code(&none).contains("minutes"));
     assert!(!without_code(&locked(Some("0"))).contains("minute"));
+}
+
+#[test]
+fn a_passkey_is_offered_and_named_in_a_lockout_only_to_an_owner_who_has_one() {
+    let page = |passkey, problem| {
+        sign_in(&SignIn {
+            problem: SignInProblem::from_query(problem, Some("61")),
+            passkey,
+            ..sign_in_view()
+        })
+        .unwrap()
+    };
+    let with = page(true, Some("too_many_attempts"));
+    assert!(with.html().contains("data-passkey=\"sign-in\""));
+    // The advice is hidden until the script that shows the button shows it.
+    assert!(without_code(&with).contains(
+        "Try again in 2 minutes<span data-passkey-advice hidden>, or use a passkey</span>."
+    ));
+    assert!(
+        !without_code(&page(true, Some("invalid_credentials"))).contains("data-passkey-advice")
+    );
+    assert!(!without_code(&page(true, None)).contains("data-passkey-advice"));
+    assert!(
+        SCRIPT.contains("querySelectorAll(\"[data-passkey-advice]\")"),
+        "the script that shows the button shows the advice"
+    );
+    let without = page(false, Some("too_many_attempts"));
+    assert!(!without_code(&without).contains("passkey"));
+    assert!(without.html().contains("Try again in 2 minutes."));
+    assert!(!without_code(&page(false, None)).contains("passkey"));
+    assert!(without_code(&page(true, None)).contains("data-passkey=\"sign-in\""));
 }
 
 #[test]

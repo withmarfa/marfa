@@ -241,19 +241,24 @@ without_caddy_authority() {
 
 # ---- leaving nothing behind --------------------------------------------------
 
+# A log is read by whoever reads the run, and holds proof that opens an unclaimed instance.
+redact_setup_proof() {
+  sed -E -e 's/(setup|recovery) code: [A-Z2-7-]+/\1 code: [redacted]/g' -e 's/(handoff=)[0-9A-Za-z_-]+/\1[redacted]/g'
+}
+
 show_logs() {
   echo "--- the end of the log of $name ($current)"
-  server status ${dir_args[@]+"${dir_args[@]}"} 2>&1 | tail -30 || true
+  server status ${dir_args[@]+"${dir_args[@]}"} 2>&1 | tail -30 | redact_setup_proof || true
   case $current in
-    docker) docker logs --tail 40 "$name" 2>&1 || true ;;
-    native-root) sudo journalctl -u "marfa-$name.service" -n 40 --no-pager 2>&1 || true ;;
+    docker) docker logs --tail 40 "$name" 2>&1 | redact_setup_proof || true ;;
+    native-root) sudo journalctl -u "marfa-$name.service" -n 40 --no-pager 2>&1 | redact_setup_proof || true ;;
     native-user)
       if [ "$os" = Darwin ]; then
-        tail -n 40 "$HOME/Library/Logs/Marfa/"*"$name"* 2>&1 || true
+        tail -n 40 "$HOME/Library/Logs/Marfa/"*"$name"* 2>&1 | redact_setup_proof || true
       else
-        journalctl --user -u "marfa-$name.service" -n 40 --no-pager 2>&1 || true
+        journalctl --user -u "marfa-$name.service" -n 40 --no-pager 2>&1 | redact_setup_proof || true
         # A runner keeps user services' output in the system journal.
-        sudo journalctl "_SYSTEMD_USER_UNIT=marfa-$name.service" -n 40 --no-pager 2>&1 || true
+        sudo journalctl "_SYSTEMD_USER_UNIT=marfa-$name.service" -n 40 --no-pager 2>&1 | redact_setup_proof || true
       fi
       ;;
   esac
@@ -342,11 +347,11 @@ prove() {
   server install ${dir_args[@]+"${dir_args[@]}"} --yes --name "$name" --access proxy --address "$address" --port "$port" \
     ${runtime[@]+"${runtime[@]}"} > "$work/install.log" 2>&1 ||
     {
-      cat "$work/install.log"
+      redact_setup_proof < "$work/install.log"
       fail "marfa server install failed."
     }
   # The setup link carries a one-time code: the log shows everything but it.
-  sed -E 's#(handoff=)[0-9A-Za-z_-]+#\1<code>#' "$work/install.log"
+  redact_setup_proof < "$work/install.log"
 
   status | holds '.running == true and .answering == true and .health.http == 200 and .claimed == false' \
     "The new install is not running and answering, unclaimed."

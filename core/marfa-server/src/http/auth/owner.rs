@@ -24,7 +24,7 @@ pub async fn claim(
     admit_claim(&app, &headers, &visit).await?;
     named_instance::judge(&app, &headers)?;
     let fields = body.open_object().await?;
-    let (found, signed_in) = make_claim(&app, &headers, visit, fields).await?;
+    let (found, signed_in) = make_claim(&app, &headers, visit, fields, None).await?;
     let mut answer = json_answer(
         StatusCode::CREATED,
         &found.to_json(app.addresses().sign_in().origin()),

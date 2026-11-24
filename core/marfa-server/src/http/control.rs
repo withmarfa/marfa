@@ -40,12 +40,11 @@ pub async fn setup_code(State(app): State<Arc<App>>, caller: Caller) -> Answer {
 
 pub async fn setup_ticket(State(app): State<Arc<App>>, caller: Caller) -> Answer {
     let (ticket, expires_at) = claim::issue_ticket(&app, &caller).await?;
-    let origin = app.addresses().sign_in().origin().to_string();
     Ok(json_answer(
         StatusCode::OK,
         &json!({
             "ticket": ticket,
-            "url": format!("{origin}/setup#handoff={ticket}"),
+            "url": claim::handoff_link(&app, &ticket),
             "expires_at": expires_at,
         }),
     ))
@@ -60,7 +59,7 @@ pub async fn setup_claim(State(app): State<Arc<App>>, caller: Caller, body: Json
     let name = owner::optional_text(&body, "name")?;
     let email = owner::optional_email(&body)?;
     let details = Details::new(username, email, name, password.to_string())?;
-    let owner = claim::claim(&app, details, Proof::Local, Visit::default()).await?;
+    let owner = claim::claim(&app, details, Proof::Local, None, Visit::default()).await?;
     Ok(json_answer(
         StatusCode::CREATED,
         &owner.to_json(app.addresses().sign_in().origin()),

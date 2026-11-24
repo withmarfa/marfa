@@ -645,6 +645,45 @@ async fn a_passkey_of_another_host_cannot_sign_in_and_stays_listed() {
 }
 
 #[tokio::test]
+async fn the_sign_in_page_offers_a_passkey_only_to_an_owner_who_has_one_for_this_address() {
+    let mut instance = Instance::claimed().await;
+    let offers = |page: &Reply| page.text.contains("data-passkey=\"sign-in\"");
+    let locked = "/auth/sign-in?error=too_many_attempts&retry_after_seconds=61";
+    let none = instance.get("/auth/sign-in", "").await;
+    assert_eq!(none.status, StatusCode::OK);
+    assert!(!offers(&none));
+    assert!(
+        !instance
+            .get(locked, "")
+            .await
+            .text
+            .contains("or use a passkey")
+    );
+
+    instance.add(&Device::new()).await;
+    assert!(offers(&instance.get("/auth/sign-in", "").await));
+    assert!(
+        instance
+            .get(locked, "")
+            .await
+            .text
+            .contains("or use a passkey")
+    );
+
+    instance.move_to("https://marfa.example");
+    let stranded = instance.get("/auth/sign-in", "").await;
+    assert_eq!(stranded.status, StatusCode::OK);
+    assert!(!offers(&stranded));
+    assert!(
+        !instance
+            .get(locked, "")
+            .await
+            .text
+            .contains("or use a passkey")
+    );
+}
+
+#[tokio::test]
 async fn an_assertion_for_a_removed_passkey_is_refused() {
     let instance = Instance::claimed().await;
     let device = Device::new();
