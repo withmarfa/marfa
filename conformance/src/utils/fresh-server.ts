@@ -11,6 +11,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { signInOwnerWithPassword } from "../client/owner-session.js";
 import { offeredValues } from "./approval-form.js";
+import { checkDeviceCode } from "./device-check.js";
 import { parseEnvFile, redactSetupProof, TEST_OWNER } from "./target.js";
 import {
   groupOf,
@@ -753,14 +754,20 @@ export interface DeviceFlow {
   /** One poll of the token door, as an app makes it: no credential. */
   poll(): Promise<DevicePoll>;
   /**
-   * The owner signs in on the sign-in surface's own origin and approves
-   * everything the consent screen offers.
+   * The owner signs in on the sign-in surface's own origin, confirms the code
+   * on the check page and approves everything the consent screen offers.
    */
   approve(): Promise<void>;
-  /** The owner signs in and denies the code on the consent screen. */
+  /** The owner signs in, confirms the code and denies it on the consent screen. */
   deny(): Promise<void>;
   /** The code a device's own request carries. */
   deviceCode: string;
+  /** The code the device shows the person. */
+  userCode: string;
+  /** The link carrying the code, `verification_uri_complete`. */
+  link: string;
+  /** The sign-in surface's origin, where the person enters and approves the code. */
+  origin: string;
 }
 
 /**
@@ -855,6 +862,9 @@ export async function startDeviceFlow(
     registeredScope: registered.scope,
     interval: code.interval,
     deviceCode: code.device_code,
+    userCode: code.user_code,
+    link: code.verification_uri_complete,
+    origin,
     async poll() {
       const response = await fetch(discovery.token_endpoint, {
         method: "POST",
@@ -874,6 +884,7 @@ export async function startDeviceFlow(
       const cookie = await ownerSession();
       // Redirects are not followed, so a refusal, such as the per-address
       // lookup limit, fails here rather than as a pending poll later.
+      await checkDeviceCode(origin, origin, cookie, code.user_code);
       const consent = await fetch(
         `${origin}/auth/device/consent?user_code=${encodeURIComponent(code.user_code)}`,
         { headers: { cookie }, redirect: "manual" },
@@ -910,6 +921,7 @@ export async function startDeviceFlow(
     },
     async deny() {
       const cookie = await ownerSession();
+      await checkDeviceCode(origin, origin, cookie, code.user_code);
       const denied = await fetch(`${origin}/auth/device/consent`, {
         method: "POST",
         redirect: "manual",

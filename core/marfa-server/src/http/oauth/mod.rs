@@ -99,6 +99,10 @@ pub fn doors() -> Routes {
         .route("/oauth/device-authorization", post(device::code))
         .route("/auth/device", post(device::enter))
         .route(
+            "/auth/device/check",
+            get(device::check_screen).post(device::check),
+        )
+        .route(
             "/auth/device/consent",
             get(device::screen).post(device::answer),
         )

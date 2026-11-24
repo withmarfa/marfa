@@ -80,6 +80,11 @@ const PINS: &[Pin] = &[
         file: "a07f88fa0595c02b4c4a7c1722848d6b99afda7110aa32a92ed3594a5ede7e88",
         holds: "cc2ae5bf2ca43d48dd939e4cf5e9b9ff5364a023168d6d455188428418579ebe",
     },
+    Pin {
+        version: 14,
+        file: "7c5237f346b42cdd3b8a2069419d25227a2b8d6b635cae9e888e3bb3c066c1c6",
+        holds: "7cfeb760a8a9e06e2eaf9a306fdef5c4f8b40ca8840e3429d742cf4ae90d138d",
+    },
 ];
 
 const MIGRATION_CHANGED: &str = "A migration that a published release contains is never edited, \

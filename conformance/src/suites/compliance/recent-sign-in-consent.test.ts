@@ -16,6 +16,7 @@ import {
   token,
   type App,
 } from "../../utils/signed-in.js";
+import { checkDeviceCode } from "../../utils/device-check.js";
 import { readControls } from "../../utils/approval-form.js";
 import { visibleText } from "../../utils/page-html.js";
 import { TEST_OWNER } from "../../utils/target.js";
@@ -172,19 +173,28 @@ async function deviceCode(scope: string, clientId?: string): Promise<Device> {
   };
 }
 
-function deviceScreen(device: Device, cookie: string): Promise<Response> {
+/** The owner confirms the code on the check page from the browser `cookie`. */
+function checked(device: Device, cookie: string): Promise<void> {
+  return checkDeviceCode(server.apiUrl, origin, cookie, device.userCode, {
+    [CLIENT_HEADER]: nextAddress(),
+  });
+}
+
+async function deviceScreen(device: Device, cookie: string): Promise<Response> {
+  await checked(device, cookie);
   return ownerGet(
     `/auth/device/consent?user_code=${encodeURIComponent(device.userCode)}`,
     cookie,
   );
 }
 
-function deviceApproval(
+async function deviceApproval(
   device: Device,
   cookie: string,
   scopes: readonly string[],
   headers: Record<string, string> = {},
 ): Promise<Response> {
+  await checked(device, cookie);
   return ownerPost(
     "/auth/device/consent",
     cookie,

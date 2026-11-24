@@ -5,6 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { checkDeviceCode } from "../../utils/device-check.js";
 import { cleanup } from "../../utils/setup.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { cliContext, once, releaseHeld } from "./harness.js";
@@ -13,8 +14,8 @@ import type { CliContext } from "./harness.js";
 /**
  * A person signs in: the binary prints a code and a link, the person
  * approves in a browser, and the binary holds the token. Driven headless
- * here: the approval is a signed-in browser session posting to the consent
- * door. The token is
+ * here: the approval is a signed-in browser session confirming the code on
+ * the check step and posting to the consent door. The token is
  * printed rather than kept, and the client is registered over HTTP and
  * handed to the binary, so the binary finds nothing in the run's keychain,
  * or off macOS is refused one and reads that as nothing. The keychain round
@@ -142,8 +143,8 @@ describe("the owner", () => {
     expect(first.scope).toContain("*:read");
 
     // The person: a browser session on the sign-in surface's own origin,
-    // which is where the link points, the consent screen, an approval of
-    // everything the screen offers.
+    // which is where the link points, the check step, the consent screen, an
+    // approval of everything the screen offers.
     const origin = new URL(first.verification_uri_complete).origin;
     const signIn = await fetch(`${origin}/auth/sign-in`, {
       method: "POST",
@@ -155,6 +156,7 @@ describe("the owner", () => {
       signIn.headers.get("set-cookie") ?? "",
     )?.[1];
     expect(cookie, "sign-in set no session cookie").toBeTruthy();
+    await checkDeviceCode(origin, origin, cookie!, first.user_code);
     const consent = await fetch(
       `${origin}/auth/device/consent?user_code=${encodeURIComponent(first.user_code)}`,
       { headers: { cookie: cookie! } },
@@ -304,9 +306,10 @@ describe("a fresh sign-in", () => {
       verification_uri_complete: string;
     };
     const page = new URL(first.verification_uri_complete).origin;
-    const consentAt = `${page}/auth/device/consent?user_code=${encodeURIComponent(first.user_code)}`;
+    const query = `user_code=${encodeURIComponent(first.user_code)}`;
+    const consentAt = `${page}/auth/device/consent?${query}`;
 
-    const asked = await fetch(consentAt, {
+    const asked = await fetch(`${page}/auth/device/check?${query}`, {
       headers: { cookie: earlier },
       redirect: "manual",
     });
@@ -316,6 +319,7 @@ describe("a fresh sign-in", () => {
     expect(to.searchParams.get("prompt")).toBe("login");
 
     const cookie = await ownerCookie(page);
+    await checkDeviceCode(page, page, cookie, first.user_code);
     const consent = await fetch(consentAt, { headers: { cookie } });
     expect(consent.status).toBe(200);
     const form = new URLSearchParams();

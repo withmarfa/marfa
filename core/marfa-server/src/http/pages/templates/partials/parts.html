@@ -7,6 +7,12 @@
 {# Use the note ID in the field’s aria-describedby. #}
 {% macro group(title="", note="", hint="", problem="", link_href="", link_label="") %}<div>{% if !title.is_empty() %}<h2 class="gh">{{ title }}</h2>{% endif %}<div class="group">{{ caller() }}</div>{% if !problem.is_empty() || !hint.is_empty() || !link_href.is_empty() %}<div class="under">{% if !problem.is_empty() %}<p class="err" id="{{ note }}" role="alert">{{ problem }}</p>{% else if !hint.is_empty() %}<p class="hint" id="{{ note }}">{{ hint }}</p>{% endif %}{% if !link_href.is_empty() %}<p><a href="{{ link_href }}">{{ link_label }}</a></p>{% endif %}</div>{% endif %}</div>{% endmacro %}
 
+{# A short code: one real input over cells the script draws in, with one hint or one problem under it. #}
+{% macro code_field(id, name, label, value="", invalid=false, note="", hint="", problem="") %}<div class="code{% if invalid %} bad{% endif %}"><input id="{{ id }}" class="in" type="text" name="{{ name }}"{% if !value.is_empty() %} value="{{ value }}"{% endif %} aria-label="{{ label }}" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="16" required{% if invalid %} aria-invalid="true"{% endif %}{% if !note.is_empty() %} aria-describedby="{{ note }}"{% endif %}><span class="cells" aria-hidden="true">{% for at in 0..8 %}{% if at == 4 %}<span class="dash"></span>{% endif %}<span class="cell"></span>{% endfor %}</span></div>{% if !problem.is_empty() %}<p class="err" id="{{ note }}" role="alert">{{ problem }}</p>{% else if !hint.is_empty() %}<p class="hint" id="{{ note }}">{{ hint }}</p>{% endif %}{% endmacro %}
+
+{# Shown, to compare with another screen: `code` is its characters alone, and a screen reader reads `said`. #}
+{% macro code_shown(code, said, hint="") %}<div class="code shown"><span class="said">{{ said }}</span><span class="cells" aria-hidden="true">{% for character in code.chars() %}{% if loop.index0 == 4 %}<span class="dash"></span>{% endif %}<span class="cell">{{ character }}</span>{% endfor %}</span></div>{% if !hint.is_empty() %}<p class="hint">{{ hint }}</p>{% endif %}{% endmacro %}
+
 {# A title and at most one line under it. #}
 {% macro head(title, lede="") %}<div class="head"><h1>{{ title }}</h1>{% if !lede.is_empty() %}<p class="lede">{{ lede }}</p>{% endif %}</div>{% endmacro %}
 

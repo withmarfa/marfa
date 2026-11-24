@@ -439,7 +439,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // each set from the import graph and fails when a helper is in the wrong
   // rule, so a new import moves a helper here.
   [
-    /^conformance\/src\/utils\/(approval-form|control-request|fresh-server|server-process|target|temp-folder)\.ts$/,
+    /^conformance\/src\/utils\/(approval-form|control-request|device-check|fresh-server|server-process|target|temp-folder)\.ts$/,
     [...FIXTURES, "restore-drill", "mcp-conformance", RELEASE],
   ],
   [

@@ -10,6 +10,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { controlRequest } from "../../utils/control-request.js";
+import { checkDeviceCode, postDeviceCheck } from "../../utils/device-check.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import {
   authorize,
@@ -264,9 +265,9 @@ async function deviceCode(
   };
 }
 
-function devicePage(userCode: string, cookie: string): Promise<Response> {
+function checkPage(userCode: string, cookie: string): Promise<Response> {
   return fetch(
-    `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+    `${server.apiUrl}/auth/device/check?user_code=${encodeURIComponent(userCode)}`,
     { redirect: "manual", headers: { cookie } },
   );
 }
@@ -293,9 +294,13 @@ function deviceDecision(
   });
 }
 
-/** The owner approves, from the browser `cookie`, everything the device page offers. */
+/** The owner confirms the code and approves, from the browser `cookie`, everything the device page offers. */
 async function approveDevice(userCode: string, cookie: string): Promise<void> {
-  const page = await devicePage(userCode, cookie);
+  await checkDeviceCode(server.apiUrl, origin, cookie, userCode);
+  const page = await fetch(
+    `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+    { redirect: "manual", headers: { cookie } },
+  );
   expect(page.status, page.headers.get("location") ?? "").toBe(200);
   const offered = offeredValues(await page.text(), "scopes");
   const approved = await deviceDecision(userCode, cookie, offered);
@@ -311,14 +316,14 @@ function devicePoll(clientId: string, code: string) {
   });
 }
 
-/** Where a device page sends a browser it asks to sign in again. */
+/** Where the check step sends a browser it asks to sign in again. */
 function expectSignInAgain(answer: Response, userCode: string): void {
   expect(answer.status).toBe(302);
   const to = new URL(answer.headers.get("location")!, server.apiUrl);
   expect(to.pathname, String(to)).toBe("/auth/sign-in");
   expect(to.searchParams.get("prompt"), String(to)).toBe("login");
   expect(to.searchParams.get("return_to"), String(to)).toBe(
-    `/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+    `/auth/device/check?user_code=${encodeURIComponent(userCode)}`,
   );
 }
 
@@ -790,11 +795,18 @@ describe("max_age at the device authorization endpoint", () => {
     const asked = await deviceCode(clientId, { max_age: "900" });
     expect(asked.status, JSON.stringify(asked.body)).toBe(200);
     const userCode = asked.body.user_code as string;
-    expectSignInAgain(await devicePage(userCode, stale), userCode);
+    expectSignInAgain(await checkPage(userCode, stale), userCode);
     expectSignInAgain(
-      await deviceDecision(userCode, stale, SCOPE.split(" ")),
+      await postDeviceCheck(server.apiUrl, origin, stale, userCode),
       userCode,
     );
+    // The session could not confirm the code, so its decision is sent to the
+    // check step.
+    const decided = await deviceDecision(userCode, stale, SCOPE.split(" "));
+    expect(decided.status).toBe(302);
+    expect(
+      new URL(decided.headers.get("location")!, server.apiUrl).pathname,
+    ).toBe("/auth/device/check");
     const pending = await devicePoll(clientId, asked.body.device_code);
     expect(pending.body.error).toBe("authorization_pending");
 
@@ -824,7 +836,7 @@ describe("max_age at the device authorization endpoint", () => {
     const asked = await deviceCode(clientId, { max_age: "0" });
     expect(asked.status, JSON.stringify(asked.body)).toBe(200);
     const userCode = asked.body.user_code as string;
-    expectSignInAgain(await devicePage(userCode, before), userCode);
+    expectSignInAgain(await checkPage(userCode, before), userCode);
     await approveDevice(userCode, await signIn());
     const issued = await devicePoll(clientId, asked.body.device_code);
     expect(issued.status, JSON.stringify(issued.body)).toBe(200);

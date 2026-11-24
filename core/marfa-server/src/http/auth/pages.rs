@@ -2,17 +2,18 @@ use std::sync::Arc;
 
 use axum::extract::{Request, State};
 use axum::http::header::ACCEPT;
-use axum::http::{HeaderMap, Uri};
+use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 
-use super::{cookies, require_safe_transport};
+use super::{cookies, redirect, require_safe_transport};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::auth::claim;
 use crate::app::auth::owner;
-use crate::app::auth::return_to::{HOME, kept};
+use crate::app::auth::return_to::{HOME, encoded, kept};
 use crate::app::oauth::authorize::app_named;
+use crate::app::oauth::device::CHECK_PATH;
 use crate::app::oauth::redirect::shown_destination;
 use crate::app::oauth::signed_link::{self, Verified};
 use crate::app::refusal::{Code, Refusal, Result};
@@ -178,14 +179,22 @@ pub async fn error(uri: Uri) -> Answer {
     Ok(pages::auth_error(&view)?.into_response())
 }
 
+/// A link carrying a code goes to the page that asks the owner to compare it, never past it.
 pub async fn device(uri: Uri) -> Answer {
     let pairs = query::pairs(&uri)?;
+    let problem =
+        DeviceProblem::from_query(first(&pairs, "error"), first(&pairs, "retry_after_seconds"));
+    let user_code = shown(first(&pairs, "user_code"));
+    let user_code = user_code.trim();
+    if problem.is_none() && !user_code.is_empty() {
+        return redirect(
+            StatusCode::FOUND,
+            &format!("{CHECK_PATH}?user_code={}", encoded(user_code)),
+        );
+    }
     let view = DeviceEntry {
-        user_code: shown(first(&pairs, "user_code")),
-        problem: DeviceProblem::from_query(
-            first(&pairs, "error"),
-            first(&pairs, "retry_after_seconds"),
-        ),
+        user_code: user_code.to_string(),
+        problem,
     };
     Ok(pages::device_entry(&view)?.into_response())
 }

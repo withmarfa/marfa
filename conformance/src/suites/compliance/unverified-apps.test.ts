@@ -3,6 +3,7 @@ import {
   readRows,
   visibleText,
 } from "../../utils/approval-form.js";
+import { checkDeviceCode } from "../../utils/device-check.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
@@ -134,9 +135,10 @@ async function deviceApprovalPage(
   });
   expect(code.status).toBe(200);
   const { user_code: userCode } = (await code.json()) as { user_code: string };
+  await checkDeviceCode(server!.apiUrl, origin, cookie, userCode);
   const page = await fetch(
     `${server!.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
-    { headers: { cookie } },
+    { headers: { cookie }, redirect: "manual" },
   );
   expect(page.status).toBe(200);
   return page.text();

@@ -423,6 +423,155 @@ code {
     center / contain no-repeat;
 }
 
+/* A short code in cells. Without the script, or in forced colors, a typed code shows in its input instead. */
+.code {
+  position: relative;
+}
+
+.code .cells {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.code .cell {
+  position: relative;
+  display: flex;
+  flex: 0 1 2.75rem;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 3.25rem;
+  border: 1px solid var(--edge);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  color: var(--t1);
+  font: 500 1.375rem/1 ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.code .dash {
+  flex: none;
+  width: 0.625rem;
+  height: 2px;
+  margin: 0 0.1875rem;
+  border-radius: 1px;
+  background: var(--t2);
+  opacity: 0.7;
+}
+
+.code.shown .cell {
+  border-color: transparent;
+  background: var(--well);
+}
+
+.code.bad .cell {
+  border-color: var(--red);
+}
+
+.code .said {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.code .in {
+  height: 3.25rem;
+  padding: 0 0.875rem;
+  font: 500 1.375rem/1 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.code .in ~ .cells {
+  display: none;
+}
+
+@media (forced-colors: none) {
+  .js .code:not(.plain) .in ~ .cells {
+    display: flex;
+  }
+
+  .js .code:not(.plain) .in {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    height: 100%;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    color: transparent;
+    caret-color: transparent;
+  }
+
+  .js .code:not(.plain) .in::selection {
+    background: transparent;
+  }
+
+  .js .code:not(.plain) .in:focus-visible {
+    outline: none;
+  }
+}
+
+.code .cell.at {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.code.bad .cell.at {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px var(--red-ring);
+}
+
+.code .cell.at:empty::after {
+  content: "";
+  width: 1.5px;
+  height: 1.5rem;
+  background: var(--t1);
+}
+
+.code .cell.at:not(:empty)::after {
+  content: "";
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  left: 0.25rem;
+  width: 1.5px;
+  background: var(--t1);
+}
+
+.code .cell.at.end:not(:empty)::after {
+  right: 0.25rem;
+  left: auto;
+}
+
+.code .cell.picked {
+  background: color-mix(in srgb, Highlight 30%, var(--bg));
+}
+
+.code + .hint,
+.code + .err {
+  margin-top: 0.625rem;
+}
+
+@media (max-width: 600px) {
+  .code .cells {
+    gap: 0.3125rem;
+  }
+
+  .code .cell {
+    flex-basis: 2.25rem;
+    height: 3rem;
+    font-size: 1.25rem;
+  }
+
+  .code .in {
+    height: 3rem;
+  }
+}
+
 /* A note under a box. */
 .note {
   margin-top: 0.875rem;
@@ -907,7 +1056,8 @@ fieldset.access > p {
 @media (forced-colors: active) {
   .btn,
   .pop select,
-  .in {
+  .in,
+  .code .cell {
     border: 1px solid ButtonText;
   }
 

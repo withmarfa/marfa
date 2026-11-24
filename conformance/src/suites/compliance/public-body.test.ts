@@ -512,6 +512,7 @@ const OPEN_DOORS = [
   "/oauth/revoke",
   "/oauth/device-authorization",
   "/auth/device",
+  "/auth/device/check",
   "/auth/device/consent",
 ];
 

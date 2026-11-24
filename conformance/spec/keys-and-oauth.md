@@ -3232,11 +3232,11 @@ When the `credential-cleanup` job runs, the server MUST remove each device code 
 
 ### `keys-and-oauth/device-code-unentered-bound`
 
-When the server stores a device code while it holds 1000 other device codes that the device approval page has not shown for its user code and that nobody has decided, the server MUST, in the same write, remove the one of those 1000 it stored first.
+When the server stores a device code while it holds 1000 other device codes that no owner has confirmed on the check page and that nobody has decided, the server MUST, in the same write, remove the one of those 1000 it stored first.
 
-**Reason:** A device code request takes no credential, and the limit for one address (`keys-and-oauth/device-code-address-limit`) does not bound what many addresses send. Refusing requests past a count for every address together would also refuse the owner's `marfa login`, so the oldest code nobody has entered makes room instead, and a code the owner has entered is never removed this way. A removed code is answered as a code the server never issued: a poll gets `400 invalid_grant`, and the approval page does not know its user code.
+**Reason:** A device code request takes no credential, and the limit for one address (`keys-and-oauth/device-code-address-limit`) does not bound what many addresses send. Refusing requests past a count for every address together would also refuse the owner's `marfa login`, so the oldest code nobody has confirmed makes room instead, and a code the owner has confirmed is never removed this way. A removed code is answered as a code the server never issued: a poll gets `400 invalid_grant`, and the check page does not know its user code.
 
-**Tests:** `compliance/sign-in-door-limits.test.ts › keeps at most 1000 device codes nobody has entered, removing the oldest, and keeps an entered one`.
+**Tests:** `compliance/sign-in-door-limits.test.ts › keeps at most 1000 device codes nobody has confirmed, removing the oldest, and keeps a confirmed one`.
 
 ### `keys-and-oauth/device-approved`
 
@@ -3286,19 +3286,19 @@ When a browser session that signed in more than fifteen minutes ago approves a d
 
 ### `keys-and-oauth/device-page-confirm`
 
-When a signed-in owner opens `/auth/device/consent` for a code requested without `max_age` whose request names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, the server MUST answer `200` with the approval screen holding the "Confirm it's you" dialog, whatever the age of the session.
+When a signed-in owner opens `/auth/device/consent` for a code the same browser session confirmed on the check page, requested without `max_age`, whose request names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, the server MUST answer `200` with the approval screen holding the "Confirm it's you" dialog, whatever the age of the session.
 
 **Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than fifteen minutes ago the request for a permission or a write, with the way to confirm it's them`.
 
 ### `keys-and-oauth/device-page-reads`
 
-When a browser session that signed in more than fifteen minutes ago opens `/auth/device/consent` for a code requested without `max_age` whose scopes `keys-and-oauth/consent-older-reads` lists, or the app's standing consent covers, the server MUST answer `200` with the approval screen holding no "Confirm it's you" dialog.
+When a browser session that signed in more than fifteen minutes ago opens `/auth/device/consent` for a code it confirmed on the check page, requested without `max_age`, whose scopes `keys-and-oauth/consent-older-reads` lists, or the app's standing consent covers, the server MUST answer `200` with the approval screen holding no "Confirm it's you" dialog.
 
 **Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than fifteen minutes ago a request that only reads, with no question`.
 
 ### `keys-and-oauth/device-client-gone`
 
-If a signed-in person opens the device approval page for a pending code whose client is no longer registered, then the server MUST answer `400 invalid_client`.
+If a signed-in person opens the device approval page for a pending code their browser session confirmed on the check page, whose client is no longer registered, then the server MUST answer `400 invalid_client`.
 
 **Tests:** `compliance/oauth-refusals.test.ts › answers 400 invalid_client for a pending code whose client is no longer registered`.
 
@@ -3308,25 +3308,111 @@ If `POST /oauth/device-authorization` names a `max_age` that is not a whole numb
 
 **Tests:** `compliance/step-up.test.ts › refuses a max_age that is not a whole number of seconds or is too large with 400 invalid_request`.
 
-### `keys-and-oauth/device-max-age-sign-in`
-
-Where a device code was requested with `max_age`, if a browser session that began more than `max_age` seconds before the code was requested opens `/auth/device/consent` for the code or posts a decision on it, then the server MUST send the browser to `/auth/sign-in` with `prompt=login` and a `return_to` of the code's approval page.
-
-**Reason:** OpenID Connect Core section 3.1.2.1 and RFC 9470 section 4, with the device authorization request as the authorization request: a device asks for a fresh sign-in this way to meet `keys-and-oauth/step-up-challenge`. `max_age=0` asks for a sign-in made after the code was requested.
-
-**Tests:** `compliance/step-up.test.ts › sends a browser that signed in longer ago than max_age to sign in again before it approves the code, and the token the code then issues passes the step-up check`, `› sends a browser that signed in before the code was asked for to sign in again under max_age=0, and approves from a sign-in made after it`.
-
 ### `keys-and-oauth/device-max-age-pending`
 
 Where a device code was requested with `max_age`, if a browser session that began more than `max_age` seconds before the code was requested posts a decision on it, then the server MUST leave the code pending.
 
 **Tests:** `compliance/step-up.test.ts › sends a browser that signed in longer ago than max_age to sign in again before it approves the code, and the token the code then issues passes the step-up check`.
 
+## The device check step
+
+A link can carry a code someone else's device shows, so the owner compares the code with the device on the check page before the approval page opens for it. A confirmation holds for one code and one browser session.
+
+### `keys-and-oauth/device-check-link`
+
+When `GET /auth/device` carries a `user_code` and no `error`, the server MUST redirect the browser to `/auth/device/check` with the same `user_code`.
+
+**Reason:** RFC 8628 section 5.4: `verification_uri_complete` carries the code, and anyone can send the owner a link carrying the code of a device they hold, so a link reaches the step that asks the owner to compare and never the approval page.
+
+**Tests:** `compliance/device-grant.test.ts › sends a link carrying the code to the check step, which shows the code to compare`.
+
+### `keys-and-oauth/device-check-page`
+
+While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), when a signed-in owner whose browser session meets the code's `max_age` (`keys-and-oauth/device-max-age-sign-in`) and its app's renewal (`mcp/settings-step-up-renewal`) opens `/auth/device/check` with the `user_code` of a pending device code, the server MUST answer `200` with a page that shows the code and asks the owner to confirm it matches the code on the device.
+
+**Tests:** `compliance/device-grant.test.ts › sends a link carrying the code to the check step, which shows the code to compare`.
+
+### `keys-and-oauth/device-check-confirm`
+
+While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), when a signed-in owner whose browser session meets the code's `max_age` (`keys-and-oauth/device-max-age-sign-in`) and its app's renewal (`mcp/settings-step-up-renewal`) posts `POST /auth/device/check` with the `user_code` of a pending device code, the server MUST redirect the browser to `/auth/device/consent` with the same `user_code`.
+
+**Tests:** `compliance/device-grant.test.ts › opens the approval page only for the code the owner confirmed, in the browser that confirmed it`.
+
+### `keys-and-oauth/device-entry-to-check`
+
+While the caller's device code lookups are within their limits (`keys-and-oauth/device-lookup-address-limit`, `keys-and-oauth/device-lookup-instance-limit`, `keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), when `POST /auth/device` receives the `user_code` of a pending device code, the server MUST redirect the browser to `/auth/device/check` with the same `user_code`.
+
+**Tests:** `compliance/device-grant.test.ts › sends a typed code to the check step`.
+
+### `keys-and-oauth/device-check-signed-out`
+
+When a browser with no owner session opens `/auth/device/check`, the server MUST send it to `/auth/sign-in` with a `return_to` of the check page for the same `user_code`.
+
+**Tests:** `compliance/device-grant.test.ts › sends a browser with no session to sign in, and back to the check step`.
+
+### `keys-and-oauth/device-check-unknown`
+
+While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), if a signed-in owner opens or posts `/auth/device/check` with a `user_code` the server never issued or has removed, then the server MUST redirect the browser to `/auth/device` with `error=invalid_code`.
+
+**Tests:** `compliance/device-grant.test.ts › sends a code it does not know back to the entry page as wrong, and a code it holds as expired as expired`.
+
+### `keys-and-oauth/device-check-expired`
+
+While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), if a signed-in owner opens or posts `/auth/device/check` with the `user_code` of a device code the server holds as expired, then the server MUST redirect the browser to `/auth/device` with `error=expired_code`.
+
+**Tests:** `compliance/device-grant.test.ts › sends a code it does not know back to the entry page as wrong, and a code it holds as expired as expired`.
+
+### `keys-and-oauth/device-consent-unchecked`
+
+If a signed-in owner opens `/auth/device/consent` for a code their browser session has not confirmed on the check page, then the server MUST redirect the browser to `/auth/device/check` with the same `user_code`.
+
+**Reason:** The approval page opens only once the owner has compared the code, so a link to it cannot skip the check. A confirmation is held by the server for the one code and the one browser session that made it, so confirming one code opens no other, and neither a link nor a page can carry a confirmation to another browser.
+
+**Tests:** `compliance/device-grant.test.ts › opens the approval page only for the code the owner confirmed, in the browser that confirmed it`.
+
+### `keys-and-oauth/device-decision-unchecked`
+
+If a signed-in owner posts a decision to `POST /auth/device/consent` on a code their browser session has not confirmed on the check page, then the server MUST redirect the browser to `/auth/device/check` with the same `user_code`.
+
+**Reason:** A form someone else wrote, or a decision posted without the approval page, cannot approve a code the owner did not compare. A confirmation holds only for its own code and its own browser session (`keys-and-oauth/device-consent-unchecked`).
+
+**Tests:** `compliance/device-grant.test.ts › opens the approval page only for the code the owner confirmed, in the browser that confirmed it`.
+
+### `keys-and-oauth/device-decision-unchecked-pending`
+
+If a signed-in owner posts a decision to `POST /auth/device/consent` on a pending device code their browser session has not confirmed on the check page, then the server MUST leave the code pending.
+
+**Tests:** `compliance/device-grant.test.ts › opens the approval page only for the code the owner confirmed, in the browser that confirmed it`, `› ends a browser's confirmation when another browser session confirms the same code`.
+
+### `keys-and-oauth/device-check-replaced`
+
+When a signed-in owner confirms a device code on the check page, the server MUST end every confirmation of that code by another browser session.
+
+**Reason:** One browser session at a time holds a code's confirmation, so the approval page opens only in the browser that compared the code last.
+
+**Tests:** `compliance/device-grant.test.ts › ends a browser's confirmation when another browser session confirms the same code`.
+
+### `keys-and-oauth/device-check-confirm-again`
+
+When the owner confirms it's them in a browser session that has confirmed a device code on the check page, the server MUST keep that confirmation for the browser session that confirming it's them opens.
+
+**Reason:** Confirming it's them on the approval page replaces the browser session, and the owner should not have to compare the code again.
+
+**Tests:** `compliance/device-grant.test.ts › keeps a confirmed code when the owner confirms it's them`.
+
+### `keys-and-oauth/device-max-age-sign-in`
+
+While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), where a device code was requested with `max_age`, if a browser session that began more than `max_age` seconds before the code was requested opens `/auth/device/check` for the pending code or posts to it, then the server MUST send the browser to `/auth/sign-in` with `prompt=login` and a `return_to` of the code's check page.
+
+**Reason:** OpenID Connect Core section 3.1.2.1 and RFC 9470 section 4, with the device authorization request as the authorization request: a device asks for a fresh sign-in this way to meet `keys-and-oauth/step-up-challenge`. `max_age=0` asks for a sign-in made after the code was requested. Such a session cannot confirm the code, so the approval page sends it to the check page (`keys-and-oauth/device-consent-unchecked`).
+
+**Tests:** `compliance/step-up.test.ts › sends a browser that signed in longer ago than max_age to sign in again before it approves the code, and the token the code then issues passes the step-up check`, `› sends a browser that signed in before the code was asked for to sign in again under max_age=0, and approves from a sign-in made after it`.
+
 ## The sign-in surface
 
 ### `keys-and-oauth/browser-origin`
 
-If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/consent` receives a form whose `Origin`, or `Referer` where it carries no `Origin`, is not the issuer's origin, then the server MUST answer `403 forbidden` before it reads the form, whether that origin is one `cors_origins` names, another of the instance's `addresses`, an approved web page's origin or `null`.
+If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/check`, `POST /auth/device/consent` or `POST /auth/consent` receives a form whose `Origin`, or `Referer` where it carries no `Origin`, is not the issuer's origin, then the server MUST answer `403 forbidden` before it reads the form, whether that origin is one `cors_origins` names, another of the instance's `addresses`, an approved web page's origin or `null`.
 
 **Reason:** A form posted under the owner's cookie acts as the owner, and the owner signs in only at the sign-in address. `cors_origins` and an approval let a web page call the instance with the credential it holds, never with the owner's browser session.
 
@@ -3334,7 +3420,7 @@ If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `PO
 
 ### `keys-and-oauth/browser-no-origin`
 
-When a form post to `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/consent` carries neither `Origin` nor `Referer`, the server MUST answer it as that operation answers a form rather than refuse it for its origin.
+When a form post to `POST /auth/device`, `POST /auth/device/check`, `POST /auth/device/consent` or `POST /auth/consent` carries neither `Origin` nor `Referer`, the server MUST answer it as that operation answers a form rather than refuse it for its origin.
 
 **Tests:** `compliance/sign-in-surface.test.ts › refuses a form post from an origin it does not trust, on every browser door`.
 
@@ -3578,9 +3664,9 @@ If a client document limit keeps the server from fetching a client's metadata do
 
 ### `keys-and-oauth/device-lookup-address-limit`
 
-If one address has made ten device code lookups without the owner's live browser session in fifteen minutes, across the entry form, the consent screen and its decision, then the server MUST redirect its next lookup without that authority with `error=too_many_attempts` before the code is looked up.
+If one address has made ten device code lookups on the entry form without the owner's live browser session in fifteen minutes, then the server MUST redirect its next lookup without that authority with `error=too_many_attempts` before the code is looked up.
 
-**Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and owner consent per owner`.
+**Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and the owner's checks per owner`.
 
 ### `keys-and-oauth/device-lookup-wait`
 
@@ -3588,7 +3674,7 @@ If a device code lookup is refused by a device lookup limit, then the server MUS
 
 **Reason:** The anonymous address limit, the anonymous instance limit and the two owner limits each end at their own time, and a lookup refused by one can meet another that is spent for longer, so the page can say how long to wait only if the redirect names the later end.
 
-**Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and owner consent per owner`, `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`, `compliance/sign-in-limits.test.ts › names the later end when a lookup meets a spent address limit and a spent instance limit`.
+**Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and the owner's checks per owner`, `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`, `compliance/sign-in-limits.test.ts › names the later end when a lookup meets a spent address limit and a spent instance limit`.
 
 ### `keys-and-oauth/device-lookup-page`
 
@@ -3598,7 +3684,7 @@ When `GET /auth/device` carries `error=too_many_attempts` and a `retry_after_sec
 
 ### `keys-and-oauth/device-code-not-right`
 
-When `GET /auth/device` carries `error=invalid_code`, the server MUST answer a page saying the code isn't right or has expired, and to check it against the device or start again on the device for a new one.
+When `GET /auth/device` carries `error=invalid_code`, the server MUST answer a page saying the code isn't right or has expired, and to check the device.
 
 **Reason:** The server removes a device code once it has expired, when the device next asks for a token, so a code that has expired and been removed reads as one the server never issued. The page cannot tell the two apart, so it names both.
 
@@ -3606,25 +3692,25 @@ When `GET /auth/device` carries `error=invalid_code`, the server MUST answer a p
 
 ### `keys-and-oauth/device-code-expired`
 
-When `GET /auth/device` carries `error=expired_code`, the server MUST answer a page saying the code has expired and to start connecting again in the app or on the device for a new one.
+When `GET /auth/device` carries `error=expired_code`, the server MUST answer a page saying the code has expired and to start again on the device.
 
 **Reason:** Checking what was typed cannot put an expired code right, so the page sends the person back to the device and not to the keyboard. The server answers this only while it still holds the expired code. A code can also end while the person claims a new instance on the way to approving it.
 
-**Tests:** `compliance/sign-in-surface.test.ts › says an unknown code as wrong or expired, and a code the server holds as expired as expired`, `compliance/claim-from-app.test.ts › says to start connecting again in the app when the device code ended during setup`.
+**Tests:** `compliance/sign-in-surface.test.ts › says an unknown code as wrong or expired, and a code the server holds as expired as expired`, `compliance/claim-from-app.test.ts › says to start again on the device when the device code ended during setup`.
 
 ### `keys-and-oauth/device-code-lifetime`
 
-The server MUST say, on the page where a device code is typed, that codes end after 10 minutes, the `expires_in` of 600 it issues them with.
+The server MUST say, on the page where a device code is typed, that a code lasts 10 minutes, the `expires_in` of 600 it issues them with.
 
 **Tests:** `compliance/sign-in-surface.test.ts › says how long codes last`.
 
 ### `keys-and-oauth/device-page-code`
 
-When `GET /auth/device` carries `user_code`, the server MUST answer a page whose code field holds it.
+When `GET /auth/device` carries a `user_code` and an `error`, the server MUST answer a page whose code field holds the `user_code`.
 
-**Reason:** `verification_uri_complete` carries the code, so a person who follows it only checks the code against the device.
+**Reason:** The person sees what they typed beside what was wrong with it. A `user_code` with no `error` goes to the check step instead (`keys-and-oauth/device-check-link`).
 
-**Tests:** `compliance/sign-in-door-limits.test.ts › fills the device page's code field with the user_code it is opened with`.
+**Tests:** `compliance/sign-in-door-limits.test.ts › fills the device page's code field with the user_code it is sent back with`.
 
 ### `keys-and-oauth/device-lookup-instance-limit`
 
@@ -3636,15 +3722,15 @@ If every address together has made a hundred counted device code lookups without
 
 ### `keys-and-oauth/device-lookup-owner-lane`
 
-When a caller with a verified, live browser session of the claimed owner looks a device code up on the entry form, the consent screen or its decision, the server MUST count the lookup in an owner lane independent of the anonymous address and instance limits.
+When a caller with a verified, live browser session of the claimed owner looks a device code up on the entry form, the check page or its confirmation, the server MUST count the lookup in an owner lane independent of the anonymous address and instance limits.
 
 **Reason:** Anonymous callers cannot close the owner's device approval path by spending its address or instance allowance.
 
-**Tests:** `compliance/device-owner-limits.test.ts › admits owner entry and consent and exchanges the grant after anonymous address and aggregate exhaustion`.
+**Tests:** `compliance/device-owner-limits.test.ts › admits owner entry and checks and exchanges the grant after anonymous address and aggregate exhaustion`.
 
 ### `keys-and-oauth/device-lookup-owner-limit`
 
-If the claimed owner has made ten counted device code lookups in fifteen minutes, across browser sessions, addresses, the entry form, the consent screen and its decision, then the server MUST redirect the owner's next lookup with `error=too_many_attempts` before the code is looked up.
+If the claimed owner has made ten counted device code lookups in fifteen minutes, across browser sessions, addresses, the entry form, the check page and its confirmation, then the server MUST redirect the owner's next lookup with `error=too_many_attempts` before the code is looked up.
 
 **Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`.
 
@@ -3660,7 +3746,7 @@ If the owner lane has made a hundred counted device code lookups in fifteen minu
 
 If a device code lookup carries only an unverified, expired or revoked owner cookie, an ordinary key or an OAuth access token, including a bearer beside a live owner cookie, then the server MUST NOT count it in the owner lane.
 
-**Tests:** `compliance/device-owner-limits.test.ts › keeps a %s cookie in the anonymous lane`, `› admits owner entry and consent and exchanges the grant after anonymous address and aggregate exhaustion`.
+**Tests:** `compliance/device-owner-limits.test.ts › keeps a %s cookie in the anonymous lane`, `› admits owner entry and checks and exchanges the grant after anonymous address and aggregate exhaustion`.
 
 ### `keys-and-oauth/device-lookup-owner-concurrent`
 

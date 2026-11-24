@@ -481,7 +481,14 @@ pub async fn confirm(
                 visit: &visit,
             },
         )?;
-        session::end_replaced(tx, &unit.at, &unit.caller, &visit, &session)?;
+        session::end_replaced(
+            tx,
+            &unit.at,
+            &unit.caller,
+            &visit,
+            &session,
+            &opened.session,
+        )?;
         note(
             tx,
             &unit.at,

@@ -6,6 +6,7 @@ import {
   readRows,
   visibleText,
 } from "../../utils/approval-form.js";
+import { checkDeviceCode } from "../../utils/device-check.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -119,6 +120,7 @@ async function deviceScreen(app: App, scope: string): Promise<DeviceScreen> {
     device_code: string;
     interval: number;
   };
+  await checkDeviceCode(server.apiUrl, origin, cookie, code.user_code);
   const page = await fetch(
     `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(code.user_code)}`,
     { headers: { cookie }, redirect: "manual" },
@@ -971,7 +973,18 @@ describe("what an approval grants an app whose access ended while the screen was
     await disconnect(app);
 
     const answered = await decideDevice(device, "approve", posted);
-    expect(answered.status).toBe(404);
+    expect(answered.status).toBe(302);
+    const back = new URL(answered.headers.get("location") ?? "", server.apiUrl);
+    expect(back.pathname).toBe("/auth/device/check");
+    expect(back.searchParams.get("user_code")).toBe(device.userCode);
+    const checking = await fetch(back, {
+      redirect: "manual",
+      headers: { cookie },
+    });
+    expect(checking.status).toBe(302);
+    const told = new URL(checking.headers.get("location") ?? "", server.apiUrl);
+    expect(told.pathname).toBe("/auth/device");
+    expect(told.searchParams.get("error")).toBe("invalid_code");
     const polled = await poll(app, device);
     expect(polled.body.error).toBe("invalid_grant");
     expect(polled.body.access_token).toBeUndefined();

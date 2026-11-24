@@ -357,8 +357,18 @@ impl Instance {
         text_at(&asked, "device_code").to_string()
     }
 
+    async fn device_checked(&self, user_code: &str, cookie: &str) -> Reply {
+        let fields = [("user_code", user_code)];
+        self.send(post_form("/auth/device/check", Some(cookie), &fields))
+            .await
+    }
+
     async fn device_approved(&self, client: &str, scope: &str) -> String {
         let asked = self.device_asked(client, scope).await;
+        let checked = self
+            .device_checked(text_at(&asked, "user_code"), &self.cookie)
+            .await;
+        assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
         let mut fields = vec![
             ("user_code", text_at(&asked, "user_code")),
             ("decision", "approve"),
@@ -2657,7 +2667,12 @@ async fn a_foreign_form_neither_uses_nor_renews_a_session() {
     let last_use = "SELECT last_used_at FROM sign_ins";
     let before = instance.text_of(last_use).await;
 
-    for door in ["/auth/consent", "/auth/device", "/auth/device/consent"] {
+    for door in [
+        "/auth/consent",
+        "/auth/device",
+        "/auth/device/check",
+        "/auth/device/consent",
+    ] {
         let form = Request::builder()
             .method(Method::POST)
             .uri(door)
@@ -2812,6 +2827,11 @@ async fn ending_a_grant_ends_the_device_code_left_on_a_screen() {
     assert_eq!(issued.status, StatusCode::OK, "{}", issued.text);
     let on_screen = instance.device_asked(&client, NOTES).await;
     let unrelated = instance.device_asked(&elsewhere, NOTES).await;
+    for asked in [&on_screen, &unrelated] {
+        let user_code = text_at(asked, "user_code");
+        let checked = instance.device_checked(user_code, &instance.cookie).await;
+        assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
+    }
 
     let grant = instance.grant_of(&client).await;
     let ended = instance.end_grant(&grant).await;
@@ -2832,7 +2852,7 @@ async fn ending_a_grant_ends_the_device_code_left_on_a_screen() {
             .await
     };
     let refused = approve(&on_screen).await;
-    assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text);
+    sent_to_check(&refused, text_at(&on_screen, "user_code"));
     let device_code = text_at(&on_screen, "device_code");
     refused_as(&instance.poll(&client, device_code).await, "invalid_grant");
     let tokens = "SELECT count(*) FROM oauth_access_tokens";
@@ -2889,6 +2909,12 @@ async fn a_device_code_outlives_its_client_and_its_page_says_so() {
     };
     let registered = instance.register_device(NOTES).await;
     let standing = instance.device_asked(&registered, NOTES).await;
+    for asked in [&standing, &asked] {
+        let checked = instance
+            .device_checked(text_at(asked, "user_code"), &instance.cookie)
+            .await;
+        assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
+    }
     let shown = instance.send(page_of(&standing)).await;
     assert_eq!(shown.status, StatusCode::OK, "{}", shown.text);
     let refused = instance.send(page_of(&asked)).await;
@@ -2903,6 +2929,300 @@ async fn a_device_code_outlives_its_client_and_its_page_says_so() {
     app.clock.advance(DAY_MS + 15 * 60_000).unwrap();
     cleaned(app).await;
     assert_eq!(instance.count(codes).await, 0);
+}
+
+fn sent_to_check(reply: &Reply, user_code: &str) {
+    assert_eq!(reply.status, StatusCode::FOUND, "{}", reply.text);
+    let sent = reply.location().unwrap();
+    assert_eq!(sent.path(), "/auth/device/check", "{sent}");
+    let named: Vec<_> = sent.query_pairs().collect();
+    assert_eq!(named.len(), 1, "{sent}");
+    assert_eq!(named[0].0, "user_code", "{sent}");
+    assert_eq!(named[0].1, user_code, "{sent}");
+}
+
+fn consent_page(user_code: &str, cookie: &str) -> Request<Body> {
+    get(
+        &format!("/auth/device/consent?user_code={}", encoded_code(user_code)),
+        Some(cookie),
+    )
+}
+
+fn encoded_code(user_code: &str) -> String {
+    url::form_urlencoded::byte_serialize(user_code.as_bytes()).collect()
+}
+
+fn device_decision<'a>(user_code: &'a str, decision: &'a str) -> Vec<(&'a str, &'a str)> {
+    vec![
+        ("user_code", user_code),
+        ("decision", decision),
+        ("scopes", NOTES),
+    ]
+}
+
+#[tokio::test]
+async fn the_allow_page_and_its_post_refuse_a_code_not_checked_in_this_session() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register_device(NOTES).await;
+    let asked = instance.device_asked(&client, NOTES).await;
+    let user_code = text_at(&asked, "user_code");
+    let device_code = text_at(&asked, "device_code");
+    let grants = "SELECT count(*) FROM oauth_consents";
+
+    let shown = instance
+        .send(consent_page(user_code, &instance.cookie))
+        .await;
+    sent_to_check(&shown, user_code);
+    for decision in ["approve", "deny"] {
+        let fields = device_decision(user_code, decision);
+        let decided = instance
+            .send(post_form(
+                "/auth/device/consent",
+                Some(&instance.cookie),
+                &fields,
+            ))
+            .await;
+        sent_to_check(&decided, user_code);
+    }
+    assert_eq!(instance.count(grants).await, 0);
+    refused_as(
+        &instance.poll(&client, device_code).await,
+        "authorization_pending",
+    );
+
+    let checked = instance.device_checked(user_code, &instance.cookie).await;
+    assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
+    let sent = checked.location().unwrap();
+    assert_eq!(sent.path(), "/auth/device/consent", "{sent}");
+    assert_eq!(
+        sent.query(),
+        Some(&*format!("user_code={}", encoded_code(user_code)))
+    );
+    let shown = instance
+        .send(consent_page(user_code, &instance.cookie))
+        .await;
+    assert_eq!(shown.status, StatusCode::OK, "{}", shown.text);
+    let fields = device_decision(user_code, "approve");
+    let decided = instance
+        .send(post_form(
+            "/auth/device/consent",
+            Some(&instance.cookie),
+            &fields,
+        ))
+        .await;
+    assert_eq!(decided.status, StatusCode::OK, "{}", decided.text);
+    assert_eq!(instance.count(grants).await, 1);
+    let issued = instance.poll(&client, device_code).await;
+    assert_eq!(issued.status, StatusCode::OK, "{}", issued.text);
+}
+
+#[tokio::test]
+async fn a_check_admits_only_its_own_code_and_only_in_its_own_browser() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register_device(NOTES).await;
+    let checked = instance.device_asked(&client, NOTES).await;
+    let other = instance.device_asked(&client, NOTES).await;
+    let checked = text_at(&checked, "user_code");
+    let other = text_at(&other, "user_code");
+    let elsewhere = instance.sign_in_again().await;
+
+    let done = instance.device_checked(checked, &instance.cookie).await;
+    assert_eq!(done.status, StatusCode::FOUND, "{}", done.text);
+    let not_this = instance.send(consent_page(other, &instance.cookie)).await;
+    sent_to_check(&not_this, other);
+    let fields = device_decision(other, "approve");
+    let not_this = instance
+        .send(post_form(
+            "/auth/device/consent",
+            Some(&instance.cookie),
+            &fields,
+        ))
+        .await;
+    sent_to_check(&not_this, other);
+    let not_here = instance.send(consent_page(checked, &elsewhere)).await;
+    sent_to_check(&not_here, checked);
+    let fields = device_decision(checked, "approve");
+    let not_here = instance
+        .send(post_form("/auth/device/consent", Some(&elsewhere), &fields))
+        .await;
+    sent_to_check(&not_here, checked);
+    let grants = "SELECT count(*) FROM oauth_consents";
+    assert_eq!(instance.count(grants).await, 0);
+
+    let shown = instance.send(consent_page(checked, &instance.cookie)).await;
+    assert_eq!(shown.status, StatusCode::OK, "{}", shown.text);
+}
+
+#[tokio::test]
+async fn a_check_carries_over_when_the_owner_confirms_it_is_them() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register_device(NOTES).await;
+    let asked = instance.device_asked(&client, NOTES).await;
+    let user_code = text_at(&asked, "user_code");
+    let checked = instance.device_checked(user_code, &instance.cookie).await;
+    assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
+
+    let body = json!({ "password": PASSWORD });
+    let confirm = Request::builder()
+        .method(Method::POST)
+        .uri("/auth/confirm")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ORIGIN, ORIGIN)
+        .header(header::COOKIE, &instance.cookie)
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let confirmed = instance.send(confirm).await;
+    assert_eq!(confirmed.status, StatusCode::OK, "{}", confirmed.text);
+    let replaced = confirmed.cookie().unwrap();
+    assert_ne!(replaced, instance.cookie);
+
+    let shown = instance.send(consent_page(user_code, &replaced)).await;
+    assert_eq!(shown.status, StatusCode::OK, "{}", shown.text);
+}
+
+const CHECKED_CODES: &str = "SELECT count(*) FROM oauth_device_codes WHERE checked_by IS NOT NULL";
+
+#[tokio::test]
+async fn a_check_waiting_behind_a_sign_out_asks_the_browser_to_sign_in() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register_device(NOTES).await;
+    let asked = instance.device_asked(&client, NOTES).await;
+    let user_code = text_at(&asked, "user_code");
+    let leaving = instance.sign_in_again().await;
+    let witness = instance.device_checked(user_code, &leaving).await;
+    assert_eq!(witness.status, StatusCode::FOUND, "{}", witness.text);
+    assert_eq!(instance.count(CHECKED_CODES).await, 1);
+    instance
+        .stage("UPDATE oauth_device_codes SET checked_by = NULL")
+        .await;
+
+    let held = Some("auth.device_code.checked");
+    instance.app.faults.set("hold:write", held).unwrap();
+    let check = instance.device_checked(user_code, &leaving);
+    let sign_out = async {
+        instance.when_held().await;
+        let left = instance
+            .send(post_form("/auth/sign-out", Some(&leaving), &[]))
+            .await;
+        instance.app.faults.clear(None);
+        left
+    };
+    let (checked, left) = tokio::join!(check, sign_out);
+    assert!(left.status.is_success(), "{}", left.text);
+    assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
+    let sent = checked.location().unwrap();
+    assert_eq!(sent.path(), "/auth/sign-in", "{sent}");
+    let check = format!("/auth/device/check?user_code={}", encoded_code(user_code));
+    assert!(
+        sent.query_pairs()
+            .any(|(name, value)| name == "return_to" && value == check.as_str()),
+        "{sent}"
+    );
+    assert_eq!(instance.count(CHECKED_CODES).await, 0);
+}
+
+#[tokio::test]
+async fn a_code_expiring_while_its_check_waits_reads_as_expired_and_stays_unchecked() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register_device(NOTES).await;
+    let asked = instance.device_asked(&client, NOTES).await;
+    let user_code = text_at(&asked, "user_code");
+    let witness = instance.device_asked(&client, NOTES).await;
+    let checked = instance
+        .device_checked(text_at(&witness, "user_code"), &instance.cookie)
+        .await;
+    assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
+    assert_eq!(instance.count(CHECKED_CODES).await, 1);
+    instance
+        .stage("UPDATE oauth_device_codes SET checked_by = NULL")
+        .await;
+
+    let held = Some("auth.device_code.checked");
+    instance.app.faults.set("hold:write", held).unwrap();
+    let check = instance.device_checked(user_code, &instance.cookie);
+    let expire = async {
+        instance.when_held().await;
+        instance.app.clock.advance(11 * 60_000).unwrap();
+        instance.app.faults.clear(None);
+    };
+    let (checked, ()) = tokio::join!(check, expire);
+    assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
+    let sent = checked.location().unwrap();
+    assert_eq!(sent.path(), "/auth/device", "{sent}");
+    assert!(
+        sent.query_pairs()
+            .any(|(name, value)| name == "error" && value == "expired_code"),
+        "{sent}"
+    );
+    assert_eq!(instance.count(CHECKED_CODES).await, 0);
+}
+
+#[tokio::test]
+async fn a_link_carrying_the_code_lands_on_the_check_step() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register_device(NOTES).await;
+    let asked = instance.device_asked(&client, NOTES).await;
+    let user_code = text_at(&asked, "user_code");
+    let link = Url::parse(text_at(&asked, "verification_uri_complete")).unwrap();
+    let path = format!("{}?{}", link.path(), link.query().unwrap());
+
+    for cookie in [None, Some(instance.cookie.as_str())] {
+        let landed = instance.send(get(&path, cookie)).await;
+        sent_to_check(&landed, user_code);
+    }
+    let check = format!("/auth/device/check?user_code={}", encoded_code(user_code));
+    let signed_out = instance.send(get(&check, None)).await;
+    let sent = signed_out.location().unwrap();
+    assert_eq!(sent.path(), "/auth/sign-in", "{sent}");
+    let back: Vec<_> = sent.query_pairs().collect();
+    assert!(
+        back.iter()
+            .any(|(name, value)| name == "return_to" && value == check.as_str()),
+        "{sent}"
+    );
+    let shown = instance.send(get(&check, Some(&instance.cookie))).await;
+    assert_eq!(shown.status, StatusCode::OK, "{}", shown.text);
+    assert!(shown.text.contains("Check the code"), "{}", shown.text);
+    assert!(shown.text.contains("It Matches"), "{}", shown.text);
+    assert!(
+        shown
+            .text
+            .contains("Don’t continue if someone sent you this code."),
+        "{}",
+        shown.text
+    );
+    let grants = "SELECT count(*) FROM oauth_consents";
+    assert_eq!(instance.count(grants).await, 0);
+}
+
+#[tokio::test]
+async fn an_expired_code_reads_as_expired() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register_device(NOTES).await;
+    let asked = instance.device_asked(&client, NOTES).await;
+    let user_code = text_at(&asked, "user_code");
+    let check = format!("/auth/device/check?user_code={}", encoded_code(user_code));
+    let live = instance.send(get(&check, Some(&instance.cookie))).await;
+    assert_eq!(live.status, StatusCode::OK, "{}", live.text);
+
+    instance.app.clock.advance(11 * 60_000).unwrap();
+    for reply in [
+        instance.send(get(&check, Some(&instance.cookie))).await,
+        instance.device_checked(user_code, &instance.cookie).await,
+    ] {
+        let sent = reply.location().unwrap();
+        assert_eq!(sent.path(), "/auth/device", "{sent}");
+        let page = format!("{}?{}", sent.path(), sent.query().unwrap());
+        let shown = instance.send(get(&page, Some(&instance.cookie))).await;
+        assert_eq!(shown.status, StatusCode::OK, "{}", shown.text);
+        assert!(
+            shown
+                .text
+                .contains("That code has expired. Start again on your device."),
+            "{}",
+            shown.text
+        );
+    }
 }
 
 #[tokio::test]
@@ -3372,6 +3692,10 @@ async fn a_device_approval_stands_only_for_the_destinations_asked_about() {
              '[\"http://127.0.0.1:9/callback\",\"https://added.example/callback\"]'",
         )
         .await;
+    let checked = instance
+        .device_checked(text_at(&asked, "user_code"), &instance.cookie)
+        .await;
+    assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
 
     let fields = [
         ("user_code", text_at(&asked, "user_code")),

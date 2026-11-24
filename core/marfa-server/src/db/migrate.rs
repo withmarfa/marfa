@@ -98,6 +98,14 @@ pub const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0013_connector_former_targets.sql"),
         done: None,
     },
+    Migration {
+        version: 14,
+        sql: include_str!("migrations/0014_device_code_checked.sql"),
+        done: Some(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('oauth_device_codes') \
+             WHERE name = 'checked_by')",
+        ),
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

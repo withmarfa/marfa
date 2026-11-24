@@ -318,7 +318,7 @@ When the server logs setup exchange requests, the server MUST omit submitted set
 
 ## Claiming in the sign-in page an app opens
 
-An app that reaches an instance with no owner opens its sign-in page, and the person claims the instance there. `return_to` is where the browser goes once setup is done, such as the app's authorization request or a device code's approval page. Only the setup code form and the owner-details form carry it: a JSON body to `POST /setup/exchange` or `POST /setup/claim` does not take it (`instance-claim/setup-undeclared-key`), and neither does `POST /owner` (`instance-claim/owner-undeclared-key`).
+An app that reaches an instance with no owner opens its sign-in page, and the person claims the instance there. `return_to` is where the browser goes once setup is done, such as the app's authorization request or a device code's check page. Only the setup code form and the owner-details form carry it: a JSON body to `POST /setup/exchange` or `POST /setup/claim` does not take it (`instance-claim/setup-undeclared-key`), and neither does `POST /owner` (`instance-claim/owner-undeclared-key`).
 
 ### `instance-claim/sign-in-is-setup`
 
@@ -360,7 +360,7 @@ When the setup code page names an app, the server MUST show the unverified-app c
 
 ### `instance-claim/setup-page-approval-after`
 
-When the setup code page or the owner-details page carries a `return_to` whose path is `/oauth/authorize` or `/auth/device/consent`, the server MUST say on it that the person chooses what the app can access, or turns it down, after the account is made.
+When the setup code page or the owner-details page carries a `return_to` whose path is `/oauth/authorize` or `/auth/device/check`, the server MUST say on it that the person chooses what the app can access, or turns it down, after the account is made.
 
 **Reason:** Claiming the instance does not approve the app, and a person must not think it does.
 
