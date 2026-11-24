@@ -71,6 +71,15 @@ pub use manual::{Waiting, advance, set_manual, waits};
 #[cfg(test)]
 static GLOBAL_CLOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Held for a whole test that sets the manual clock, or that reads times
+/// across a stretch in which another test could set it.
+#[cfg(test)]
+pub(crate) fn alone() -> std::sync::MutexGuard<'static, ()> {
+    GLOBAL_CLOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

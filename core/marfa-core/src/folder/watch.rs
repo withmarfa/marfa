@@ -3070,6 +3070,8 @@ mod backoff_tests {
     use crate::folder::WatchRecord;
     use crate::folder::held_links_tests::{nothing_found, online_folder};
     use crate::scripted::root;
+    use std::sync::MutexGuard;
+    use std::sync::atomic::AtomicUsize;
 
     const OTHER_INSTANCE: &str = "11111111-1111-7111-8111-111111111111";
 
@@ -3088,17 +3090,34 @@ mod backoff_tests {
 
     const SECOND: Duration = Duration::from_secs(1);
 
+    /// Held for a whole test: the manual clock and the pass counter are
+    /// process-wide, so two of these tests at once would count and advance
+    /// each other's time.
+    fn alone() -> MutexGuard<'static, ()> {
+        crate::clock::alone()
+    }
+
+    /// The pass counter when this test began counting: it is cumulative for
+    /// the process.
+    static COUNTED_FROM: AtomicUsize = AtomicUsize::new(0);
+
+    fn start_counting() {
+        crate::fault::observe(true);
+        COUNTED_FROM.store(crate::fault::reached("folder-pass-start"), Ordering::SeqCst);
+    }
+
     fn passes() -> usize {
-        crate::fault::reached("folder-pass-start")
+        crate::fault::reached("folder-pass-start") - COUNTED_FROM.load(Ordering::SeqCst)
     }
 
     #[test]
     fn a_folder_whose_server_answers_as_another_instance_stops_and_sends_almost_nothing() {
+        let _alone = alone();
         let (dir, folder, server) = online_folder(nothing_found());
         server.on("/", vec![root(OTHER_INSTANCE)]);
         let record = WatchRecord::at(dir.path().join("record.json"), 1, Duration::from_secs(5));
         crate::clock::set_manual(true);
-        crate::fault::observe(true);
+        start_counting();
         let (stop, ended) = (AtomicBool::new(false), AtomicBool::new(false));
         let watched = std::thread::scope(|scope| {
             let watching = scope.spawn(|| {
@@ -3189,12 +3208,13 @@ mod backoff_tests {
         .unwrap();
         drop(server);
         crate::clock::set_manual(true);
-        crate::fault::observe(true);
+        start_counting();
         (dir, folder)
     }
 
     #[test]
     fn passes_that_keep_failing_back_off_and_a_real_change_ends_the_wait() {
+        let _alone = alone();
         let (_dir, folder) = unreachable_folder();
         let (before, after) = failing_then(&folder, || {
             std::fs::write(folder.root().join("Changed.md"), "a real change\n").unwrap();
@@ -3207,6 +3227,7 @@ mod backoff_tests {
 
     #[test]
     fn a_write_to_a_kept_file_ends_the_wait_between_failing_passes() {
+        let _alone = alone();
         let (_dir, folder) = unreachable_folder();
         let root = folder.root().to_path_buf();
         let kept = root.join(landing::reserved("00000000000000000000000000000004"));

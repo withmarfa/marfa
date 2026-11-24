@@ -528,6 +528,7 @@ fn look_is_due(telling: &mut watch::Telling) {
 
 #[test]
 fn a_quick_pass_while_a_directory_is_unwatched_reads_that_directory_only_when_the_look_is_due() {
+    let _alone = crate::clock::alone();
     let mut all = names(12);
     all.push("sub/deep.md".into());
     let (dir, folder, _server, mut passes) = watched(&all);
@@ -597,6 +598,7 @@ fn a_quick_pass_while_a_directory_is_unwatched_reads_that_directory_only_when_th
 
 #[test]
 fn the_look_at_an_unwatched_directory_of_any_size_reads_it_and_no_more_of_the_folder() {
+    let _alone = crate::clock::alone();
     // More than a pass names, and more than a quick pass looks at.
     for beneath in [300, 1100] {
         let mut all = names(40);
