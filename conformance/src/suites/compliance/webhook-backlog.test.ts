@@ -18,6 +18,8 @@ const REASON =
   "Adding this delivery would exceed the subscription's pending delivery or payload byte limit.";
 /** The waits between the eight attempts of `events/retry-schedule`, in seconds. */
 const WAITS_S = [1, 5, 25, 125, 625, 3125, 15625];
+/** A note body that outweighs the rest of its payload. */
+const LARGE = "x".repeat(20_000);
 
 let server: FreshServer;
 let clock: ReturnType<typeof movedClock>;
@@ -198,17 +200,6 @@ const listedInAttention = async (id = webhookId) =>
     (entry) => entry.kind === "webhook" && entry.reference === id,
   );
 
-/** The payload a delivery stores: the body it was sent with, less what each attempt adds. */
-function storedBytes(body: string): number {
-  const {
-    event_id: _event,
-    delivery_id: _delivery,
-    delivered_at: _at,
-    ...payload
-  } = JSON.parse(body) as Record<string, unknown>;
-  return Buffer.byteLength(JSON.stringify(payload));
-}
-
 describe("a webhook whose receiver never answers", () => {
   const unsent: string[] = [];
 
@@ -372,17 +363,15 @@ describe("a webhook whose receiver never answers", () => {
     { retry: 0, timeout: 60_000 },
     async () => {
       hook.hold();
-      const held = await write("held for the bytes");
-      const body = await waitFor(
-        "the held delivery to reach the receiver",
-        async () => hook.bodies.find((sent) => sent.includes(held)),
+      const held = await write(`held ${LARGE}`);
+      await waitFor("the held delivery to reach the receiver", async () =>
+        hook.bodies.some((sent) => sent.includes(held)) ? true : undefined,
       );
-      // The next payload fits alone, and not beside the one still pending.
-      await configure({
-        webhook_backlog_bytes: Math.floor(storedBytes(body) * 1.5),
-      });
+      // Each payload holds its body and less than half as much again, so the
+      // next fits alone and not beside the one still pending.
+      await configure({ webhook_backlog_bytes: 1.5 * LARGE.length });
       const before = withStatus(await deliveries(), "canceled").length;
-      const id = await write("past the bytes now");
+      const id = await write(`past ${LARGE}`);
       const canceled = await waitFor(
         "the delivery past the bytes",
         async () => {
