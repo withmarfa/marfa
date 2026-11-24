@@ -90,8 +90,7 @@ const BOARD_TYPES: [&str; 28] = [
     "Web Page",
 ];
 const BOARD_TYPE_LEVELS: &str = r#"for (const [title, word] of [["Conversation", "No Access"], ["Message", "No Access"], ["Game", "No Access"], ["Song", "No Access"], ["Album", "No Access"], ["Film", "Read Only"], ["Series", "Read Only"], ["Episode", "Read Only"], ["Person", "Read Only"], ["Place", "Read Only"]]) pick(title, word);"#;
-/// Board U13: Read Only's two powers, Manage files and Back up and restore are allowed, every other
-/// power is not.
+/// The four powers allowed on design board U13.
 const BOARD_POWERS: &str = r#"const allowed = ["See server health", "Manage files", "Read the activity log", "Back up and restore"]; for (const title of ["Make keys", "Manage every key", "Disconnect other apps", "Change settings", "See server health", "Run housekeeping and updates", "Replace or remove types", "Manage files", "Manage webhooks", "Manage connectors", "Read the activity log", "Empty the trash", "Back up and restore", "Manage sign-ins and passkeys"]) pick(title, allowed.includes(title) ? "Allow" : "Don't Allow");"#;
 
 /// One page in one state. `board` is the Round 4 board it is compared with, such as `U1`.

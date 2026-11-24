@@ -482,8 +482,8 @@ describe("the admin level on the approval pages", () => {
         "custom",
       ]);
       // A page without scripts shows no choice, so it defines Read Only.
-      expect(visibleText(html), page).toContain(
-        "Read Only is server health and the activity log.",
+      expect(html, page).toContain(
+        '<span class="without-script">Read Only is server health and the activity log.</span>',
       );
     }
     for (const asked of [
@@ -1407,8 +1407,11 @@ describe("what an approval grants an app whose access changed while the screen w
           level,
         ).toEqual(["audit.read", "instance.read", "keys.mint"]);
 
+      // Each page drawn again keeps the level the owner chose.
+      for (const html of [browser, onDevice])
+        expect(defaultSubmission(html, "admin"), level).toEqual([level]);
       // The witness: the page drawn again grants the level it shows.
-      const approved = await approveDeviceWith(device, fields(onDevice));
+      const approved = await approveDeviceWith(device, asDrawn(onDevice));
       expect(approved.status, level).toBe(200);
       await approved.body?.cancel();
       const issued = await poll(app, device);

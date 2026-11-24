@@ -397,8 +397,6 @@ pub fn admin_gives(powers: &[String]) -> String {
     }
 }
 
-/// What Read Only holds of the powers asked, said under the admin box, and in its place without
-/// scripts.
 pub fn read_only_line(powers: &[Permission]) -> String {
     let held: Vec<&str> = powers
         .iter()

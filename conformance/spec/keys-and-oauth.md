@@ -2122,7 +2122,7 @@ Where a request names a permission that the app's standing consent does not cove
 
 Where the permissions a request names that the app's standing consent does not cover include at least one of `instance.read` and `audit.read` and at least one permission outside those two, the server MUST offer, on the consent screen and the device approval page, the admin level `read_only` in the field named `admin`.
 
-**Reason:** Read Only gives the app server health (`instance.read`) and the activity log (`audit.read`). Both only read, so an owner can let an app see how the instance is doing without letting it change anything, decide who gets in or send data out. `blobs.manage` deletes and replaces files, so it is not among them.
+**Reason:** Read Only lets the owner grant the requested server health and activity log reads. Managing blobs also permits uploads and removal of stored copies.
 
 **Tests:** `compliance/approval-screens.test.ts › offers Read Only only where it holds some of the powers asked and not all, on both pages`, `› draws the page again and restores no power the person removed while it was open, at Full Access and at Read Only, on both pages`.
 
