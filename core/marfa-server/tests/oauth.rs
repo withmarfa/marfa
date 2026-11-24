@@ -254,9 +254,15 @@ impl Instance {
         landed.query().unwrap().to_string()
     }
 
-    async fn decide(&self, link: &str, scopes: &[&str]) -> Reply {
+    /// Posts `chosen` as a person sets it on the consent page `link` draws now, or on the notice
+    /// a link the server refuses draws.
+    async fn decide(&self, link: &str, chosen: &[&str]) -> Reply {
+        let page = self
+            .send(get(&format!("/auth/consent?{link}"), Some(&self.cookie)))
+            .await
+            .text;
         let mut fields = vec![("decision", "approve"), ("authorization_request", link)];
-        fields.extend(scopes.iter().map(|scope| ("scopes", *scope)));
+        fields.extend(chosen_on(&page, chosen));
         self.send(post_form("/auth/consent", Some(&self.cookie), &fields))
             .await
     }
@@ -359,11 +365,17 @@ impl Instance {
 
     async fn device_approved(&self, client: &str, scope: &str) -> String {
         let asked = self.device_asked(client, scope).await;
-        let mut fields = vec![
-            ("user_code", text_at(&asked, "user_code")),
-            ("decision", "approve"),
-        ];
-        fields.extend(scope.split(' ').map(|scope| ("scopes", scope)));
+        let user_code = text_at(&asked, "user_code");
+        let path = format!(
+            "/auth/device/consent?{}",
+            encoded(&[("user_code", user_code)])
+        );
+        let page = self.send(get(&path, Some(&self.cookie))).await;
+        assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+        let page = page.text;
+        let chosen: Vec<&str> = scope.split(' ').collect();
+        let mut fields = vec![("user_code", user_code), ("decision", "approve")];
+        fields.extend(chosen_on(&page, &chosen));
         let reply = self
             .send(post_form(
                 "/auth/device/consent",
@@ -372,6 +384,7 @@ impl Instance {
             ))
             .await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
+        assert!(reply.text.contains("Device connected"), "{}", reply.text);
         text_at(&asked, "device_code").to_string()
     }
 
@@ -427,6 +440,41 @@ impl Instance {
         let reply = self.authorize(client, scope, CALLBACK).await;
         assert!(code_in(&reply).is_some(), "{:?}", reply.location());
     }
+}
+
+/// The `held` value an approval page's form posts.
+fn held_on(page: &str) -> &str {
+    let marker = "name=\"held\" value=\"";
+    page.find(marker).map_or("", |at| {
+        let rest = &page[at + marker.len()..];
+        &rest[..rest.find('"').unwrap_or(0)]
+    })
+}
+
+fn is_permission(scope: &str) -> bool {
+    !scope.contains(':') && scope.contains('.')
+}
+
+/// The fields a page posts for `chosen`: its `held` value, each scope as `scopes` and, where the
+/// page offers an admin level, each permission as a Custom row.
+fn chosen_on<'a>(page: &'a str, chosen: &[&'a str]) -> Vec<(&'static str, &'a str)> {
+    let mut fields = vec![("held", held_on(page))];
+    fields.extend(
+        chosen
+            .iter()
+            .filter(|scope| !is_permission(scope))
+            .map(|scope| ("scopes", *scope)),
+    );
+    if page.contains("name=\"admin\"") {
+        fields.push(("admin", "custom"));
+        fields.extend(
+            chosen
+                .iter()
+                .filter(|scope| is_permission(scope))
+                .map(|scope| ("powers", *scope)),
+        );
+    }
+    fields
 }
 
 fn code_in(reply: &Reply) -> Option<String> {
