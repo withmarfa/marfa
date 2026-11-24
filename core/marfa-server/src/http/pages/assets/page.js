@@ -186,11 +186,12 @@
     const title = next.content.querySelector("title");
     if (title) document.title = title.textContent;
     main.replaceChildren(...incoming.childNodes);
+    watchPage(main);
     window.scrollTo(0, 0);
   }
 
-  function watchChanges() {
-    for (const form of document.querySelectorAll("form[data-change]")) {
+  function watchChanges(root = document) {
+    for (const form of root.querySelectorAll("form[data-change]")) {
       form.addEventListener("submit", (event) => {
         if (event.defaultPrevented) return;
         event.preventDefault();
@@ -203,8 +204,8 @@
   }
 
   // A form the browser sends keeps its buttons disabled until the answer, or the cached page, returns.
-  function watchForms() {
-    for (const form of document.querySelectorAll("form:not([data-change], [method=dialog])")) {
+  function watchForms(root = document) {
+    for (const form of root.querySelectorAll("form:not([data-change], [method=dialog])")) {
       if (form.dataset.passkeyRenameForm) continue;
       form.addEventListener("submit", (event) => {
         if (event.defaultPrevented) return;
@@ -213,30 +214,85 @@
         setTimeout(() => setBusy(buttons, true));
       });
     }
-    addEventListener("pageshow", (event) => {
-      if (!event.persisted) return;
-      for (const button of document.querySelectorAll("button[type=submit]")) {
-        button.disabled = false;
-      }
-    });
   }
 
-  // Draws a code field's input in its cells as the server reads it: letters and digits, in capitals.
-  function watchCodes() {
-    for (const input of document.querySelectorAll(".code > .in")) {
+  addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+    for (const button of document.querySelectorAll("button[type=submit]")) {
+      button.disabled = false;
+    }
+  });
+
+  // The server reads only the letters and digits of a code, in capitals.
+  const isCodeCharacter = (character) => /[A-Za-z0-9]/.test(character);
+  const codeCharactersIn = (text) => [...text].filter(isCodeCharacter).length;
+
+  /** `text` up to its `room`th letter or digit. */
+  function fitCode(text, room) {
+    let kept = "";
+    for (const character of text) {
+      if (isCodeCharacter(character)) {
+        if (room <= 0) break;
+        room -= 1;
+      }
+      kept += character;
+    }
+    return kept;
+  }
+
+  // Each code input's drawing, for the selection changes the document hears.
+  const codeDrawings = new WeakMap();
+  document.addEventListener("selectionchange", () => {
+    codeDrawings.get(document.activeElement)?.();
+  });
+
+  // Draws a code field's input in its cells as the server reads it, and takes no more
+  // letters or digits than it has cells, so what is drawn is what is sent.
+  function watchCodes(root = document) {
+    for (const input of root.querySelectorAll(".code > .in")) {
       const cells = [...input.parentElement.querySelectorAll(".cell")];
+      const fit = () => {
+        if (codeCharactersIn(input.value) <= cells.length) return;
+        const caret = input.selectionEnd ?? input.value.length;
+        input.value = fitCode(input.value, cells.length);
+        const at = Math.min(caret, input.value.length);
+        input.setSelectionRange(at, at);
+      };
       const draw = () => {
-        const typed = input.value
-          .toUpperCase()
-          .replace(/[^A-Z0-9]/g, "")
-          .slice(0, cells.length);
-        const at = document.activeElement === input ? Math.min(typed.length, cells.length - 1) : -1;
+        const { value } = input;
+        const typed = [...value].filter(isCodeCharacter).join("").toUpperCase();
+        const focused = document.activeElement === input;
+        const from = codeCharactersIn(value.slice(0, input.selectionStart ?? value.length));
+        const to = codeCharactersIn(value.slice(0, input.selectionEnd ?? value.length));
+        const at = focused && from === to ? Math.min(from, cells.length - 1) : -1;
         cells.forEach((cell, index) => {
           cell.textContent = typed[index] ?? "";
           cell.classList.toggle("at", index === at);
+          cell.classList.toggle("end", index === at && from === cells.length);
+          cell.classList.toggle("picked", focused && index >= from && index < to);
         });
       };
-      for (const kind of ["input", "focus", "blur"]) input.addEventListener(kind, draw);
+      input.addEventListener("beforeinput", (event) => {
+        if (!event.inputType.startsWith("insert") || event.isComposing) return;
+        const data = event.data ?? event.dataTransfer?.getData("text/plain") ?? "";
+        const start = input.selectionStart ?? input.value.length;
+        const end = input.selectionEnd ?? start;
+        const kept = input.value.slice(0, start) + input.value.slice(end);
+        const fitted = fitCode(data, cells.length - codeCharactersIn(kept));
+        if (fitted === data) return;
+        event.preventDefault();
+        input.setRangeText(fitted, start, end, "end");
+        draw();
+      });
+      input.addEventListener("input", () => {
+        fit();
+        draw();
+      });
+      for (const kind of ["focus", "blur", "select", "selectionchange"]) {
+        input.addEventListener(kind, draw);
+      }
+      codeDrawings.set(input, draw);
+      fit();
       draw();
     }
   }
@@ -477,9 +533,9 @@
     return !/^(\[.*\]|\d+\.\d+\.\d+\.\d+)$/.test(location.hostname);
   }
 
-  function watchPasskeys() {
+  function watchPasskeys(root = document) {
     if (!window.PublicKeyCredential || !addressTakesPasskeys()) return;
-    for (const button of document.querySelectorAll("[data-passkey]")) {
+    for (const button of root.querySelectorAll("[data-passkey]")) {
       button.hidden = false;
       const group = button.closest("[data-passkey-group]");
       if (group) group.hidden = false;
@@ -561,11 +617,11 @@
     setBusy([save], false);
   }
 
-  function watchPasskeyRenames() {
-    for (const button of document.querySelectorAll("[data-passkey-rename]")) {
+  function watchPasskeyRenames(root = document) {
+    for (const button of root.querySelectorAll("[data-passkey-rename]")) {
       button.addEventListener("click", () => openRename(button));
     }
-    for (const form of document.querySelectorAll("[data-passkey-rename-form]")) {
+    for (const form of root.querySelectorAll("[data-passkey-rename-form]")) {
       form.addEventListener("submit", (event) => {
         event.preventDefault();
         void renamePasskey(form);
@@ -576,35 +632,35 @@
     }
   }
 
-  function watchPasskeyRemovals() {
-    for (const button of document.querySelectorAll("[data-passkey-remove]")) {
+  function watchPasskeyRemovals(root = document) {
+    for (const button of root.querySelectorAll("[data-passkey-remove]")) {
       button.addEventListener("click", () => void removePasskey(button));
     }
   }
 
-  function watchChoices() {
-    const choose = document.querySelector("[data-needs-choice]");
-    const radios = document.querySelectorAll("input[name=access]");
+  function watchChoices(root = document) {
+    const choose = root.querySelector("[data-needs-choice]");
+    const radios = root.querySelectorAll("input[name=access]");
     const sync = () => {
       if (choose) {
-        const picked = document.querySelector("input[name=access]:checked");
+        const picked = root.querySelector("input[name=access]:checked");
         choose.classList.toggle("open", picked?.value === "choose");
       }
-      for (const list of document.querySelectorAll("[data-types-list]")) {
-        const all = document.querySelector("select[data-types-switch]");
+      for (const list of root.querySelectorAll("[data-types-list]")) {
+        const all = root.querySelector("select[data-types-switch]");
         list.classList.toggle("open", all?.value === "choose-types");
       }
     };
     for (const radio of radios) radio.addEventListener("change", sync);
-    for (const select of document.querySelectorAll("select[data-types-switch]")) {
+    for (const select of root.querySelectorAll("select[data-types-switch]")) {
       select.addEventListener("change", sync);
     }
     sync();
   }
 
   /** One switch turns every permission on or off; each still posts on its own. */
-  function watchPowers() {
-    for (const group of document.querySelectorAll("[data-powers]")) {
+  function watchPowers(root = document) {
+    for (const group of root.querySelectorAll("[data-powers]")) {
       const all = group.querySelector("[data-powers-all]");
       const each = [...group.querySelectorAll("[data-powers-each] input[name=scopes]")];
       if (!all || each.length === 0) continue;
@@ -623,15 +679,20 @@
     }
   }
 
+  // Everything a page's content needs, run on the first page and on each page swapped in.
+  function watchPage(root = document) {
+    watchChoices(root);
+    watchPowers(root);
+    watchChanges(root);
+    watchForms(root);
+    watchPasskeys(root);
+    watchPasskeyRemovals(root);
+    watchPasskeyRenames(root);
+    watchCodes(root);
+    focusFirstField();
+  }
+
   exchangeHandoff();
-  watchChoices();
-  watchPowers();
-  watchChanges();
-  watchForms();
   watchDialog();
-  watchPasskeys();
-  watchPasskeyRemovals();
-  watchPasskeyRenames();
-  watchCodes();
-  focusFirstField();
+  watchPage();
 })();

@@ -423,7 +423,7 @@ code {
     center / contain no-repeat;
 }
 
-/* A short code in cells. Without the script, a typed code shows in its input instead. */
+/* A short code in cells. Without the script, or in forced colors, a typed code shows in its input instead. */
 .code {
   position: relative;
 }
@@ -435,6 +435,7 @@ code {
 }
 
 .code .cell {
+  position: relative;
   display: flex;
   flex: 0 1 2.75rem;
   align-items: center;
@@ -488,28 +489,30 @@ code {
   display: none;
 }
 
-.js .code .in ~ .cells {
-  display: flex;
-}
+@media (forced-colors: none) {
+  .js .code .in ~ .cells {
+    display: flex;
+  }
 
-.js .code .in {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  height: 100%;
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-  color: transparent;
-  caret-color: transparent;
-}
+  .js .code .in {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    height: 100%;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    color: transparent;
+    caret-color: transparent;
+  }
 
-.js .code .in::selection {
-  background: transparent;
-}
+  .js .code .in::selection {
+    background: transparent;
+  }
 
-.js .code .in:focus-visible {
-  outline: none;
+  .js .code .in:focus-visible {
+    outline: none;
+  }
 }
 
 .code .cell.at {
@@ -527,6 +530,25 @@ code {
   width: 1.5px;
   height: 1.5rem;
   background: var(--t1);
+}
+
+.code .cell.at:not(:empty)::after {
+  content: "";
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  left: 0.25rem;
+  width: 1.5px;
+  background: var(--t1);
+}
+
+.code .cell.at.end:not(:empty)::after {
+  right: 0.25rem;
+  left: auto;
+}
+
+.code .cell.picked {
+  background: color-mix(in srgb, Highlight 30%, var(--bg));
 }
 
 .code + .hint,
@@ -1037,10 +1059,6 @@ fieldset.access > p {
   .in,
   .code .cell {
     border: 1px solid ButtonText;
-  }
-
-  .code .cell.at {
-    outline: 2px solid Highlight;
   }
 
   .btn:disabled {
