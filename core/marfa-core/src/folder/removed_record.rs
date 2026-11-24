@@ -585,16 +585,14 @@ pub(super) fn restored_reason(outcome: Outcome, detail: Option<&str>, carries_id
         "move or rename it"
     };
     let why = match outcome {
-        Outcome::Both => "the instance holds a different version of its item now. It is kept as it is and not sent, and the item's own file shows the instance's version. Copy what you want to keep into that file, then delete this one".to_string(),
+        Outcome::Both => "the sync is keeping this file for comparison. If it reports a separate file for the instance's version, copy any edits you want into that file before deleting this one".to_string(),
         Outcome::Absent => "the folder on the instance holds no item for it. It is not sent".to_string(),
         _ => format!(
             "{}. It is not sent, and nothing on the instance is changed",
             detail.unwrap_or("what the instance holds of it cannot be told")
         ),
     };
-    format!(
-        "this directory last synced it with another instance, and {why}; to send it as a new item, {as_new}"
-    )
+    format!("{why}. To send it as a new item, {as_new}")
 }
 
 /// A hash only for bytes the folder itself wrote at the version the server

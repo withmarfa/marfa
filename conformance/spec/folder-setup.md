@@ -1248,7 +1248,7 @@ When `folders add` adds a folder to a directory whose removal record names that 
 
 ### `folder-setup/readd-kept-said`
 
-When `folders push` moves a file under `folder-setup/readd-differs-kept`, the CLI MUST name the file it moved the file to and the file that shows the instance's version.
+When `folders push` moves a file under `folder-setup/readd-differs-kept`, the CLI MUST report the path of the moved file and the path of the file that shows the instance's version.
 
 **Tests:** `cli/folder-instance-changed.test.ts › sends no file the directory synced before to the instance a backup was restored into, keeps both where they differ, and keeps the record until every file is settled`.
 

@@ -691,19 +691,18 @@ guarded! {
             })
         }
 
-        /// Stops following the folder and keeps its files. A confirmed folder
-        /// first leaves a removal record under `.marfa`, keeping the files an
-        /// earlier record still holds, and is refused where it cannot. Refused while writes wait, except for a first sync
-        /// still waiting to be confirmed, which this cancels, and except where
-        /// another Marfa instance answers at the folder's server, which none of
-        /// them can reach; the answer then names each file holding a change the
-        /// folder could not send. Follows no symbolic
-        /// link, and takes a path through one only where it is the path the
-        /// registry lists. Where that path is
-        /// gone, passes through a link, or holds state the registry does not
-        /// show to be the folder's own, the folder is only taken off the
-        /// registry. Asks a watch that holds the folder to let it go, as `add`
-        /// does; that watch then ends with `Removed` or `Unlisted`.
+        /// Stops following the folder and keeps its files. After first-sync
+        /// confirmation, removal must save the record under `.marfa` before
+        /// clearing the working copy. The record retains unbound paths from
+        /// an earlier removal of the same folder. Removal cancels an
+        /// unconfirmed first sync.
+        /// Pending writes otherwise prevent removal unless another instance
+        /// answers at the server, or last answered there and it is unreachable.
+        /// In that case, the result lists the files with unsent changes.
+        /// A path through a symbolic link must match the registered path.
+        /// If that path is missing, goes through a link, or holds a different
+        /// store, removal only drops the registry entry. A watch holding the
+        /// folder releases it and ends with `Removed` or `Unlisted`.
         pub fn remove(&self, dir: String) -> Result<FolderRemoval, MarfaError> {
             marfa_core::Folder::remove_at_asking(&dir)
                 .map(FolderRemoval::from)
