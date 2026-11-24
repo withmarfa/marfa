@@ -92,8 +92,8 @@ const PINS: &[Pin] = &[
     },
     Pin {
         version: 16,
-        file: "2f19781b090ba83a65aa16c5642997b93266f273ff91c2bcf1cf021cf29dd0ae",
-        holds: "3ca400048f941b92558247126c5c6df470912e478936773c488a2e90c632c730",
+        file: "7c8242b52c9c91c21324308052ec136874d07182e79331d1342ac959b1180d9b",
+        holds: "31e80b2e8f68fa909e76e97ac5978cde4dc00195869e34fb245356798be2802f",
     },
 ];
 
