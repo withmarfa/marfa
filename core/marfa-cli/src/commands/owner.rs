@@ -202,16 +202,8 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
                 .get("url")
                 .and_then(Value::as_str)
                 .ok_or_else(|| CliError::Invalid("server returned no setup link".into()))?;
-            if !no_browser {
-                let command = if cfg!(target_os = "macos") {
-                    "open"
-                } else {
-                    "xdg-open"
-                };
-                let status = std::process::Command::new(command).arg(link).status();
-                if !status.is_ok_and(|status| status.success()) {
-                    crate::errln!("Could not open a browser; use the setup link below.");
-                }
+            if !no_browser && !super::open_link(link) {
+                crate::errln!("Could not open a browser; use the setup link below.");
             }
             out.value(&result)
         }

@@ -932,6 +932,68 @@ When `marfa items get` prints an item whose state is not `active` without `--jso
 
 **Tests:** `cli/items.test.ts › takes a note through archive, the bin, restore, and the purge`.
 
+### `cli/command-link-web`
+
+When `marfa items link` runs without `--app`, without `--json` and without `--open`, the CLI MUST print the `web_url` of the item the server answers, as the server gave it, alone on one line of standard output.
+
+**Reason:** the address is the sign-in address the server holds, which is not always the address the CLI reaches the API at, so the CLI never builds it.
+
+**Tests:** `cli/item-link.test.ts › prints the web_url of an item alone on one line, from the sign-in address and not the API address`.
+
+### `cli/command-link-app`
+
+When `marfa items link` runs with `--app` and without `--json` and without `--open`, the CLI MUST print the `app_url` of the item the server answers, in place of its `web_url`, alone on one line of standard output.
+
+**Tests:** `cli/item-link.test.ts › prints the app_url with --app`.
+
+### `cli/command-link-json`
+
+When `marfa items link` runs with `--json` and without `--open`, the CLI MUST print one JSON object holding the `web_url` and the `app_url` of the item the server answers.
+
+**Tests:** `cli/item-link.test.ts › prints both links as one JSON object under --json`.
+
+### `cli/command-link-any-state`
+
+When `marfa items link` is given a lowercase UUIDv7, the CLI MUST read the item with `state=any`.
+
+**Reason:** a person who holds an item's id asks for its link whatever its state.
+
+**Tests:** `cli/item-link.test.ts › reads the item with state=any`.
+
+### `cli/command-link-deleted`
+
+When `marfa items link` prints or opens the link of an item the server answers from the bin, the CLI MUST say on standard error that the item is in Recently Deleted.
+
+**Reason:** the link of an item in the bin opens it where it waits, and the line names that place.
+
+**Tests:** `cli/item-link.test.ts › prints the link of an item in the bin and says on standard error that it is in Recently Deleted`.
+
+### `cli/command-link-bad-id`
+
+If `marfa items link` is given an id that is not a lowercase UUIDv7, then the CLI MUST refuse it `invalid` and send no request.
+
+**Tests:** `cli/item-link.test.ts › refuses an id that is not a lowercase UUIDv7 before it sends a request`.
+
+### `cli/command-link-old-server`
+
+If the server answers the item without the link `marfa items link` prints, then the CLI MUST refuse with a message that the server gives no item links and needs a newer release, and print nothing on standard output.
+
+**Reason:** a server that does not give a link cannot be told its own sign-in address by the CLI, so a link made from the address the CLI reached it at could point at a page that is not Marfa's.
+
+**Tests:** `cli/item-link.test.ts › says a server that answers an item with no link needs a newer release, and prints nothing`.
+
+### `cli/command-link-open`
+
+When `marfa items link` runs with `--open` and the system's opener takes the link, the CLI MUST hand the opener the `web_url`, or the `app_url` where `--app` is given, and print nothing on standard output.
+
+**Tests:** `cli/item-link.test.ts › hands the web_url, or the app_url with --app, to the system's opener and prints nothing`.
+
+### `cli/command-link-open-failed`
+
+If the system's opener is absent or does not take the link of `marfa items link --open`, then the CLI MUST print on standard output what it would print without `--open`, the `web_url` or with `--app` the `app_url` alone on one line, or with `--json` one JSON object holding the `web_url` and the `app_url`, say on standard error that it could not open the link, and exit with a code other than `0`.
+
+**Tests:** `cli/item-link.test.ts › prints the link and exits non-zero where no opener takes it`.
+
 ### `cli/command-row-path`
 
 If the server refuses the one operation that `marfa rows put` or `marfa rows patch` sends, then the CLI MUST name the refused field by its path within the row, such as `values.amount`, in the message and in each `details.errors` path.

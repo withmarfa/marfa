@@ -43,6 +43,21 @@ pub enum ItemsCommand {
         #[arg(long, value_name = "NAME")]
         include: Vec<String>,
     },
+    /// Print an item's link, one line, or open it. The link is the address the
+    /// item's own server gives, the bin included.
+    Link {
+        /// The item id.
+        id: String,
+        /// Give the link that opens the item in a Marfa app on this device,
+        /// `marfa://` and the instance and item ids, in place of the address
+        /// that opens in a browser.
+        #[arg(long)]
+        app: bool,
+        /// Open the link with the system's opener in place of printing it. If
+        /// nothing opens it, the link is printed and the command fails.
+        #[arg(long)]
+        open: bool,
+    },
     /// Create an item.
     Create(CreateArgs),
     /// Change an item's properties or fields, conditional on the version read.
@@ -1245,6 +1260,7 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
                 idempotency,
             } => idempotency.apply(replace_tags_request(id, tags)),
         },
+        ItemsCommand::Link { id, app, open } => return link(id, *app, *open, remote, out),
         ItemsCommand::Edges(args) => return edges(args, false, remote, out),
         ItemsCommand::Backrefs(args) => return edges(args, true, remote, out),
         ItemsCommand::Add(args) => return add(args, remote, out),
@@ -1296,6 +1312,66 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
             out.report(&answer, |answer| super::said::tags(verb, &id, answer))
         }
         (None, None, None) => out.value(&answer),
+    }
+}
+
+/// The item's `web_url` or `app_url`, as its server answers it, printed or opened.
+fn link(id: &str, app: bool, open: bool, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    marfa_rules::validation::id("id", id).map_err(|_| {
+        CliError::Invalid(format!(
+            "Invalid item ID: {id:?} is not a UUIDv7 in lowercase"
+        ))
+    })?;
+    let answer = remote.json(&get_request(id, &[]))?;
+    let item = answer.get("item").unwrap_or(&Value::Null);
+    let web_url = || item_link(item, "web_url", &["http", "https"]);
+    let app_url = || item_link(item, "app_url", &["marfa"]);
+    let wanted = if app { app_url()? } else { web_url()? };
+    let shown = if out.json {
+        json!({"web_url": web_url()?, "app_url": app_url()?})
+    } else {
+        Value::String(wanted.clone())
+    };
+    if item.get("state").and_then(Value::as_str) == Some("trashed") {
+        crate::errln!("This item is in the bin, which the apps call Recently Deleted.");
+    }
+    if open && super::open_link(&wanted) {
+        return Ok(());
+    }
+    match &shown {
+        Value::String(text) => out.line(text)?,
+        object => out.value(object)?,
+    }
+    if open {
+        return Err(CliError::Io(std::io::Error::other(
+            "could not open the link with the system's opener; it is printed above",
+        )));
+    }
+    Ok(())
+}
+
+/// A link the server put on an item, kept only if it is one address in a scheme
+/// it may hand over: the opener and the terminal take what it says.
+fn item_link(item: &Value, name: &str, schemes: &[&str]) -> Result<String, CliError> {
+    let link = item.get(name).and_then(Value::as_str).ok_or_else(|| {
+        CliError::Invalid(
+            "the server gives no item links: it needs a newer release of Marfa".into(),
+        )
+    })?;
+    let plain = url::Url::parse(link).is_ok_and(|parsed| schemes.contains(&parsed.scheme()))
+        && !link
+            .chars()
+            .any(|c| c.is_whitespace() || output::needs_escape(c));
+    if plain {
+        Ok(link.to_string())
+    } else {
+        let expected = match schemes {
+            ["marfa"] => "a marfa address",
+            _ => "an http or https address",
+        };
+        Err(CliError::Invalid(format!(
+            "the server gave {name} as something other than {expected}"
+        )))
     }
 }
 

@@ -736,6 +736,23 @@ marfa items get [OPTIONS] <ID>
 | --- | --- |
 | `--include <NAME>` | Extra to add to the item: `backrefs`, `neighbors` or `versions`; repeatable. |
 
+### marfa items link
+
+Print an item's link, one line, or open it. The link is the address the item's own server gives, the bin included.
+
+```text
+marfa items link [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The item id. |
+
+| Option | Description |
+| --- | --- |
+| `--app` | Give the link that opens the item in a Marfa app on this device, `marfa://` and the instance and item ids, in place of the address that opens in a browser. |
+| `--open` | Open the link with the system's opener in place of printing it. If nothing opens it, the link is printed and the command fails. |
+
 ### marfa items create
 
 Create an item.
