@@ -2,12 +2,12 @@
 
 use marfa_rules::filter::Expression;
 use marfa_rules::filter::sql::{self, Adding};
-use marfa_rules::query::column_sort_expression;
 use rusqlite::Transaction;
 use rusqlite::types::Value as Bound;
 use serde_json::{Map, Value, json};
 
-use super::order::{NO_KEY, Order};
+use super::keys;
+use super::sort_key::{NO_KEY, Sorted};
 use super::store::{self, Held};
 use super::{Sight, Table, not_found_row, table_of, tables_of_host};
 use crate::app::App;
@@ -137,21 +137,11 @@ impl Withholding {
         if !marfa_rules::schema::order_column_inlinable(column) {
             return Sql::new("NULL");
         }
-        let order = Order {
+        let order = Sorted {
             column: column.to_string(),
             kind: kind.to_string(),
         };
         self.masked(column, &Sql::new(&order.value_key_sql("r.body")))
-    }
-
-    fn sort_key(&self, column: &str, kind: &str) -> Sql {
-        if marfa_rules::schema::KEYED_KINDS.contains(&kind) {
-            return self.typed(column, kind);
-        }
-        let text = column_sort_expression("r.body", "?");
-        let mut shown = Sql::new(&text);
-        shown.values = vec![Bound::Text(format!("$.{column}")); text.matches('?').count()];
-        self.masked(column, &shown)
     }
 
     /// A number the column holds, and nothing for any other kind of value.
@@ -261,40 +251,39 @@ fn selection(
     Ok(sql)
 }
 
-/// The sort key a page orders by, after which ties go by id ascending.
+/// A value written as an item's id has no key, whoever reads it.
 enum Key {
     Id,
     Updated,
-    Column {
-        name: String,
-        kind: String,
-    },
+    /// A column whose key the server keeps in `table_row_keys`.
+    Column(Sorted),
     /// The column the table names as its `order`, whose key is stored with each row.
-    Order(Order),
+    Order(Sorted),
 }
 
 impl Key {
     /// With no `sort`, the table's own `order` column, or `id` for a table that names none.
     fn of(sort: Option<&str>, table: &Table) -> Result<Key> {
         match sort {
-            None => Ok(table.order.clone().map_or(Key::Id, Key::Order)),
+            None => Ok(table.kept.order.clone().map_or(Key::Id, Key::Order)),
             Some("id") => Ok(Key::Id),
             Some("updated_at") => Ok(Key::Updated),
             Some(sort) => match sort.strip_prefix("values.") {
                 Some(column)
-                    if let Some(order) = table.order.as_ref().filter(|o| o.column == column) =>
+                    if let Some(order) =
+                        table.kept.order.as_ref().filter(|o| o.column == column) =>
                 {
                     Ok(Key::Order(order.clone()))
                 }
                 Some(column) if let Some(definition) = table.columns.get(column) => {
-                    Ok(Key::Column {
-                        name: column.to_string(),
+                    Ok(Key::Column(Sorted {
+                        column: column.to_string(),
                         kind: definition
                             .get("type")
                             .and_then(Value::as_str)
                             .unwrap_or_default()
                             .to_string(),
-                    })
+                    }))
                 }
                 _ => Err(invalid(
                     "sort",
@@ -309,8 +298,7 @@ impl Key {
         match self {
             Key::Id => "id".to_string(),
             Key::Updated => "updated_at".to_string(),
-            Key::Column { name, .. } => format!("values.{name}"),
-            Key::Order(order) => format!("values.{}", order.column),
+            Key::Column(sorted) | Key::Order(sorted) => format!("values.{}", sorted.column),
         }
     }
 
@@ -318,17 +306,21 @@ impl Key {
     fn kind(&self) -> Option<String> {
         match self {
             Key::Id | Key::Updated => None,
-            Key::Column { kind, .. } => Some(kind.clone()),
+            Key::Column(sorted) => Some(sorted.kind.clone()),
             Key::Order(order) => Some(order.signature()),
         }
     }
 
-    fn expression(&self, withholding: &Withholding) -> Sql {
+    fn expression(&self) -> Sql {
         match self {
             Key::Id => Sql::new("NULL"),
             Key::Updated => Sql::new("r.updated_at"),
-            Key::Column { name, kind } => withholding.sort_key(name, kind),
-            Key::Order(order) => Sql::new(&order.key_sql("r.body", "r.refs")),
+            Key::Column(sorted) | Key::Order(sorted)
+                if marfa_rules::schema::order_column_inlinable(&sorted.column) =>
+            {
+                Sql::new(&sorted.key_sql("r.body", "r.refs"))
+            }
+            Key::Column(_) | Key::Order(_) => Sql::new("NULL"),
         }
     }
 }
@@ -356,7 +348,7 @@ fn position_after(sql: &mut Sql, key: &Key, descending: bool, at: &Position) {
             sql.bind(id);
             sql.push(")");
         }
-        (Key::Column { .. } | Key::Order(_), value) => {
+        (Key::Column(_) | Key::Order(_), value) => {
             sql.push(&format!(" AND (k IS NULL OR k {after} "));
             sql.bind(value.clone());
             sql.push(" OR (k = ");
@@ -373,7 +365,7 @@ fn order_by(sql: &mut Sql, key: &Key, descending: bool) {
     match key {
         Key::Id => sql.push(&format!(" ORDER BY r.id {direction}")),
         Key::Updated => sql.push(&format!(" ORDER BY k {direction}, r.id ASC")),
-        Key::Column { .. } | Key::Order(_) => {
+        Key::Column(_) | Key::Order(_) => {
             sql.push(&format!(" ORDER BY k {direction} NULLS LAST, r.id ASC"));
         }
     }
@@ -439,7 +431,6 @@ fn resumed(
     read: &Reader<'_, '_>,
     table: Option<i64>,
     key: &Key,
-    withholding: &Withholding,
     scope: &str,
     position: Position,
 ) -> Result<Position> {
@@ -454,7 +445,7 @@ fn resumed(
     };
     let table = table.ok_or_else(moved)?;
     let mut sql = Sql::new("SELECT ");
-    sql.append(&key.expression(withholding));
+    sql.append(&key.expression());
     sql.push(" FROM table_rows r WHERE r.table_seq = ");
     sql.bind(table);
     sql.push(" AND r.id = ");
@@ -488,7 +479,7 @@ fn scanned_page(
 ) -> Result<Vec<(Held, Bound)>> {
     let mut sql =
         Sql::new("SELECT * FROM (SELECT r.id, r.updated_at, json(r.body), json(r.refs), ");
-    sql.append(&key.expression(asked.withholding));
+    sql.append(&key.expression());
     sql.push(" AS k");
     let index = matches!(key, Key::Updated).then_some("table_rows_updated");
     sql.append(&selection(
@@ -507,61 +498,91 @@ fn scanned_page(
     store::page(read.tx, &sql)
 }
 
-/// A page by the stored order keys, in the order [`scanned_page`] gives.
+/// The key the server keeps for the rows a page sorts by.
+enum Kept<'a> {
+    /// The table's `order`, in `table_rows.ord`.
+    Order,
+    /// Another column, in `table_row_keys`.
+    Column(&'a str),
+}
+
+impl Kept<'_> {
+    fn rows(&self, asked: &Selected<'_>) -> Result<(Sql, &'static str, &'static str)> {
+        let (mut sql, key, id) = match self {
+            Kept::Order => {
+                let mut sql = Sql::new(
+                    " FROM table_rows r INDEXED BY table_rows_ordered WHERE r.table_seq = ",
+                );
+                sql.bind(asked.seq);
+                (sql, "r.ord", "r.id")
+            }
+            Kept::Column(name) => {
+                let mut sql = Sql::new(
+                    " FROM table_row_keys k CROSS JOIN table_rows r \
+                     ON r.table_seq = k.table_seq AND r.id = k.id WHERE k.table_seq = ",
+                );
+                sql.bind(asked.seq);
+                sql.push(" AND k.name = ");
+                sql.bind(name.to_string());
+                (sql, "k.key", "k.id")
+            }
+        };
+        if let Some(expression) = asked.filter {
+            conditions(&mut sql, expression, asked.withholding)?;
+        }
+        Ok((sql, key, id))
+    }
+}
+
+/// A page by the keys the server keeps, in the order [`scanned_page`] gives.
 fn keyed_page(
     read: &Reader<'_, '_>,
     asked: &Selected<'_>,
+    kept: &Kept<'_>,
     limit: i64,
 ) -> Result<Vec<(Held, Bound)>> {
-    let index = Some("table_rows_ordered");
     let after = asked
         .position
         .map(|at| (at.keys.first().cloned().unwrap_or(Bound::Null), at));
     let mut found = Vec::new();
     if !matches!(after, Some((Bound::Null, _))) {
-        let mut sql = Sql::new("SELECT r.id, r.updated_at, json(r.body), json(r.refs), r.ord");
-        sql.append(&selection(
-            asked.seq,
-            asked.filter,
-            asked.withholding,
-            index,
-        )?);
+        let (rows, key, id) = kept.rows(asked)?;
+        let mut sql = Sql::new(&format!(
+            "SELECT r.id, r.updated_at, json(r.body), json(r.refs), {key}"
+        ));
+        sql.append(&rows);
         let (direction, beyond) = match asked.descending {
             true => ("DESC", "<"),
             false => ("ASC", ">"),
         };
         // The planner bounds the range by one upper bound only, so a cursor's bound replaces this.
         if !(asked.descending && after.is_some()) {
-            sql.push(&format!(" AND r.ord < {NO_KEY}"));
+            sql.push(&format!(" AND {key} < {NO_KEY}"));
         }
         if let Some((value, at)) = &after {
-            sql.push(&format!(" AND r.ord {beyond}= "));
+            sql.push(&format!(" AND {key} {beyond}= "));
             sql.bind(value.clone());
-            sql.push(&format!(" AND (r.ord {beyond} "));
+            sql.push(&format!(" AND ({key} {beyond} "));
             sql.bind(value.clone());
-            sql.push(" OR r.id > ");
+            sql.push(&format!(" OR {id} > "));
             sql.bind(at.id.clone());
             sql.push(")");
         }
-        sql.push(&format!(" ORDER BY r.ord {direction}, r.id ASC LIMIT "));
+        sql.push(&format!(" ORDER BY {key} {direction}, {id} ASC LIMIT "));
         sql.bind(limit);
         found = store::page(read.tx, &sql)?;
     }
     let left = limit - found.len() as i64;
     if left > 0 {
+        let (rows, key, id) = kept.rows(asked)?;
         let mut sql = Sql::new("SELECT r.id, r.updated_at, json(r.body), json(r.refs), NULL");
-        sql.append(&selection(
-            asked.seq,
-            asked.filter,
-            asked.withholding,
-            index,
-        )?);
-        sql.push(&format!(" AND r.ord = {NO_KEY}"));
+        sql.append(&rows);
+        sql.push(&format!(" AND {key} = {NO_KEY}"));
         if let Some((Bound::Null, at)) = &after {
-            sql.push(" AND r.id > ");
+            sql.push(&format!(" AND {id} > "));
             sql.bind(at.id.clone());
         }
-        sql.push(" ORDER BY r.id ASC LIMIT ");
+        sql.push(&format!(" ORDER BY {id} ASC LIMIT "));
         sql.bind(left);
         found.extend(store::page(read.tx, &sql)?);
     }
@@ -595,13 +616,21 @@ fn answered_page(
     let withholding = Withholding::of(read)?;
     let seq = store::table_seq(read.tx, host.seq, &table.name)?;
     let position = position
-        .map(|at| resumed(read, seq, &key, &withholding, &scope, at))
+        .map(|at| resumed(read, seq, &key, &scope, at))
         .transpose()?;
-    let keyed = match (&key, seq) {
-        (Key::Order(order), Some(seq)) => {
-            store::ordered_by(read.tx, seq)? == Some(order.signature())
+    let kept = match (&key, seq) {
+        (Key::Order(order), Some(seq))
+            if store::ordered_by(read.tx, seq)? == Some(order.signature()) =>
+        {
+            Some(Kept::Order)
         }
-        _ => false,
+        (Key::Column(sorted), Some(seq))
+            if table.kept.keyed.holds(&sorted.column)
+                && keys::keyed_by(read.tx, seq)? == Some(table.kept.keyed.signature()) =>
+        {
+            Some(Kept::Column(&sorted.column))
+        }
+        _ => None,
     };
     let selected = Selected {
         seq,
@@ -610,9 +639,9 @@ fn answered_page(
         position: position.as_ref(),
         descending: asked.descending,
     };
-    let mut found = match keyed {
-        true => keyed_page(read, &selected, limit + 1)?,
-        false => scanned_page(read, &selected, &key, limit + 1)?,
+    let mut found = match &kept {
+        Some(kept) => keyed_page(read, &selected, kept, limit + 1)?,
+        None => scanned_page(read, &selected, &key, limit + 1)?,
     };
     let more = found.len() as i64 > limit;
     found.truncate(limit as usize);
@@ -796,14 +825,27 @@ mod parity {
 
     const CORPUS: &str = include_str!("../../../../marfa-rules/src/filter/parity.json");
 
+    /// The corpus's rows as the server holds them, with each item column's value in `refs`.
     fn held(corpus: &Value) -> Connection {
         let db = Connection::open_in_memory().unwrap();
         crate::db::migrate::make_all(&db).unwrap();
+        let columns = corpus["table"]["columns"].as_object().unwrap();
         for row in corpus["table"]["rows"].as_array().unwrap() {
+            let refs: Map<String, Value> = row["body"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(column, _)| columns[*column]["type"] == "item")
+                .map(|(column, value)| (column.clone(), value.clone()))
+                .collect();
             db.execute(
-                "INSERT INTO table_rows (table_seq, id, updated_at, batch, body) \
-                 VALUES (1, ?1, '2026-01-01T00:00:00Z', 0, jsonb(?2))",
-                params![row["id"].as_str().unwrap(), row["body"].to_string()],
+                "INSERT INTO table_rows (table_seq, id, updated_at, batch, refs, body) \
+                 VALUES (1, ?1, '2026-01-01T00:00:00Z', 0, jsonb(?2), jsonb(?3))",
+                params![
+                    row["id"].as_str().unwrap(),
+                    super::super::refs_text(&refs),
+                    row["body"].to_string()
+                ],
             )
             .unwrap();
         }
@@ -862,27 +904,47 @@ mod parity {
     }
 
     #[test]
-    fn the_rows_are_sorted_by_each_column_as_the_working_copy_sorts_them() {
+    fn the_rows_are_sorted_by_each_column_as_the_working_copy_sorts_them_scanned_or_kept() {
         let corpus: Value = serde_json::from_str(CORPUS).unwrap();
-        let db = held(&corpus);
+        let columns = corpus["table"]["columns"].as_object().unwrap();
+        let mut db = held(&corpus);
+        let keyed = keys::Keyed::of(columns, None);
+        let tx = db.transaction().unwrap();
+        keys::rekey_whole(&tx, 1, &keyed).unwrap();
         for case in corpus["table"]["sorts"].as_array().unwrap() {
             let column = case["by"].as_str().unwrap();
-            let kind = corpus["table"]["columns"][column]["type"].as_str().unwrap();
-            let key = readable().sort_key(column, kind);
+            let kind = columns[column]["type"].as_str().unwrap();
+            let key = Key::Column(Sorted {
+                column: column.to_string(),
+                kind: kind.to_string(),
+            })
+            .expression();
             for (direction, ids) in [("ASC", &case["ascending"]), ("DESC", &case["descending"])] {
-                let mut statement = db
-                    .prepare(&format!(
+                let ways = [
+                    format!(
                         "SELECT r.id FROM table_rows r WHERE r.table_seq = 1 \
                          ORDER BY ({0}) {direction} NULLS LAST, r.id ASC",
                         key.text
-                    ))
-                    .unwrap();
-                let found: Vec<String> = statement
-                    .query_map(params_from_iter(key.values.iter()), |row| row.get(0))
-                    .unwrap()
-                    .collect::<std::result::Result<_, _>>()
-                    .unwrap();
-                assert_eq!(json!(found), *ids, "{column} {direction}");
+                    ),
+                    format!(
+                        "SELECT id FROM table_rows WHERE table_seq = 1 AND id NOT IN \
+                         (SELECT id FROM table_row_keys WHERE table_seq = 1 AND name = '{column}') \
+                         UNION ALL SELECT id FROM (SELECT id FROM table_row_keys \
+                         WHERE table_seq = 1 AND name = '{column}' \
+                         ORDER BY key = X'', CASE WHEN key = X'' THEN NULL ELSE key END \
+                         {direction}, id ASC)"
+                    ),
+                ];
+                for way in ways {
+                    let found: Vec<String> = tx
+                        .prepare(&way)
+                        .unwrap()
+                        .query_map(params_from_iter(key.values.iter()), |row| row.get(0))
+                        .unwrap()
+                        .collect::<std::result::Result<_, _>>()
+                        .unwrap();
+                    assert_eq!(json!(found), *ids, "{column} {direction}: {way}");
+                }
             }
         }
     }

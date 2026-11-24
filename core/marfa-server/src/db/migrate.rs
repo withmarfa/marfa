@@ -114,6 +114,14 @@ pub const MIGRATIONS: &[Migration] = &[
              WHERE name = 'failing_since')",
         ),
     },
+    Migration {
+        version: 16,
+        sql: include_str!("migrations/0016_table_row_keys.sql"),
+        done: Some(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('table_summaries') \
+             WHERE name = 'keyed_by')",
+        ),
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

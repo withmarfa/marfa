@@ -856,7 +856,7 @@ When the server withholds a row's value from the reading key, the server MUST se
 
 **Reason:** a filter, an order, a total or a cursor that read the value would tell the key which item it names.
 
-**Tests:** `compliance/table-rows-reads.test.ts › filters, sorts, totals and pages a withheld item id as no value`.
+**Tests:** `compliance/table-rows-reads.test.ts › filters, totals and pages a withheld item id as no value, and sorts every item id as no value for every reader`.
 
 ## Reading rows
 
@@ -966,13 +966,13 @@ When a page of rows is sorted by a `datetime`, `date`, `number`, `integer` or `s
 
 **Tests:** `compliance/table-rows-reads.test.ts › sorts a value a forced change left of another type as no value`, `› sorts a date or datetime column by its own type after a forced change left other values`.
 
-### `tables/rows-order-item-id`
+### `tables/rows-sort-item-id`
 
-When a page of rows is sorted by a table's `order` column, the server MUST sort a value written as an item's ID as though the row held no value for the column, for every reader.
+When a page of rows is sorted by `values.<column>`, the server MUST sort a value written as an item's ID as though the row held no value for the column, for every reader.
 
-**Reason:** the order is kept once for every reader, and a key that may not read the item must not learn where its ID sorts. Such a value is left only by a column changed from `item` with `force=true`.
+**Reason:** the order of a table's rows by each column is kept once for every reader, and a key that may not read the item must not learn where its ID sorts. A page sorted by a column of type `item` is therefore in `id` order, and a column changed from `item` with `force=true` keeps the IDs it held.
 
-**Tests:** `compliance/table-rows-reads.test.ts › sorts an item id a forced change left in the order column as no value`.
+**Tests:** `compliance/table-rows-reads.test.ts › filters, totals and pages a withheld item id as no value, and sorts every item id as no value for every reader`, `› sorts an item id a forced change left in a column as no value, in the order column or another`.
 
 ### `tables/order-changed`
 
@@ -989,6 +989,22 @@ When a change to a type moves the order the server keeps for the rows of its ite
 **Reason:** a type can have any number of items with any number of tables, and one write that rewrote them all would hold every other write.
 
 **Tests:** `compliance/table-rows-reads.test.ts › rewrites the kept order of many small tables mostly in table-row-cleanup, sorting every page right meanwhile`.
+
+### `tables/columns-changed`
+
+When a type's change adds a column to a table, removes one or changes the type of one, the server MUST answer each page of the table's rows sorted by any column from then on in the order `tables/rows-sort` states.
+
+**Reason:** the server keeps the order of the rows by each column, so a page sorted by a column with no `filter` reads only the rows it answers. It rewrites that order for a large table a page at a time, in `table-row-cleanup`, and a page read meanwhile, or one that names a `filter`, reads the whole table and is still sorted right.
+
+**Tests:** `compliance/table-rows-reads.test.ts › sorts by every column through a change that adds and removes columns, while table-row-cleanup rebuilds the kept keys of a large table`.
+
+### `tables/columns-change-bounded`
+
+When a change to a type changes the columns of its items' tables, the server MUST rewrite the order it keeps of at most 1000 values, one for each row and kept column, in the write of that change and leave the rest to `table-row-cleanup`.
+
+**Reason:** a type can have any number of items with tables of any size, and one write that rewrote them all would hold every other write.
+
+**Tests:** `compliance/table-rows-reads.test.ts › sorts by every column through a change that adds and removes columns, while table-row-cleanup rebuilds the kept keys of a large table`.
 
 ### `tables/order-undo`
 

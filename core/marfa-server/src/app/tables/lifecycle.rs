@@ -9,13 +9,14 @@ use marfa_rules::schema::{
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
 
-use super::order::Order;
+use super::keys::{self, Keyed, Keying};
 use super::search::{self, Indexing, Searched};
+use super::sort_key::Sorted;
 use super::store::{self, Ordering};
-use super::{item_tables, tables_by_name};
+use super::{Kept, item_tables, tables_by_name};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
-use crate::app::catalog::Catalog;
+use crate::app::catalog::{self, Catalog, Snapshot};
 use crate::app::housekeeping::{self, DAY_MS, Report, Run, cutoff, report_kept};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
@@ -39,6 +40,7 @@ struct Tally {
     changes: i64,
     reordered: i64,
     reindexed: i64,
+    rekeyed: i64,
     pages: i64,
 }
 
@@ -52,6 +54,7 @@ impl Tally {
             }
             Page::Reordered(rows) => self.reordered += rows,
             Page::Reindexed(rows) => self.reindexed += rows,
+            Page::Rekeyed(rows) => self.rekeyed += rows,
         }
         self.pages += 1;
     }
@@ -64,6 +67,7 @@ impl Tally {
                 "changes_removed": self.changes,
                 "reordered": self.reordered,
                 "reindexed": self.reindexed,
+                "rekeyed": self.rekeyed,
                 "pages": self.pages,
             }),
             again,
@@ -76,6 +80,7 @@ enum Page {
     Removed(store::Removed),
     Reordered(i64),
     Reindexed(i64),
+    Rekeyed(i64),
 }
 
 #[derive(Clone, Copy)]
@@ -83,6 +88,7 @@ enum Stage {
     Purged,
     Reordered,
     Reindexed,
+    Rekeyed,
     Orphaned,
     Expired,
 }
@@ -93,6 +99,7 @@ pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
         Stage::Purged,
         Stage::Reordered,
         Stage::Reindexed,
+        Stage::Rekeyed,
         Stage::Orphaned,
         Stage::Expired,
     ] {
@@ -109,6 +116,7 @@ pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
                         Stage::Reindexed => {
                             search::reindex_page(tx, CLEANUP_PAGE)?.map(Page::Reindexed)
                         }
+                        Stage::Rekeyed => rekey_page(tx, &live)?.map(Page::Rekeyed),
                         Stage::Orphaned => store::orphan_page(tx, CLEANUP_PAGE)?.map(Page::Removed),
                         Stage::Expired => {
                             match cutoff(tx, &live, ROW_LOG_RETENTION_DAYS, DAY_MS)? {
@@ -133,29 +141,42 @@ pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
     Ok(tally.report(false))
 }
 
-type Declared = BTreeMap<String, (Option<Order>, Searched)>;
+type Declared = BTreeMap<String, Kept>;
 
-/// What each table of an item of `type_id` holding `properties` keeps: its order and the columns
-/// it is searched by. An item's own table keeps no order.
+/// What each table of an item of `type_id` holding `properties` keeps. An item's own table keeps
+/// no order.
 fn declared(catalog: &Catalog, type_id: &str, properties: &Map<String, Value>) -> Result<Declared> {
     if !catalog.types.contains(type_id) {
         return Ok(BTreeMap::new());
     }
     Ok(item_tables(&catalog.types, type_id, properties)?
         .into_iter()
-        .map(|table| (table.name, (table.order, table.searched)))
+        .map(|table| (table.name, table.kept))
         .collect())
+}
+
+/// Rewrites one page of the keys of the first table waiting, by the columns its type declares now.
+fn rekey_page(tx: &Transaction<'_>, app: &App) -> Result<Option<i64>> {
+    let Some(next) = keys::next_rekeying(tx)? else {
+        return Ok(None);
+    };
+    let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Committed)?;
+    let keyed = declared(&catalog, &next.type_id, &parsed(&next.properties)?)?
+        .remove(&next.table)
+        .map(|kept| kept.keyed)
+        .unwrap_or_default();
+    keys::rekey_page(tx, &next, &keyed, CLEANUP_PAGE).map(Some)
 }
 
 // The inline budget spans every table affected by the change.
 fn settle_order(
     tx: &Transaction<'_>,
     held: &Ordering,
-    order: Option<&Order>,
+    order: Option<&Sorted>,
     at: &str,
     rewritten: &mut i64,
 ) -> Result<()> {
-    let wanted = order.map(Order::signature);
+    let wanted = order.map(Sorted::signature);
     let settled = match &held.rebuilding {
         Some(target) => *target == wanted,
         None => held.ordered_by == wanted,
@@ -168,6 +189,26 @@ fn settle_order(
         return store::reorder_whole(tx, held.table_seq, order);
     }
     store::reorder_later(tx, held.table_seq, order)?;
+    housekeeping::bring_forward(tx, CLEANUP_JOB, at)
+}
+
+fn settle_keys(
+    tx: &Transaction<'_>,
+    held: &Keying,
+    keyed: &Keyed,
+    at: &str,
+    rewritten: &mut i64,
+) -> Result<()> {
+    let wanted = keyed.signature();
+    if !held.rebuilding && held.keyed_by.as_deref() == Some(wanted.as_str()) {
+        return Ok(());
+    }
+    let cost = keys::cost(keyed, held.row_count);
+    if *rewritten + cost <= CLEANUP_PAGE {
+        *rewritten += cost;
+        return keys::rekey_whole(tx, held.table_seq, keyed);
+    }
+    keys::rekey_later(tx, held.table_seq)?;
     housekeeping::bring_forward(tx, CLEANUP_JOB, at)
 }
 
@@ -198,24 +239,59 @@ fn settle_index(
 struct Rewritten {
     ordered: i64,
     indexed: i64,
+    keyed: i64,
+}
+
+/// What the tables of one item, or of every item of one type, keep now.
+struct Held {
+    orderings: Vec<Ordering>,
+    indexings: Vec<Indexing>,
+    keyings: Vec<Keying>,
+}
+
+impl Held {
+    fn of_item(tx: &Transaction<'_>, seq: i64) -> Result<Held> {
+        Ok(Held {
+            orderings: store::orderings_of_item(tx, seq)?,
+            indexings: search::indexings_of_item(tx, seq)?,
+            keyings: keys::keyings_of_item(tx, seq)?,
+        })
+    }
+
+    fn of_type(tx: &Transaction<'_>, type_id: &str) -> Result<Held> {
+        Ok(Held {
+            orderings: store::orderings_of_type(tx, type_id)?,
+            indexings: search::indexings_of_type(tx, type_id)?,
+            keyings: keys::keyings_of_type(tx, type_id)?,
+        })
+    }
 }
 
 fn settle(
     tx: &Transaction<'_>,
-    declared: &BTreeMap<String, (Option<Order>, Searched)>,
-    orderings: Vec<Ordering>,
-    indexings: Vec<Indexing>,
+    declared: &Declared,
+    held: Held,
     at: &str,
     rewritten: &mut Rewritten,
 ) -> Result<()> {
-    let none = (None, Searched::default());
-    for held in orderings {
-        let (order, _) = declared.get(&held.table).unwrap_or(&none);
-        settle_order(tx, &held, order.as_ref(), at, &mut rewritten.ordered)?;
+    let none = Kept::default();
+    for ordering in held.orderings {
+        let kept = declared.get(&ordering.table).unwrap_or(&none);
+        settle_order(
+            tx,
+            &ordering,
+            kept.order.as_ref(),
+            at,
+            &mut rewritten.ordered,
+        )?;
     }
-    for held in indexings {
-        let (_, searched) = declared.get(&held.table).unwrap_or(&none);
-        settle_index(tx, &held, searched, at, &mut rewritten.indexed)?;
+    for indexing in held.indexings {
+        let kept = declared.get(&indexing.table).unwrap_or(&none);
+        settle_index(tx, &indexing, &kept.searched, at, &mut rewritten.indexed)?;
+    }
+    for keying in held.keyings {
+        let kept = declared.get(&keying.table).unwrap_or(&none);
+        settle_keys(tx, &keying, &kept.keyed, at, &mut rewritten.keyed)?;
     }
     Ok(())
 }
@@ -237,9 +313,7 @@ pub fn rekey_types(
                 if declared(before, type_id, &properties)? == wanted {
                     continue;
                 }
-                let orderings = store::orderings_of_item(tx, seq)?;
-                let indexings = search::indexings_of_item(tx, seq)?;
-                settle(tx, &wanted, orderings, indexings, at, &mut rewritten)?;
+                settle(tx, &wanted, Held::of_item(tx, seq)?, at, &mut rewritten)?;
             }
             continue;
         }
@@ -247,9 +321,7 @@ pub fn rekey_types(
         if declared(before, type_id, &none)? == wanted {
             continue;
         }
-        let orderings = store::orderings_of_type(tx, type_id)?;
-        let indexings = search::indexings_of_type(tx, type_id)?;
-        settle(tx, &wanted, orderings, indexings, at, &mut rewritten)?;
+        settle(tx, &wanted, Held::of_type(tx, type_id)?, at, &mut rewritten)?;
     }
     Ok(())
 }
@@ -263,13 +335,10 @@ pub fn rekey_item(
     at: &str,
 ) -> Result<()> {
     let wanted = declared(catalog, type_id, properties)?;
-    let orderings = store::orderings_of_item(tx, seq)?;
-    let indexings = search::indexings_of_item(tx, seq)?;
     settle(
         tx,
         &wanted,
-        orderings,
-        indexings,
+        Held::of_item(tx, seq)?,
         at,
         &mut Rewritten::default(),
     )

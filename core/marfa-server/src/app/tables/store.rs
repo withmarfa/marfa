@@ -4,8 +4,9 @@ use rusqlite::types::Value as Bound;
 use rusqlite::{OptionalExtension, Row, Transaction, params, params_from_iter};
 use serde_json::{Map, Value};
 
-use super::order::Order;
-use super::search::{self, Searched};
+use super::Kept;
+use super::search;
+use super::sort_key::Sorted;
 use crate::app::clock::{Stamp, Unread};
 use crate::app::query::Sql;
 use crate::app::refusal::{Refusal, Result};
@@ -72,23 +73,23 @@ pub(super) fn open(
     tx: &Transaction<'_>,
     seq: i64,
     table: &str,
-    order: Option<&Order>,
-    searched: &Searched,
+    kept: &Kept,
     batch: &str,
     at: &str,
 ) -> Result<i64> {
     tx.prepare_cached(
-        "INSERT INTO table_summaries \
-         (item_seq, table_name, row_count, bytes, last_batch, changed_at, ordered_by, searched_by) \
-         VALUES (?1, ?2, 0, 0, ?3, ?4, ?5, ?6) ON CONFLICT (item_seq, table_name) DO NOTHING",
+        "INSERT INTO table_summaries (item_seq, table_name, row_count, bytes, last_batch, \
+         changed_at, ordered_by, searched_by, keyed_by) \
+         VALUES (?1, ?2, 0, 0, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (item_seq, table_name) DO NOTHING",
     )?
     .execute(params![
         seq,
         table,
         batch,
         at,
-        order.map(Order::signature),
-        searched.signature()
+        kept.order.as_ref().map(Sorted::signature),
+        kept.searched.signature(),
+        kept.keyed.signature()
     ])?;
     table_seq(tx, seq, table)?.ok_or_else(|| Refusal::internal("a table summary did not land"))
 }
@@ -123,7 +124,7 @@ pub(super) struct Written<'a> {
     pub batch: i64,
     pub body: &'a str,
     pub refs: Option<&'a str>,
-    pub order: Option<&'a Order>,
+    pub order: Option<&'a Sorted>,
 }
 
 pub(super) fn put(tx: &Transaction<'_>, row: &Written<'_>) -> Result<()> {
@@ -579,7 +580,11 @@ pub(super) fn own_columns_naming(
 
 /// Forgets a purged item's summaries and leaves its rows and their log for `table-row-cleanup`.
 pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
-    for queue in ["table_rows_reordering", "table_rows_reindexing"] {
+    for queue in [
+        "table_rows_reordering",
+        "table_rows_reindexing",
+        "table_rows_rekeying",
+    ] {
         tx.prepare_cached(&format!(
             "DELETE FROM {queue} WHERE table_seq IN \
              (SELECT seq FROM table_summaries WHERE item_seq = ?1)"
@@ -615,6 +620,10 @@ pub(super) fn remove_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<Rem
     else {
         return Ok(None);
     };
+    let keys = super::keys::remove_keys(tx, table, limit)?;
+    if keys > 0 {
+        return Ok(Some(Removed::default()));
+    }
     let mut statement = tx.prepare_cached(
         "SELECT seq, rows FROM row_batches WHERE table_seq = ?1 ORDER BY seq LIMIT ?2",
     )?;
@@ -787,14 +796,18 @@ pub(super) fn orderings_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<V
     )
 }
 
-fn key_of(order: Option<&Order>, body: &str, refs: &str) -> String {
+fn key_of(order: Option<&Sorted>, body: &str, refs: &str) -> String {
     order.map_or_else(
         || "NULL".to_string(),
         |order| order.stored_key_sql(body, refs),
     )
 }
 
-pub(super) fn reorder_whole(tx: &Transaction<'_>, table: i64, order: Option<&Order>) -> Result<()> {
+pub(super) fn reorder_whole(
+    tx: &Transaction<'_>,
+    table: i64,
+    order: Option<&Sorted>,
+) -> Result<()> {
     tx.execute(
         &format!(
             "UPDATE table_rows SET ord = {} WHERE table_seq = ?1",
@@ -805,17 +818,21 @@ pub(super) fn reorder_whole(tx: &Transaction<'_>, table: i64, order: Option<&Ord
     tx.prepare_cached("DELETE FROM table_rows_reordering WHERE table_seq = ?1")?
         .execute([table])?;
     tx.prepare_cached("UPDATE table_summaries SET ordered_by = ?2 WHERE seq = ?1")?
-        .execute(params![table, order.map(Order::signature)])?;
+        .execute(params![table, order.map(Sorted::signature)])?;
     Ok(())
 }
 
 /// Leaves the table's keys to `table-row-cleanup`, which starts them over for `order`.
-pub(super) fn reorder_later(tx: &Transaction<'_>, table: i64, order: Option<&Order>) -> Result<()> {
+pub(super) fn reorder_later(
+    tx: &Transaction<'_>,
+    table: i64,
+    order: Option<&Sorted>,
+) -> Result<()> {
     tx.prepare_cached(
         "INSERT INTO table_rows_reordering (table_seq, target, after_id) VALUES (?1, ?2, NULL) \
          ON CONFLICT (table_seq) DO UPDATE SET target = ?2, after_id = NULL",
     )?
-    .execute(params![table, order.map(Order::signature)])?;
+    .execute(params![table, order.map(Sorted::signature)])?;
     tx.prepare_cached("UPDATE table_summaries SET ordered_by = NULL WHERE seq = ?1")?
         .execute([table])?;
     Ok(())
@@ -834,7 +851,7 @@ pub(super) fn reorder_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<i6
     else {
         return Ok(None);
     };
-    let order = target.as_deref().and_then(Order::from_signature);
+    let order = target.as_deref().and_then(Sorted::from_signature);
     let mut statement = tx.prepare(&format!(
         "UPDATE table_rows SET ord = {} WHERE table_seq = ?1 AND id IN \
          (SELECT id FROM table_rows WHERE table_seq = ?1 AND id > ?2 ORDER BY id LIMIT ?3) \
@@ -958,5 +975,41 @@ mod tests {
             10
         );
         assert_eq!(count(&tx, "SELECT count(*) FROM row_changes"), 10);
+    }
+
+    #[test]
+    fn a_purge_removes_the_sort_keys_of_its_table_in_pages_and_no_others() {
+        let mut db = logged(&[]);
+        let tx = db.transaction().unwrap();
+        for (table, keys) in [(1, 2_500), (2, 10)] {
+            for n in 0..keys {
+                tx.execute(
+                    "INSERT INTO table_row_keys (table_seq, name, key, id) VALUES (?1, 'a', ?2, ?2)",
+                    params![table, format!("{n:05}")],
+                )
+                .unwrap();
+            }
+        }
+        tx.execute("INSERT INTO table_rows_purging (table_seq) VALUES (1)", [])
+            .unwrap();
+        let mut pages = 0;
+        while remove_page(&tx, 1_000).unwrap().is_some() {
+            pages += 1;
+        }
+        assert_eq!(pages, 4);
+        assert_eq!(
+            count(
+                &tx,
+                "SELECT count(*) FROM table_row_keys WHERE table_seq = 1"
+            ),
+            0
+        );
+        assert_eq!(
+            count(
+                &tx,
+                "SELECT count(*) FROM table_row_keys WHERE table_seq = 2"
+            ),
+            10
+        );
     }
 }

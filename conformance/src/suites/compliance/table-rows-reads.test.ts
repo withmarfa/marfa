@@ -613,7 +613,7 @@ describe("reading rows", () => {
     });
   });
 
-  it("filters, sorts, totals and pages a withheld item id as no value", async () => {
+  it("filters, totals and pages a withheld item id as no value, and sorts every item id as no value for every reader", async () => {
     counter += 1;
     const hiddenType = `user.rows-reads-hidden-${counter}-${ctx.runId}`;
     const shownType = `user.rows-reads-shown-${counter}-${ctx.runId}`;
@@ -715,7 +715,7 @@ describe("reading rows", () => {
       return seen;
     };
     expect(await paged(client)).toEqual([withHidden, withShown, without]);
-    expect(await paged(reader)).toEqual([withShown, withHidden, without]);
+    expect(await paged(reader)).toEqual([withHidden, withShown, without]);
   });
 });
 
@@ -1144,7 +1144,7 @@ describe("sorting by a table's order", () => {
     expect(instants.slice(3)).toEqual([loose[0]]);
   });
 
-  it("sorts an item id a forced change left in the order column as no value", async () => {
+  it("sorts an item id a forced change left in a column as no value, in the order column or another", async () => {
     counter += 1;
     const pointed = `user.rows-order-pointed-${counter}-${ctx.runId}`;
     expect(
@@ -1161,10 +1161,15 @@ describe("sorting by a table's order", () => {
     } as never);
     expect(target.status, JSON.stringify(target.error)).toBe(201);
     trackItem(ctx, target.data.item.id);
-    const columns = { name: { type: "string" }, about: { type: "item" } };
+    const columns = {
+      name: { type: "string" },
+      about: { type: "item" },
+      also: { type: "item" },
+    };
     const { type, item, table } = await ordered(columns, "name");
+    const to = target.data.item.id;
     const pointing = await write(item, [
-      { op: "put", values: { name: "m", about: target.data.item.id } },
+      { op: "put", values: { name: "m", about: to, also: to } },
     ]);
     const forced = await client.replaceType(
       type,
@@ -1174,7 +1179,11 @@ describe("sorting by a table's order", () => {
         tables: {
           lines: {
             ...table,
-            columns: { ...columns, about: { type: "string" } },
+            columns: {
+              ...columns,
+              about: { type: "string" },
+              also: { type: "string" },
+            },
             order: "about",
           },
         },
@@ -1183,8 +1192,8 @@ describe("sorting by a table's order", () => {
     );
     expect(forced.status, JSON.stringify(forced.error)).toBe(200);
     const plain = await write(item, [
-      { op: "put", values: { name: "z", about: "zzzzzzzz" } },
-      { op: "put", values: { name: "a", about: "00000000" } },
+      { op: "put", values: { name: "z", about: "zzzzzzzz", also: "zzzzzzzz" } },
+      { op: "put", values: { name: "a", about: "00000000", also: "00000000" } },
     ]);
     counter += 1;
     const key = await client.createKey({
@@ -1196,16 +1205,18 @@ describe("sorting by a table's order", () => {
     trackKey(ctx, key.data.id);
     const reader = new MarfaClient({ baseUrl: apiUrl, apiKey: key.data.key });
     for (const as of [client, reader]) {
-      expect(await walk(as, item, "values.about", "asc", 1)).toEqual([
-        plain[1],
-        plain[0],
-        pointing[0],
-      ]);
-      expect(await walk(as, item, "values.about", "desc", 1)).toEqual([
-        plain[0],
-        plain[1],
-        pointing[0],
-      ]);
+      for (const sort of ["values.about", "values.also"]) {
+        expect(await walk(as, item, sort, "asc", 1)).toEqual([
+          plain[1],
+          plain[0],
+          pointing[0],
+        ]);
+        expect(await walk(as, item, sort, "desc", 1)).toEqual([
+          plain[0],
+          plain[1],
+          pointing[0],
+        ]);
+      }
     }
     const shown = (await client.getRow(item, "lines", pointing[0]!)).data;
     expect(shown.values.about).toBe(target.data.item.id);
@@ -1292,6 +1303,135 @@ describe("sorting by a table's order", () => {
       }
       expect(Date.now()).toBeLessThan(deadline);
     }
+    await sorted();
+  });
+
+  it("sorts by every column through a change that adds and removes columns, while table-row-cleanup rebuilds the kept keys of a large table", async () => {
+    const columns = {
+      rank: { type: "integer" },
+      label: { type: "string" },
+      score: { type: "number" },
+    };
+    const { type, item, table } = await ordered(columns, "rank");
+    const count = 1_500;
+    const label = (n: number) =>
+      `l${String((n * 7_919) % count).padStart(5, "0")}`;
+    const ids: string[] = [];
+    for (let start = 0; start < count; start += 750) {
+      ids.push(
+        ...(await write(
+          item,
+          Array.from(
+            { length: 750 },
+            (_, n) =>
+              ({
+                op: "put",
+                values: {
+                  rank: start + n,
+                  label: label(start + n),
+                  score: ((start + n) * 31) % count,
+                },
+              }) as RowOperation,
+          ),
+        )),
+      );
+    }
+    const byLabel = [...ids].sort((a, b) =>
+      label(ids.indexOf(a)) < label(ids.indexOf(b)) ? -1 : 1,
+    );
+    const byScore = [...ids].sort(
+      (a, b) =>
+        ((ids.indexOf(a) * 31) % count) - ((ids.indexOf(b) * 31) % count),
+    );
+    expect(await walk(client, item, "values.score", "asc")).toEqual(byScore);
+    const begun: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 2; page++) {
+      const res = await client.listRows(item, "lines", {
+        sort: "values.label",
+        limit: 200,
+        cursor,
+      });
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      begun.push(...res.data.data.map((r) => r.id));
+      cursor = res.data.next_cursor ?? undefined;
+    }
+
+    const changedAt = new Date().toISOString();
+    const { score: _, ...kept } = columns;
+    const changed = await client.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: {
+          lines: { ...table, columns: { ...kept, tag: { type: "string" } } },
+        },
+      },
+      true,
+    );
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    do {
+      const res = await client.listRows(item, "lines", {
+        sort: "values.label",
+        limit: 200,
+        cursor,
+      });
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      begun.push(...res.data.data.map((r) => r.id));
+      cursor = res.data.next_cursor ?? undefined;
+    } while (cursor);
+    expect(begun).toEqual(byLabel);
+    await write(item, [
+      { op: "patch", id: ids[10]!, values: { tag: "b" } },
+      { op: "patch", id: ids[20]!, values: { tag: "a" } },
+    ]);
+    const byTag = [ids[20]!, ids[10]!, ...[...ids].sort()].filter(
+      (id, at, all) => all.indexOf(id) === at,
+    );
+    const sorted = async () => {
+      expect(await walk(client, item, "values.label", "desc", 400)).toEqual(
+        [...byLabel].reverse(),
+      );
+      expect(await walk(client, item, "values.tag", "asc", 400)).toEqual(byTag);
+      expect(await walk(client, item, "values.rank", "asc")).toEqual(ids);
+    };
+    await sorted();
+
+    const management = getManagementClient();
+    const deadline = Date.now() + 60_000;
+    const runs = new Map<string, number>();
+    let asked = false;
+    for (;;) {
+      const job = (await management.listHousekeeping()).data.data.find(
+        (row) => row.name === "table-row-cleanup",
+      );
+      if (job?.last_started_at && job.last_started_at > changedAt) {
+        runs.set(
+          job.last_started_at,
+          (job.last_result as { rekeyed: number }).rekeyed,
+        );
+      }
+      if (
+        job?.last_started_at &&
+        job.last_started_at > changedAt &&
+        job.last_finished_at &&
+        job.last_finished_at >= job.last_started_at &&
+        !job.running_since
+      ) {
+        expect(job.last_outcome).toBe("succeeded");
+        break;
+      }
+      if (!asked && !job?.running_since) {
+        asked = (await management.runHousekeeping("table-row-cleanup")).ok;
+      } else {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(Date.now()).toBeLessThan(deadline);
+    }
+    // The write rebuilds at most 1,000 values, here 500 rows of two kept columns.
+    const left = [...runs.values()].reduce((sum, n) => sum + n, 0);
+    expect(left).toBeGreaterThanOrEqual(count - 500);
     await sorted();
   });
 

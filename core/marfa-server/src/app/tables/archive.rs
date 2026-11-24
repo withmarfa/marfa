@@ -7,10 +7,9 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use super::events::{self, Announced};
-use super::order::Order;
-use super::search::{self, Searched};
+use super::search;
 use super::store::{self, Held};
-use super::{Changed, MAX_OPERATIONS, Sight, refs_text, tables_of_host};
+use super::{Changed, Kept, MAX_OPERATIONS, Sight, keys, refs_text, tables_of_host};
 use crate::app::archive::checks::RowKey;
 use crate::app::catalog::Catalog;
 use crate::app::items::{self, Host, Reader};
@@ -157,8 +156,7 @@ struct Run {
     host: Host,
     table: String,
     table_seq: i64,
-    order: Option<Order>,
-    searched: Searched,
+    kept: Kept,
     batch: String,
     /// The batch last announced, which the table's summary names.
     announced: Option<String>,
@@ -210,24 +208,13 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
             let declared = tables_of_host(self.catalog, &host)?
                 .into_iter()
                 .find(|table| table.name == key.table);
-            let (order, searched) = declared
-                .map(|table| (table.order, table.searched))
-                .unwrap_or_default();
-            let table_seq = store::open(
-                tx,
-                host.seq,
-                &key.table,
-                order.as_ref(),
-                &searched,
-                &batch,
-                &self.unit.at,
-            )?;
+            let kept = declared.map(|table| table.kept).unwrap_or_default();
+            let table_seq = store::open(tx, host.seq, &key.table, &kept, &batch, &self.unit.at)?;
             self.run = Some(Run {
                 host,
                 table: key.table.clone(),
                 table_seq,
-                order,
-                searched,
+                kept,
                 batch,
                 announced: None,
                 changed: Vec::new(),
@@ -276,10 +263,18 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
                 batch: store::UNLOGGED,
                 body: &body,
                 refs: refs_text(&refs).as_deref(),
-                order: run.order.as_ref(),
+                order: run.kept.order.as_ref(),
             },
         )?;
-        search::index(tx, run.table_seq, &key.id, &run.searched, &values, &refs)?;
+        keys::keep(tx, run.table_seq, &key.id, &run.kept.keyed)?;
+        search::index(
+            tx,
+            run.table_seq,
+            &key.id,
+            &run.kept.searched,
+            &values,
+            &refs,
+        )?;
         run.count += 1;
         run.bytes += body.len() as i64;
         if updated_at > run.changed_at {
