@@ -31,6 +31,7 @@ interface Hook {
   url: string;
   bodies: string[];
   recover(): void;
+  refuse(): void;
   hold(): void;
   close(): Promise<void>;
 }
@@ -69,10 +70,12 @@ async function startHook(): Promise<Hook> {
   const bodies: string[] = [];
   const held: ServerResponse[] = [];
   const sockets = new Set<Socket>();
-  let answering = false;
+  let mode: "hold" | "refuse" | "answer" = "hold";
   const answer = (res: ServerResponse) => {
-    res.writeHead(200);
-    res.end("ok");
+    if (res.writableEnded || res.destroyed) return;
+    if (mode === "refuse") res.writeHead(503);
+    else res.writeHead(200);
+    res.end(mode === "refuse" ? "unavailable" : "ok");
   };
   const receiver = createServer((req, res) => {
     let body = "";
@@ -81,8 +84,8 @@ async function startHook(): Promise<Hook> {
     });
     req.on("end", () => {
       bodies.push(body);
-      if (answering) answer(res);
-      else held.push(res);
+      if (mode === "hold") held.push(res);
+      else answer(res);
     });
   });
   receiver.on("connection", (socket) => {
@@ -100,13 +103,15 @@ async function startHook(): Promise<Hook> {
     url: `http://127.0.0.1:${String(address.port)}/hook`,
     bodies,
     recover() {
-      answering = true;
-      for (const res of held.splice(0)) {
-        if (!res.writableEnded && !res.destroyed) answer(res);
-      }
+      mode = "answer";
+      for (const res of held.splice(0)) answer(res);
+    },
+    refuse() {
+      mode = "refuse";
+      for (const res of held.splice(0)) answer(res);
     },
     hold() {
-      answering = false;
+      mode = "hold";
     },
     async close() {
       for (const socket of sockets) socket.destroy();
@@ -241,29 +246,31 @@ describe("a webhook whose receiver never answers", () => {
     "goes on attempting the pending deliveries a lowered limit leaves over it",
     { retry: 0, timeout: 120_000 },
     async () => {
-      await waitFor(
-        "an attempt after the restart to end unanswered",
-        async () =>
-          (await deliveries()).some(
-            (row) => row.status === "pending" && row.attempt >= 1,
-          )
-            ? true
-            : undefined,
-        45_000,
-      );
-      // Past the first wait, still far short of the day attention waits for.
-      await clock.advance(2_000);
-      await waitFor(
-        "a second attempt while the lowered limit applies",
-        async () =>
-          (await deliveries()).some(
-            (row) => row.status === "pending" && row.attempt >= 2,
-          )
-            ? true
-            : undefined,
-        90_000,
-      );
-      expect(withStatus(await deliveries(), "pending")).toHaveLength(LIMIT);
+      // A quick 503 keeps each attempt from waiting out its timeout.
+      hook.refuse();
+      const retained = withStatus(await deliveries(), "pending");
+      expect(retained).toHaveLength(LIMIT);
+      let attempts = new Map(retained.map((row) => [row.id, row.attempt]));
+      for (const round of [1, 2]) {
+        const highest = Math.max(...attempts.values());
+        // Past the longest wait, still far short of the day attention waits for.
+        await clock.advance((WAITS_S[highest - 1] ?? 0) * 1000 + 1000);
+        const before = attempts;
+        attempts = await waitFor(
+          `attempt round ${String(round)} on every retained delivery`,
+          async () => {
+            const rows = withStatus(await deliveries(), "pending");
+            const further =
+              rows.length === LIMIT &&
+              rows.every((row) => row.attempt > (before.get(row.id) ?? 0));
+            return further
+              ? new Map(rows.map((row) => [row.id, row.attempt]))
+              : undefined;
+          },
+          45_000,
+        );
+      }
+      hook.hold();
       await configure({ webhook_backlog_deliveries: LIMIT });
     },
   );
@@ -346,10 +353,17 @@ describe("a webhook whose receiver never answers", () => {
         ).toBe(false);
       }
 
+      const earlier = new Set((await deliveries()).map((row) => row.id));
       const sent = await write("after the receiver recovered");
-      await waitFor("a delivery after the backlog drained", async () =>
-        hook.bodies.some((body) => body.includes(sent)) ? true : undefined,
+      const next = await waitFor(
+        "the delivery after the backlog drained to be recorded succeeded",
+        async () =>
+          (await deliveries()).find(
+            (row) => !earlier.has(row.id) && row.status === "succeeded",
+          ),
       );
+      expect(next.attempt).toBe(1);
+      expect(hook.bodies.some((body) => body.includes(sent))).toBe(true);
       expect(
         (await deliveries()).find((row) => row.status === "pending"),
       ).toBeUndefined();
