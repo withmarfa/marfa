@@ -78,9 +78,9 @@ pub(super) fn open(
     at: &str,
 ) -> Result<i64> {
     tx.prepare_cached(
-        "INSERT INTO table_summaries (item_seq, table_name, row_count, bytes, last_batch, \
-         changed_at, ordered_by, searched_by, keyed_by) \
-         VALUES (?1, ?2, 0, 0, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (item_seq, table_name) DO NOTHING",
+        "INSERT INTO table_summaries \
+         (item_seq, table_name, row_count, bytes, last_batch, changed_at, ordered_by, searched_by) \
+         VALUES (?1, ?2, 0, 0, ?3, ?4, ?5, ?6) ON CONFLICT (item_seq, table_name) DO NOTHING",
     )?
     .execute(params![
         seq,
@@ -88,10 +88,23 @@ pub(super) fn open(
         batch,
         at,
         kept.order.as_ref().map(Sorted::signature),
-        kept.searched.signature(),
-        kept.keyed.signature()
+        kept.searched.signature()
     ])?;
     table_seq(tx, seq, table)?.ok_or_else(|| Refusal::internal("a table summary did not land"))
+}
+
+/// The type, properties and name of the item and table `table` keys.
+pub(super) fn host_of_table(
+    tx: &Transaction<'_>,
+    table: i64,
+) -> Result<Option<(String, String, String)>> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT i.type, json(i.properties), s.table_name FROM table_summaries s \
+             JOIN items i ON i.seq = s.item_seq WHERE s.seq = ?1",
+        )?
+        .query_row([table], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .optional()?)
 }
 
 /// The order every row of table `table` holds the key of, once none is being rebuilt.
@@ -578,13 +591,11 @@ pub(super) fn own_columns_naming(
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Forgets a purged item's summaries and leaves its rows and their log for `table-row-cleanup`.
+/// Forgets a purged item's summaries and leaves its rows, their keys and their log for
+/// `table-row-cleanup`.
 pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
-    for queue in [
-        "table_rows_reordering",
-        "table_rows_reindexing",
-        "table_rows_rekeying",
-    ] {
+    super::keys::forget_tables_of(tx, seq)?;
+    for queue in ["table_rows_reordering", "table_rows_reindexing"] {
         tx.prepare_cached(&format!(
             "DELETE FROM {queue} WHERE table_seq IN \
              (SELECT seq FROM table_summaries WHERE item_seq = ?1)"
@@ -596,7 +607,8 @@ pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
             "INSERT OR IGNORE INTO table_rows_purging (table_seq) \
              SELECT s.seq FROM table_summaries s WHERE s.item_seq = ?1 \
              AND (EXISTS (SELECT 1 FROM table_rows r WHERE r.table_seq = s.seq) \
-             OR EXISTS (SELECT 1 FROM row_batches b WHERE b.table_seq = s.seq))",
+             OR EXISTS (SELECT 1 FROM row_batches b WHERE b.table_seq = s.seq) \
+             OR EXISTS (SELECT 1 FROM table_row_keys k WHERE k.table_seq = s.seq))",
         )?
         .execute([seq])?
         > 0;

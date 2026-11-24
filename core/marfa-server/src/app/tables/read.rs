@@ -6,16 +6,20 @@ use rusqlite::Transaction;
 use rusqlite::types::Value as Bound;
 use serde_json::{Map, Value, json};
 
-use super::keys;
+use super::keys::{self, Standing};
+use super::lifecycle;
 use super::sort_key::{NO_KEY, Sorted};
 use super::store::{self, Held};
 use super::{Sight, Table, not_found_row, table_of, tables_of_host};
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::catalog::{self, Snapshot};
 use crate::app::faults::FAIL_TABLE_ROWS_PAGE;
+use crate::app::housekeeping;
 use crate::app::items::{self, Reader, reading};
 use crate::app::query::{Position, Secret, Sql, readable_types};
 use crate::app::refusal::{Refusal, Result};
+use crate::db::Write;
 
 const FIRST_PAGE: i64 = 100;
 pub const MAX_PAGE: i64 = 1000;
@@ -589,12 +593,15 @@ fn keyed_page(
     Ok(found)
 }
 
+/// A table and column a page found unkept and may ask the server to keep.
+type Unkept = (i64, Sorted);
+
 fn answered_page(
     read: &Reader<'_, '_>,
     item_id: &str,
     table: &str,
     asked: &Page,
-) -> Result<String> {
+) -> Result<(String, Option<Unkept>)> {
     if read.faults().fail(FAIL_TABLE_ROWS_PAGE, Some(table)) {
         return Err(Refusal::internal("the read of a page of rows failed"));
     }
@@ -618,17 +625,22 @@ fn answered_page(
     let position = position
         .map(|at| resumed(read, seq, &key, &scope, at))
         .transpose()?;
+    let mut unkept = None;
     let kept = match (&key, seq) {
         (Key::Order(order), Some(seq))
             if store::ordered_by(read.tx, seq)? == Some(order.signature()) =>
         {
             Some(Kept::Order)
         }
-        (Key::Column(sorted), Some(seq))
-            if table.kept.keyed.holds(&sorted.column)
-                && keys::keyed_by(read.tx, seq)? == Some(table.kept.keyed.signature()) =>
-        {
-            Some(Kept::Column(&sorted.column))
+        (Key::Column(sorted), Some(seq)) if table.kept.keyed.holds(sorted) => {
+            match keys::standing(read.tx, seq, sorted)? {
+                Standing::Ready => Some(Kept::Column(&sorted.column)),
+                Standing::Absent if keys::addable(read.tx, seq, sorted)? => {
+                    unkept = Some((seq, sorted.clone()));
+                    None
+                }
+                _ => None,
+            }
         }
         _ => None,
     };
@@ -654,7 +666,10 @@ fn answered_page(
         .into_iter()
         .map(|(row, _)| shown.row(row))
         .collect::<Result<Vec<_>>>()?;
-    printed(&json!({ "data": data, "next_cursor": next }))
+    Ok((
+        printed(&json!({ "data": data, "next_cursor": next }))?,
+        unkept,
+    ))
 }
 
 pub async fn page(
@@ -664,10 +679,37 @@ pub async fn page(
     table: String,
     asked: Page,
 ) -> Result<String> {
-    reading(app, caller, move |read| {
+    let (page, unkept) = reading(app, caller, move |read| {
         answered_page(read, &item_id, &table, &asked)
     })
-    .await
+    .await?;
+    if let Some((seq, sorted)) = unkept {
+        keep_sort_keys(app, seq, sorted).await;
+    }
+    Ok(page)
+}
+
+/// A refusal here costs a later page its speed and nothing else, so the page that asked does not fail.
+async fn keep_sort_keys(app: &App, seq: i64, sorted: Sorted) {
+    let cache = app.catalog_handle();
+    let at = app.clock.stamp();
+    let added = app
+        .db
+        .write(Write::own(), move |tx| {
+            let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
+            let keyable = lifecycle::keyable(&catalog, tx, seq)?;
+            if !keys::add(tx, seq, &keyable, &sorted)? {
+                return Ok(());
+            }
+            housekeeping::bring_forward(tx, lifecycle::CLEANUP_JOB, &at)
+        })
+        .await;
+    if let Err(refusal) = added {
+        tracing::warn!(
+            code = refusal.code.wire(),
+            "Keys for a sort of rows were not added"
+        );
+    }
 }
 
 pub async fn get(
@@ -908,9 +950,15 @@ mod parity {
         let corpus: Value = serde_json::from_str(CORPUS).unwrap();
         let columns = corpus["table"]["columns"].as_object().unwrap();
         let mut db = held(&corpus);
-        let keyed = keys::Keyed::of(columns, None);
         let tx = db.transaction().unwrap();
-        keys::rekey_whole(&tx, 1, &keyed).unwrap();
+        for (column, definition) in columns {
+            tx.execute(
+                "INSERT INTO table_sort_indexes (table_seq, name, kind) VALUES (1, ?1, ?2)",
+                rusqlite::params![column, definition["type"].as_str().unwrap()],
+            )
+            .unwrap();
+        }
+        while keys::fill_page(&tx, 2).unwrap().is_some() {}
         for case in corpus["table"]["sorts"].as_array().unwrap() {
             let column = case["by"].as_str().unwrap();
             let kind = columns[column]["type"].as_str().unwrap();

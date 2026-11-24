@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use super::events::{self, Announced};
 use super::search;
+use super::sort_key::Sorted;
 use super::store::{self, Held};
 use super::{Changed, Kept, MAX_OPERATIONS, Sight, keys, refs_text, tables_of_host};
 use crate::app::archive::checks::RowKey;
@@ -157,6 +158,7 @@ struct Run {
     table: String,
     table_seq: i64,
     kept: Kept,
+    sorts: Vec<Sorted>,
     batch: String,
     /// The batch last announced, which the table's summary names.
     announced: Option<String>,
@@ -210,11 +212,13 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
                 .find(|table| table.name == key.table);
             let kept = declared.map(|table| table.kept).unwrap_or_default();
             let table_seq = store::open(tx, host.seq, &key.table, &kept, &batch, &self.unit.at)?;
+            let sorts = keys::kept(tx, table_seq)?;
             self.run = Some(Run {
                 host,
                 table: key.table.clone(),
                 table_seq,
                 kept,
+                sorts,
                 batch,
                 announced: None,
                 changed: Vec::new(),
@@ -266,7 +270,7 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
                 order: run.kept.order.as_ref(),
             },
         )?;
-        keys::keep(tx, run.table_seq, &key.id, &run.kept.keyed)?;
+        keys::keep(tx, run.table_seq, &key.id, &run.sorts)?;
         search::index(
             tx,
             run.table_seq,

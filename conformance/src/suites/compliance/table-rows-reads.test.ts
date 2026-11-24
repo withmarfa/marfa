@@ -1306,134 +1306,166 @@ describe("sorting by a table's order", () => {
     await sorted();
   });
 
-  it("sorts by every column through a change that adds and removes columns, while table-row-cleanup rebuilds the kept keys of a large table", async () => {
+  it("sorts a large table by its columns right while table-row-cleanup keeps their order and after, through writes and a change to the columns", async () => {
     const columns = {
       rank: { type: "integer" },
       label: { type: "string" },
       score: { type: "number" },
     };
     const { type, item, table } = await ordered(columns, "rank");
-    const count = 1_500;
-    const label = (n: number) =>
-      `l${String((n * 7_919) % count).padStart(5, "0")}`;
-    const ids: string[] = [];
-    for (let start = 0; start < count; start += 750) {
-      ids.push(
-        ...(await write(
-          item,
-          Array.from(
-            { length: 750 },
-            (_, n) =>
-              ({
-                op: "put",
-                values: {
-                  rank: start + n,
-                  label: label(start + n),
-                  score: ((start + n) * 31) % count,
-                },
-              }) as RowOperation,
-          ),
-        )),
+    const count = 20_000;
+    const label = (at: number) =>
+      `l${String((at * 7_919) % count).padStart(5, "0")}`;
+    type Held = Map<string, string | number | undefined>;
+    const labels: Held = new Map();
+    const scores: Held = new Map();
+    for (let start = 0; start < count; start += 1_000) {
+      const made = await write(
+        item,
+        Array.from(
+          { length: 1_000 },
+          (_, n) =>
+            ({
+              op: "put",
+              values: {
+                rank: start + n,
+                label: label(start + n),
+                score: ((start + n) * 31) % count,
+              },
+            }) as RowOperation,
+        ),
       );
-    }
-    const byLabel = [...ids].sort((a, b) =>
-      label(ids.indexOf(a)) < label(ids.indexOf(b)) ? -1 : 1,
-    );
-    const byScore = [...ids].sort(
-      (a, b) =>
-        ((ids.indexOf(a) * 31) % count) - ((ids.indexOf(b) * 31) % count),
-    );
-    expect(await walk(client, item, "values.score", "asc")).toEqual(byScore);
-    const begun: string[] = [];
-    let cursor: string | undefined;
-    for (let page = 0; page < 2; page++) {
-      const res = await client.listRows(item, "lines", {
-        sort: "values.label",
-        limit: 200,
-        cursor,
+      made.forEach((id, n) => {
+        labels.set(id, label(start + n));
+        scores.set(id, ((start + n) * 31) % count);
       });
-      expect(res.status, JSON.stringify(res.error)).toBe(200);
-      begun.push(...res.data.data.map((r) => r.id));
-      cursor = res.data.next_cursor ?? undefined;
     }
+    const ids = [...labels.keys()];
+
+    const expected = (values: Held, direction: "asc" | "desc") => {
+      const byId = [...values.keys()].sort();
+      const held = byId.filter((id) => values.get(id) !== undefined);
+      const none = byId.filter((id) => values.get(id) === undefined);
+      held.sort((a, b) => {
+        const x = values.get(a)!;
+        const y = values.get(b)!;
+        const by = x < y ? -1 : x > y ? 1 : 0;
+        return direction === "asc" ? by : -by;
+      });
+      return [...held, ...none];
+    };
+    const sorted = async (column: string, values: Held) => {
+      for (const direction of ["asc", "desc"] as const) {
+        expect(await walk(client, item, `values.${column}`, direction)).toEqual(
+          expected(values, direction),
+        );
+      }
+    };
+    const change = async (operations: RowOperation[]) => {
+      const made = await write(item, operations);
+      operations.forEach((operation, n) => {
+        if (operation.op === "delete") {
+          labels.delete(operation.id);
+          scores.delete(operation.id);
+          return;
+        }
+        const values = operation.values as { label?: string; score?: number };
+        for (const [column, held] of [
+          ["label", labels],
+          ["score", scores],
+        ] as const) {
+          if (operation.op === "put" || column in values) {
+            held.set(made[n]!, values[column]);
+          }
+        }
+      });
+    };
+
+    type Cleaned = { keyed: number; keys_removed: number; pages: number };
+    const management = getManagementClient();
+    const settle = async (since: string): Promise<Cleaned[]> => {
+      const runs = new Map<string, Cleaned>();
+      for (;;) {
+        const job = (await management.listHousekeeping()).data.data.find(
+          (row) => row.name === "table-row-cleanup",
+        )!;
+        if (!job.running_since) {
+          if (
+            job.last_started_at &&
+            job.last_started_at > since &&
+            job.last_finished_at &&
+            job.last_finished_at >= job.last_started_at
+          ) {
+            expect(job.last_outcome).toBe("succeeded");
+            const run = job.last_result as Cleaned;
+            expect(run.keyed + run.keys_removed).toBeLessThanOrEqual(
+              1_000 * run.pages,
+            );
+            runs.set(job.last_started_at, run);
+            if (run.keyed === 0 && run.keys_removed === 0) {
+              return [...runs.values()];
+            }
+          }
+          await management.runHousekeeping("table-row-cleanup");
+        }
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    };
+    const total = (runs: Cleaned[], of: "keyed" | "keys_removed") =>
+      runs.reduce((sum, run) => sum + run[of], 0);
+
+    const sortedAt = new Date().toISOString();
+    await sorted("label", labels);
+    await sorted("score", scores);
+    await change([
+      { op: "put", values: { rank: -1, label: "l00000a", score: -5 } },
+      { op: "patch", id: ids[0]!, values: { label: "l99999" } },
+      { op: "patch", id: ids[1]!, values: { score: 0.5 } },
+      { op: "delete", id: ids[2]! },
+    ]);
+    await sorted("label", labels);
+    expect(total(await settle(sortedAt), "keyed")).toBeGreaterThan(0);
+
+    await change([
+      { op: "put", values: { rank: -2, label: "a", score: count } },
+      { op: "put", values: { rank: -3 } },
+      { op: "patch", id: ids[3]!, values: { label: "m", score: -1 } },
+      { op: "delete", id: ids[5]! },
+    ]);
+    await sorted("label", labels);
+    await sorted("score", scores);
 
     const changedAt = new Date().toISOString();
-    const { score: _, ...kept } = columns;
     const changed = await client.replaceType(
       type,
       {
         id: type,
         fields: { title: { type: "string" } },
         tables: {
-          lines: { ...table, columns: { ...kept, tag: { type: "string" } } },
+          lines: {
+            ...table,
+            columns: { rank: columns.rank, score: { type: "string" } },
+          },
         },
       },
       true,
     );
     expect(changed.status, JSON.stringify(changed.error)).toBe(200);
-    do {
-      const res = await client.listRows(item, "lines", {
-        sort: "values.label",
-        limit: 200,
-        cursor,
-      });
-      expect(res.status, JSON.stringify(res.error)).toBe(200);
-      begun.push(...res.data.data.map((r) => r.id));
-      cursor = res.data.next_cursor ?? undefined;
-    } while (cursor);
-    expect(begun).toEqual(byLabel);
-    await write(item, [
-      { op: "patch", id: ids[10]!, values: { tag: "b" } },
-      { op: "patch", id: ids[20]!, values: { tag: "a" } },
-    ]);
-    const byTag = [ids[20]!, ids[10]!, ...[...ids].sort()].filter(
-      (id, at, all) => all.indexOf(id) === at,
-    );
-    const sorted = async () => {
-      expect(await walk(client, item, "values.label", "desc", 400)).toEqual(
-        [...byLabel].reverse(),
-      );
-      expect(await walk(client, item, "values.tag", "asc", 400)).toEqual(byTag);
-      expect(await walk(client, item, "values.rank", "asc")).toEqual(ids);
-    };
-    await sorted();
+    for (const id of scores.keys()) scores.set(id, undefined);
+    await sorted("score", scores);
+    expect(total(await settle(changedAt), "keys_removed")).toBeGreaterThan(0);
 
-    const management = getManagementClient();
-    const deadline = Date.now() + 60_000;
-    const runs = new Map<string, number>();
-    let asked = false;
-    for (;;) {
-      const job = (await management.listHousekeeping()).data.data.find(
-        (row) => row.name === "table-row-cleanup",
-      );
-      if (job?.last_started_at && job.last_started_at > changedAt) {
-        runs.set(
-          job.last_started_at,
-          (job.last_result as { rekeyed: number }).rekeyed,
-        );
-      }
-      if (
-        job?.last_started_at &&
-        job.last_started_at > changedAt &&
-        job.last_finished_at &&
-        job.last_finished_at >= job.last_started_at &&
-        !job.running_since
-      ) {
-        expect(job.last_outcome).toBe("succeeded");
-        break;
-      }
-      if (!asked && !job?.running_since) {
-        asked = (await management.runHousekeeping("table-row-cleanup")).ok;
-      } else {
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      expect(Date.now()).toBeLessThan(deadline);
-    }
-    // The write rebuilds at most 1,000 values, here 500 rows of two kept columns.
-    const left = [...runs.values()].reduce((sum, n) => sum + n, 0);
-    expect(left).toBeGreaterThanOrEqual(count - 500);
-    await sorted();
-  });
+    const resortedAt = new Date().toISOString();
+    await sorted("score", scores);
+    await change([
+      { op: "patch", id: ids[6]!, values: { score: "b" } },
+      { op: "patch", id: ids[7]!, values: { score: "a" } },
+    ]);
+    await sorted("score", scores);
+    expect(total(await settle(resortedAt), "keyed")).toBeGreaterThan(0);
+    await change([{ op: "patch", id: ids[8]!, values: { score: "c" } }]);
+    await sorted("score", scores);
+  }, 600_000);
 
   it("refuses a cursor answered before the sorted column changed type", async () => {
     const columns = { at: { type: "string" }, other: { type: "string" } };

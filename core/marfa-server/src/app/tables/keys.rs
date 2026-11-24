@@ -1,17 +1,29 @@
-//! `table_row_keys`: each row's sort key by each column but `order`, kept by every row write.
+//! Which (table, column) pairs a sorted page reads from `table_row_keys`, the walk that keys the
+//! rows already there, and the removal of a dropped pair's keys. Items keep theirs the same way, in
+//! `items::sort_keys`.
 
 use rusqlite::types::Value as Bound;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Map, Value};
 
 use super::sort_key::Sorted;
+use crate::app::items::sort_keys;
+pub(crate) use crate::app::items::sort_keys::Standing;
 use crate::app::refusal::{Refusal, Result};
 
+/// A table with fewer rows sorts faster by reading them all than by keeping keys for each write.
+pub(super) const MIN_ROWS: i64 = sort_keys::MIN_ITEMS;
+
+/// Each pair costs every write to its table and a key for each of its rows, so the number a
+/// server keeps is bounded, apart from the pairs items keep.
+pub(super) const MAX_PAIRS: i64 = sort_keys::MAX_PAIRS;
+
+/// The columns of a table whose keys the server may keep: every column but `order`, whose key
+/// `table_rows.ord` holds, and the `item` columns, whose values all sort as none.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Keyed(Vec<Sorted>);
 
 impl Keyed {
-    /// Every column but `order` and the `item` columns, whose values all sort as none.
     pub(crate) fn of(columns: &Map<String, Value>, order: Option<&Sorted>) -> Keyed {
         let mut keyed: Vec<Sorted> = columns
             .iter()
@@ -29,60 +41,180 @@ impl Keyed {
         Keyed(keyed)
     }
 
-    pub(crate) fn signature(&self) -> String {
-        self.0
-            .iter()
-            .map(Sorted::signature)
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-
-    pub(crate) fn holds(&self, column: &str) -> bool {
-        self.0.iter().any(|sorted| sorted.column == column)
-    }
-
-    fn width(&self) -> i64 {
-        self.0.len().max(1) as i64
+    pub(crate) fn holds(&self, sorted: &Sorted) -> bool {
+        self.0.contains(sorted)
     }
 }
 
-/// The rows one page of a rebuild takes, so it writes about `limit` keys.
-pub(super) fn rows_per_page(keyed: &Keyed, limit: i64) -> i64 {
-    (limit / keyed.width()).max(1)
+/// The pairs kept for a table, which each write to it keys its rows by.
+pub(super) fn kept(tx: &Transaction<'_>, table: i64) -> Result<Vec<Sorted>> {
+    Ok(tx
+        .prepare_cached("SELECT name, kind FROM table_sort_indexes WHERE table_seq = ?1")?
+        .query_map([table], |row| {
+            Ok(Sorted {
+                column: row.get(0)?,
+                kind: row.get(1)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?)
 }
 
-pub(super) fn cost(keyed: &Keyed, rows: i64) -> i64 {
-    rows.saturating_mul(keyed.width())
+pub(super) fn standing(tx: &Transaction<'_>, table: i64, sorted: &Sorted) -> Result<Standing> {
+    let held: Option<(String, bool)> = tx
+        .prepare_cached(
+            "SELECT kind, ready FROM table_sort_indexes WHERE table_seq = ?1 AND name = ?2",
+        )?
+        .query_row(params![table, sorted.column], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .optional()?;
+    Ok(match held {
+        None => Standing::Absent,
+        Some((kind, true)) if kind == sorted.kind => Standing::Ready,
+        Some(_) => Standing::Filling,
+    })
 }
 
-pub(super) fn keep(tx: &Transaction<'_>, table: i64, id: &str, keyed: &Keyed) -> Result<()> {
+fn large(tx: &Transaction<'_>, table: i64) -> Result<bool> {
+    let rows: Option<i64> = tx
+        .prepare_cached("SELECT row_count FROM table_summaries WHERE seq = ?1")?
+        .query_row([table], |row| row.get(0))
+        .optional()?;
+    Ok(rows.is_some_and(|rows| rows >= MIN_ROWS))
+}
+
+fn dropping(tx: &Transaction<'_>, table: i64, column: &str) -> Result<bool> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT EXISTS (SELECT 1 FROM table_sort_indexes_dropping \
+             WHERE table_seq = ?1 AND name = ?2)",
+        )?
+        .query_row(params![table, column], |row| row.get(0))?)
+}
+
+fn room(tx: &Transaction<'_>) -> Result<bool> {
+    let held: i64 = tx
+        .prepare_cached("SELECT count(*) FROM table_sort_indexes")?
+        .query_row([], |row| row.get(0))?;
+    Ok(held < MAX_PAIRS)
+}
+
+/// Whether a page that found the pair absent may ask for it to be kept.
+pub(super) fn addable(tx: &Transaction<'_>, table: i64, sorted: &Sorted) -> Result<bool> {
+    Ok(large(tx, table)? && !dropping(tx, table, &sorted.column)? && room(tx)?)
+}
+
+/// Adds a pair that `keyed`, the table's columns now, holds, and says whether it did; `fill_page`
+/// keys the rows already written.
+pub(super) fn add(
+    tx: &Transaction<'_>,
+    table: i64,
+    keyed: &Keyed,
+    sorted: &Sorted,
+) -> Result<bool> {
+    if !keyed.holds(sorted) || standing(tx, table, sorted)? != Standing::Absent {
+        return Ok(false);
+    }
+    if !addable(tx, table, sorted)? {
+        return Ok(false);
+    }
+    tx.prepare_cached(
+        "INSERT INTO table_sort_indexes (table_seq, name, kind) VALUES (?1, ?2, ?3)",
+    )?
+    .execute(params![table, sorted.column, sorted.kind])?;
+    Ok(true)
+}
+
+/// Stops keeping the table's pairs that `keyed` no longer holds; `fill_page` removes their keys.
+/// Says whether it stopped any.
+pub(super) fn drop_unkept(tx: &Transaction<'_>, table: i64, keyed: &Keyed) -> Result<bool> {
+    let mut dropped = false;
+    for sorted in kept(tx, table)? {
+        if keyed.holds(&sorted) {
+            continue;
+        }
+        tx.prepare_cached("DELETE FROM table_sort_indexes WHERE table_seq = ?1 AND name = ?2")?
+            .execute(params![table, sorted.column])?;
+        tx.prepare_cached(
+            "INSERT OR IGNORE INTO table_sort_indexes_dropping (table_seq, name) VALUES (?1, ?2)",
+        )?
+        .execute(params![table, sorted.column])?;
+        dropped = true;
+    }
+    Ok(dropped)
+}
+
+/// The tables of one item, or of every item of one type, that keep a pair.
+pub(super) struct Keeping {
+    pub table_seq: i64,
+    pub table: String,
+}
+
+fn keepings(tx: &Transaction<'_>, filter: &str, key: &dyn rusqlite::ToSql) -> Result<Vec<Keeping>> {
+    let mut statement = tx.prepare_cached(&format!(
+        "SELECT s.seq, s.table_name FROM table_summaries s WHERE {filter} \
+         AND EXISTS (SELECT 1 FROM table_sort_indexes k WHERE k.table_seq = s.seq)"
+    ))?;
+    let found = statement.query_map([key], |row| {
+        Ok(Keeping {
+            table_seq: row.get(0)?,
+            table: row.get(1)?,
+        })
+    })?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+pub(super) fn keepings_of_item(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Keeping>> {
+    keepings(tx, "s.item_seq = ?1", &seq)
+}
+
+pub(super) fn keepings_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<Keeping>> {
+    keepings(
+        tx,
+        "s.item_seq IN (SELECT seq FROM items WHERE type = ?1)",
+        &type_id,
+    )
+}
+
+/// Stops keeping every pair of a purged item's tables, whose keys go with its rows.
+pub(super) fn forget_tables_of(tx: &Transaction<'_>, seq: i64) -> Result<()> {
+    for kept in ["table_sort_indexes", "table_sort_indexes_dropping"] {
+        tx.prepare_cached(&format!(
+            "DELETE FROM {kept} WHERE table_seq IN \
+             (SELECT seq FROM table_summaries WHERE item_seq = ?1)"
+        ))?
+        .execute([seq])?;
+    }
+    Ok(())
+}
+
+/// Brings the row's keys to the pairs kept for its table.
+pub(super) fn keep(tx: &Transaction<'_>, table: i64, id: &str, kept: &[Sorted]) -> Result<()> {
+    if kept.is_empty() {
+        return Ok(());
+    }
     let mut held: Vec<(String, Bound)> = tx
         .prepare_cached("SELECT name, key FROM table_row_keys WHERE table_seq = ?1 AND id = ?2")?
         .query_map(params![table, id], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    let wanted: Vec<Bound> = match keyed.0.is_empty() {
-        true => Vec::new(),
-        false => {
-            let keys: Vec<String> = keyed
-                .0
-                .iter()
-                .map(|sorted| sorted.stored_key_sql("body", "refs"))
-                .collect();
-            tx.prepare_cached(&format!(
-                "SELECT {} FROM table_rows WHERE table_seq = ?1 AND id = ?2",
-                keys.join(", ")
-            ))?
-            .query_row(params![table, id], |row| {
-                (0..keyed.0.len()).map(|at| row.get(at)).collect()
-            })
-            .optional()?
-            .ok_or_else(|| Refusal::internal("a written row did not read"))?
-        }
-    };
+    let keys: Vec<String> = kept
+        .iter()
+        .map(|sorted| sorted.stored_key_sql("body", "refs"))
+        .collect();
+    let wanted: Vec<Bound> = tx
+        .prepare_cached(&format!(
+            "SELECT {} FROM table_rows WHERE table_seq = ?1 AND id = ?2",
+            keys.join(", ")
+        ))?
+        .query_row(params![table, id], |row| {
+            (0..kept.len()).map(|at| row.get(at)).collect()
+        })
+        .optional()?
+        .ok_or_else(|| Refusal::internal("a written row did not read"))?;
     let mut insert = tx.prepare_cached(
         "INSERT INTO table_row_keys (table_seq, name, key, id) VALUES (?1, ?2, ?3, ?4)",
     )?;
-    for (sorted, key) in keyed.0.iter().zip(wanted) {
+    for (sorted, key) in kept.iter().zip(wanted) {
         match held.iter().position(|(name, _)| *name == sorted.column) {
             Some(at) if held[at].1 == key => {
                 held.swap_remove(at);
@@ -101,170 +233,18 @@ pub(super) fn keep(tx: &Transaction<'_>, table: i64, id: &str, keyed: &Keyed) ->
     Ok(())
 }
 
-pub(super) fn forget(tx: &Transaction<'_>, table: i64, id: &str) -> Result<()> {
+/// Removes a deleted row's keys; a table that keeps no pair holds none but a dropped pair's,
+/// which `fill_page` removes.
+pub(super) fn forget(tx: &Transaction<'_>, table: i64, id: &str, kept: &[Sorted]) -> Result<()> {
+    if kept.is_empty() {
+        return Ok(());
+    }
     tx.prepare_cached("DELETE FROM table_row_keys WHERE table_seq = ?1 AND id = ?2")?
         .execute(params![table, id])?;
     Ok(())
 }
 
-pub(super) struct Keying {
-    pub table_seq: i64,
-    pub table: String,
-    pub row_count: i64,
-    pub keyed_by: Option<String>,
-    pub rebuilding: bool,
-}
-
-fn keyings(tx: &Transaction<'_>, filter: &str, key: &dyn rusqlite::ToSql) -> Result<Vec<Keying>> {
-    let mut statement = tx.prepare_cached(&format!(
-        "SELECT s.seq, s.table_name, s.row_count, s.keyed_by, q.table_seq IS NOT NULL \
-         FROM table_summaries s LEFT JOIN table_rows_rekeying q ON q.table_seq = s.seq \
-         WHERE {filter}"
-    ))?;
-    let found = statement.query_map([key], |row| {
-        Ok(Keying {
-            table_seq: row.get(0)?,
-            table: row.get(1)?,
-            row_count: row.get(2)?,
-            keyed_by: row.get(3)?,
-            rebuilding: row.get(4)?,
-        })
-    })?;
-    Ok(found.collect::<rusqlite::Result<_>>()?)
-}
-
-pub(super) fn keyings_of_item(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Keying>> {
-    keyings(tx, "s.item_seq = ?1", &seq)
-}
-
-pub(super) fn keyings_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<Keying>> {
-    keyings(
-        tx,
-        "s.item_seq IN (SELECT seq FROM items WHERE type = ?1)",
-        &type_id,
-    )
-}
-
-/// None while a rebuild is under way.
-pub(super) fn keyed_by(tx: &Transaction<'_>, table: i64) -> Result<Option<String>> {
-    Ok(tx
-        .prepare_cached("SELECT keyed_by FROM table_summaries WHERE seq = ?1")?
-        .query_row([table], |row| row.get(0))
-        .optional()?
-        .flatten())
-}
-
-fn rekey_rows(
-    tx: &Transaction<'_>,
-    table: i64,
-    keyed: &Keyed,
-    after: &str,
-    limit: i64,
-) -> Result<(i64, Option<String>)> {
-    let (taken, last): (i64, Option<String>) = tx
-        .prepare_cached(
-            "SELECT count(*), max(id) FROM (SELECT id FROM table_rows \
-             WHERE table_seq = ?1 AND id > ?2 ORDER BY id LIMIT ?3)",
-        )?
-        .query_row(params![table, after, limit], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?;
-    let Some(through) = last.clone() else {
-        return Ok((0, None));
-    };
-    tx.prepare_cached("DELETE FROM table_row_keys WHERE table_seq = ?1 AND id > ?2 AND id <= ?3")?
-        .execute(params![table, after, through])?;
-    for sorted in &keyed.0 {
-        tx.prepare_cached(&format!(
-            "INSERT INTO table_row_keys (table_seq, name, key, id) \
-             SELECT ?1, ?4, {}, id FROM table_rows WHERE table_seq = ?1 AND id > ?2 AND id <= ?3",
-            sorted.stored_key_sql("body", "refs")
-        ))?
-        .execute(params![table, after, through, sorted.column])?;
-    }
-    Ok((taken, last))
-}
-
-fn settled_as(tx: &Transaction<'_>, table: i64, signature: Option<&str>) -> Result<()> {
-    tx.prepare_cached("UPDATE table_summaries SET keyed_by = ?2 WHERE seq = ?1")?
-        .execute(params![table, signature])?;
-    Ok(())
-}
-
-pub(super) fn rekey_whole(tx: &Transaction<'_>, table: i64, keyed: &Keyed) -> Result<()> {
-    let page = rows_per_page(keyed, super::lifecycle::CLEANUP_PAGE);
-    let mut after = String::new();
-    loop {
-        let (taken, last) = rekey_rows(tx, table, keyed, &after, page)?;
-        match last {
-            Some(last) if taken == page => after = last,
-            _ => break,
-        }
-    }
-    tx.prepare_cached("DELETE FROM table_rows_rekeying WHERE table_seq = ?1")?
-        .execute([table])?;
-    settled_as(tx, table, Some(&keyed.signature()))
-}
-
-/// Sorted reads scan until `table-row-cleanup` has rebuilt the keys.
-pub(super) fn rekey_later(tx: &Transaction<'_>, table: i64) -> Result<()> {
-    tx.prepare_cached(
-        "INSERT INTO table_rows_rekeying (table_seq, after_id) VALUES (?1, NULL) \
-         ON CONFLICT (table_seq) DO UPDATE SET after_id = NULL",
-    )?
-    .execute([table])?;
-    settled_as(tx, table, None)
-}
-
-pub(super) struct Rekeying {
-    pub table_seq: i64,
-    pub table: String,
-    pub type_id: String,
-    pub properties: String,
-    pub after: String,
-}
-
-pub(super) fn next_rekeying(tx: &Transaction<'_>) -> Result<Option<Rekeying>> {
-    Ok(tx
-        .prepare_cached(
-            "SELECT q.table_seq, s.table_name, i.type, json(i.properties), q.after_id \
-             FROM table_rows_rekeying q JOIN table_summaries s ON s.seq = q.table_seq \
-             JOIN items i ON i.seq = s.item_seq ORDER BY q.table_seq LIMIT 1",
-        )?
-        .query_row([], |row| {
-            Ok(Rekeying {
-                table_seq: row.get(0)?,
-                table: row.get(1)?,
-                type_id: row.get(2)?,
-                properties: row.get(3)?,
-                after: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-            })
-        })
-        .optional()?)
-}
-
-pub(super) fn rekey_page(
-    tx: &Transaction<'_>,
-    next: &Rekeying,
-    keyed: &Keyed,
-    limit: i64,
-) -> Result<i64> {
-    let page = rows_per_page(keyed, limit);
-    let (taken, last) = rekey_rows(tx, next.table_seq, keyed, &next.after, page)?;
-    match last {
-        Some(last) if taken == page => {
-            tx.prepare_cached("UPDATE table_rows_rekeying SET after_id = ?2 WHERE table_seq = ?1")?
-                .execute(params![next.table_seq, last])?;
-        }
-        _ => {
-            tx.prepare_cached("DELETE FROM table_rows_rekeying WHERE table_seq = ?1")?
-                .execute([next.table_seq])?;
-            settled_as(tx, next.table_seq, Some(&keyed.signature()))?;
-        }
-    }
-    Ok(taken)
-}
-
+/// Removes up to `limit` keys of a purged table.
 pub(super) fn remove_keys(tx: &Transaction<'_>, table: i64, limit: i64) -> Result<i64> {
     Ok(tx
         .prepare_cached(
@@ -274,68 +254,286 @@ pub(super) fn remove_keys(tx: &Transaction<'_>, table: i64, limit: i64) -> Resul
         .execute(params![table, limit])? as i64)
 }
 
+/// One page of keys removed or rows keyed.
+pub(super) enum Filled {
+    Removed(i64),
+    Keyed(i64),
+}
+
+fn drop_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<i64>> {
+    let pair: Option<(i64, String)> = tx
+        .prepare_cached("SELECT table_seq, name FROM table_sort_indexes_dropping LIMIT 1")?
+        .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .optional()?;
+    let Some((table, name)) = pair else {
+        return Ok(None);
+    };
+    let removed = tx
+        .prepare_cached(
+            "DELETE FROM table_row_keys WHERE (table_seq, name, key, id) IN \
+             (SELECT table_seq, name, key, id FROM table_row_keys \
+             WHERE table_seq = ?1 AND name = ?2 LIMIT ?3)",
+        )?
+        .execute(params![table, name, limit])? as i64;
+    if removed < limit {
+        tx.prepare_cached(
+            "DELETE FROM table_sort_indexes_dropping WHERE table_seq = ?1 AND name = ?2",
+        )?
+        .execute(params![table, name])?;
+    }
+    Ok(Some(removed))
+}
+
+/// One page of work: removing up to `limit` keys of a dropped pair, else keying up to `limit` rows
+/// of the first pair not yet ready. Rows a write keyed meanwhile already hold the same key.
+pub(super) fn fill_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<Filled>> {
+    if let Some(removed) = drop_page(tx, limit)? {
+        return Ok(Some(Filled::Removed(removed)));
+    }
+    let pair: Option<(i64, String, String, String)> = tx
+        .prepare_cached(
+            "SELECT table_seq, name, kind, filled_after FROM table_sort_indexes \
+             WHERE ready = 0 LIMIT 1",
+        )?
+        .query_row([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .optional()?;
+    let Some((table, column, kind, after)) = pair else {
+        return Ok(None);
+    };
+    let (taken, last): (i64, Option<String>) = tx
+        .prepare_cached(
+            "SELECT count(*), max(id) FROM (SELECT id FROM table_rows \
+             WHERE table_seq = ?1 AND id > ?2 ORDER BY id LIMIT ?3)",
+        )?
+        .query_row(params![table, after, limit], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+    if let Some(through) = &last {
+        let sorted = Sorted { column, kind };
+        tx.prepare_cached(&format!(
+            "INSERT OR IGNORE INTO table_row_keys (table_seq, name, key, id) \
+             SELECT ?1, ?4, {}, id FROM table_rows WHERE table_seq = ?1 AND id > ?2 AND id <= ?3",
+            sorted.stored_key_sql("body", "refs")
+        ))?
+        .execute(params![table, after, through, sorted.column])?;
+        tx.prepare_cached(
+            "UPDATE table_sort_indexes SET filled_after = ?3 WHERE table_seq = ?1 AND name = ?2",
+        )?
+        .execute(params![table, sorted.column, through])?;
+        if taken == limit {
+            return Ok(Some(Filled::Keyed(taken)));
+        }
+        return ready(tx, table, &sorted.column).map(|()| Some(Filled::Keyed(taken)));
+    }
+    ready(tx, table, &column).map(|()| Some(Filled::Keyed(0)))
+}
+
+fn ready(tx: &Transaction<'_>, table: i64, column: &str) -> Result<()> {
+    tx.prepare_cached(
+        "UPDATE table_sort_indexes SET ready = 1 WHERE table_seq = ?1 AND name = ?2",
+    )?
+    .execute(params![table, column])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use rusqlite::Connection;
+    use serde_json::json;
+
     use super::*;
-    use crate::db::migrate::{self, MIGRATIONS};
+
+    fn db(tables: &[(i64, i64)]) -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::migrate::make_all(&db).unwrap();
+        for &(seq, rows) in tables {
+            db.execute(
+                "INSERT INTO table_summaries (seq, item_seq, table_name, row_count, bytes, \
+                 last_batch, changed_at) VALUES (?1, ?1, 'lines', ?2, 0, '', '')",
+                params![seq, rows],
+            )
+            .unwrap();
+            db.execute(
+                "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?2) \
+                 INSERT INTO table_rows (table_seq, id, updated_at, batch, body) \
+                 SELECT ?1, printf('%06d', i), '', 0, jsonb(json_object('a', ?2 - i)) FROM n",
+                params![seq, rows],
+            )
+            .unwrap();
+        }
+        db
+    }
+
+    fn a(kind: &str) -> Sorted {
+        Sorted {
+            column: "a".into(),
+            kind: kind.into(),
+        }
+    }
+
+    fn keyed(kind: &str) -> Keyed {
+        Keyed::of(
+            json!({ "a": { "type": kind }, "who": { "type": "item" } })
+                .as_object()
+                .unwrap(),
+            None,
+        )
+    }
+
+    fn count(tx: &Transaction<'_>, sql: &str) -> i64 {
+        tx.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    fn drain(tx: &Transaction<'_>, limit: i64) -> Vec<i64> {
+        let mut pages = Vec::new();
+        while let Some(page) = fill_page(tx, limit).unwrap() {
+            pages.push(match page {
+                Filled::Removed(keys) => -keys,
+                Filled::Keyed(rows) => rows,
+            });
+        }
+        pages
+    }
 
     #[test]
-    fn an_upgraded_database_rekeys_every_table_in_pages_of_about_the_limit() {
-        let mut db = rusqlite::Connection::open_in_memory().unwrap();
-        let before = &MIGRATIONS[..MIGRATIONS.len() - 1];
-        migrate::complete(&mut db, before).unwrap();
-        db.execute_batch(
-            "INSERT INTO items (seq, id, type, state, tier, source, version, schema_version, \
-             occurred_at, created_at, updated_at, last_activity_at, properties) \
-             VALUES (1, 'i', 'user.t', 'active', 'feed', 's', 1, 0, 't', 't', 't', 't', jsonb('{}')); \
-             INSERT INTO table_summaries (seq, item_seq, table_name, row_count, bytes, last_batch, changed_at) \
-             VALUES (7, 1, 'lines', 30, 0, '', '')",
-        )
-        .unwrap();
-        for n in 0..30 {
-            db.execute(
-                "INSERT INTO table_rows (table_seq, id, updated_at, batch, body) \
-                 VALUES (7, ?1, '', 0, jsonb(?2))",
-                params![
-                    format!("{n:03}"),
-                    format!(r#"{{"a": {n}, "b": "t{}"}}"#, 30 - n)
-                ],
-            )
-            .unwrap();
-        }
-        migrate::upgrade(&mut db, MIGRATIONS, before.len() as u32).unwrap();
+    fn only_a_declared_column_of_a_large_table_gains_a_pair() {
+        let mut db = db(&[(1, MIN_ROWS), (2, MIN_ROWS - 1)]);
         let tx = db.transaction().unwrap();
-        assert_eq!(keyed_by(&tx, 7).unwrap(), None);
-        let columns: Map<String, Value> = serde_json::from_str(
-            r#"{"a": {"type": "number"}, "b": {"type": "string"}, "c": {"type": "item"}}"#,
+        let number = keyed("number");
+        let who = Sorted {
+            column: "who".into(),
+            kind: "item".into(),
+        };
+        assert!(!number.holds(&who));
+        assert!(!add(&tx, 1, &number, &who).unwrap());
+        assert!(!add(&tx, 1, &number, &a("string")).unwrap());
+        assert!(!add(&tx, 2, &number, &a("number")).unwrap());
+        assert!(!add(&tx, 3, &number, &a("number")).unwrap());
+        assert!(add(&tx, 1, &number, &a("number")).unwrap());
+        assert!(!add(&tx, 1, &number, &a("number")).unwrap());
+        assert_eq!(standing(&tx, 1, &a("number")).unwrap(), Standing::Filling);
+    }
+
+    #[test]
+    fn the_cap_holds_across_tables() {
+        let mut db = db(&[]);
+        let tx = db.transaction().unwrap();
+        for seq in 1..=MAX_PAIRS + 1 {
+            tx.execute(
+                "INSERT INTO table_summaries (seq, item_seq, table_name, row_count, bytes, \
+                 last_batch, changed_at) VALUES (?1, ?1, 'lines', ?2, 0, '', '')",
+                params![seq, MIN_ROWS],
+            )
+            .unwrap();
+        }
+        for seq in 1..=MAX_PAIRS {
+            assert!(add(&tx, seq, &keyed("number"), &a("number")).unwrap());
+        }
+        assert!(!add(&tx, MAX_PAIRS + 1, &keyed("number"), &a("number")).unwrap());
+        assert!(drop_unkept(&tx, 1, &Keyed::default()).unwrap());
+        assert!(add(&tx, MAX_PAIRS + 1, &keyed("number"), &a("number")).unwrap());
+    }
+
+    #[test]
+    fn the_walk_keys_every_row_once_in_bounded_pages_beside_the_rows_writes_keyed() {
+        let rows = 2_505;
+        let mut db = db(&[(1, rows)]);
+        let tx = db.transaction().unwrap();
+        tx.execute(
+            "UPDATE table_summaries SET row_count = ?1 WHERE seq = 1",
+            [MIN_ROWS],
         )
         .unwrap();
-        let keyed = Keyed::of(&columns, None);
-        let mut pages = Vec::new();
-        while let Some(next) = next_rekeying(&tx).unwrap() {
-            assert_eq!(next.table_seq, 7);
-            pages.push(rekey_page(&tx, &next, &keyed, 20).unwrap());
+        assert!(add(&tx, 1, &keyed("number"), &a("number")).unwrap());
+        let kept = kept(&tx, 1).unwrap();
+        assert!(fill_page(&tx, 1_000).unwrap().is_some());
+        // A write behind the walk and one ahead of it, as `Batch` keys them.
+        for id in ["000010", "002000"] {
+            tx.execute(
+                "UPDATE table_rows SET body = jsonb('{\"a\": -1}') WHERE table_seq = 1 AND id = ?1",
+                [id],
+            )
+            .unwrap();
+            keep(&tx, 1, id, &kept).unwrap();
         }
-        assert_eq!(pages, [10, 10, 10, 0]);
-        assert_eq!(
-            keyed_by(&tx, 7).unwrap().as_deref(),
-            Some("number:a,string:b")
+        tx.execute(
+            "DELETE FROM table_rows WHERE table_seq = 1 AND id = '002001'",
+            [],
+        )
+        .unwrap();
+        forget(&tx, 1, "002001", &kept).unwrap();
+        assert_eq!(drain(&tx, 1_000), [1_000, 504]);
+        assert_eq!(standing(&tx, 1, &a("number")).unwrap(), Standing::Ready);
+        assert_eq!(count(&tx, "SELECT count(*) FROM table_row_keys"), rows - 1);
+        let wrong = count(
+            &tx,
+            "SELECT count(*) FROM table_row_keys k JOIN table_rows r USING (table_seq, id) \
+             WHERE k.key IS NOT json_extract(r.body, '$.a')",
         );
-        let held: i64 = tx
-            .query_row(
-                "SELECT count(*) FROM table_row_keys WHERE table_seq = 7",
-                [],
-                |row| row.get(0),
+        assert_eq!(wrong, 0);
+    }
+
+    #[test]
+    fn a_retyped_or_removed_column_drops_its_pair_and_its_keys_in_pages() {
+        let mut db = db(&[(1, MIN_ROWS), (2, MIN_ROWS)]);
+        let tx = db.transaction().unwrap();
+        assert!(add(&tx, 1, &keyed("number"), &a("number")).unwrap());
+        assert!(add(&tx, 2, &keyed("number"), &a("number")).unwrap());
+        drain(&tx, 5_000);
+        assert_eq!(
+            count(&tx, "SELECT count(*) FROM table_row_keys"),
+            2 * MIN_ROWS
+        );
+
+        assert!(!drop_unkept(&tx, 1, &keyed("number")).unwrap());
+        assert!(drop_unkept(&tx, 1, &keyed("string")).unwrap());
+        assert_eq!(standing(&tx, 1, &a("string")).unwrap(), Standing::Absent);
+        assert!(!add(&tx, 1, &keyed("string"), &a("string")).unwrap());
+        assert_eq!(drain(&tx, 5_000), [-5_000, -5_000, -5_000, -5_000, 0]);
+        assert_eq!(
+            count(
+                &tx,
+                "SELECT count(*) FROM table_row_keys WHERE table_seq = 1"
+            ),
+            0
+        );
+        assert_eq!(
+            count(
+                &tx,
+                "SELECT count(*) FROM table_row_keys WHERE table_seq = 2"
+            ),
+            MIN_ROWS
+        );
+        assert!(add(&tx, 1, &keyed("string"), &a("string")).unwrap());
+    }
+
+    #[test]
+    fn a_table_that_shrinks_keeps_its_pair_and_its_keys_true() {
+        let mut db = db(&[(1, MIN_ROWS)]);
+        let tx = db.transaction().unwrap();
+        assert!(add(&tx, 1, &keyed("number"), &a("number")).unwrap());
+        drain(&tx, 5_000);
+        let kept = kept(&tx, 1).unwrap();
+        for n in 1..=10 {
+            let id = format!("{n:06}");
+            tx.execute(
+                "DELETE FROM table_rows WHERE table_seq = 1 AND id = ?1",
+                [&id],
             )
             .unwrap();
-        assert_eq!(held, 60);
-        let first: String = tx
-            .query_row(
-                "SELECT id FROM table_row_keys WHERE table_seq = 7 AND name = 'b' ORDER BY key, id",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(first, "029");
+            forget(&tx, 1, &id, &kept).unwrap();
+        }
+        tx.execute(
+            "UPDATE table_summaries SET row_count = row_count - 10 WHERE seq = 1",
+            [],
+        )
+        .unwrap();
+        assert_eq!(standing(&tx, 1, &a("number")).unwrap(), Standing::Ready);
+        assert_eq!(
+            count(&tx, "SELECT count(*) FROM table_row_keys"),
+            MIN_ROWS - 10
+        );
     }
 }

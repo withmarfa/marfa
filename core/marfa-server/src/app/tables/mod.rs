@@ -109,6 +109,7 @@ pub(crate) struct Table {
 pub(crate) struct Kept {
     pub order: Option<Sorted>,
     pub searched: Searched,
+    /// The columns whose keys it keeps once a large table is sorted by one.
     pub keyed: Keyed,
 }
 
@@ -280,6 +281,8 @@ struct Batch<'a, 'c> {
     table: &'a Table,
     /// The table's key, `None` until the table first holds a row.
     table_seq: Option<i64>,
+    /// The columns the server keeps the table's rows' keys by.
+    sorts: Vec<Sorted>,
     batch_id: String,
     undoes: Option<String>,
     /// The batch's seq in the log, `None` until it first changes a row.
@@ -495,7 +498,7 @@ impl Batch<'_, '_> {
                 order: self.table.kept.order.as_ref(),
             },
         )?;
-        keys::keep(unit.tx(), table, id, &self.table.kept.keyed)?;
+        keys::keep(unit.tx(), table, id, &self.sorts)?;
         search::index(
             unit.tx(),
             table,
@@ -526,7 +529,7 @@ impl Batch<'_, '_> {
         }
         self.begin(id, true, None)?;
         search::forget(unit.tx(), table, id)?;
-        keys::forget(unit.tx(), table, id)?;
+        keys::forget(unit.tx(), table, id, &self.sorts)?;
         let bytes = store::delete(unit.tx(), table, id)?
             .ok_or_else(|| Refusal::internal("a held row did not delete"))?;
         self.count -= 1;
@@ -664,12 +667,18 @@ impl<'a, 'c> Batch<'a, 'c> {
         table: &'a Table,
         undoes: Option<String>,
     ) -> Result<Batch<'a, 'c>> {
+        let table_seq = store::table_seq(unit.tx(), host.seq, &table.name)?;
+        let sorts = match table_seq {
+            Some(seq) => keys::kept(unit.tx(), seq)?,
+            None => Vec::new(),
+        };
         Ok(Batch {
             unit,
             catalog,
             host,
             table,
-            table_seq: store::table_seq(unit.tx(), host.seq, &table.name)?,
+            table_seq,
+            sorts,
             batch_id: Uuid::now_v7().to_string(),
             undoes,
             batch_seq: None,
