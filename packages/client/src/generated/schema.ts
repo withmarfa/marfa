@@ -3679,7 +3679,7 @@ export interface components {
         /** @description How a view groups its items. */
         ViewGroup: {
             /**
-             * @description The field to group by: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier` or `tags`), `properties.<name>`, `source`, `status_group`, or `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins.
+             * @description The field to group by: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier` or `tags`), `properties.<name>`, `source`, `status_group`, `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins.
              * @example properties.status
              */
             by: string;
