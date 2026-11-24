@@ -1,62 +1,61 @@
-<h1>Passkeys and password</h1>
-<section class="part" aria-labelledby="passkeys-title">
+{% import "partials/parts.html" as parts %}<div class="head"><h1>Passkeys and password</h1></div>
+<section class="part flow" aria-labelledby="passkeys-title">
 <h2 id="passkeys-title">Passkeys</h2>
 <p class="lede">A passkey signs you in with your device's lock instead of your password.</p>
 <p>Passkeys work only at a secure address: HTTPS with a domain name, or localhost on the computer running Marfa. They don't work at an IP address.</p>
 {% if rows.is_empty() %}
 <p>You haven't added a passkey yet.</p>
 {% else %}
-<ul class="stack">
+<ul class="flow">
 {% for row in rows %}
-<li>
+<li class="flow">
 <p><bdi>{{ row.name }}</bdi></p>
 <p class="lede">Added {{ row.added }}{% if let Some(day) = row.last_used %}. Last used {{ day }}{% endif %}.</p>
 {% if let Some(host) = row.made_for %}
 <p class="notice">Made for {{ host }}, so it can't sign in here. Remove it and add a new passkey.</p>
 {% endif %}
 <div class="actions" data-passkey-actions>
-<button type="button" class="button" data-passkey-rename="{{ row.id }}">Rename</button>
-<button type="button" class="button" data-passkey-remove="{{ row.id }}">Remove</button>
+<button type="button" class="btn small" data-passkey-rename="{{ row.id }}">Rename</button>
+<button type="button" class="btn small" data-passkey-remove="{{ row.id }}">Remove</button>
 </div>
-<form class="stack" data-passkey-rename-form="{{ row.id }}" hidden>
-<div class="field">
-<label for="passkey-rename-{{ row.id }}">New name</label>
-<input id="passkey-rename-{{ row.id }}" type="text" name="name" value="{{ row.name }}" maxlength="200" required autocomplete="off">
+<form data-passkey-rename-form="{{ row.id }}" hidden>
+<div class="fields">
+{% call parts::group() %}
+{% call parts::field("passkey-rename-{}"|format(row.id), "New name", name="name", value=row.name.as_str(), maxlength=200) %}{% endcall %}
+{% endcall %}
 </div>
-<div class="actions">
-<button type="submit" class="button primary">Save</button>
-<button type="button" class="button" data-passkey-rename-cancel>Cancel</button>
-</div>
+{% call parts::actions() %}<button type="button" class="btn" data-passkey-rename-cancel>Cancel</button>
+<button type="submit" class="btn primary">Save</button>{% endcall %}
 </form>
 </li>
 {% endfor %}
 </ul>
 {% endif %}
-<p class="notice error" role="alert" data-passkey-error hidden></p>
-<div class="stack" data-passkey-group hidden>
-<div class="field">
-<label for="passkey-name">Passkey name</label>
-<input id="passkey-name" type="text" maxlength="200" autocomplete="off" data-passkey-name>
+<p class="err" role="alert" data-passkey-error hidden></p>
+<div data-passkey-group hidden>
+<div class="fields">
+{% call parts::group() %}
+{% call parts::field("passkey-name", "Passkey name", maxlength=200, required=false) %}{% endcall %}
+{% endcall %}
 </div>
-<button type="button" class="button primary wide" data-passkey="add" hidden>Add a passkey</button>
+{% call parts::actions() %}<button type="button" class="btn primary" data-passkey="add" hidden>Add a passkey</button>{% endcall %}
 </div>
 </section>
-<section class="part" aria-labelledby="password-title">
+<section class="part flow" aria-labelledby="password-title">
 <h2 id="password-title">Password</h2>
 <p class="lede">Changing your password signs you out of every other browser. Apps you've connected stay connected.</p>
-<form method="post" action="/auth/owner/password" class="stack" data-change>
+<form method="post" action="/auth/owner/password" data-change>
 <input type="text" value="{{ username }}" autocomplete="username" readonly hidden>
-<div class="field">
-<label for="current-password">Current password</label>
-<input id="current-password" type="password" name="current_password" autocomplete="current-password" required>
+<div class="fields">
+{% call parts::group() %}
+{% call parts::field("current-password", "Current password", name="current_password", kind="password", autocomplete="current-password") %}{% endcall %}
+{% endcall %}
+{% call parts::group(note="new-password-note", hint="Use at least 8 characters. Choose a password you don't use anywhere else.") %}
+{% call parts::field("new-password", "New password", name="new_password", kind="password", autocomplete="new-password", minlength=8, maxlength=128, note="new-password-note") %}{% endcall %}
+{% endcall %}
 </div>
-<div class="field">
-<label for="new-password">New password</label>
-<input id="new-password" type="password" name="new_password" autocomplete="new-password" minlength="8" maxlength="128" required aria-describedby="new-password-hint">
-<p class="hint" id="new-password-hint">Use at least 8 characters. Choose a password you don't use anywhere else.</p>
-</div>
-<p class="notice error" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
+<p class="err" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
 <p class="notice" role="status" data-form-done hidden>Your password has been changed.</p>
-<button type="submit" class="button primary wide">Change password</button>
+{% call parts::actions() %}<button type="submit" class="btn primary">Change password</button>{% endcall %}
 </form>
 </section>

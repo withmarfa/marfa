@@ -880,7 +880,7 @@ describe("signing the owner in at the claim", () => {
         });
         expect(refused.status).toBe(400);
         const page = await refused.text();
-        expect(page).toContain('id="username-error"');
+        expect(page).toMatch(/<input id="username"[^>]*\saria-invalid="true"/);
         expect(page).toContain('value="not a username"');
         expect(page).not.toContain(OWNER.password);
         const claimed = await form({

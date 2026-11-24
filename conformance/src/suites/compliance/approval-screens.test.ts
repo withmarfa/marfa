@@ -1364,7 +1364,9 @@ describe("what the approval pages refuse an app that asks for all data, and deny
     const screen = await deviceScreen(await register(ALL), ALL);
     const denied = await decideDevice(screen, "approve", [CHOOSE], []);
     expect(denied.status).toBe(200);
-    expect(visibleText(await denied.text())).toMatch(/didn't approve access/i);
+    expect(visibleText(await denied.text())).toContain(
+      "Your device isn’t connected",
+    );
     expect((await poll(app, screen)).status).not.toBe(200);
   });
 

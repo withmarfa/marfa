@@ -733,20 +733,24 @@ describe("the instance display name", () => {
     4 * FRESH_SERVER_TIMEOUT_MS,
   );
 
-  it("refuses invalid names and escapes the name in pages on later requests", async () => {
+  it("refuses invalid names and keeps the name out of pages on later requests", async () => {
     const client = configKey();
     const name = '<img src=x onerror="throw 1"> & Library';
+    const escaped =
+      "&lt;img src=x onerror=&quot;throw 1&quot;&gt; &amp; Library";
     expect((await client.updateConfig({ name })).status).toBe(200);
+    const described = await fetch(`${server!.apiUrl}/`);
+    expect(described.status).toBe(200);
+    expect(await described.json()).toMatchObject({ name });
     for (const path of ["/", "/auth/sign-in", "/setup"]) {
       const response = await fetch(`${server!.apiUrl}${path}`, {
         headers: { accept: "text/html" },
       });
       expect(response.status, path).toBe(200);
       const html = await response.text();
-      expect(html, path).toContain(
-        "&lt;img src=x onerror=&quot;throw 1&quot;&gt; &amp; Library",
-      );
       expect(html, path).not.toContain(name);
+      expect(html, path).not.toContain(escaped);
+      expect(html, path).not.toContain("Library");
     }
     for (const invalid of [
       "",

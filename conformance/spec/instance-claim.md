@@ -524,7 +524,7 @@ When a recovery code has been accepted once, the server MUST refuse that code ag
 
 ### `instance-claim/recovery-page`
 
-While an instance holds a recovery code that has not ended, the server MUST serve `GET /setup` as a page titled "Recover the owner" that takes the recovery code.
+While an instance holds a recovery code that has not ended, the server MUST serve `GET /setup` as a page titled "Recover your account" that takes the recovery code.
 
 **Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`, `› refuses a recovery code sixty minutes after the start that printed it`.
 

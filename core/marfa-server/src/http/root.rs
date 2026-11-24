@@ -56,29 +56,28 @@ pub async fn document() -> Answer {
     Ok(([(header::CONTENT_TYPE, "application/json")], DOCUMENT).into_response())
 }
 
-async fn page(app: &Arc<App>, parts: &Parts, name: String) -> Answer {
+async fn page(app: &Arc<App>, parts: &Parts) -> Answer {
     if browser_session(parts, app).await.is_some()
         && let Ok(Some(found)) = owner::find(app).await
     {
         let view = Running {
-            instance_name: name,
             username: found.username,
         };
         return Ok(pages::running(&view)?.into_response());
     }
-    Ok(pages::notice(&Notice::running(&name))?.into_response())
+    Ok(pages::notice(&Notice::running())?.into_response())
 }
 
 async fn answer(app: &Arc<App>, parts: &Parts) -> Answer {
     query::only(&parts.uri, &[])?;
-    let name = instance::name(app).await?;
     let accept = parts
         .headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok());
     if asks_for_html(accept) {
-        return page(app, parts, name).await;
+        return page(app, parts).await;
     }
+    let name = instance::name(app).await?;
     Ok(json_answer(
         StatusCode::OK,
         &json!({

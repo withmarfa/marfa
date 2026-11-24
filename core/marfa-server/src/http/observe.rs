@@ -16,10 +16,10 @@ use super::body::Shared;
 use super::caller_address::caller_address;
 use super::listening::Peer;
 use super::pages::{self, Notice};
+use crate::app::App;
 use crate::app::attention::faults::Place;
 use crate::app::provenance::{self, Origin};
-use crate::app::refusal::{Code, Refusal};
-use crate::app::{App, instance};
+use crate::app::refusal::{Code, INTERNAL_MESSAGE, Refusal};
 use crate::listener::{Declaration, Transport};
 use crate::log;
 use crate::telemetry::{Finished, Served};
@@ -59,17 +59,20 @@ fn keeps_its_envelope(code: Code) -> bool {
     matches!(code, Code::VersionConflict | Code::AncestorUnavailable)
 }
 
-async fn offer_page(app: &App, response: &mut Response) {
+fn offer_page(response: &mut Response) {
     let Some(page) = response.extensions().get::<Page>().cloned() else {
         return;
     };
     if keeps_its_envelope(page.code) {
         return;
     }
-    let name = instance::name(app)
-        .await
-        .unwrap_or_else(|_| instance::DEFAULT_NAME.to_string());
-    let notice = Notice::refusal(&name, response.status(), &page.message);
+    let notice = if response.extensions().get::<Unmatched>().is_some() {
+        Notice::missing_page()
+    } else if page.code == Code::InternalError && page.message == INTERNAL_MESSAGE {
+        Notice::fault()
+    } else {
+        Notice::refusal(response.status(), &page.message)
+    };
     if let Ok(rendered) = pages::notice(&notice) {
         rendered.write_over(response);
     }
@@ -172,7 +175,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     }
 
     if wants_html {
-        offer_page(&observed.app, &mut response).await;
+        offer_page(&mut response);
     }
     let unanswered = !response.headers().contains_key(header::SET_COOKIE);
     if let Some(cookie) = notes.renewal.get()

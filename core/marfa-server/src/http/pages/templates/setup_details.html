@@ -1,34 +1,21 @@
-<h1>Create your account</h1>
-<p class="lede">You'll use these details to sign in to this Marfa.</p>
-{% if connecting %}
-<p>Next, you choose what the app can access, or turn it down.</p>
-{% endif %}
-{% if let Some(message) = view.notice %}
-<p class="notice error" role="alert">{{ message }}</p>
-{% endif %}
-<form id="owner-form" method="post" action="/setup/claim" class="stack">
+{% import "partials/parts.html" as parts %}{% call parts::head("Create your account", "You'll use these details to sign in to this Marfa.") %}{% endcall %}
+{% if connecting %}<p>Next, you choose what the app can access, or turn it down.</p>
+{% endif %}{% if let Some(message) = view.notice %}<p class="err" role="alert">{{ message }}</p>
+{% endif %}<form id="owner-form" method="post" action="/setup/claim">
 <input type="hidden" name="return_to" value="{{ view.return_to }}">
-<div class="field">
-<label for="name">Name</label>
-<input id="name" type="text" name="name" value="{{ view.name }}" autocomplete="name"{% if view.errors.name.is_some() %} aria-invalid="true" aria-describedby="name-error"{% endif %}>
-{% if let Some(message) = view.errors.name %}<p class="error" id="name-error">{{ message }}</p>{% endif %}
+<div class="fields">
+{% call parts::group(note="name-note", problem=view.errors.name.as_deref().unwrap_or_default()) %}
+{% call parts::field("name", "Name", name="name", value=view.name.as_str(), autocomplete="name", required=false, invalid=view.errors.name.is_some(), note="name-note", described=view.errors.name.is_some()) %}{% endcall %}
+{% endcall %}
+{% call parts::group(note="username-note", hint="Letters a to z, numbers, dots, dashes and underscores. You sign in with it.", problem=view.errors.username.as_deref().unwrap_or_default()) %}
+{% call parts::field("username", "Username", name="username", value=view.username.as_str(), autocomplete="username", capitalize="none", invalid=view.errors.username.is_some(), note="username-note") %}{% endcall %}
+{% endcall %}
+{% call parts::group(note="password-note", hint="Choose a password you don't use anywhere else.", problem=view.errors.password.as_deref().unwrap_or_default()) %}
+{% call parts::field("password", "Password", name="password", kind="password", autocomplete="new-password", invalid=view.errors.password.is_some(), note="password-note") %}{% endcall %}
+{% endcall %}
+{% call parts::group(note="email-note", problem=view.errors.email.as_deref().unwrap_or_default()) %}
+{% call parts::field("email", "Email (optional)", name="email", kind="email", value=view.email.as_str(), autocomplete="email", capitalize="none", required=false, invalid=view.errors.email.is_some(), note="email-note", described=view.errors.email.is_some()) %}{% endcall %}
+{% endcall %}
 </div>
-<div class="field">
-<label for="username">Username</label>
-<input id="username" type="text" name="username" value="{{ view.username }}" autocomplete="username" autocapitalize="none" spellcheck="false" required aria-describedby="username-hint{% if view.errors.username.is_some() %} username-error{% endif %}"{% if view.errors.username.is_some() %} aria-invalid="true"{% endif %}>
-<p class="hint" id="username-hint">Letters a to z, numbers, dots, dashes and underscores. You sign in with it.</p>
-{% if let Some(message) = view.errors.username %}<p class="error" id="username-error">{{ message }}</p>{% endif %}
-</div>
-<div class="field">
-<label for="password">Password</label>
-<input id="password" type="password" name="password" autocomplete="new-password" required aria-describedby="password-hint{% if view.errors.password.is_some() %} password-error{% endif %}"{% if view.errors.password.is_some() %} aria-invalid="true"{% endif %}>
-<p class="hint" id="password-hint">Choose a password you don't use anywhere else.</p>
-{% if let Some(message) = view.errors.password %}<p class="error" id="password-error">{{ message }}</p>{% endif %}
-</div>
-<div class="field">
-<label for="email">Email (optional)</label>
-<input id="email" type="email" name="email" value="{{ view.email }}" autocomplete="email" autocapitalize="none" spellcheck="false"{% if view.errors.email.is_some() %} aria-invalid="true" aria-describedby="email-error"{% endif %}>
-{% if let Some(message) = view.errors.email %}<p class="error" id="email-error">{{ message }}</p>{% endif %}
-</div>
-<button type="submit" class="button primary wide">Create account</button>
+{% call parts::actions() %}<button type="submit" class="btn primary">Create account</button>{% endcall %}
 </form>

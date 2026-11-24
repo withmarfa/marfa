@@ -1,17 +1,14 @@
-<h1>Recover the owner</h1>
-<p class="lede">Enter the recovery code to choose a new password for this Marfa's owner.</p>
-{% if let Some(message) = problem_message %}
-<p class="notice error" id="setup-problem" role="alert">{{ message }}</p>
-{% endif %}
-<form method="post" action="/setup/exchange" class="stack">
+{% import "partials/parts.html" as parts %}{% call parts::head("Recover your account", "Enter the recovery code to choose a new password for this Marfa's owner.") %}{% endcall %}
+<form method="post" action="/setup/exchange">
 <input type="hidden" name="purpose" value="recovery">
-<div class="field">
-<label for="code">Recovery code</label>
-<input id="code" class="code" type="text" name="code" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" required autofocus{% if has_problem %} aria-describedby="setup-problem" aria-invalid="true"{% endif %}>
+<div class="fields">
+{% call parts::group(note="code-note", problem=problem_message.as_deref().unwrap_or_default()) %}
+{% call parts::field("code", "Recovery code", name="code", capitalize="characters", mono=true, invalid=has_problem, note="code-note", described=has_problem) %}{% endcall %}
+{% endcall %}
 </div>
 <details>
 <summary>Where's my recovery code?</summary>
 <p>Marfa prints a recovery code in its log each time it starts with owner recovery turned on. A code works once, for an hour, and the next start replaces it.</p>
 </details>
-<button type="submit" class="button primary wide">Continue</button>
+{% call parts::actions() %}<button type="submit" class="btn primary">Continue</button>{% endcall %}
 </form>

@@ -14,132 +14,24 @@ pub struct Link {
 
 #[derive(Debug, Clone)]
 pub struct Notice {
-    pub instance_name: String,
     pub status: StatusCode,
     pub heading: String,
     pub message: String,
+    /// The one next step, drawn as a button.
     pub link: Option<Link>,
     /// The browser goes to the link without a click.
     pub opens_link: bool,
 }
 
 impl Notice {
-    fn new(instance_name: &str, status: StatusCode, heading: &str, message: &str) -> Notice {
+    fn new(status: StatusCode, heading: &str, message: &str) -> Notice {
         Notice {
-            instance_name: instance_name.to_owned(),
             status,
             heading: heading.to_owned(),
             message: message.to_owned(),
             link: None,
             opens_link: false,
         }
-    }
-
-    /// `app_url` is the `marfa://` link of an item, built from an id the caller has read as well formed.
-    pub fn opening_item(instance_name: &str, app_url: &str) -> Notice {
-        Notice {
-            opens_link: true,
-            ..Notice::new(
-                instance_name,
-                StatusCode::OK,
-                "Opening in a Marfa app",
-                "If nothing opens, no app on this device opens Marfa links.",
-            )
-            .linked("Open in Marfa", app_url)
-        }
-    }
-
-    pub fn not_an_item_link(instance_name: &str) -> Notice {
-        Notice::new(
-            instance_name,
-            StatusCode::NOT_FOUND,
-            "This is not a Marfa link",
-            "Check the link, or ask whoever sent it for a new one.",
-        )
-    }
-
-    pub fn unverified_request(instance_name: &str) -> Notice {
-        Notice::new(
-            instance_name,
-            StatusCode::BAD_REQUEST,
-            "We could not verify this request",
-            "The link may have been changed. Go back to the app and start again.",
-        )
-    }
-
-    pub fn expired_request(instance_name: &str) -> Notice {
-        Notice::new(
-            instance_name,
-            StatusCode::BAD_REQUEST,
-            "This request has expired",
-            "Go back to the app and start again.",
-        )
-    }
-
-    pub fn device_approved(instance_name: &str) -> Notice {
-        Notice::new(
-            instance_name,
-            StatusCode::OK,
-            "Device connected",
-            "Go back to your device to continue.",
-        )
-    }
-
-    pub fn device_denied(instance_name: &str) -> Notice {
-        Notice::new(
-            instance_name,
-            StatusCode::OK,
-            "Device not connected",
-            "You didn't approve access, so your device was not connected.",
-        )
-    }
-
-    pub fn connector_signed_in(instance_name: &str) -> Notice {
-        Notice::new(
-            instance_name,
-            StatusCode::OK,
-            "You're signed in",
-            "Marfa keeps this sign-in for the connector. You can close this page and return to your app.",
-        )
-    }
-
-    /// `why` is `None` where the state names no sign-in, which tells a stranger nothing.
-    pub fn connector_sign_in_unfinished(instance_name: &str, why: Option<&Failure>) -> Notice {
-        let message = match why {
-            None => "This sign-in was canceled, has ended, or was already used. Go back to your app and sign in again.".to_string(),
-            Some(failure) => format!(
-                "{} Go back to your app and sign in again.",
-                sign_in_failure(failure)
-            ),
-        };
-        Notice::new(
-            instance_name,
-            StatusCode::BAD_REQUEST,
-            "Sign-in didn't finish",
-            &message,
-        )
-    }
-
-    pub fn connector_sign_in_failed(instance_name: &str, why: &Failure) -> Notice {
-        Notice::new(
-            instance_name,
-            StatusCode::BAD_GATEWAY,
-            "Sign-in didn't finish",
-            &format!(
-                "{} Go back to your app and sign in again.",
-                sign_in_failure(why)
-            ),
-        )
-    }
-
-    pub fn signed_out(instance_name: &str) -> Notice {
-        Notice::new(
-            instance_name,
-            StatusCode::OK,
-            "You're signed out",
-            "You're signed out of this browser.",
-        )
-        .linked("Sign in", "/auth/sign-in")
     }
 
     fn linked(self, label: &str, href: &str) -> Notice {
@@ -152,40 +44,144 @@ impl Notice {
         }
     }
 
-    pub fn running(instance_name: &str) -> Notice {
+    /// `app_url` is the `marfa://` link of an item, built from an id the caller has read as well formed.
+    pub fn opening_item(app_url: &str) -> Notice {
+        Notice {
+            opens_link: true,
+            ..Notice::new(
+                StatusCode::OK,
+                "Opening in a Marfa app",
+                "If nothing opens, no app on this device opens Marfa links.",
+            )
+            .linked("Open in Marfa", app_url)
+        }
+    }
+
+    pub fn not_an_item_link() -> Notice {
         Notice::new(
-            instance_name,
+            StatusCode::NOT_FOUND,
+            "This is not a Marfa link",
+            "Check the link, or ask whoever sent it for a new one.",
+        )
+    }
+
+    pub fn unverified_request() -> Notice {
+        Notice::new(
+            StatusCode::BAD_REQUEST,
+            "Marfa couldn’t check this request",
+            "The link may have been changed. Go back to the app and start again.",
+        )
+    }
+
+    pub fn expired_request() -> Notice {
+        Notice::new(
+            StatusCode::BAD_REQUEST,
+            "This request has expired",
+            "Go back to the app and start again.",
+        )
+    }
+
+    pub fn device_approved() -> Notice {
+        Notice::new(
+            StatusCode::OK,
+            "Your device is connected",
+            "Go back to it to continue.",
+        )
+    }
+
+    pub fn device_denied() -> Notice {
+        Notice::new(
+            StatusCode::OK,
+            "Your device isn’t connected",
+            "You didn’t allow it. Start again on the device if you meant to.",
+        )
+    }
+
+    pub fn connector_signed_in() -> Notice {
+        Notice::new(
+            StatusCode::OK,
+            "You’re signed in",
+            "Marfa keeps this sign-in for the connector. Go back to your app.",
+        )
+    }
+
+    /// `why` is `None` where the state names no sign-in, which tells a stranger nothing.
+    pub fn connector_sign_in_unfinished(why: Option<&Failure>) -> Notice {
+        let message = match why {
+            None => "It was canceled, has ended or was already used. Start again in your app."
+                .to_string(),
+            Some(failure) => format!("{} Start again in your app.", sign_in_failure(failure)),
+        };
+        Notice::new(StatusCode::BAD_REQUEST, "Sign-in didn’t finish", &message)
+    }
+
+    pub fn connector_sign_in_failed(why: &Failure) -> Notice {
+        Notice::new(
+            StatusCode::BAD_GATEWAY,
+            "Sign-in didn’t finish",
+            &format!("{} Start again in your app.", sign_in_failure(why)),
+        )
+    }
+
+    pub fn signed_out() -> Notice {
+        Notice::new(
+            StatusCode::OK,
+            "You’re signed out",
+            "Sign in again to manage this Marfa.",
+        )
+        .linked("Sign In", "/auth/sign-in")
+    }
+
+    pub fn running() -> Notice {
+        Notice::new(
             StatusCode::OK,
             "This Marfa is running",
             "Sign in to manage it, or open an app that connects to it.",
         )
-        .linked("Sign in", "/auth/sign-in")
+        .linked("Sign In", "/auth/sign-in")
     }
 
     /// `return_to` is a value `kept` has read, where signing in goes on to.
-    pub fn already_claimed(instance_name: &str, return_to: &str) -> Notice {
+    pub fn already_claimed(return_to: &str) -> Notice {
         Notice::new(
-            instance_name,
             StatusCode::OK,
             "This Marfa already has an owner",
             "Setup is finished. Sign in to continue.",
         )
-        .linked("Sign in", &through_sign_in(return_to))
+        .linked("Sign In", &through_sign_in(return_to))
     }
 
-    pub fn refusal(instance_name: &str, status: StatusCode, message: &str) -> Notice {
-        let heading = match status {
-            StatusCode::NOT_FOUND => "Page not found",
-            StatusCode::UNAUTHORIZED => "Sign in needed",
-            StatusCode::FORBIDDEN => "Not allowed",
-            StatusCode::TOO_MANY_REQUESTS => "Too many requests",
-            status if status.is_server_error() => "Something went wrong",
-            _ => "Request not accepted",
-        };
-        let notice = Notice::new(instance_name, status, heading, message);
+    /// No route answers the address.
+    pub fn missing_page() -> Notice {
+        Notice::new(
+            StatusCode::NOT_FOUND,
+            "There’s nothing here",
+            "Check the address and try again.",
+        )
+    }
+
+    /// The server's generic internal refusal, which carries no words of its own.
+    pub fn fault() -> Notice {
+        Notice::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Something went wrong",
+            "Marfa couldn’t continue. Go back to the app and try again.",
+        )
+    }
+
+    /// A refusal a browser reads, in the words it carries.
+    pub fn refusal(status: StatusCode, message: &str) -> Notice {
         match status {
-            StatusCode::UNAUTHORIZED => notice.linked("Sign in", "/auth/sign-in"),
-            _ => notice,
+            StatusCode::NOT_FOUND => Notice::new(status, "Not found", message),
+            status if status.is_server_error() => {
+                Notice::new(status, "Something went wrong", message)
+            }
+            StatusCode::UNAUTHORIZED => {
+                Notice::new(status, "Sign in needed", message).linked("Sign In", "/auth/sign-in")
+            }
+            StatusCode::FORBIDDEN => Notice::new(status, "Not allowed", message),
+            StatusCode::TOO_MANY_REQUESTS => Notice::new(status, "Too many requests", message),
+            _ => Notice::new(status, "Request not accepted", message),
         }
     }
 }
@@ -203,14 +199,7 @@ pub fn notice(view: &Notice) -> Result<Page> {
         .as_ref()
         .filter(|_| view.opens_link)
         .map(|link| link.href.as_str());
-    Ok(document_opening(
-        &view.heading,
-        &view.instance_name,
-        &body,
-        Needs::default(),
-        opens,
-    )?
-    .with_status(view.status))
+    Ok(document_opening(&view.heading, &body, Needs::default(), opens)?.with_status(view.status))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,58 +236,50 @@ impl AuthErrorCode {
 
 #[derive(Debug, Clone)]
 pub struct AuthError {
-    pub instance_name: String,
     pub code: AuthErrorCode,
 }
 
 pub fn auth_error(view: &AuthError) -> Result<Page> {
     let (heading, message) = match view.code {
         AuthErrorCode::InvalidRedirect => (
-            "This app can't continue",
-            "It asked to send you to an address it didn't register with Marfa, so Marfa \
-             stopped. Go back to the app and try again.",
+            "This app can’t continue",
+            "It asked to send you to an address it didn’t register. Tell its developer.",
         ),
         AuthErrorCode::InvalidClient => (
-            "Marfa doesn't know this app",
-            "The app isn't registered with Marfa, or its registration has ended. Go back to \
-             the app and start again.",
+            "Marfa doesn’t know this app",
+            "Its registration may have ended. Go back to the app and start again.",
         ),
         AuthErrorCode::InvalidRequest => (
-            "This app can't continue",
+            "This app can’t continue",
             "Its request to Marfa was incomplete. Go back to the app and try again.",
         ),
         AuthErrorCode::UnsupportedResponseType | AuthErrorCode::UnauthorizedClient => (
-            "This app can't continue",
-            "It asked to sign in a way Marfa doesn't allow for it. Go back to the app and try \
+            "This app can’t continue",
+            "It asked to sign in a way Marfa doesn’t allow for it. Go back to the app and try \
              again.",
         ),
         AuthErrorCode::InvalidScope => (
-            "This app can't continue",
-            "It asked for access Marfa can't give. Go back to the app and try again.",
+            "This app can’t continue",
+            "It asked for access Marfa can’t give. Go back to the app and try again.",
         ),
         AuthErrorCode::InvalidTarget => (
-            "This app can't continue",
-            "It asked for something this Marfa doesn't serve. Go back to the app and try again.",
+            "This app can’t continue",
+            "It asked for something this Marfa doesn’t serve. Go back to the app and try again.",
         ),
         AuthErrorCode::LoginRequired => (
-            "You're not signed in",
+            "You’re not signed in",
             "This app needs you to sign in to Marfa. Go back to the app and start again.",
         ),
         AuthErrorCode::ConsentRequired => (
             "This app needs your approval",
-            "You haven't approved this app. Go back to the app and start again.",
+            "You haven’t allowed it. Go back to the app and start again.",
         ),
         AuthErrorCode::Other => (
             "Something went wrong",
-            "Marfa couldn't continue with this request. Go back to the app and try again.",
+            "Marfa couldn’t continue. Go back to the app and try again.",
         ),
     };
-    notice(&Notice::new(
-        &view.instance_name,
-        StatusCode::OK,
-        heading,
-        message,
-    ))
+    notice(&Notice::new(StatusCode::OK, heading, message))
 }
 
 /// One sentence for each outcome word, written by Marfa and never by the provider.
@@ -307,7 +288,7 @@ fn sign_in_failure(failure: &Failure) -> &'static str {
         Failure::TokenError("invalid_client")
         | Failure::BrowserError("unauthorized_client")
         | Failure::TokenError("unauthorized_client") => {
-            "The service refused this connector's client ID or secret. Check them in the plugin's settings."
+            "The service refused this connector’s client ID or secret. Check them in the plugin’s settings."
         }
         Failure::TokenError("invalid_grant") => {
             "The service refused the sign-in, which may have been used already or taken too long."
@@ -325,12 +306,12 @@ fn sign_in_failure(failure: &Failure) -> &'static str {
         }
         Failure::NoCode => "The service sent the browser back without finishing the sign-in.",
         Failure::ChangedSinceStart => {
-            "The connector's sign-in or its client settings changed after the sign-in started."
+            "The connector’s sign-in or its client settings changed after the sign-in started."
         }
-        Failure::Timeout => "The service didn't answer in time.",
-        Failure::Unreachable => "Marfa couldn't reach the service.",
+        Failure::Timeout => "The service didn’t answer in time.",
+        Failure::Unreachable => "Marfa couldn’t reach the service.",
         Failure::Status(_) => "The service answered with an error.",
-        Failure::NoRefreshToken => "The service didn't send a token Marfa can keep.",
-        Failure::UnreadableAnswer => "The service sent an answer Marfa couldn't read.",
+        Failure::NoRefreshToken => "The service didn’t send a token Marfa can keep.",
+        Failure::UnreadableAnswer => "The service sent an answer Marfa couldn’t read.",
     }
 }

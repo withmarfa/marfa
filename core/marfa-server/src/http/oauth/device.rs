@@ -9,7 +9,6 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::auth::Visit;
 use crate::app::auth::return_to::encoded;
-use crate::app::instance;
 use crate::app::oauth::authorize::sign_in_then;
 use crate::app::oauth::device::{
     self, Answer as Answered, Blocked, CONSENT_PATH as CONSENT, Lookup,
@@ -132,7 +131,6 @@ pub async fn screen(
     match device::screen(&app, &typed, &owner).await? {
         Ok(offer) => {
             let view = Consent {
-                instance_name: instance::name(&app).await?,
                 offer: *offer,
                 answering: Answering::Device(typed),
             };
@@ -169,10 +167,9 @@ pub async fn answer(
         return too_many(wait);
     }
     let answered = device::answer(&app, &owner, typed, approve, fields.post()).await?;
-    let name = instance::name(&app).await?;
     match answered {
-        Answered::Approved => Ok(pages::notice(&Notice::device_approved(&name))?.into_response()),
-        Answered::Denied => Ok(pages::notice(&Notice::device_denied(&name))?.into_response()),
+        Answered::Approved => Ok(pages::notice(&Notice::device_approved())?.into_response()),
+        Answered::Denied => Ok(pages::notice(&Notice::device_denied())?.into_response()),
         Answered::Code(Lookup::Unknown) => {
             Err(Refusal::new(Code::NotFound, "No code matches this one.").into())
         }

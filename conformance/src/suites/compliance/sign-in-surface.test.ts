@@ -621,7 +621,7 @@ describe("the pages a person reads at sign-in", () => {
     const page = await (
       await fetch(`${server!.apiUrl}/auth/sign-in`, { headers: { cookie } })
     ).text();
-    expect(visibleText(page)).toContain("You're signed in");
+    expect(visibleText(page)).toContain("You’re signed in");
     expect(visibleText(page)).toContain(OWNER.username);
     expect(pageField(page, "password")).toBeUndefined();
 
@@ -647,7 +647,7 @@ describe("the pages a person reads at sign-in", () => {
     const refused = await fetch(edited, { headers: { cookie } });
     expect(refused.status).toBe(400);
     const text = await refused.text();
-    expect(text).toContain("We could not verify this request");
+    expect(text).toContain("Marfa couldn’t check this request");
     expect(text).not.toContain("has expired");
 
     // A signature the instance did not make is told the same.
@@ -659,13 +659,13 @@ describe("the pages a person reads at sign-in", () => {
     const unverified = await fetch(forged, { headers: { cookie } });
     expect(unverified.status).toBe(400);
     expect(await unverified.text()).toContain(
-      "We could not verify this request",
+      "Marfa couldn’t check this request",
     );
     // The witness: the link as it was signed reaches the consent screen.
     const genuine = await fetch(authorize, { headers: { cookie } });
     expect(genuine.status).toBe(200);
     expect(await genuine.text()).not.toContain(
-      "We could not verify this request",
+      "Marfa couldn’t check this request",
     );
   });
 
@@ -678,7 +678,7 @@ describe("the pages a person reads at sign-in", () => {
     expect(open.status).toBe(200);
     const shown = await open.text();
     expect(shown).not.toContain("has expired");
-    expect(shown).not.toContain("We could not verify this request");
+    expect(shown).not.toContain("Marfa couldn’t check this request");
 
     // The window is ten minutes.
     await server!.advanceClock(11 * 60_000);
@@ -686,6 +686,6 @@ describe("the pages a person reads at sign-in", () => {
     expect(lapsed.status).toBe(400);
     const text = await lapsed.text();
     expect(text).toContain("This request has expired");
-    expect(text).not.toContain("We could not verify this request");
+    expect(text).not.toContain("Marfa couldn’t check this request");
   });
 });

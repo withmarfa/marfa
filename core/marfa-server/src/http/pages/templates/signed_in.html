@@ -1,9 +1,9 @@
-<h1>You're signed in</h1>
+<div class="head">
+<h1>You’re signed in</h1>
 <p class="lede">Signed in as <bdi>{{ view.username }}</bdi>.</p>
-<div class="actions">
-<a class="button primary" href="{{ view.continue_to }}">Continue</a>
-<form method="post" action="/auth/sign-out" data-change data-then="/auth/sign-in">
-<button type="submit" class="button">Sign out</button>
-<p class="notice error" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
-</form>
 </div>
+<form method="post" action="/auth/sign-out" data-change data-then="/auth/sign-in">
+<p class="err" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
+{% import "partials/parts.html" as parts %}{% call parts::actions() %}<button type="submit" class="btn">Sign out</button>
+<a class="btn primary" href="{{ view.continue_to }}">Continue</a>{% endcall %}
+</form>

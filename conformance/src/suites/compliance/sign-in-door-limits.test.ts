@@ -594,7 +594,9 @@ describe("what a page and a redirect take from the request", () => {
     );
     // The witness: with no user_code the field is empty.
     const blank = await fetch(`${limited.apiUrl}/auth/device`);
-    expect(await blank.text()).toMatch(/<input id="user_code"[^>]* value=""/);
+    expect(await blank.text()).toMatch(
+      /<input id="user_code"(?![^>]*\svalue=)[^>]*>/,
+    );
   });
 
   it("takes a loopback redirect URI on any port for one registered on the loopback", async () => {

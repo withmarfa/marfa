@@ -184,7 +184,11 @@ pub async fn claim(
     {
         let mut fields = body.form().await?;
         let return_to = take_return_to(&app, &mut fields);
-        return Ok(pages::claim_refused(&app, refusal, Typed::of(&fields), return_to).await?);
+        return Ok(pages::claim_refused(
+            refusal,
+            Typed::of(&fields),
+            return_to,
+        )?);
     }
     admitted?;
     let (mut fields, return_to) = if form {
@@ -205,7 +209,7 @@ pub async fn claim(
     }
     let (owner, signed_in) = match make_claim(&app, &headers, visit, fields).await {
         Err(Stopped::Refused(refusal)) if browser && pages::wants_page(&headers) => {
-            return Ok(pages::claim_refused(&app, &refusal, typed, return_to).await?);
+            return Ok(pages::claim_refused(&refusal, typed, return_to)?);
         }
         claimed => claimed?,
     };
@@ -257,7 +261,7 @@ pub async fn recover(
     let password = text("password").unwrap_or("").to_string();
     match claim::recover(&app, proof, password, visit).await {
         Err(refusal) if browser && pages::wants_page(&headers) => {
-            return Ok(pages::recover_refused(&app, &refusal).await?);
+            return Ok(pages::recover_refused(&refusal)?);
         }
         recovered => recovered?,
     }

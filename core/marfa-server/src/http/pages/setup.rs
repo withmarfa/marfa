@@ -58,7 +58,6 @@ fn connects_an_app(return_to: &str) -> bool {
 
 #[derive(Debug, Clone)]
 pub struct SetupCode {
-    pub instance_name: String,
     pub problem: Option<SetupCodeProblem>,
     /// Where the browser goes once the instance is claimed, as `kept` read it.
     pub return_to: String,
@@ -68,7 +67,6 @@ pub struct SetupCode {
 /// The code page of an instance that has an owner and offers a recovery code.
 #[derive(Debug, Clone)]
 pub struct RecoveryCode {
-    pub instance_name: String,
     pub problem: Option<SetupCodeProblem>,
 }
 
@@ -101,7 +99,6 @@ pub fn setup_code(view: &SetupCode) -> Result<Page> {
     })?;
     document(
         "Claim this Marfa",
-        &view.instance_name,
         &body,
         Needs {
             connect: true,
@@ -115,12 +112,7 @@ pub fn recovery_code(view: &RecoveryCode) -> Result<Page> {
         problem_message: view.problem.map(|problem| problem.message(true)),
         has_problem: view.problem.is_some(),
     })?;
-    document(
-        "Recover the owner",
-        &view.instance_name,
-        &body,
-        Needs::default(),
-    )
+    document("Recover your account", &body, Needs::default())
 }
 
 #[derive(Debug, Clone, Default)]
@@ -133,7 +125,6 @@ pub struct SetupFieldErrors {
 
 #[derive(Debug, Clone)]
 pub struct SetupDetails {
-    pub instance_name: String,
     /// What was typed before. The password is never sent back.
     pub name: String,
     pub username: String,
@@ -156,17 +147,11 @@ pub fn setup_details(view: &SetupDetails) -> Result<Page> {
         view,
         connecting: connects_an_app(&view.return_to),
     })?;
-    document(
-        "Create your account",
-        &view.instance_name,
-        &body,
-        Needs::default(),
-    )
+    document("Create your account", &body, Needs::default())
 }
 
 #[derive(Debug, Clone)]
 pub struct RecoverPassword {
-    pub instance_name: String,
     pub error: Option<String>,
     pub notice: Option<String>,
 }
@@ -179,10 +164,5 @@ struct RecoverPasswordBody<'a> {
 
 pub fn recover_password(view: &RecoverPassword) -> Result<Page> {
     let body = render_body(&RecoverPasswordBody { view })?;
-    document(
-        "Choose a new password",
-        &view.instance_name,
-        &body,
-        Needs::default(),
-    )
+    document("Choose a new password", &body, Needs::default())
 }

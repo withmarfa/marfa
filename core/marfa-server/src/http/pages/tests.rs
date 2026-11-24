@@ -9,7 +9,6 @@ const HOSTILE: &str = "\"><img src=x onerror=alert(1)> & 'q'";
 
 fn sign_in_view() -> SignIn {
     SignIn {
-        instance_name: "Marfa".into(),
         username: String::new(),
         return_to: "/".into(),
         authorization: None,
@@ -84,7 +83,6 @@ fn the_answer_carries_the_headers_a_page_needs() {
 #[test]
 fn only_a_page_that_asks_the_server_for_something_may_connect() {
     let device = device_entry(&DeviceEntry {
-        instance_name: "Marfa".into(),
         user_code: String::new(),
         problem: None,
     })
@@ -95,7 +93,6 @@ fn only_a_page_that_asks_the_server_for_something_may_connect() {
     );
     let signed_in_with_dialog = document(
         "T",
-        "Marfa",
         "",
         Needs {
             connect: false,
@@ -110,14 +107,17 @@ fn only_a_page_that_asks_the_server_for_something_may_connect() {
         ),
         Some("'self'")
     );
-    assert!(signed_in_with_dialog.html().contains("Confirm it's you"));
-    assert!(!device.html().contains("Confirm it's you"));
+    assert!(
+        signed_in_with_dialog
+            .html()
+            .contains("Confirm it&#39;s you")
+    );
+    assert!(!device.html().contains("Confirm it&#39;s you"));
 }
 
 #[test]
 fn a_hostile_value_is_text_in_text_and_in_an_attribute() {
     let page = sign_in(&SignIn {
-        instance_name: HOSTILE.into(),
         username: HOSTILE.into(),
         return_to: HOSTILE.into(),
         authorization: None,
@@ -131,14 +131,12 @@ fn a_hostile_value_is_text_in_text_and_in_an_attribute() {
     let escaped = "&quot;&gt;&lt;img src=x onerror=alert(1)&gt; &amp; &#39;q&#39;";
     assert!(html.contains(&format!("value=\"{escaped}\"")));
     assert!(html.contains(&format!("<bdi class=\"app-name\">{escaped}</bdi>")));
-    assert!(html.contains(&format!("<header class=\"brand\">{escaped}</header>")));
 }
 
 #[test]
 fn a_hostile_value_stays_text_on_every_other_page() {
     let pages = [
         setup_details(&SetupDetails {
-            instance_name: HOSTILE.into(),
             name: HOSTILE.into(),
             username: HOSTILE.into(),
             email: HOSTILE.into(),
@@ -153,7 +151,6 @@ fn a_hostile_value_stays_text_on_every_other_page() {
         })
         .unwrap(),
         setup_code(&SetupCode {
-            instance_name: HOSTILE.into(),
             problem: None,
             return_to: HOSTILE.into(),
             app: Some(AskingApp {
@@ -162,18 +159,16 @@ fn a_hostile_value_stays_text_on_every_other_page() {
             }),
         })
         .unwrap(),
-        notice(&Notice::already_claimed(HOSTILE, HOSTILE)).unwrap(),
-        notice(&Notice::opening_item(HOSTILE, HOSTILE)).unwrap(),
-        notice(&Notice::not_an_item_link(HOSTILE)).unwrap(),
+        notice(&Notice::already_claimed(HOSTILE)).unwrap(),
+        notice(&Notice::opening_item(HOSTILE)).unwrap(),
+        notice(&Notice::not_an_item_link()).unwrap(),
         device_entry(&DeviceEntry {
-            instance_name: HOSTILE.into(),
             user_code: HOSTILE.into(),
             problem: None,
         })
         .unwrap(),
-        notice(&Notice::refusal("x", StatusCode::BAD_REQUEST, HOSTILE)).unwrap(),
+        notice(&Notice::refusal(StatusCode::BAD_REQUEST, HOSTILE)).unwrap(),
         signed_in(&SignedIn {
-            instance_name: HOSTILE.into(),
             username: HOSTILE.into(),
             continue_to: format!("/{HOSTILE}"),
         })
@@ -198,14 +193,13 @@ fn a_continue_link_goes_only_to_a_path_on_the_instance() {
         ("", "/"),
     ] {
         let page = signed_in(&SignedIn {
-            instance_name: "Marfa".into(),
             username: "owner".into(),
             continue_to: given.into(),
         })
         .unwrap();
         assert!(
             page.html()
-                .contains(&format!("<a class=\"button primary\" href=\"{link}\">")),
+                .contains(&format!("<a class=\"btn primary\" href=\"{link}\">")),
             "{given:?}"
         );
     }
@@ -264,7 +258,6 @@ fn a_lockout_names_the_wait_only_when_it_was_given_one() {
 fn the_device_page_says_why_a_code_failed_and_how_long_codes_last() {
     let page = |problem| {
         device_entry(&DeviceEntry {
-            instance_name: "Marfa".into(),
             user_code: String::new(),
             problem,
         })
@@ -280,7 +273,7 @@ fn the_device_page_says_why_a_code_failed_and_how_long_codes_last() {
     ));
     let expired = page(DeviceProblem::from_query(Some("expired_code"), None));
     assert!(expired.html().contains("That code has expired."));
-    assert!(!expired.html().contains("right"));
+    assert!(!expired.html().contains("isn&#39;t right"));
     let locked = page(DeviceProblem::from_query(
         Some("too_many_attempts"),
         Some("61"),
@@ -309,14 +302,33 @@ fn an_error_code_the_page_does_not_know_is_never_shown() {
 }
 
 #[test]
+fn a_specific_refusal_keeps_its_words_and_only_the_generic_ones_are_drawn() {
+    let specific = [
+        (StatusCode::NOT_FOUND, "This resource is not served here."),
+        (StatusCode::INSUFFICIENT_STORAGE, "The disk is full."),
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "The change may have completed. Read the item again before trying again.",
+        ),
+    ];
+    for (status, words) in specific {
+        let page = notice(&Notice::refusal(status, words)).unwrap();
+        assert!(page.html().contains(words), "{status}");
+        assert!(!page.html().contains("Check the address"), "{status}");
+        assert!(!page.html().contains("Marfa couldn’t continue"), "{status}");
+    }
+    let missing = notice(&Notice::missing_page()).unwrap();
+    assert!(missing.html().contains("There’s nothing here"));
+    assert!(missing.html().contains("Check the address and try again."));
+    let fault = notice(&Notice::fault()).unwrap();
+    assert!(fault.html().contains("Marfa couldn’t continue."));
+}
+
+#[test]
 fn a_page_the_caller_gives_a_status_answers_with_it() {
-    let response = notice(&Notice::refusal(
-        "Marfa",
-        StatusCode::NOT_FOUND,
-        "Nothing here.",
-    ))
-    .unwrap()
-    .into_response();
+    let response = notice(&Notice::refusal(StatusCode::NOT_FOUND, "Nothing here."))
+        .unwrap()
+        .into_response();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert!(
         response
@@ -328,7 +340,6 @@ fn a_page_the_caller_gives_a_status_answers_with_it() {
 #[tokio::test]
 async fn a_page_over_a_refusal_keeps_its_status_and_drops_its_length() {
     let page = notice(&Notice::refusal(
-        "Marfa",
         StatusCode::FORBIDDEN,
         "That is not allowed.",
     ))
@@ -353,12 +364,11 @@ async fn a_page_over_a_refusal_keeps_its_status_and_drops_its_length() {
 
 #[test]
 fn a_sign_in_refusal_and_the_claimed_notice_link_to_sign_in() {
-    let refused = notice(&Notice::refusal("Marfa", StatusCode::UNAUTHORIZED, "No."))
+    let refused = notice(&Notice::refusal(StatusCode::UNAUTHORIZED, "No."))
         .unwrap()
         .html;
     assert!(refused.contains("/auth/sign-in"));
     let claimed = notice(&Notice::already_claimed(
-        "Marfa",
         "/oauth/authorize?client_id=a&state=b",
     ))
     .unwrap()
@@ -371,7 +381,6 @@ fn a_sign_in_refusal_and_the_claimed_notice_link_to_sign_in() {
 
 fn code_page(return_to: &str, app: Option<AskingApp>) -> String {
     setup_code(&SetupCode {
-        instance_name: "Marfa".into(),
         problem: None,
         return_to: return_to.into(),
         app,
@@ -383,7 +392,7 @@ fn code_page(return_to: &str, app: Option<AskingApp>) -> String {
 #[test]
 fn the_setup_code_page_says_where_the_code_is_and_carries_return_to() {
     let plain = code_page("/", None);
-    assert!(plain.contains("in its terminal, or in its host's log"));
+    assert!(plain.contains("in its terminal, or in its host&#39;s log"));
     assert!(plain.contains("<input type=\"hidden\" name=\"return_to\" value=\"/\">"));
     assert!(!plain.contains("choose what the app can access"));
     let asked = code_page("/oauth/authorize?client_id=a", None);
@@ -411,12 +420,7 @@ fn the_setup_code_page_names_an_app_only_beside_its_host() {
 
 #[test]
 fn only_the_recovery_page_says_its_code_is_a_recovery_code() {
-    let recovery = recovery_code(&RecoveryCode {
-        instance_name: "Marfa".into(),
-        problem: None,
-    })
-    .unwrap()
-    .html;
+    let recovery = recovery_code(&RecoveryCode { problem: None }).unwrap().html;
     assert!(recovery.contains("Recovery code"));
     assert!(recovery.contains("<input type=\"hidden\" name=\"purpose\" value=\"recovery\">"));
     assert!(!recovery.contains("name=\"return_to\""));
@@ -426,7 +430,6 @@ fn only_the_recovery_page_says_its_code_is_a_recovery_code() {
 #[test]
 fn the_details_page_carries_return_to() {
     let details = setup_details(&SetupDetails {
-        instance_name: "Marfa".into(),
         name: String::new(),
         username: String::new(),
         email: String::new(),
@@ -526,12 +529,7 @@ mod consent_pages {
     }
 
     fn page_of(answering: Answering, offer: Offer) -> Page {
-        consent(&Consent {
-            instance_name: HOSTILE.into(),
-            offer,
-            answering,
-        })
-        .unwrap()
+        consent(&Consent { offer, answering }).unwrap()
     }
 
     #[test]
@@ -615,7 +613,7 @@ mod consent_pages {
         let html = without_code(&page_of(Answering::Authorization("q".into()), view));
         assert!(!html.contains("name=\"access\""));
         assert!(!html.contains("Choose access"));
-        assert!(!html.contains("Confirm it's you"));
+        assert!(!html.contains("Confirm it&#39;s you"));
         assert!(!html.contains("15 minutes"));
     }
 
@@ -632,17 +630,16 @@ mod consent_pages {
 #[test]
 fn only_the_page_that_opens_an_item_refreshes_to_its_link() {
     let url = "marfa://a/b";
-    let opening = notice(&Notice::opening_item("Marfa", url)).unwrap();
-    assert!(opening.html().contains(&format!("<a href=\"{url}\">")));
+    let opening = notice(&Notice::opening_item(url)).unwrap();
+    assert!(opening.html().contains(&format!(
+        "<a class=\"btn primary\" href=\"{url}\">Open in Marfa</a>"
+    )));
     assert!(opening.html().contains(&format!(
         "<meta http-equiv=\"refresh\" content=\"0;url={url}\">"
     )));
-    for other in [
-        Notice::not_an_item_link("Marfa"),
-        Notice::signed_out("Marfa"),
-    ] {
+    for other in [Notice::not_an_item_link(), Notice::signed_out()] {
         assert!(!notice(&other).unwrap().html().contains("http-equiv"));
     }
-    let hostile = notice(&Notice::opening_item("Marfa", "\"><img src=x>")).unwrap();
+    let hostile = notice(&Notice::opening_item("\"><img src=x>")).unwrap();
     assert!(!hostile.html().contains("<img"));
 }
