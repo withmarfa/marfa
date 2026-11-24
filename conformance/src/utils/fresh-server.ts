@@ -10,7 +10,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { signInOwnerWithPassword } from "../client/owner-session.js";
-import { offeredValues } from "./approval-form.js";
+import { everythingOffered } from "./approval-form.js";
 import { parseEnvFile, redactSetupProof, TEST_OWNER } from "./target.js";
 import {
   groupOf,
@@ -884,14 +884,12 @@ export async function startDeviceFlow(
         );
       }
       const html = await consent.text();
-      const form = new URLSearchParams({
-        user_code: code.user_code,
-        decision: "approve",
-      });
       // The owner approves everything the device asked for.
-      for (const scope of offeredValues(html, "scopes")) {
-        form.append("scopes", scope);
-      }
+      const form = new URLSearchParams([
+        ["user_code", code.user_code],
+        ["decision", "approve"],
+        ...everythingOffered(html),
+      ]);
       const approved = await fetch(`${origin}/auth/device/consent`, {
         method: "POST",
         redirect: "manual",

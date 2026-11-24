@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { offeredValues } from "../../utils/approval-form.js";
+import { everythingOffered } from "../../utils/approval-form.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -259,13 +259,11 @@ function devicePage(userCode: string, cookie: string): Promise<Response> {
 async function approveDevice(userCode: string, cookie: string): Promise<void> {
   const shown = await devicePage(userCode, cookie);
   expect(shown.status, shown.headers.get("location") ?? "").toBe(200);
-  const form = new URLSearchParams({
-    user_code: userCode,
-    decision: "approve",
-  });
-  for (const scope of offeredValues(await shown.text(), "scopes")) {
-    form.append("scopes", scope);
-  }
+  const form = new URLSearchParams([
+    ["user_code", userCode],
+    ["decision", "approve"],
+    ...everythingOffered(await shown.text()),
+  ]);
   const decided = await fetch(`${server.apiUrl}/auth/device/consent`, {
     method: "POST",
     redirect: "manual",

@@ -181,14 +181,17 @@ async function bothPages(scope: string): Promise<[string, string][]> {
   ];
 }
 
-/** What a page says under Full access, as a person reads it. */
-const fullAccessText = (html: string): string =>
-  readRows(html).find(
-    (r) => r.control.name === "access" && r.control.value === "full",
-  )?.text ?? "";
-
 const selectNamed = (html: string, label: string) =>
   readControls(html).find((c) => c.tag === "select" && c.label === label);
+
+/** The admin level and the rows Custom chooses from, the controls that give permissions. */
+const adminControls = (html: string) =>
+  readControls(html).filter((c) => c.name === "admin" || c.name === "powers");
+
+const adminLevels = (html: string): string[] =>
+  readControls(html)
+    .find((c) => c.name === "admin")
+    ?.options.map((o) => o.value) ?? [];
 
 describe("what the approval pages offer", () => {
   const booted = bootFor("approval-offers");
@@ -254,10 +257,7 @@ describe("what the approval pages offer", () => {
     const scope = "core.note:read";
     for (const [page, html] of await bothPages(scope)) {
       expect(offeredValues(html, "scopes"), page).toEqual([scope]);
-      expect(
-        readControls(html).filter((c) => c.role === "switch"),
-        page,
-      ).toEqual([]);
+      expect(adminControls(html), page).toEqual([]);
       const text = visibleText(html);
       for (const unasked of [
         "Your profile",
@@ -291,96 +291,270 @@ describe("what the approval pages offer", () => {
     }
   });
 
-  it("offers every permission turned off, on both pages", async () => {
-    const permissions =
-      "keys.mint webhooks.manage audit.read items.purge grants.manage config.manage schema.write";
+  it("offers the permissions a request names as one admin level at Full access, each row starting at Allow, on both pages", async () => {
+    const asked = ["keys.mint", "webhooks.manage", "items.purge"];
     for (const [page, html] of await bothPages(
-      `core.note:read ${permissions}`,
+      `core.note:read ${asked.join(" ")}`,
     )) {
-      const found = readControls(html).filter(
-        (c) => c.role === "switch" && c.name === "scopes",
-      );
-      expect(found.map((c) => c.value).sort(), page).toEqual(
-        permissions.split(" ").sort(),
-      );
-      expect(
-        found.every((c) => !c.checked),
-        page,
-      ).toBe(true);
-      // The witness that something is on by default: the note is.
-      expect(defaultSubmission(html, "scopes"), page).toEqual([
-        "core.note:read",
-      ]);
-    }
-  });
-
-  it("marks the permissions that delete for good, and no other, on both pages", async () => {
-    const marked = [
-      "instance.maintain",
-      "schema.write",
-      "items.purge",
-      "backups.manage",
-      "config.manage",
-      "connectors.manage",
-    ];
-    const others = ["keys.mint", "webhooks.manage", "audit.read"];
-    for (const [page, html] of await bothPages(
-      `core.note:read ${[...marked, ...others].join(" ")}`,
-    )) {
-      for (const literal of [...marked, ...others]) {
-        const row = readRows(html).find((r) => r.control.value === literal);
-        const undone = /can't be undone/i.test(row?.text ?? "");
-        expect(undone, `${page}: ${literal}`).toBe(marked.includes(literal));
-      }
-      // The Full access choice says so in the words a person reads, not in
-      // markup the Choose access controls hide.
-      expect(fullAccessText(html), page).toMatch(/can't be undone/i);
+      const admin = readControls(html).filter((c) => c.name === "admin");
+      expect(admin, page).toHaveLength(1);
+      expect(adminLevels(html), page).toEqual(["full", "none", "custom"]);
+      expect(admin[0]!.value, page).toBe("full");
+      const rows = readControls(html).filter((c) => c.name === "powers");
+      expect(rows.map((c) => c.value).sort(), page).toEqual([...asked].sort());
+      for (const row of rows)
+        expect(
+          row.options.map((o) => [o.value, o.selected]),
+          `${page}: ${row.value}`,
+        ).toEqual([
+          ["", false],
+          [row.value, true],
+        ]);
+      // A permission is never a field named scopes, which the note is.
+      expect(offeredValues(html, "scopes"), page).toEqual(["core.note:read"]);
     }
   });
 });
 
-describe("the switch that groups the permissions", () => {
-  const booted = bootFor("approval-switch");
+describe("the admin level on the approval pages", () => {
+  const booted = bootFor("approval-admin");
   beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
   afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-  it("groups the permissions a request names under one switch, turned off, that opens to choose them one by one, on both pages", async () => {
-    const asked = ["backups.manage", "sign_ins.manage"];
+  /** An approval on the consent screen `consent` is the address of, posting `fields`. */
+  function post(consent: URL, fields: [string, string][]): Promise<Response> {
+    return fetch(`${server.apiUrl}/auth/consent`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        cookie,
+        origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams([
+        ["decision", "approve"],
+        ["authorization_request", consent.search.slice(1)],
+        ...fields,
+      ]),
+    });
+  }
+
+  /** The scopes a token carries after an approval of `scope` that posts `fields`. */
+  async function granted(
+    scope: string,
+    fields: [string, string][],
+  ): Promise<string[]> {
+    const app = await register(scope);
+    const proof = pkce();
+    const landed = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, scope, proof),
+        cookie,
+      ),
+    );
+    const sent = await sentTo(server, await post(landed!, fields));
+    const code = sent?.searchParams.get("code");
+    expect(code, String(sent)).toBeTruthy();
+    const exchanged = await token(server, {
+      grant_type: "authorization_code",
+      code: code!,
+      redirect_uri: CALLBACK,
+      code_verifier: proof.verifier,
+      client_id: app.clientId,
+    });
+    expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
+    return exchanged.body.scope?.split(" ").sort() ?? [];
+  }
+
+  const ASKED = "core.note:read keys.mint instance.read audit.read";
+  const NOTE: [string, string] = ["scopes", "core.note:read"];
+
+  it("offers Limited only where it holds some of the powers asked and not all, on both pages", async () => {
     for (const [page, html] of await bothPages(
-      `core.note:read ${asked.join(" ")}`,
-    )) {
-      expect(visibleText(html), page).toContain("Look after this Marfa");
-      const all = readControls(html).filter(
-        (c) => c.role === "switch" && c.name === "",
-      );
-      expect(all, page).toHaveLength(1);
-      expect(all[0]!.checked, page).toBe(false);
-      const each =
-        /<details class="powers-each"[^>]*>([\s\S]*?)<\/details>/.exec(
-          html,
-        )?.[1] ?? "";
-      expect(visibleText(each), page).toContain("Choose one by one");
-      expect(
-        readControls(each)
-          .filter((c) => c.name === "scopes")
-          .map((c) => c.value)
-          .sort(),
-        page,
-      ).toEqual(asked);
-    }
+      "core.note:read instance.read keys.mint",
+    ))
+      expect(adminLevels(html), page).toEqual([
+        "full",
+        "limited",
+        "none",
+        "custom",
+      ]);
+    for (const asked of ["keys.mint items.purge", "instance.read audit.read"])
+      for (const [page, html] of await bothPages(`core.note:read ${asked}`))
+        expect(adminLevels(html), `${page}: ${asked}`).toEqual([
+          "full",
+          "none",
+          "custom",
+        ]);
   });
 
-  it("shows no switch for the permissions to a request that names none, on both pages", async () => {
-    for (const [page, html] of await bothPages("core.note:read")) {
-      expect(visibleText(html), page).not.toContain("Look after this Marfa");
+  it("shows no admin level to a request that names no permission, on both pages", async () => {
+    for (const [page, html] of await bothPages("core.note:read"))
+      expect(adminControls(html), page).toEqual([]);
+    // The witness: one permission asked brings the level.
+    for (const [page, html] of await bothPages("core.note:read audit.read"))
+      expect(adminLevels(html), page).toContain("full");
+  });
+
+  it("offers no admin level or row for a power the app holds, on both pages", async () => {
+    const held = "core.note:read keys.mint";
+    const app = await register(`${held} audit.read`);
+    const first = await consentScreen(app, held);
+    const approved = await post(first.consent, [
+      ["scopes", "core.note:read"],
+      ["admin", "full"],
+    ]);
+    expect(
+      (await sentTo(server, approved))?.searchParams.get("code"),
+    ).toBeTruthy();
+
+    const more = `${held} audit.read`;
+    const browser = await consentScreen(app, more);
+    const device = await deviceScreen(app, more);
+    for (const [page, html] of [
+      ["the consent screen", browser.html],
+      ["the device approval page", device.html],
+    ] as const) {
       expect(
-        readControls(html).filter((c) => c.role === "switch"),
+        readControls(html)
+          .filter((c) => c.name === "powers")
+          .map((c) => c.value),
         page,
-      ).toEqual([]);
+      ).toEqual(["audit.read"]);
+      expect(visibleText(html), page).toMatch(/Already allowed.*Make keys/);
     }
-    // The witness: one permission asked brings the switch.
-    for (const [page, html] of await bothPages("core.note:read audit.read")) {
-      expect(visibleText(html), page).toContain("Look after this Marfa");
+    const again = await deviceScreen(app, held);
+    expect(adminControls(again.html)).toEqual([]);
+  });
+
+  it("grants the permissions of the admin level posted, on both pages", async () => {
+    expect(await granted(ASKED, [NOTE, ["admin", "full"]])).toEqual([
+      "audit.read",
+      "core.note:read",
+      "instance.read",
+      "keys.mint",
+    ]);
+    expect(await granted(ASKED, [NOTE, ["admin", "limited"]])).toEqual([
+      "audit.read",
+      "core.note:read",
+      "instance.read",
+    ]);
+    expect(await granted(ASKED, [NOTE, ["admin", "none"]])).toEqual([
+      "core.note:read",
+    ]);
+    // The device approval page reads the level the same way.
+    const app = await register(ASKED);
+    const screen = await deviceScreen(app, ASKED);
+    const answered = await fetch(`${server.apiUrl}/auth/device/consent`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        cookie,
+        origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams([
+        ["user_code", screen.userCode],
+        ["decision", "approve"],
+        NOTE,
+        ["admin", "limited"],
+      ]),
+    });
+    expect(answered.status).toBe(200);
+    await answered.body?.cancel();
+    const issued = await poll(app, screen);
+    expect(issued.status).toBe(200);
+    expect(issued.body.scope?.split(" ").sort()).toEqual([
+      "audit.read",
+      "core.note:read",
+      "instance.read",
+    ]);
+  });
+
+  it("grants under Custom exactly the powers allowed", async () => {
+    expect(
+      await granted(ASKED, [
+        NOTE,
+        ["admin", "custom"],
+        ["powers", ""],
+        ["powers", "keys.mint"],
+        ["powers", "audit.read"],
+      ]),
+    ).toEqual(["audit.read", "core.note:read", "keys.mint"]);
+    expect(
+      await granted(ASKED, [
+        NOTE,
+        ["admin", "custom"],
+        ["powers", ""],
+        ["powers", ""],
+      ]),
+    ).toEqual(["core.note:read"]);
+  });
+
+  it("counts no power row posted beside a level other than Custom", async () => {
+    const rows: [string, string][] = [
+      ["powers", "keys.mint"],
+      ["powers", "audit.read"],
+    ];
+    expect(await granted(ASKED, [NOTE, ["admin", "none"], ...rows])).toEqual([
+      "core.note:read",
+    ]);
+    expect(await granted(ASKED, [NOTE, ...rows])).toEqual(["core.note:read"]);
+    expect(
+      await granted(ASKED, [
+        NOTE,
+        ["admin", "limited"],
+        ["powers", "keys.mint"],
+      ]),
+    ).toEqual(["audit.read", "core.note:read", "instance.read"]);
+    // The witness: the same rows under Custom count.
+    expect(await granted(ASKED, [NOTE, ["admin", "custom"], ...rows])).toEqual([
+      "audit.read",
+      "core.note:read",
+      "keys.mint",
+    ]);
+  });
+
+  it("refuses an admin level or a power the request did not name, and grants nothing", async () => {
+    const app = await register(`${ASKED} items.purge`);
+    const landed = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, "core.note:read keys.mint", pkce()),
+        cookie,
+      ),
+    );
+    for (const fields of [
+      [NOTE, ["admin", "custom"], ["powers", "items.purge"]],
+      [NOTE, ["admin", "custom"], ["powers", "core.note:read"]],
+      [NOTE, ["admin", "everything"]],
+    ] as [string, string][][]) {
+      const refused = await post(landed!, fields);
+      expect(refused.status, JSON.stringify(fields)).toBe(400);
+      await refused.body?.cancel();
+    }
+    const unasked = await register("core.note:read");
+    const plain = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(unasked.clientId, "core.note:read", pkce()),
+        cookie,
+      ),
+    );
+    const levelled = await post(plain!, [NOTE, ["admin", "none"]]);
+    expect(levelled.status).toBe(400);
+    await levelled.body?.cancel();
+    // The witness: the same requests, posted within them, are codes.
+    for (const [consent, fields] of [
+      [landed!, [NOTE, ["admin", "custom"], ["powers", "keys.mint"]]],
+      [plain!, [NOTE]],
+    ] as [URL, [string, string][]][]) {
+      const sent = await sentTo(server, await post(consent, fields));
+      expect(sent?.searchParams.get("code"), String(sent)).toBeTruthy();
     }
   });
 });
@@ -407,9 +581,9 @@ describe("what the approval pages say of a permission", () => {
     "webhooks.manage",
   ];
 
-  // The first switch of the group is read with the control that opens it.
+  // The first row is read with the hint above the rows.
   const ownWords = (text: string | undefined): string | undefined =>
-    text?.replace(/^Choose one by one /, "");
+    text?.replace(/^With Custom, choose which to allow\. /, "");
 
   it("describes each permission in the same words on both pages", async () => {
     const [[, consent], ...others] = await bothPages(
@@ -776,7 +950,7 @@ describe("what an approval grants an app whose access ended while the screen was
   async function holder(): Promise<App> {
     const app = await register(ASKED);
     const screen = await consentScreen(app, HELD);
-    // The permission starts off, so the person turns it on.
+    // The permission is posted as a scope, which a page never does and the server reads all the same.
     const sent = await decide(
       server,
       origin,
@@ -1732,18 +1906,6 @@ describe("what the approval pages say under full access", () => {
 
   const REQUEST = "core.note:read core.note:write core.task:read";
 
-  it("says under Full access that a power can't be undone only where the request names one, on both pages", async () => {
-    for (const [page, html] of await bothPages(
-      `${REQUEST} items.purge keys.mint`,
-    ))
-      expect(fullAccessText(html), page).toMatch(/can't be undone/i);
-    // The witness: the same words are absent where no such power is named.
-    for (const [page, html] of await bothPages(`${REQUEST} keys.mint`)) {
-      expect(fullAccessText(html), page).toContain("Control over Marfa");
-      expect(fullAccessText(html), page).not.toMatch(/can't be undone/i);
-    }
-  });
-
   it("offers no choice of access where the app's standing consent covers every scope, on both pages", async () => {
     const app = await register(REQUEST);
     const first = await consentScreen(app, REQUEST);
@@ -2077,7 +2239,7 @@ describe("what the approval pages offer and grant an app that names no scope", (
       ["edge.*:read", "Read only"],
       ["edge.*:write", "Read and edit"],
     ]);
-    expect(readControls(html).filter((c) => c.role === "switch")).toEqual([]);
+    expect(adminControls(html)).toEqual([]);
     const offered = offeredValues(html, "scopes");
     for (const permission of PERMISSIONS)
       expect(offered, permission).not.toContain(permission);
@@ -2091,7 +2253,7 @@ describe("what the approval pages offer and grant an app that names no scope", (
     );
     expect(
       readControls(html)
-        .filter((c) => c.role === "switch" && c.name === "scopes")
+        .filter((c) => c.name === "powers")
         .map((c) => c.value),
     ).toEqual(["keys.mint"]);
     expect(selectNamed(html, "All your data")).toBeUndefined();

@@ -506,50 +506,31 @@
     }
   }
 
+  // A part marked data-shown-by shows while the control it names is at data-shown-at; without
+  // scripts every part shows and the server reads only what the control's value counts.
   function watchChoices() {
     const choose = document.querySelector("[data-needs-choice]");
     const radios = document.querySelectorAll("input[name=access]");
+    const parts = [...document.querySelectorAll("[data-shown-by]")];
     const sync = () => {
       if (choose) {
         const picked = document.querySelector("input[name=access]:checked");
         choose.classList.toggle("open", picked?.value === "choose");
       }
-      for (const list of document.querySelectorAll("[data-types-list]")) {
-        const all = document.querySelector("select[data-types-switch]");
-        list.classList.toggle("open", all?.value === "choose-types");
+      for (const part of parts) {
+        const control = document.getElementById(part.dataset.shownBy);
+        part.classList.toggle("open", control?.value === part.dataset.shownAt);
       }
     };
     for (const radio of radios) radio.addEventListener("change", sync);
-    for (const select of document.querySelectorAll("select[data-types-switch]")) {
-      select.addEventListener("change", sync);
+    for (const part of parts) {
+      document.getElementById(part.dataset.shownBy)?.addEventListener("change", sync);
     }
     sync();
   }
 
-  /** One switch turns every permission on or off; each still posts on its own. */
-  function watchPowers() {
-    for (const group of document.querySelectorAll("[data-powers]")) {
-      const all = group.querySelector("[data-powers-all]");
-      const each = [...group.querySelectorAll("[data-powers-each] input[name=scopes]")];
-      if (!all || each.length === 0) continue;
-      all.hidden = false;
-      const sync = () => {
-        const on = each.filter((input) => input.checked).length;
-        all.checked = on === each.length;
-        all.indeterminate = on > 0 && on < each.length;
-      };
-      all.addEventListener("change", () => {
-        for (const input of each) input.checked = all.checked;
-        sync();
-      });
-      for (const input of each) input.addEventListener("change", sync);
-      sync();
-    }
-  }
-
   exchangeHandoff();
   watchChoices();
-  watchPowers();
   watchChanges();
   watchDialog();
   watchPasskeys();

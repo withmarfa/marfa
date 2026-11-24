@@ -49,9 +49,7 @@ describe("the access a key holds, as the terminal prints it", () => {
     expect(row("core.note", "Read and edit"), outcome.stdout).toBe(true);
     expect(row("core.task", "Read only"), outcome.stdout).toBe(true);
     expect(row("edge.references", "Read only"), outcome.stdout).toBe(true);
-    expect(lines).toContain(
-      "Powers: Make, see, edit and revoke keys; Delete items in the trash for good",
-    );
+    expect(lines).toContain("Powers: Make keys; Empty the trash");
     // What the key claims and when it was made stay in the readable output.
     expect(outcome.stdout).toMatch(/^ {2}source /m);
     expect(outcome.stdout).toMatch(/^ {2}claims /m);

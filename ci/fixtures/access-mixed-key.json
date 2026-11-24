@@ -61,8 +61,5 @@
       "level": "Read and edit"
     }
   ],
-  "powers": [
-    "Make, see, edit and revoke keys",
-    "Delete items in the trash for good"
-  ]
+  "powers": ["Make keys", "Empty the trash"]
 }

@@ -1,7 +1,7 @@
 //! Words shared by both approval pages, so they cannot say the same thing two ways.
 
 use crate::app::access::Level;
-use crate::app::oauth::offer::{LevelRow, Reach};
+use crate::app::oauth::offer::{AdminLevel, AppShown, LevelRow, Reach};
 
 pub fn level(level: Level) -> &'static str {
     match level {
@@ -13,9 +13,58 @@ pub fn level(level: Level) -> &'static str {
 
 pub const CHOOSE_TYPES_WORD: &str = "Choose types";
 pub const EDIT_LINE: &str = "Edit includes adding and deleting items.";
-pub const POWERS_TITLE: &str = "Look after this Marfa";
-pub const POWERS_EACH: &str = "Choose one by one";
-pub const UNDONE_MARK: &str = "Can't be undone.";
+pub const ADMIN_TITLE: &str = "Settings, keys and more";
+pub const ALLOW: &str = "Allow";
+pub const DONT_ALLOW: &str = "Don't allow";
+
+pub fn admin_level(level: AdminLevel) -> &'static str {
+    match level {
+        AdminLevel::Full => "Full access",
+        AdminLevel::Limited => "Limited",
+        AdminLevel::None => "No access",
+        AdminLevel::Custom => "Custom",
+    }
+}
+
+/// Follows the app's name, which the app chose itself.
+pub fn app_bracket(app: &AppShown) -> String {
+    match app.destinations.first() {
+        Some(host) => format!("(unverified, {host})"),
+        None => "(unverified)".to_string(),
+    }
+}
+
+/// What approving reaches beyond the bracket, each part only where it applies.
+pub fn app_line(app: &AppShown) -> Option<String> {
+    let mut sentences = Vec::new();
+    if app.destinations.len() > 1 {
+        let hosts: Vec<&str> = app.destinations.iter().map(String::as_str).collect();
+        sentences.push(format!("It sends you back to {}.", and_list(&hosts)));
+    }
+    if let Some(host) = &app.document_host {
+        sentences.push(format!("Its details come from {host}."));
+    }
+    if !app.web_origins.is_empty() {
+        let origins: Vec<&str> = app
+            .web_origins
+            .iter()
+            .map(|origin| origin.strip_prefix("https://").unwrap_or(origin))
+            .collect();
+        sentences.push(format!(
+            "Allowing it also lets {} reach Marfa from your browser.",
+            and_list(&origins)
+        ));
+    }
+    (!sentences.is_empty()).then(|| sentences.join(" "))
+}
+
+fn and_list(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => (*one).to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
 
 pub struct PowerWords {
     pub title: &'static str,
@@ -26,77 +75,71 @@ const POWERS: [(&str, PowerWords); 14] = [
     (
         "keys.mint",
         PowerWords {
-            title: "Make, see, edit and revoke keys",
-            note: Some(
-                "Keys made this way start with no more than this app holds. Narrowing its access ends those that hold more.",
-            ),
+            title: "Make keys",
+            note: Some("They hold no more than this app does."),
         },
     ),
     (
         "keys.manage",
         PowerWords {
-            title: "See, edit, narrow and revoke every key",
-            note: Some(
-                "On its own, this can reduce a key's access and extend its life, but cannot give it more access. With permission to make keys, this app can also make keys that keep working after you disconnect it, and that save as any connector.",
-            ),
+            title: "Manage every key",
+            note: Some("With Make keys, it can make keys that outlast its access."),
         },
     ),
     (
         "grants.manage",
         PowerWords {
-            title: "See and disconnect other apps",
+            title: "Disconnect other apps",
             note: None,
         },
     ),
     (
         "config.manage",
         PowerWords {
-            title: "See and change Marfa's settings",
+            title: "Change settings",
             note: None,
         },
     ),
     (
         "instance.read",
         PowerWords {
-            title: "See health, metrics, storage and job status",
+            title: "See server health",
             note: None,
         },
     ),
     (
         "instance.maintain",
         PowerWords {
-            title: "Run housekeeping and update the server",
-            note: Some(
-                "Includes canceling bulk jobs and confirming the clock. Some jobs permanently delete data that is due to go.",
-            ),
+            title: "Run housekeeping and updates",
+            note: Some("Some jobs delete data for good."),
         },
     ),
     (
         "schema.write",
         PowerWords {
-            title: "Replace or remove type definitions",
-            note: Some("Only for types and relationships with edit access."),
+            title: "Replace or remove types",
+            note: None,
         },
     ),
     (
         "blobs.manage",
         PowerWords {
-            title: "Read and add any file, and manage file storage",
+            title: "Manage files",
             note: None,
         },
     ),
     (
         "webhooks.manage",
         PowerWords {
-            title: "Manage webhooks that send events to other services",
-            note: Some("Includes seeing webhooks and sending events again."),
+            title: "Manage webhooks",
+            note: None,
         },
     ),
     (
         "connectors.manage",
         PowerWords {
-            title: "See, manage and remove all connectors",
-            note: Some("Includes clearing what a connector has saved."),
+            title: "Manage connectors",
+            note: None,
         },
     ),
     (
@@ -109,24 +152,22 @@ const POWERS: [(&str, PowerWords); 14] = [
     (
         "items.purge",
         PowerWords {
-            title: "Delete items in the trash for good",
+            title: "Empty the trash",
             note: None,
         },
     ),
     (
         "backups.manage",
         PowerWords {
-            title: "See, take, adopt and restore backups",
-            note: Some(
-                "This app can restore items and types outside its usual access. If a restore would add settings, the app also needs permission to change Marfa's settings.",
-            ),
+            title: "Back up and restore",
+            note: Some("It can restore items outside its usual access."),
         },
     ),
     (
         "sign_ins.manage",
         PowerWords {
-            title: "See, rename and end sign-ins and passkeys",
-            note: Some("Includes changing your password and ending this app's own access."),
+            title: "Manage sign-ins and passkeys",
+            note: Some("Includes changing your password."),
         },
     ),
 ];

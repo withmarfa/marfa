@@ -442,8 +442,10 @@ fn the_details_page_carries_return_to() {
 
 mod consent_pages {
     use super::*;
-    use crate::app::access::Level;
-    use crate::app::oauth::offer::{AppShown, Choice, Held, LevelRow, Offer, Power, Reach};
+    use crate::app::access::{Level, Permission};
+    use crate::app::oauth::offer::{
+        Admin, AdminLevel, AppShown, Choice, Held, LevelRow, Offer, Reach,
+    };
 
     fn row(reach: Reach, pattern: &str, label: Option<&str>, levels: &[(Level, &str)]) -> LevelRow {
         LevelRow {
@@ -465,6 +467,7 @@ mod consent_pages {
             label: label.map(str::to_string),
             description: None,
             covers: Vec::new(),
+            yes_or_no: reach == Reach::Profile && levels.len() == 1,
         }
     }
 
@@ -501,16 +504,11 @@ mod consent_pages {
                 None,
                 &[(Level::Read, "profile:read")],
             )],
-            powers: vec![
-                Power {
-                    literal: "items.purge".into(),
-                    cannot_be_undone: true,
-                },
-                Power {
-                    literal: "keys.mint".into(),
-                    cannot_be_undone: false,
-                },
-            ],
+            admin: Some(Admin {
+                powers: vec![Permission::ItemsPurge, Permission::KeysMint],
+                levels: vec![AdminLevel::Full, AdminLevel::None, AdminLevel::Custom],
+                selected: AdminLevel::Full,
+            }),
             held: vec![Held {
                 reach: Reach::Type,
                 pattern: "core.task".into(),
@@ -591,26 +589,82 @@ mod consent_pages {
         assert!(!browser.contains("device-check"));
     }
 
+    fn options_of<'a>(html: &'a str, name: &str) -> Vec<&'a str> {
+        html.match_indices(&format!("name=\"{name}\""))
+            .map(|(at, _)| {
+                let from = at + html[at..].find('>').unwrap() + 1;
+                &html[from..from + html[from..].find("</select>").unwrap()]
+            })
+            .collect()
+    }
+
     #[test]
-    fn choices_are_controls_and_powers_are_switches_that_start_off() {
+    fn admin_is_one_level_starting_at_full_access_with_custom_rows_at_allow() {
         let html = without_code(&page_of(Answering::Authorization("q".into()), offer()))
             .replace("&#39;", "'");
         assert!(html.contains("name=\"access\" value=\"full\" checked"));
         assert!(html.contains("name=\"access\" value=\"choose\">"));
-        assert!(html.contains("role=\"switch\""));
-        assert!(!html.contains(
-            "role=\"switch\" id=\"power-0\" name=\"scopes\" value=\"items.purge\" checked"
-        ));
-        assert!(html.find("keys.mint").unwrap() < html.find("items.purge").unwrap());
-        assert!(html.contains("Can't be undone: delete items in the trash for good"));
+        assert_eq!(
+            options_of(&html, "admin"),
+            ["<option value=\"full\" selected>Full access</option>\
+              <option value=\"none\">No access</option>\
+              <option value=\"custom\">Custom</option>"]
+        );
+        assert_eq!(
+            options_of(&html, "powers"),
+            [
+                "<option value=\"\">Don't allow</option>\
+                 <option value=\"keys.mint\" selected>Allow</option>",
+                "<option value=\"\">Don't allow</option>\
+                 <option value=\"items.purge\" selected>Allow</option>",
+            ]
+        );
+        assert!(html.contains("data-shown-by=\"admin-level\" data-shown-at=\"custom\""));
+        assert!(html.contains("They hold no more than this app does."));
+        assert!(html.contains("Settings, keys and more: make keys; empty the trash"));
+        assert!(!html.contains("role=\"switch\""));
         assert!(html.contains("Changes like this need a sign-in from the last 15 minutes."));
+    }
+
+    #[test]
+    fn the_profile_alone_is_allow_or_not() {
+        let html = without_code(&page_of(Answering::Authorization("q".into()), offer()))
+            .replace("&#39;", "'");
+        assert!(html.contains(
+            "<option value=\"\">Don't allow</option><option value=\"profile:read\" selected>Allow</option>"
+        ));
+    }
+
+    #[test]
+    fn the_app_name_is_marked_unverified_with_where_it_sends_you() {
+        let mut view = offer();
+        view.app = AppShown {
+            name: "Cardigan".into(),
+            client_id: "https://cardigan.dev/app.json".into(),
+            document_host: None,
+            destinations: Vec::new(),
+            web_origins: Vec::new(),
+        };
+        let bare = without_code(&page_of(Answering::Authorization("q".into()), view.clone()));
+        assert!(bare.contains("<bdi>Cardigan</bdi> (unverified) wants to connect"));
+        assert!(!bare.contains("class=\"facts\""));
+        view.app.destinations = vec!["cardigan.app".into(), "login.cardigan.app".into()];
+        view.app.document_host = Some("cardigan.dev".into());
+        view.app.web_origins = vec!["https://cardigan.app".into()];
+        let html = without_code(&page_of(Answering::Authorization("q".into()), view));
+        assert!(html.contains("<bdi>Cardigan</bdi> (unverified, cardigan.app) wants to connect"));
+        assert!(html.contains(
+            "<p class=\"facts\">It sends you back to cardigan.app and login.cardigan.app. \
+             Its details come from cardigan.dev. \
+             Allowing it also lets cardigan.app reach Marfa from your browser.</p>"
+        ));
     }
 
     #[test]
     fn a_page_with_nothing_to_choose_offers_no_choice_of_access() {
         let mut view = offer();
         view.full_access_choice = false;
-        view.powers.clear();
+        view.admin = None;
         view.confirm = false;
         let html = without_code(&page_of(Answering::Authorization("q".into()), view));
         assert!(!html.contains("name=\"access\""));

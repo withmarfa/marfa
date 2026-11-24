@@ -151,6 +151,23 @@ export function offeredValues(html: string, name: string): string[] {
   return [...new Set(out.filter((v) => v !== ""))];
 }
 
+/**
+ * What a person posts who allows everything the page offers: every scope it
+ * offers, and the admin level it starts at, which holds every power asked.
+ */
+export function everythingOffered(html: string): [string, string][] {
+  return [
+    ...offeredValues(html, "scopes").map((v): [string, string] => [
+      "scopes",
+      v,
+    ]),
+    ...defaultSubmission(html, "admin").map((v): [string, string] => [
+      "admin",
+      v,
+    ]),
+  ];
+}
+
 export interface RowRead {
   control: ControlRead;
   /** The text a person reads beside the control: everything since the control before it. */

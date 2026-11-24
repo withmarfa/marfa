@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createServer, type RequestListener, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { offeredValues } from "../../utils/approval-form.js";
+import { everythingOffered } from "../../utils/approval-form.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -274,13 +274,13 @@ function devicePage(userCode: string, cookie: string): Promise<Response> {
 function deviceDecision(
   userCode: string,
   cookie: string,
-  scopes: readonly string[],
+  fields: readonly [string, string][],
 ): Promise<Response> {
-  const form = new URLSearchParams({
-    user_code: userCode,
-    decision: "approve",
-  });
-  for (const scope of scopes) form.append("scopes", scope);
+  const form = new URLSearchParams([
+    ["user_code", userCode],
+    ["decision", "approve"],
+    ...fields,
+  ]);
   return fetch(`${server.apiUrl}/auth/device/consent`, {
     method: "POST",
     redirect: "manual",
@@ -297,8 +297,11 @@ function deviceDecision(
 async function approveDevice(userCode: string, cookie: string): Promise<void> {
   const page = await devicePage(userCode, cookie);
   expect(page.status, page.headers.get("location") ?? "").toBe(200);
-  const offered = offeredValues(await page.text(), "scopes");
-  const approved = await deviceDecision(userCode, cookie, offered);
+  const approved = await deviceDecision(
+    userCode,
+    cookie,
+    everythingOffered(await page.text()),
+  );
   await approved.body?.cancel();
   expect(approved.status).toBe(200);
 }
@@ -792,7 +795,11 @@ describe("max_age at the device authorization endpoint", () => {
     const userCode = asked.body.user_code as string;
     expectSignInAgain(await devicePage(userCode, stale), userCode);
     expectSignInAgain(
-      await deviceDecision(userCode, stale, SCOPE.split(" ")),
+      await deviceDecision(
+        userCode,
+        stale,
+        SCOPE.split(" ").map((scope): [string, string] => ["scopes", scope]),
+      ),
       userCode,
     );
     const pending = await devicePoll(clientId, asked.body.device_code);

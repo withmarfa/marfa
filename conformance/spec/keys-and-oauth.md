@@ -1992,7 +1992,7 @@ When a browser session that signed in more than fifteen minutes ago opens `/auth
 
 ## What the approval pages offer
 
-The consent screen at `/auth/consent` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, except the types chosen in place of all data or content, which are fields named `types` whose values are scopes that an all-data or content scope the request names covers. So what a form posts is the request narrowed. Where a request names something to choose, a form also posts a field named `access`, whose value is `full` or `choose`.
+The consent screen at `/auth/consent` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, except the types chosen in place of all data or content, which are fields named `types` whose values are scopes that an all-data or content scope the request names covers, and the permissions, which are given by one admin level posted as `admin` and, under the level Custom, by fields named `powers` whose values are permissions the request names. So what a form posts is the request narrowed. Where a request names something to choose, a form also posts a field named `access`, whose value is `full` or `choose`.
 
 ### `keys-and-oauth/approval-full-access`
 
@@ -2020,7 +2020,7 @@ When a person approves with `access` posted as `full`, the server MUST NOT grant
 
 ### `keys-and-oauth/approval-access-unstated`
 
-Where an approval post carries no `access` field or a value other than `full`, the server MUST read the decision from the scopes and types the post carries, as `keys-and-oauth/consent-ticked`, `keys-and-oauth/consent-nothing-denies` and `keys-and-oauth/device-nothing-denies` state.
+Where an approval post carries no `access` field or a value other than `full`, the server MUST read the decision from the scopes, types, admin level and powers the post carries, as `keys-and-oauth/consent-ticked`, `keys-and-oauth/consent-nothing-denies` and `keys-and-oauth/device-nothing-denies` state.
 
 **Reason:** A post that does not say Full access can only narrow, so a script written before the choice existed keeps its meaning.
 
@@ -2038,7 +2038,7 @@ While an app holds no access to an item type, where a request names both the rea
 
 Where the consent screen or the device approval page offers the choice read and edit for an item type or for content, the server MUST say beside the choices for data that edit includes adding and deleting items.
 
-**Reason:** Read and edit is the write level, which creates, changes and deletes items, a delete moving the item to the bin. Destroying a trashed item for good takes the separate power `items.purge`, which the page offers on its own. Editing a definition, a link type or the profile adds and deletes no item, so those choices do not bring the line: `metadata.types:write` registers and changes types, and deleting one takes `schema.write`.
+**Reason:** Read and edit is the write level, which creates, changes and deletes items, a delete moving the item to the bin. Destroying a trashed item for good takes the separate power `items.purge`, which the page offers among the admin powers. Editing a definition, a link type or the profile adds and deletes no item, so those choices do not bring the line: `metadata.types:write` registers and changes types, and deleting one takes `schema.write`.
 
 **Tests:** `compliance/approval-screens.test.ts › says that editing includes adding and deleting items, where a level to edit is offered, on both pages`.
 
@@ -2062,35 +2062,67 @@ Where a request names a scope that reaches types registered later, the server MU
 
 **Tests:** `compliance/approval-screens.test.ts › says beside a scope that reaches later types that it does, on both pages`.
 
-### `keys-and-oauth/approval-powers-off`
+### `keys-and-oauth/approval-admin-level`
 
-The server MUST offer each permission a request names, among the Choose access controls on the consent screen or the device approval page, turned off.
+Where a request names a permission that the app's standing consent does not cover, the server MUST offer, on the consent screen and the device approval page, an admin level as a form field named `admin`, with the values `full`, `none` and `custom` and with `full` selected.
 
-**Reason:** A person who narrows hands a permission over only by turning it on. Full access (`keys-and-oauth/approval-full-grants-request`) hands over the whole request in one choice.
+**Reason:** The permissions look after the instance rather than reach what the owner keeps, so a person gives them as one level, as they give a type its level, and Custom chooses them one by one. The choices start from everything asked, as Full access does (`keys-and-oauth/approval-full-access`).
 
-**Tests:** `compliance/approval-screens.test.ts › offers every permission turned off, on both pages`.
+**Tests:** `compliance/approval-screens.test.ts › offers the permissions a request names as one admin level at Full access, each row starting at Allow, on both pages`.
 
-### `keys-and-oauth/approval-powers-grouped`
+### `keys-and-oauth/approval-admin-limited`
 
-Where a request names a permission, the server MUST show the permissions it offers on the consent screen and the device approval page under one switch titled `Look after this Marfa`, turned off, with a control titled `Choose one by one` that opens the switch of each permission.
+Where the permissions a request names that the app's standing consent does not cover include some, but not all, of `instance.read`, `blobs.manage` and `audit.read`, the server MUST also offer the admin level `limited` in the field named `admin`.
 
-**Reason:** the permissions look after the instance rather than reach what the owner keeps, so a person approves them together or chooses among them.
+**Reason:** None of the three decides who gets in, sends data out or deletes data for good. Where Limited would give every power asked it is Full access, and where it would give none it is No access, so it is offered only where it differs from both.
 
-**Tests:** `compliance/approval-screens.test.ts › groups the permissions a request names under one switch, turned off, that opens to choose them one by one, on both pages`.
+**Tests:** `compliance/approval-screens.test.ts › offers Limited only where it holds some of the powers asked and not all, on both pages`.
 
-### `keys-and-oauth/approval-powers-none`
+### `keys-and-oauth/approval-admin-rows`
 
-Where a request names no permission, the server MUST NOT show the switch titled `Look after this Marfa` on the consent screen or the device approval page.
+Where the consent screen or the device approval page offers an admin level, the server MUST offer on it a form field named `powers` for each permission the request names that the app's standing consent does not cover, with the choices Allow, whose value is the permission, and Don't Allow, whose value is empty, with Allow selected.
 
-**Tests:** `compliance/approval-screens.test.ts › shows no switch for the permissions to a request that names none, on both pages`.
+**Reason:** Custom starts from the powers Full access gives, so a person who opens it turns off what they do not want.
 
-### `keys-and-oauth/approval-powers-marked`
+**Tests:** `compliance/approval-screens.test.ts › offers the permissions a request names as one admin level at Full access, each row starting at Allow, on both pages`.
 
-Where a request names `instance.maintain`, `schema.write`, `items.purge`, `backups.manage`, `config.manage` or `connectors.manage`, the server MUST mark each on the consent screen and the device approval page as unable to be undone, among the Choose access controls and in the words of the Full access choice.
+### `keys-and-oauth/approval-admin-none`
 
-**Reason:** These delete data or definitions with no way back, and a person who chooses Full access hands them over without opening the controls. A restore is one of them: it removes for good the tombstone of each link and natural key an archived item takes and every tombstone of a type it registers, which archives do not carry. `config.manage` can set a short `trash_retention_days`, directly or through a restore (`archive/restore-settings-permission`), which makes the next `trash-purge` job delete for good trashed items the instance would have kept, and `connectors.manage` clears what a connector has saved.
+Where a request names no permission that the app's standing consent does not cover, the server MUST NOT offer a field named `admin` or `powers` on the consent screen or the device approval page.
 
-**Tests:** `compliance/approval-screens.test.ts › marks the permissions that delete for good, and no other, on both pages`, `› says under Full access that a power can't be undone only where the request names one, on both pages`.
+**Reason:** There is nothing to choose. A permission the app holds is shown with what it holds (`keys-and-oauth/approval-held-shown`) and never offered for removal, as `keys-and-oauth/approval-levels-held` holds for types.
+
+**Tests:** `compliance/approval-screens.test.ts › shows no admin level to a request that names no permission, on both pages`, `› offers no admin level or row for a power the app holds, on both pages`.
+
+### `keys-and-oauth/approval-admin-grants`
+
+When a person approves on the consent screen or the device approval page with `admin` posted as `full`, `limited` or `none`, and the post does not name `access` as `full`, the server MUST add to what the post chooses every permission the request names for `full`, only those of them among `instance.read`, `blobs.manage` and `audit.read` for `limited`, and no permission for `none`.
+
+**Reason:** The page posts the level, and the server maps it, so the page decides nothing about what a level holds. The held permissions come from the standing consent (`keys-and-oauth/approval-held-now`), so No access keeps them.
+
+**Tests:** `compliance/approval-screens.test.ts › grants the permissions of the admin level posted, on both pages`.
+
+### `keys-and-oauth/approval-admin-custom`
+
+When a person approves on the consent screen or the device approval page with `admin` posted as `custom`, and the post does not name `access` as `full`, the server MUST add to what the post chooses exactly the permissions the fields named `powers` carry.
+
+**Tests:** `compliance/approval-screens.test.ts › grants under Custom exactly the powers allowed`.
+
+### `keys-and-oauth/approval-admin-rows-ignored`
+
+Where an approval post carries no `admin` field or a value other than `custom`, the server MUST NOT read the fields named `powers` that the post carries.
+
+**Reason:** A page without scripts shows and posts every row whatever level is chosen, so the level decides which rows count, as choosing types decides whether `types` count.
+
+**Tests:** `compliance/approval-screens.test.ts › counts no power row posted beside a level other than Custom`.
+
+### `keys-and-oauth/approval-admin-beyond`
+
+If an approval posted from the consent screen or the device approval page, without `access` posted as `full`, names an `admin` value other than `full`, `limited`, `none` and `custom`, names `admin` where the request names no permission, or with `admin` posted as `custom` names a `powers` value that is not a permission the request names, then the server MUST answer `400` and grant nothing.
+
+**Reason:** As with a scope (`keys-and-oauth/approval-beyond-shown`), a form can only narrow the request, and a post asking for more than the page showed is refused whole.
+
+**Tests:** `compliance/approval-screens.test.ts › refuses an admin level or a power the request did not name, and grants nothing`.
 
 ### `keys-and-oauth/approval-held-shown`
 
@@ -3748,19 +3780,19 @@ If `POST /auth/sign-in` or `POST /auth/passkeys/sign-in/options` carries an `Ori
 
 ### `keys-and-oauth/caution-consent`
 
-When the consent screen names an app, the server MUST show a caution that Marfa has not verified the app.
+When the consent screen names an app, the server MUST mark the name, beside it, as unverified.
 
 **Reason:** Registration needs no credential, so any program can pick any name.
 
-**Tests:** `compliance/unverified-apps.test.ts › is shown with the caution on the consent page`.
+**Tests:** `compliance/unverified-apps.test.ts › is marked unverified beside its name on the consent page`.
 
 ### `keys-and-oauth/caution-device`
 
-When the device approval page names an app, the server MUST show a caution that Marfa has not verified the app.
+When the device approval page names an app, the server MUST mark the name, beside it, as unverified.
 
 **Reason:** The device flow is where a code from a stranger is likeliest to be typed in, and a caution on one page and not the other leaves the second as the way round the first.
 
-**Tests:** `compliance/unverified-apps.test.ts › is shown with the caution on the device approval page`.
+**Tests:** `compliance/unverified-apps.test.ts › is marked unverified beside its name on the device approval page`.
 
 ### `keys-and-oauth/consent-names-page`
 

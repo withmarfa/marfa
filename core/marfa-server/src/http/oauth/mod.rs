@@ -76,6 +76,8 @@ impl Fields {
             access: self.get("access").map(str::to_string),
             scopes: self.all("scopes"),
             types: self.all("types"),
+            admin: self.get("admin").map(str::to_string),
+            powers: self.all("powers"),
         }
     }
 }

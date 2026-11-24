@@ -1,14 +1,9 @@
 {% import "partials/rows.html" as rows %}<div class="wide-page">
 <h1>Allow {{ view.offer.app.name }} access to {{ view.instance_name }}?</h1>
 {% if device_code.is_some() %}<p class="lede">An app showing the code below is asking to connect to Marfa. Check that the code matches the one the app shows.</p>
-{% endif %}<p class="notice caution">“<bdi>{{ view.offer.app.name }}</bdi>” is the name this app gave itself. Marfa can't confirm who made this app, so approve it only if you trust it.</p>
-<ul class="facts">
-{% for host in view.offer.app.destinations %}<li>Sends you back to {{ host }}</li>
-{% endfor %}{% if let Some(host) = view.offer.app.document_host %}<li>App details from {{ host }}</li>
-{% endif %}{% if !page_addresses.is_empty() %}<li>Approving also lets {{ page_addresses }} reach Marfa from your browser.</li>
-{% endif %}{% if !view.offer.mechanisms.is_empty() %}<li>It can keep using this access without asking you again.</li>
-{% endif %}</ul>
-{% if !held.is_empty() %}<section class="held" aria-labelledby="held-title">
+{% endif %}<p class="lede"><bdi>{{ view.offer.app.name }}</bdi> {{ app_bracket }} wants to connect to your Marfa.</p>
+{% if let Some(line) = app_line %}<p class="facts">{{ line }}</p>
+{% endif %}{% if !held.is_empty() %}<section class="held" aria-labelledby="held-title">
 <h2 id="held-title">Already allowed</h2>
 <ul>
 {% for one in held %}<li><span class="title">{{ one.title }}</span> <span class="level">{{ one.level }}</span></li>
@@ -21,7 +16,7 @@
 <legend>{{ legend }}</legend>
 <p>Full access gives this app everything it asks for{% if view.offer.returning %} here{% endif %}.</p>
 <ul class="gives">
-{% for line in gives %}<li{% if line.danger %} class="danger"{% endif %}>{{ line.text }}</li>
+{% for line in gives %}<li>{{ line.text }}</li>
 {% endfor %}</ul>
 <label class="choice">
 <span class="name">Full access</span>
@@ -36,22 +31,20 @@
 </fieldset>
 {% endif %}<div class="choose"{% if view.offer.full_access_choice %} data-needs-choice{% endif %}>
 {% if !view.offer.full_access_choice && view.offer.offers_edit %}<p class="hint">{{ edit_line }}</p>
-{% endif %}{% for item in data %}{% call rows::level(item.row) %}{% endcall %}{% if !item.types.is_empty() %}<div class="types" data-types-list>
+{% endif %}{% for item in data %}{% call rows::level(item.row) %}{% endcall %}{% if !item.types.is_empty() %}<div class="types" data-shown-by="{{ item.row.id }}" data-shown-at="{{ choose_types }}">
 <p class="hint">Choose which types to allow. A type left at No access is not included.</p>
 {% for one in item.types %}{% call rows::level(one) %}{% endcall %}{% endfor %}</div>
 {% endif %}{% endfor %}{% if !profile.is_empty() %}<h3>Your profile</h3>
-{% for row in profile %}{% call rows::level(row) %}{% endcall %}{% endfor %}{% endif %}{% if !powers.is_empty() %}<section class="powers" data-powers aria-labelledby="powers-all-title">
-<div class="row power powers-all">
+{% for row in profile %}{% call rows::level(row) %}{% endcall %}{% endfor %}{% endif %}{% if let Some(admin) = admin %}<h3>Admin</h3>
+<div class="row">
 <div class="text">
-<label class="title" id="powers-all-title" for="powers-all">{{ powers_title }}</label>
-<div class="line" id="powers-all-note">{{ powers_summary }}</div>
+<label class="title" for="admin-level">{{ admin.title }}</label>
 </div>
-<input type="checkbox" role="switch" id="powers-all" data-powers-all aria-describedby="powers-all-note" hidden>
+<select id="admin-level" name="admin" aria-label="{{ admin.title }}">{% for option in admin.options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.word }}</option>{% endfor %}</select>
 </div>
-<details class="powers-each" data-powers-each>
-<summary>{{ powers_each }}</summary>
-{% for power in powers %}{% call rows::power(power) %}{% endcall %}{% endfor %}</details>
-</section>
+<div class="types" data-shown-by="admin-level" data-shown-at="{{ custom }}">
+<p class="hint">With Custom, choose which to allow.</p>
+{% for power in admin.powers %}{% call rows::power(power) %}{% endcall %}{% endfor %}</div>
 {% endif %}</div>
 <p class="notice error" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
 {% if view.offer.confirm %}<p class="hint">Changes like this need a sign-in from the last 15 minutes.</p>
