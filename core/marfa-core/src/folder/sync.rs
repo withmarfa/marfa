@@ -83,6 +83,10 @@ impl Folder {
                         .directories
                         .iter()
                         .any(|entry| matches!(entry.flag, "unreadable" | "gone"));
+                // Every file it named has had its outcome applied.
+                if complete && report.scan.record_settled {
+                    self.retire_removal_record();
+                }
                 let unavailable = report
                     .catch_up
                     .as_ref()
@@ -212,6 +216,7 @@ impl Folder {
                 pull = Some(again);
             }
         }
+        self.locate_restored(&mut scan.restored)?;
         Ok(SyncReport {
             hydrated,
             settings,

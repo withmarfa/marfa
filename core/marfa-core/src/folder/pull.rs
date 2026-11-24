@@ -815,6 +815,17 @@ impl Folder {
                 .into_iter()
                 .map(|(path, _)| path)
                 .collect();
+            // A file the removal record keeps moves aside once the sync is
+            // confirmed, which frees the item's path.
+            let record = self.removal_record()?;
+            let moves_aside = |entry: &Placing| {
+                record.as_ref().is_some_and(|record| {
+                    matches!(
+                        record.cover(&entry.want, Some(&entry.item.id), false),
+                        super::removed_record::Cover::Judged(_)
+                    )
+                })
+            };
             for entry in placing.iter().filter(|entry| entry.bound.is_none()) {
                 if bound
                     .iter()
@@ -822,7 +833,7 @@ impl Folder {
                 {
                     plan.write += 1;
                     plan.beside += 1;
-                } else if !self.exists(self.root.join(&entry.want)) {
+                } else if !self.exists(self.root.join(&entry.want)) || moves_aside(entry) {
                     plan.write += 1;
                 } else {
                     plan.left += 1;

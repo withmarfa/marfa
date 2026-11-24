@@ -692,8 +692,8 @@ guarded! {
         }
 
         /// Stops following the folder and keeps its files. A confirmed folder
-        /// first leaves a removal record under `.marfa`, and is refused where
-        /// it cannot. Refused while writes wait, except for a first sync
+        /// first leaves a removal record under `.marfa`, keeping the files an
+        /// earlier record still holds, and is refused where it cannot. Refused while writes wait, except for a first sync
         /// still waiting to be confirmed, which this cancels, and except where
         /// another Marfa instance answers at the folder's server, which none of
         /// them can reach; the answer then names each file holding a change the

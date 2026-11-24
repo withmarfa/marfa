@@ -196,9 +196,11 @@ pub fn instance_changed_said(server: &str) -> String {
          folder because its working copy belongs to the previous instance. To follow it there, \
          run `marfa folders remove` on the directory, which keeps its files and records what \
          this folder last synced; add the same directory again with `marfa folders add` and \
-         `--folder` with the folder's ID and a key for that instance, and push it; then delete \
-         again each file `marfa folders remove` names as deleted, and push again until `marfa \
-         folders status` shows nothing waiting"
+         `--folder` with the folder's ID and a key for that instance, and push it, which sends \
+         none of the files it synced before and keeps each that differs beside the instance's \
+         version; then keep what you want of each such file in the instance's version and delete \
+         the other, delete again each file `marfa folders remove` names as deleted, and push \
+         again until `marfa folders status` shows nothing waiting"
     )
 }
 
@@ -826,6 +828,8 @@ impl Folder {
                 pull
             }
         };
+        let mut scan = scan;
+        self.locate_restored(&mut scan.restored)?;
         let problem = drain
             .report
             .unavailable
@@ -1755,6 +1759,7 @@ struct Standing {
     embeds: Vec<Flagged>,
     registry: Option<String>,
     unsure: Vec<Unsure>,
+    restored: Vec<super::RestoredFile>,
     paused: (usize, usize, usize, usize),
     lookup_refused: Option<String>,
 }
@@ -1772,6 +1777,7 @@ impl Standing {
             && self.warnings == other.warnings
             && self.flagged == other.flagged
             && self.embeds == other.embeds
+            && self.restored == other.restored
             && self.settings == other.settings
     }
 }
@@ -1896,6 +1902,7 @@ impl Telling {
             embeds: embeds.clone(),
             registry: scan.registry.clone(),
             unsure: scan.unsure.clone(),
+            restored: scan.restored.clone(),
             lookup_refused: scan.lookup_refused.clone(),
         };
         let before = self.standing.replace(now.clone());

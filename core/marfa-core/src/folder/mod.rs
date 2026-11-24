@@ -57,7 +57,7 @@ pub use every::{
     follows, watch_every,
 };
 pub use handover::{HANDOVER_WAIT, held_by_another, not_handed_over};
-pub use removed_record::{Foreseen, ForeseenFile, Foresight, Known, Removed, SentByRecord};
+pub use removed_record::{ForeseenFile, Foresight, Known, Outcome, Removed, RestoredFile};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
 pub use storage::StorageCause;
 #[cfg(unix)]
@@ -299,8 +299,8 @@ pub struct ScanReport {
     /// folder's `outside_query` is `hold`.
     pub held_outside: usize,
     pub warnings: Vec<Flagged>,
-    /// Files sent as the removal record decided.
-    pub restored: Vec<SentByRecord>,
+    /// Files the removal record judged, as the pass left them.
+    pub restored: Vec<RestoredFile>,
     /// Why the pass read nothing, where the folder's directory is gone.
     pub root_gone: Option<String>,
     /// Why links by name wait though the server answered, where they do: it
@@ -316,13 +316,26 @@ pub struct ScanReport {
     /// it found under no name in it.
     #[serde(skip)]
     pub swept: bool,
+    /// Whether a whole pass left no file waiting on the removal record.
+    #[serde(skip)]
+    pub record_settled: bool,
+}
+
+/// Each file once, as the later pass judged it.
+fn merged_restored(earlier: &[RestoredFile], later: &[RestoredFile]) -> Vec<RestoredFile> {
+    earlier
+        .iter()
+        .filter(|file| later.iter().all(|then| then.path != file.path))
+        .chain(later)
+        .cloned()
+        .collect()
 }
 
 impl ScanReport {
     /// The walk a quick pass handed its sweep to: what the quick pass sent
     /// is added, and the walk reports the rest.
     pub(super) fn absorb_quick(&mut self, quick: ScanReport) {
-        self.restored.extend(quick.restored.iter().cloned());
+        self.restored = merged_restored(&quick.restored, &self.restored);
         self.created += quick.created;
         self.updated += quick.updated;
         self.renamed += quick.renamed;
@@ -333,7 +346,8 @@ impl ScanReport {
     /// A rescan of the same sync: what it made is added, and what it holds
     /// back is what it reports.
     pub(super) fn absorb_rescan(&mut self, later: ScanReport) {
-        self.restored.extend(later.restored.iter().cloned());
+        self.restored = merged_restored(&self.restored, &later.restored);
+        self.record_settled = later.record_settled;
         self.created += later.created;
         self.updated += later.updated;
         self.renamed += later.renamed;
@@ -815,14 +829,15 @@ impl Folder {
         };
         // Nothing was agreed with the server before the first sync. The
         // record is durable before anything is cleared.
-        let recorded = if self.awaiting_confirmation()? {
-            None
+        let (recorded, earlier) = if self.awaiting_confirmation()? {
+            (None, None)
         } else {
-            Some(self.write_removal_record()?)
+            let (count, earlier) = self.write_removal_record()?;
+            (Some(count), Some(earlier))
         };
         if let Err(error) = self.unlist_for_removal() {
-            if recorded.is_some() {
-                self.drop_removal_record();
+            if let Some(earlier) = &earlier {
+                self.put_back_removal_record(earlier.as_deref());
             }
             return Err(error);
         }
@@ -858,29 +873,35 @@ impl Folder {
 
     /// Whether the copy's origin answers as another instance: asked of its
     /// root, and where the root cannot be asked, as the copy last recorded.
+    /// The answer changes nothing in the copy, so a refused removal leaves
+    /// it as it was.
     fn another_instance_answers(&self) -> Result<bool> {
-        let (recorded, origin) = {
+        let (recorded, origin, held) = {
             let conn = self.core.conn()?;
             (
                 crate::store::another_instance_answered(&conn)?,
                 crate::store::meta_get(&conn, crate::store::META_SERVER_ORIGIN)?,
+                crate::store::meta_get(&conn, crate::store::META_INSTANCE_ID)?,
             )
         };
-        let Some(http) = origin.and_then(|origin| crate::http::Http::new(&origin, "").ok()) else {
+        let (Some(http), Some(held)) = (
+            origin.and_then(|origin| crate::http::Http::new(&origin, "").ok()),
+            held,
+        ) else {
             return Ok(recorded);
         };
-        Ok(
-            match crate::catch_up::refuse_another_instance(&self.core, &http) {
-                // Its own instance answered, which clears the record.
-                Ok(_) => false,
-                Err(CoreError::CopyExpired { reason, .. })
-                    if reason == crate::http::INSTANCE_CHANGED =>
-                {
-                    true
-                }
-                Err(_) => crate::store::another_instance_answered(&*self.core.conn()?)?,
-            },
-        )
+        Ok(match http.served() {
+            Ok(served) if served.instance_id == held => {
+                // Its own instance answered, which clears the note of another.
+                crate::store::meta_delete(
+                    &*self.core.conn()?,
+                    crate::store::META_ANOTHER_INSTANCE,
+                )?;
+                false
+            }
+            Ok(_) => true,
+            Err(_) => recorded,
+        })
     }
 
     pub fn folder_id(&self) -> &str {

@@ -27,9 +27,10 @@ pub enum FoldersCommand {
     /// `folders create` makes. Needs read on `system.folder`. Warns on
     /// standard error, once, and goes on, if the directory is in iCloud Drive,
     /// a cloud service's synced location or a network file system, or if git
-    /// tracks it. If `folders remove` left a record from another instance,
-    /// the command reports which files it expects the first sync to send,
-    /// merge, or hold.
+    /// tracks it. If `folders remove` left a record of files synced with
+    /// another instance, the command names each one: the first sync sends
+    /// none of them, binds each that shows what this instance holds, and
+    /// keeps each that differs beside this instance's version.
     Add {
         /// The directory. It is made if it is not there.
         dir: PathBuf,
@@ -59,8 +60,10 @@ pub enum FoldersCommand {
         page: crate::commands::PageArgs,
     },
     /// Stop syncing a directory and keep its files. For a confirmed folder,
-    /// the command saves item versions and available content hashes in
-    /// `.marfa/removed.json`. If it cannot save the record, removal stops.
+    /// the command saves each file's item, version and instance in
+    /// `.marfa/removed.json`, keeping the files an earlier record still
+    /// holds. If it cannot read an earlier record or save the new one,
+    /// removal stops and nothing changes.
     /// Removal cancels a first sync awaiting confirmation. Pending writes
     /// otherwise prevent removal unless another instance answers at the
     /// folder's address or last answered there and the server is unreachable.
@@ -1263,23 +1266,27 @@ fn working(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> {
     Ok(folder)
 }
 
-/// Says each file a removal record decided to send, and from which version.
-pub fn restored_lines(restored: &[marfa_core::folder::SentByRecord]) -> Vec<String> {
+/// Says where each version of a file the removal record kept went.
+pub fn restored_lines(restored: &[marfa_core::folder::RestoredFile]) -> Vec<String> {
     restored
         .iter()
-        .map(|file| {
-            let path = printable(&file.path);
-            if file.over_restored {
-                format!(
-                    "{path} is sent as an edit of version {}, which the instance holds as the restore left it",
-                    file.base
-                )
-            } else {
-                format!(
-                    "{path} changed on the instance since the restore; it is sent as an edit of version {}, the last both held, so the instance merges the two and keeps both edits where they clash",
-                    file.base
-                )
-            }
+        .filter_map(|file| match (&file.kept_as, &file.instance_file) {
+            (Some(kept), Some(written)) => Some(format!(
+                "{} shows the instance's version; this directory's version is kept in {}",
+                printable(written),
+                printable(kept)
+            )),
+            (Some(kept), None) => Some(format!(
+                "{}: this directory's version is kept in {}",
+                printable(&file.path),
+                printable(kept)
+            )),
+            (None, Some(written)) => Some(format!(
+                "{}: the instance's version of its item is in {}",
+                printable(&file.path),
+                printable(written)
+            )),
+            (None, None) => None,
         })
         .collect()
 }
@@ -1618,15 +1625,18 @@ fn removed_said(dir: &Path, folder: &str, removed: &marfa_core::folder::Removed)
         "To follow the folder on that instance:".to_string(),
         format!(
             "  1. With a key for that instance, run `marfa folders add {word} --folder {folder}` \
-             on this same directory. The add reads the record above and says, for each file, \
-             whether that instance still holds it as the backup left it, in which case this \
-             directory's version is sent, or changed it since, in which case both edits are kept."
+             on this same directory. The add reads the record above and names each file that \
+             differs from what that instance holds, and each the instance holds at an older \
+             version. Nothing this directory synced before is sent: a file that differs moves, \
+             unchanged, to a numbered name beside its path, and the instance's version is \
+             written at the path."
         ),
         format!(
-            "  2. Run `marfa folders push {word}`. Delete again each file named deleted above, \
-             which the push writes back from that instance, and push again until `marfa folders \
-             status {word}` shows nothing waiting: a deleted file's item is deleted only once the \
-             folder's grace for a rename has passed."
+            "  2. Run `marfa folders push {word}`. For each file it names, copy what you want to \
+             keep into the instance's version, then delete the other. Delete again each file \
+             named deleted above, and push again until `marfa folders status {word}` shows \
+             nothing waiting: a deleted file's item is deleted only once the folder's grace for a \
+             rename has passed."
         ),
     ]);
     said.join("\n")
@@ -1634,12 +1644,12 @@ fn removed_said(dir: &Path, folder: &str, removed: &marfa_core::folder::Removed)
 
 /// What `folders add` says of the removal record it found in the directory.
 fn foresight_lines(dir: &Path, foresight: &marfa_core::folder::Foresight) -> Vec<String> {
-    use marfa_core::folder::{Foreseen, Known};
+    use marfa_core::folder::{Known, Outcome};
     match &foresight.known {
         Known::None | Known::SameInstance => return Vec::new(),
         Known::Unknown(reason) => {
             return vec![format!(
-                "nothing is known of what {} last synced: {}",
+                "nothing is known of what {} last synced: {}; the first sync sends no file that carries a marfa_id line, binds each that shows what the instance holds, and keeps the others as they are",
                 dir.display(),
                 printable(reason)
             )];
@@ -1647,33 +1657,33 @@ fn foresight_lines(dir: &Path, foresight: &marfa_core::folder::Foresight) -> Vec
         Known::OtherInstance => {}
     }
     let mut lines = vec![format!(
-        "{} last synced with another instance than the one at this server",
+        "{} last synced with another instance than the one at this server; the first sync sends none of the files it synced there",
         dir.display()
     )];
-    if foresight.files.is_empty() {
-        lines.push("  every file it recorded is as that instance holds it".into());
-    }
     for file in &foresight.files {
         let path = printable(&file.path);
-        lines.push(match &file.outcome {
-            Foreseen::Send { held, sent } => format!(
-                "  {path}: the instance holds version {held} as the backup left it, and this folder last sent version {sent}; the next push sends this file as an edit of version {held}"
+        let versions = match (file.held, file.sent) {
+            (Some(held), Some(sent)) if file.older() => format!(
+                " The instance holds version {held}, older than version {sent}, which this folder last synced."
             ),
-            Foreseen::Both { held, shared } => format!(
-                "  {path}: changed on the instance since the restore (now version {held}); where the file differs, the next push sends it as an edit of version {shared}, the last both held, and both edits are kept"
+            (Some(held), Some(sent)) => format!(
+                " The instance holds version {held}; this folder last synced version {sent}."
             ),
-            Foreseen::Absent => format!(
-                "  {path}: the instance holds no item for it; it is not sent, and taking out its marfa_id line sends it as a new item"
+            _ => String::new(),
+        };
+        lines.push(match file.outcome {
+            Outcome::InStep => format!("  {path}: shows what the instance holds; it is bound and nothing is sent.{versions}"),
+            Outcome::Both => format!(
+                "  {path}: differs from what the instance holds. It moves, unchanged, to a numbered name beside its path and is not sent, and the instance's version is written at the path.{versions}"
             ),
-            Foreseen::Unsure { reason } => format!(
-                "  {path}: not sent, and the instance's version is not written over it, because {}",
-                printable(reason)
+            Outcome::Absent => format!(
+                "  {path}: the folder on the instance holds no item for it. It waits and is not sent; take out its marfa_id line, or move a file without one, to send it as a new item.{versions}"
             ),
-            Foreseen::Gone => format!("  {path}: no longer in the directory; nothing is sent"),
-            Foreseen::Unreadable { reason } => format!(
-                "  {path}: cannot be read ({}); it is decided once it can be",
-                printable(reason)
+            Outcome::Unknown => format!(
+                "  {path}: cannot be judged now ({}). It waits and is not sent.{versions}",
+                printable(file.reason.as_deref().unwrap_or("it cannot be read"))
             ),
+            Outcome::Gone => format!("  {path}: no longer in the directory; nothing is sent.{versions}"),
         });
     }
     lines

@@ -4981,7 +4981,7 @@ marfa folders [OPTIONS] <COMMAND>
 
 ### marfa folders add
 
-Make a directory follow a folder, the `system.folder` that `folders create` makes. Needs read on `system.folder`. Warns on standard error, once, and goes on, if the directory is in iCloud Drive, a cloud service's synced location or a network file system, or if git tracks it. If `folders remove` left a record from another instance, the command reports which files it expects the first sync to send, merge, or hold.
+Make a directory follow a folder, the `system.folder` that `folders create` makes. Needs read on `system.folder`. Warns on standard error, once, and goes on, if the directory is in iCloud Drive, a cloud service's synced location or a network file system, or if git tracks it. If `folders remove` left a record of files synced with another instance, the command names each one: the first sync sends none of them, binds each that shows what this instance holds, and keeps each that differs beside this instance's version.
 
 ```text
 marfa folders add [OPTIONS] --folder <ID_OR_TITLE> <DIR>
@@ -5020,7 +5020,7 @@ marfa folders inventory [OPTIONS]
 
 ### marfa folders remove
 
-Stop syncing a directory and keep its files. For a confirmed folder, the command saves item versions and available content hashes in `.marfa/removed.json`. If it cannot save the record, removal stops. Removal cancels a first sync awaiting confirmation. Pending writes otherwise prevent removal unless another instance answers at the folder's address or last answered there and the server is unreachable. In that case, the command lists unsent changes and explains how to add the directory again. A path through a symbolic link must match the path in `folders list`. If a listed directory is missing, reached through a link, or holds a different store, the command removes only its registry entry.
+Stop syncing a directory and keep its files. For a confirmed folder, the command saves each file's item, version and instance in `.marfa/removed.json`, keeping the files an earlier record still holds. If it cannot read an earlier record or save the new one, removal stops and nothing changes. Removal cancels a first sync awaiting confirmation. Pending writes otherwise prevent removal unless another instance answers at the folder's address or last answered there and the server is unreachable. In that case, the command lists unsent changes and explains how to add the directory again. A path through a symbolic link must match the path in `folders list`. If a listed directory is missing, reached through a link, or holds a different store, the command removes only its registry entry.
 
 ```text
 marfa folders remove [OPTIONS] <DIR>

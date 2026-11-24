@@ -1273,35 +1273,6 @@ impl Http {
         ))
     }
 
-    /// Each snapshot of `id`'s history, oldest first, as its version and when
-    /// the version after it was written.
-    pub(crate) fn version_history(&self, id: &str) -> Result<Vec<(i64, String)>, CoreError> {
-        #[derive(serde::Deserialize)]
-        struct Left {
-            version: i64,
-            created_at: String,
-        }
-        let mut history = Vec::new();
-        let mut cursor: Option<String> = None;
-        loop {
-            let mut params = vec![("limit", "200")];
-            if let Some(cursor) = &cursor {
-                params.push(("cursor", cursor.as_str()));
-            }
-            let page: crate::wire::WirePage<Left> =
-                self.get_json(&["items", id, "versions"], &params)?;
-            history.extend(
-                page.data
-                    .into_iter()
-                    .map(|left| (left.version, left.created_at)),
-            );
-            match page.next_cursor {
-                Some(next) => cursor = Some(next),
-                None => return Ok(history),
-            }
-        }
-    }
-
     /// `GET /items/{id}/tables`, as the server answers it.
     pub(crate) fn item_tables(&self, id: &str) -> Result<serde_json::Value, CoreError> {
         self.get_json(&["items", id, "tables"], &[])

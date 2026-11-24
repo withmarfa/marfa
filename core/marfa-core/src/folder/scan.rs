@@ -6,7 +6,7 @@ use crate::Seen;
 use super::beneath::PendingBeneath;
 use super::default_edges::default_edges_of;
 use super::push::{admission_hold, file_item_draft, new_document};
-use super::removed_record::{self, AS_NEW, RESTORED_ELSEWHERE};
+use super::removed_record::{Cover, Outcome, RestoredFile, restored_reason};
 use super::scoped::{Guard, Inventory, Looked, Plan, Reading, linked_elsewhere};
 use super::settings::OutsideQuery;
 use super::{
@@ -33,6 +33,42 @@ fn kept_text(path: &Path, bytes: &[u8]) -> (String, Option<&'static str>) {
     match text_of(bytes) {
         Ok(text) => (text.to_string(), None),
         Err(reason) => (String::new(), Some(reason)),
+    }
+}
+
+impl Scanned {
+    /// A file read on its own, outside a pass, by its path in the directory.
+    pub(super) fn alone(root: &Path, key: &str, bytes: Vec<u8>, edge_types: &EdgeTypes) -> Scanned {
+        let path = root.join(key);
+        let (text, not_text) = kept_text(&path, &bytes);
+        let read =
+            (not_text.is_none() && carries_frontmatter(&path)).then(|| document::read(&text));
+        let unreadable = match not_text {
+            None => read.as_ref().and_then(|read| {
+                read.unreadable
+                    .clone()
+                    .or_else(|| fields::read(&read.front, edge_types).err())
+            }),
+            Some(reason) => Some(reason.to_string()),
+        };
+        Scanned {
+            key: key.to_string(),
+            id: id_named(&path, &bytes, read.as_ref()),
+            line: read
+                .as_ref()
+                .filter(|read| read.unreadable.is_none())
+                .and_then(|read| line_of(&read.front)),
+            hash: state::hash(&bytes),
+            mark: None,
+            born: None,
+            executable: None,
+            text,
+            unreadable,
+            deferred: false,
+            source: Some(bytes),
+            folded: false,
+            path,
+        }
     }
 }
 
@@ -1231,9 +1267,10 @@ impl Folder {
         let mut work: Vec<EdgeWork> = Vec::new();
         let mut moved_since: Vec<(String, EdgeWork)> = Vec::new();
         let mut unsettled: HashSet<String> = HashSet::new();
-        let evidence = self.restore_evidence()?;
+        let restore = self.removal_record()?;
         let whole_pass = scan.scope.is_none() && !scan.incomplete;
         let mut record_waits = false;
+        let restore_members: OnceCell<HashSet<String>> = OnceCell::new();
 
         for (at, (file, claim)) in files.iter().zip(claims).enumerate() {
             if let Some(gone) = self.root_gone() {
@@ -1254,6 +1291,65 @@ impl Folder {
                     item: None,
                 });
                 continue;
+            }
+            // A file the removal record names, of another instance, is bound
+            // where it shows what the instance holds and otherwise waits:
+            // nothing of it is sent.
+            let mut in_step_by_record = false;
+            if let Some(restore) = &restore
+                && claim.as_ref().is_none_or(|claim| claim.bound.is_none())
+                && let Cover::Judged(named) = restore.cover(
+                    &file.key,
+                    file.id.as_deref(),
+                    !carries_frontmatter(&file.path),
+                )
+            {
+                if claim.is_none() && (held_outside.contains(&at) || held_back.contains(&at)) {
+                    record_waits = true;
+                    unsettled.insert(file.key.clone());
+                    continue;
+                }
+                let claimed = claim.as_ref().map(|claim| claim.item_id.as_str());
+                let members =
+                    restore_members.get_or_init(|| self.members(settings).unwrap_or_default());
+                let (outcome, detail) = self.judge_restored(
+                    file,
+                    claimed,
+                    named.as_deref(),
+                    members,
+                    catalog,
+                    edge_types,
+                )?;
+                if outcome == Outcome::InStep {
+                    in_step_by_record = true;
+                } else {
+                    record_waits = true;
+                    let item = claimed.map(str::to_string).or(named);
+                    let kept_as = match (&item, outcome) {
+                        // A file that lost its item's claim to another
+                        // here stays where it is.
+                        (Some(item), Outcome::Both | Outcome::Unknown)
+                            if mode == Files::Write && (claimed.is_some() || file.id.is_none()) =>
+                        {
+                            self.set_restored_aside(file, item)?
+                        }
+                        _ => None,
+                    };
+                    report.flagged.push(Flagged {
+                        path: kept_as.clone().unwrap_or_else(|| file.key.clone()),
+                        flag: "waiting",
+                        reason: restored_reason(outcome, detail, file.id.is_some()),
+                        item: None,
+                    });
+                    report.restored.push(RestoredFile {
+                        path: file.key.clone(),
+                        outcome,
+                        item,
+                        kept_as,
+                        instance_file: None,
+                    });
+                    continue;
+                }
             }
             if file.deferred {
                 self.follow_unread(file, claim, catalog, &withheld, report)?;
@@ -1338,20 +1434,6 @@ impl Folder {
                     // Read again by the next pass, which counts the drop anew.
                     unsettled.insert(file.key.clone());
                 }
-                None if file
-                    .id
-                    .as_deref()
-                    .zip(evidence.as_ref())
-                    .is_some_and(|(id, evidence)| evidence.names(id)) =>
-                {
-                    record_waits = true;
-                    report.flagged.push(Flagged {
-                        path: file.key.clone(),
-                        flag: "waiting",
-                        reason: format!("{RESTORED_ELSEWHERE}the instance holds no item for its marfa_id, so it is not sent{AS_NEW}"),
-                        item: None,
-                    });
-                }
                 None => {
                     if self.queue_create(
                         file,
@@ -1374,47 +1456,43 @@ impl Folder {
                     item_id,
                     bound: None,
                 }) => {
-                    let basis = match (&evidence, self.core.get(&item_id)?) {
-                        (Some(evidence), Some(held)) => {
-                            self.restored_basis(evidence, &held, file.line)
-                        }
-                        _ => None,
-                    };
-                    if let Some(removed_record::Basis::Unsure(reason)) = &basis {
-                        record_waits = true;
-                        report.flagged.push(Flagged {
-                            path: file.key.clone(),
-                            flag: "waiting",
-                            reason: format!("{RESTORED_ELSEWHERE}{reason}, so it is not sent and the instance's version is not written over it{AS_NEW}"),
-                            item: None,
-                        });
-                        continue;
-                    }
-                    if self.queue_update(
+                    let queued = self.queue_update(
                         &item_id,
                         None,
                         file,
                         None,
-                        basis.as_ref(),
+                        in_step_by_record,
                         catalog,
                         edge_types,
                         &mut work,
                         &mut report.flagged,
-                    )? {
-                        report.updated += 1;
-                        if let Some(
-                            removed_record::Basis::Exact(base) | removed_record::Basis::Merge(base),
-                        ) = &basis
-                        {
-                            report.restored.push(removed_record::SentByRecord {
+                    )?;
+                    if in_step_by_record {
+                        let bound = state::bound_at(&*self.core.conn()?, &file.key)?
+                            .is_some_and(|bound| bound.item_id == item_id);
+                        if !bound {
+                            record_waits = true;
+                            report.flagged.push(Flagged {
                                 path: file.key.clone(),
-                                base: *base,
-                                over_restored: matches!(
-                                    basis,
-                                    Some(removed_record::Basis::Exact(_))
-                                ),
+                                flag: "waiting",
+                                reason: restored_reason(Outcome::Both, None, true),
+                                item: None,
                             });
                         }
+                        report.restored.push(RestoredFile {
+                            path: file.key.clone(),
+                            outcome: if bound {
+                                Outcome::InStep
+                            } else {
+                                Outcome::Both
+                            },
+                            item: Some(item_id.clone()),
+                            kept_as: None,
+                            instance_file: None,
+                        });
+                    }
+                    if queued {
+                        report.updated += 1;
                         report
                             .warnings
                             .extend(self.size_warning(file, &item_id, catalog)?);
@@ -1486,7 +1564,7 @@ impl Folder {
                         Some(&bound),
                         file,
                         None,
-                        None,
+                        false,
                         catalog,
                         edge_types,
                         &mut work,
@@ -1568,7 +1646,7 @@ impl Folder {
                         Some(&bound),
                         file,
                         sent_title,
-                        None,
+                        false,
                         catalog,
                         edge_types,
                         &mut work,
@@ -1593,24 +1671,7 @@ impl Folder {
         );
         // Without its stat, the next quick pass reads it again.
         scan.stats.retain(|(key, _)| !unsettled.contains(key));
-        if let Some(evidence) = &evidence
-            && whole_pass
-            && !record_waits
-        {
-            let carried: HashSet<&str> =
-                files.iter().filter_map(|file| file.id.as_deref()).collect();
-            let conn = self.core.conn()?;
-            let mut settled = true;
-            for item in evidence.items() {
-                if carried.contains(item) && state::bound_to_item(&conn, item)?.is_none() {
-                    settled = false;
-                    break;
-                }
-            }
-            if settled {
-                self.drop_removal_record();
-            }
-        }
+        report.record_settled = restore.is_some() && whole_pass && !record_waits;
 
         Ok(ControlFlow::Continue(work))
     }
@@ -2258,6 +2319,19 @@ impl Folder {
             }
         }
 
+        let restore = self.removal_record()?;
+        let judged = |file: &Scanned| {
+            restore.as_ref().is_some_and(|restore| {
+                matches!(
+                    restore.cover(
+                        &file.key,
+                        file.id.as_deref(),
+                        !carries_frontmatter(&file.path),
+                    ),
+                    Cover::Judged(_)
+                )
+            })
+        };
         let mut claims: Vec<Option<Claim>> = vec![None; files.len()];
         let mut taken: HashSet<String> = HashSet::new();
         for (id, members) in &contests {
@@ -2272,8 +2346,14 @@ impl Folder {
                 .or_else(|| {
                     members.iter().min_by(|a, b| {
                         let (a, b) = (&files[**a], &files[**b]);
-                        // No birth time sorts after any.
-                        (a.born.is_none(), a.born, &a.key).cmp(&(b.born.is_none(), b.born, &b.key))
+                        // A file the removal record keeps yields to one it
+                        // does not, and no birth time sorts after any.
+                        (judged(a), a.born.is_none(), a.born, &a.key).cmp(&(
+                            judged(b),
+                            b.born.is_none(),
+                            b.born,
+                            &b.key,
+                        ))
                     })
                 });
             if let Some(at) = keeper {
@@ -2560,7 +2640,7 @@ impl Folder {
         })
     }
 
-    fn holds_bytes(&self, item: &Item, file: &Scanned, catalog: &Catalog) -> bool {
+    pub(super) fn holds_bytes(&self, item: &Item, file: &Scanned, catalog: &Catalog) -> bool {
         if marfa_rules::folder::is_hidden(&item.r#type) || !suited(item, &file.key, catalog) {
             return false;
         }
