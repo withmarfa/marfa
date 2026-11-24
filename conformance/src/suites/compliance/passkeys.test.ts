@@ -728,6 +728,7 @@ describe("owner passkeys", () => {
         body: {
           sign_in_address: address,
           confirm_sign_in_address_change: true,
+          skip_sign_in_address_check: true,
         },
       });
       expect(moved.status, JSON.stringify(moved.body)).toBe(200);
@@ -737,7 +738,7 @@ describe("owner passkeys", () => {
       expect(await signInPage()).toContain("Sign in with a passkey");
       expect(await signInMarkup(WAIT)).toMatch(ADVICE);
 
-      await move(base.replace("localhost", "127.0.0.1"));
+      await move("https://elsewhere.example");
       expect(await signInPage()).not.toContain("passkey");
       const waiting = await signInPage(WAIT);
       expect(waiting).toContain("Try again in 2 minutes.");
