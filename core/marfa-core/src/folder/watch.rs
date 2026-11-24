@@ -1363,7 +1363,7 @@ impl Folder {
 
     /// Whether a pull changed nothing and left nothing that the next pull of
     /// the same copy and record would read anew: a write it failed or held
-    /// back, or a file another folder may yet take.
+    /// back, or a file another folder may yet bind.
     fn left_nothing(&self, pull: &PullReport) -> bool {
         pull.written
             + pull.rewritten
@@ -1372,7 +1372,6 @@ impl Folder {
             + pull.placed
             + pull.ended
             + pull.removed
-            + pull.taken
             + pull.relinked
             + pull.unrelinked
             + pull.unwritten
@@ -1658,7 +1657,6 @@ fn stirred(
         + drain.gave_way
         + pull.moved
         + pull.removed
-        + pull.taken
         + pull.revived
         + usize::from(settings.sent)
         > 0

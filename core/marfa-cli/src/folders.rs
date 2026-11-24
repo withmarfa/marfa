@@ -1449,10 +1449,6 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
             "file(s) left in place whose item the query does not match",
         ),
         (
-            report.taken,
-            "file(s) taken in from another directory on this machine",
-        ),
-        (
             report.elsewhere,
             "item(s) whose file was moved to another directory on this machine, written here once that directory takes it",
         ),

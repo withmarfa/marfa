@@ -2259,7 +2259,7 @@ impl Folder {
         // carries that is placed where it sits and whose bytes it holds: one
         // its query holds, or one attached to a document its query holds
         // whose file here embeds the file at that path. An item the folder no
-        // longer carries, one another folder took in or one that left by
+        // longer carries, one another folder holds or one that left by
         // state, has a file elsewhere or none, and a copy of it is new.
         let mut placed: Option<HashMap<String, Vec<crate::model::Edge>>> = None;
         // Each path a Markdown file here embeds, with the items those files are.
