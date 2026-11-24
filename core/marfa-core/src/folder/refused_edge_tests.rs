@@ -440,7 +440,7 @@ fn a_refused_create_a_files_record_still_waits_on_stays() {
 }
 
 #[test]
-fn a_refused_create_a_files_flag_shows_stays_with_its_reason() {
+fn a_line_refusal_clears_before_its_queue_entry_but_a_default_refusal_stays() {
     let fixture = fixture();
     let folder = &fixture.folder;
     let line = |end, other: &str| state::Line {
@@ -483,8 +483,6 @@ fn a_refused_create_a_files_flag_shows_stays_with_its_reason() {
 
         folder.drain().unwrap();
         assert!(in_queue(folder, &refused), "shown on {path}");
-        // The edge stands, so a line's mark goes as the drain ends; a default
-        // edge's is the defaults' to settle.
         if line_refusal {
             assert_eq!(file_status(folder, path).flag, None, "the mark on {path}");
         } else {

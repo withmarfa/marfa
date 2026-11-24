@@ -540,12 +540,7 @@ impl Folder {
             }
         }
         embedded.retain(|id| id != item_id);
-        // A file the body newly embeds that the query does not hold is the
-        // document's own (`folder-documents/embedded-outside-search`), so the embed
-        // attaches it too. Only an embed new to the body does, whether or not
-        // a link already named the file: an attachment taken away elsewhere
-        // stays away while the embed stays. An embed whose attachment waited
-        // on a held `has-attachment` line is still new.
+        // An embed still counts as new while its attachment waits on a held line.
         let attach: Vec<String> = {
             let new: Vec<String> = embedded
                 .iter()

@@ -918,7 +918,7 @@ When a document write is refused, a device MUST flag the held file `refused` wit
 
 When the working copy holds, as the server last gave it, the edge that a file's refused edge line asked for, a device MUST clear that refusal from the file, whether or not the file changed.
 
-**Reason:** the refusal says the edge was not made, and the edge now stands, so the mark would tell the person something untrue. A refusal of an edge the copy does not hold stands.
+**Reason:** once the edge exists, the corresponding line is in step with the server.
 
 **Tests:** `device/folders-cleared-answers.test.ts › clears a file's refused mark once the copy holds the edge its line names, and keeps it while it does not`.
 
@@ -1996,7 +1996,7 @@ When a Markdown body comes to embed a local file the folder's query does not hol
 
 When a document's `has-attachment` line that was held resolves or is taken out, a device MUST create the `attached-to` edge for each file outside the folder's query that the body embedded while the line was held and that no edge attaches to the document.
 
-**Reason:** the embed was new to the body when the line held the attachments back, and reading the body again must not count it as already seen, or the file would stay unattached with nothing to show for it.
+**Reason:** the held line delayed the attachment when the embed first appeared.
 
 **Tests:** `device/folders-frontmatter.test.ts › attaches an embedded file outside the query once the has-attachment line beside it resolves or is taken out`.
 

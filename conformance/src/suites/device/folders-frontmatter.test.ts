@@ -3602,7 +3602,7 @@ describe("embedded files", () => {
         "an embed attached its file while the has-attachment line stood the type down",
       ).toEqual([`${note} references ${a}`]);
 
-      // The witness: the same file, unedited, once the line resolves.
+      // The embed stays in the body when the held line resolves or is removed.
       if (resolve) {
         writeFileSync(join(harness.dir, "b.png"), png(2));
         put(harness, "Other.md", "---\ntitle: Other\n---\n![](b.png)\n");

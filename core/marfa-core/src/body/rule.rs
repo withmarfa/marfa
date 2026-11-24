@@ -898,12 +898,7 @@ fn record_host(conn: &Connection, catalog: &Catalog, host: &str) -> Result<()> {
     Ok(())
 }
 
-/// Whether a link or embed's row still answers for it: it names an item the
-/// edge to which stands, or it says the server refused the edge, which stays
-/// the answer whatever becomes of the refused write, until the edge stands
-/// (`device/body-name-refused`).
-/// Any other row, a name the server has not settled or one whose edge has
-/// gone, is replaced by what the copy reads now.
+/// Whether a recorded resolution or refusal still agrees with the held edge.
 fn answered(
     conn: &Connection,
     held: &Recorded,
@@ -1832,8 +1827,7 @@ fn read_body(
     let recorded = recorded(conn, id)?;
     let target = |kind: Kind, text: &str, resolved: Resolved| -> Result<BodyTarget> {
         let row = recorded.get(&(kind.as_str(), text.to_string()));
-        // An edge the server refused leaves the copy as it was, so only the
-        // record says the name names nothing yet, until the edge stands.
+        // A refused name keeps its answer until the edge stands.
         if let Some(row) = row.filter(|row| row.state == "refused") {
             return Ok(match made_to(conn, &recorded, kind, id, text)? {
                 Some(id) => BodyTarget::Item { id },

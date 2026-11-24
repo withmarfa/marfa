@@ -3167,8 +3167,7 @@ impl Folder {
         Ok(())
     }
 
-    /// Takes off a file the refusal of an edge its line asked for once the
-    /// copy holds that edge as the server gave it, whoever made it.
+    /// Clears a file's edge refusal when the copy holds the server's edge.
     fn clear_refusals_the_copy_has_answered(&self) -> Result<()> {
         let conn = self.core.conn()?;
         for mut bound in state::bound_refused(&conn)? {

@@ -145,9 +145,7 @@ impl RefusedEdgeCreate {
     }
 }
 
-/// The properties of each edge of this from item, type and to item that the
-/// copy holds as the server last gave it: not a row of the copy's own, which
-/// has version 0, nor one with a write waiting or a read owed.
+/// Properties of matching server edges without a pending write or read-back.
 pub(crate) fn edge_as_server_gave(
     conn: &Connection,
     from_id: &str,

@@ -7626,9 +7626,9 @@ If the server refuses a body's edge write, then a device MUST answer the link `r
 
 ### `device/body-name-refused-clears`
 
-When the working copy holds the `references` edge that a refused body link asked for, a device MUST answer the link with the item it names, not `refused`.
+When the working copy holds the `references` edge that a refused body link asked for, a device MUST answer the link with the item it names.
 
-**Reason:** the refusal says the edge was not made, and the edge now stands, whoever made it.
+**Reason:** the edge now lets the caller follow the link.
 
 **Tests:** `device/body-edges-live.test.ts › reports a refused edge write against its link, and keeps the body`.
 
