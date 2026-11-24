@@ -3167,11 +3167,9 @@ impl Folder {
         Ok(())
     }
 
-    /// Clears a file's edge refusal when the copy holds the server's edge.
-    /// An expired or refilling copy proves nothing about what the server
-    /// holds now, so its refusals stand.
     fn clear_refusals_the_copy_has_answered(&self) -> Result<()> {
         let conn = self.core.conn()?;
+        // Expiry leaves old edge rows in the copy.
         if crate::store::refilling(&conn)? || !crate::store::hydrated(&conn)? {
             return Ok(());
         }

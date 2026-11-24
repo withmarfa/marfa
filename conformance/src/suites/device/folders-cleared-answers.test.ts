@@ -224,10 +224,7 @@ describe("a folder's refused edge creates", () => {
     });
     expect((await made.folder.push()).ok).toBe(true);
     const file = await statusOf(made, "Source.md");
-    expect(
-      file.flag,
-      "the mark stayed beside the edge it names after one push",
-    ).toBeUndefined();
+    expect(file.flag, "one push clears the refused mark").toBeUndefined();
     expect(file.status).toBe("in_step");
     expect(read(made, "Source.md")).toContain(`about: "[[${target}]]"`);
   });

@@ -542,7 +542,6 @@ fn made_to(
     edge_stands(conn, host, other)
 }
 
-/// `other`, where the host's edge to it is held and it is out of the bin.
 fn edge_stands(conn: &Connection, host: &str, other: String) -> Result<Option<String>> {
     if store::in_bin(conn, &other)? {
         return Ok(None);
@@ -1832,8 +1831,6 @@ fn read_body(
     let recorded = recorded(conn, id)?;
     let target = |kind: Kind, text: &str, resolved: Resolved| -> Result<BodyTarget> {
         let row = recorded.get(&(kind.as_str(), text.to_string()));
-        // A refused name keeps its answer until the edge stands. A row saved
-        // with no target is checked against the item the name resolves to.
         if let Some(row) = row.filter(|row| row.state == "refused") {
             let other = match (&row.other_id, &resolved) {
                 (Some(other), _) => Some(other.clone()),
