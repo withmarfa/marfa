@@ -2338,7 +2338,7 @@ When a file bound to an item moves to another registered directory and the moved
 
 When a file’s ID already appears in a registered directory that follows another `system.folder` and the receiving directory already binds that item or its query excludes the item, a device MUST admit the arriving file as a new item.
 
-**Reason:** A directory that follows the same `system.folder` holds the item as the receiving directory does, so a file arriving with its ID is read as it would be with one directory (`folder-files/narrowed-arrival-read`).
+**Reason:** Two directories that follow the same `system.folder` can both keep a file after the shared query stops matching its item (`folder-files/unmatched-same-folder-kept`).
 
 **Tests:** `device/folders-one-mac.test.ts › tells a copy into another folder from a move`, `› reads a file returned to a narrowed directory while a directory of %s has the item's file`.
 
@@ -2586,13 +2586,13 @@ When a registered directory that follows another `system.folder` already holds i
 
 When a registered directory that follows another `system.folder` already holds its own file for an item this folder no longer holds, and that directory's copy holds the item with the same version, type, state, tier, bin time and tags as this directory's copy, a device MUST count this directory’s file as `let_go`.
 
-**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`, `› keeps a file both folders drop in one change when %s, and lets go one the other folder still holds once it has pulled`.
 
 ### `folder-files/let-go-peer-behind-kept`
 
 When an item leaves a folder's query for a reason other than its state or purge, and no registered directory that follows another `system.folder` and has its own file of the item has a copy that holds the item, or a document it is attached to, as `folder-files/let-go-existing-peer` or `folder-files/let-go-attachment-with-document` requires, a device MUST retain the bound file.
 
-**Reason:** A copy whose item differs from this copy's may not have heard the change that drops the item from its query too, so its file may not stay. A tag write leaves the version as it is (`items/tags-version-stale`), so the tags are compared as well. A copy that cannot be read is not known to hold the item. This directory lets the file go at a later pull, once that copy holds the item as this one does. Until then the file is kept as unmatched (`folder-setup/query-tier-departure-kept`).
+**Reason:** A peer may still show an item that has left its query. Removing a tag can change which items match without changing the item's version (`items/tags-version-stale`).
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file both folders drop in one change when %s, and lets go one the other folder still holds once it has pulled`.
 

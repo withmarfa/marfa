@@ -1538,8 +1538,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
           chmodSync(b.dir, 0o755);
         }
       }
-      // The witness: once the other folder has pulled and still holds the
-      // item, its file is let go.
       expect((await pushed(a))?.let_go).toBe(1);
       expect(existsSync(join(a.dir, "Moved.md"))).toBe(false);
       expect(existsSync(join(b.dir, "Moved.md"))).toBe(true);

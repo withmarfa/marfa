@@ -204,9 +204,6 @@ impl Peer {
         })
     }
 
-    /// Whether its query holds a document the item is attached to, by an
-    /// edge `heard` passes, so its file of the item is that document's
-    /// attachment.
     fn holds_document_of(&self, item_id: &str, heard: impl Fn(&Edge) -> bool) -> bool {
         let Some(folder) = &self.folder else {
             return false;
@@ -547,8 +544,7 @@ impl<'a> Peers<'a> {
             .filter(|peer| peer.follows_another(&self.of.folder))
     }
 
-    /// Whether the peer's copy holds the item as this copy does, in all a
-    /// query can judge by. A tag write leaves the version as it is.
+    /// A tag write can change query membership without advancing the item's version.
     fn heard(&self, peer: &Peer, item_id: &str) -> bool {
         let read = |folder: &Folder| folder.core.get(item_id).ok().flatten();
         let (Some(ours), Some(theirs)) = (read(self.of), peer.folder.as_ref().and_then(read))
@@ -568,9 +564,7 @@ impl<'a> Peers<'a> {
         self.loaded().1.as_deref()
     }
 
-    /// Whether a directory of another folder has a file carrying the id. One
-    /// of the same folder holds the item as this one does, so a file
-    /// returning here is read as it would be with one directory.
+    /// Another directory of this folder can still have a file that is returning here.
     pub(super) fn carry(&self, item_id: &str) -> bool {
         self.other_folders().any(|peer| {
             peer.files()
@@ -758,10 +752,6 @@ impl<'a> Peers<'a> {
         }
     }
 
-    /// Whether another folder holds the item, or a document it is attached
-    /// to, with a file of it already, judged only on rows its copy holds as
-    /// this copy does: a copy behind may not have heard the change that drops
-    /// the item there too.
     pub(super) fn filed_elsewhere(&self, item_id: &str) -> bool {
         self.other_folders().any(|peer| {
             (peer.holds(item_id) == Some(true) && self.heard(peer, item_id)
