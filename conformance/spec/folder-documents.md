@@ -1984,6 +1984,14 @@ When a Markdown body comes to embed a local file the folder's query does not hol
 
 **Tests:** `device/folders-frontmatter.test.ts › references an embedded file, and attaches it only where the query does not hold it`, `› sends an embedded file with its file`.
 
+### `folder-documents/embed-edge-held-line`
+
+When a document's `has-attachment` line that was held resolves or is taken out, a device MUST create the `attached-to` edge for each file outside the folder's query that the body embedded while the line was held and that no edge attaches to the document.
+
+**Reason:** the held line delayed the attachment when the embed first appeared.
+
+**Tests:** `device/folders-frontmatter.test.ts › attaches an embedded file outside the query once the has-attachment line beside it resolves or is taken out`.
+
 ### `folder-documents/embed-attachment-line-kept`
 
 While a document's body embeds a file the folder's query holds and that file is attached to the document, a device MUST render the attachment in the document's `has-attachment` line.

@@ -2691,6 +2691,9 @@ impl Folder {
             front: document.front,
             had_links: bound.map(|bound| bound.links.clone()).unwrap_or_default(),
             had_embeds: bound.map(|bound| bound.embeds.clone()).unwrap_or_default(),
+            had_unattached: bound
+                .map(|bound| bound.writes.unattached.clone())
+                .unwrap_or_default(),
             had_lines: bound.map(|bound| bound.lines.clone()).unwrap_or_default(),
             embeds: Vec::new(),
             refused_lookups: BTreeMap::new(),
@@ -3120,9 +3123,7 @@ impl Folder {
                             change,
                             save,
                         };
-                        if !bound.writes.refused.contains(&refused) {
-                            bound.writes.refused.push(refused);
-                        }
+                        bound.writes.keep_refused(refused);
                     }
                     Some(
                         crate::model::Verdict::Accepted
@@ -3228,9 +3229,7 @@ impl Folder {
                             save,
                             reason: local_refusal_reason(&error),
                         };
-                        if !bound.writes.refused.contains(&refused) {
-                            bound.writes.refused.push(refused);
-                        }
+                        bound.writes.keep_refused(refused);
                     }
                     other => {
                         bound.writes.queued[at].id = other?.id;

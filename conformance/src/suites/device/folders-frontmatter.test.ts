@@ -3574,6 +3574,66 @@ describe("embedded files", () => {
     );
   });
 
+  it("attaches an embedded file outside the query once the has-attachment line beside it resolves or is taken out", async () => {
+    for (const [label, resolve] of [
+      ["arrives", true],
+      ["goes", false],
+    ] as const) {
+      harness = await folderHarness(`folder-embed-held-attachment-${label}`);
+      const edges = new EdgeDoor();
+      scriptFolderWrites(harness, { edges });
+      acceptUploads(harness.server);
+      writeFileSync(join(harness.dir, "a.png"), png(1));
+      put(
+        harness,
+        "Note.md",
+        '---\ntitle: Note\nhas-attachment: "[[b.png]]"\n---\n![](a.png)\n',
+      );
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(pushed.value.scan.flagged[0]?.reason).toContain(
+        "[[b.png]] in its has-attachment line matches no item",
+      );
+      const note = createdFor(harness, "Note");
+      const a = createdFor(harness, "a.png");
+      expect(
+        heldEdges(edges),
+        "an embed attached its file while the has-attachment line stood the type down",
+      ).toEqual([`${note} references ${a}`]);
+
+      // The embed stays in the body when the held line resolves or is removed.
+      if (resolve) {
+        writeFileSync(join(harness.dir, "b.png"), png(2));
+        put(harness, "Other.md", "---\ntitle: Other\n---\n![](b.png)\n");
+      } else {
+        edit(harness, "Note.md", 'has-attachment: "[[b.png]]"\n', "");
+      }
+      const resolved = await harness.folder.push();
+      expect(resolved.ok, JSON.stringify(resolved)).toBe(true);
+      if (!resolved.ok) return;
+      expect(resolved.value.scan.flagged).toEqual([]);
+      expect(
+        heldEdges(edges),
+        "the embed's file was not attached once the line stopped holding it",
+      ).toEqual(
+        [
+          `${note} references ${a}`,
+          `${a} attached-to ${note}`,
+          ...(resolve
+            ? [
+                `${createdFor(harness, "b.png")} attached-to ${note}`,
+                `${createdFor(harness, "b.png")} attached-to ${createdFor(harness, "Other")}`,
+                `${createdFor(harness, "Other")} references ${createdFor(harness, "b.png")}`,
+              ]
+            : []),
+        ].sort(),
+      );
+      await harness.stop();
+      harness = undefined;
+    }
+  });
+
   it("removes no reference while an embed names nothing, and removes it once none does", async () => {
     harness = await folderHarness("folder-embed-stand-down");
     const edges = new EdgeDoor();

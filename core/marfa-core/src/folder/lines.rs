@@ -25,6 +25,7 @@ pub(super) struct EdgeWork {
     pub front: Map<String, Value>,
     pub had_links: Vec<String>,
     pub had_embeds: Vec<String>,
+    pub had_unattached: Vec<String>,
     pub had_lines: Vec<Line>,
     pub embeds: Vec<(String, Target)>,
     /// Names whose lookup the server refused while the file was as it is
@@ -67,6 +68,8 @@ pub(super) struct Outcome {
     pub links: Vec<String>,
     /// The file items the body's embeds name, kept apart from `links`.
     pub embedded: Vec<String>,
+    /// The embedded files left unattached while a `has-attachment` line is held.
+    pub unattached: Vec<String>,
     pub lines: Vec<Line>,
     pub held: Option<String>,
     /// The lines whose edge write the copy refused, as the server would have,
@@ -541,11 +544,12 @@ impl Folder {
         // document's own (`folder-documents/embedded-outside-search`), so the embed
         // attaches it too. Only an embed new to the body does, whether or not
         // a link already named the file: an attachment taken away elsewhere
-        // stays away while the embed stays.
+        // stays away while the embed stays. An embed whose attachment waits on
+        // a held `has-attachment` line still counts as new.
         let attach: Vec<String> = {
             let new: Vec<String> = embedded
                 .iter()
-                .filter(|id| !work.had_embeds.contains(id))
+                .filter(|id| !work.had_embeds.contains(id) || work.had_unattached.contains(id))
                 .cloned()
                 .collect();
             if removals.is_some() || new.is_empty() {
@@ -589,6 +593,7 @@ impl Folder {
             });
         }
 
+        let mut unattached: Vec<String> = Vec::new();
         let mut lines: Vec<Line> = Vec::new();
         // The file's edge writes are made together once every group is
         // judged, in one transaction: all of them or none.
@@ -632,6 +637,9 @@ impl Folder {
                 continue;
             }
             let Some(desired) = desired else {
+                if embeds_group {
+                    unattached.clone_from(&attach);
+                }
                 lines.extend(recorded.into_iter().map(|other| Line {
                     edge_type: edge_type.to_string(),
                     end,
@@ -841,6 +849,7 @@ impl Folder {
         Ok(Outcome {
             links,
             embedded,
+            unattached,
             lines,
             held,
             refused,

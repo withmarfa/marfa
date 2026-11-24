@@ -71,6 +71,25 @@ pub struct Writes {
     /// its reason: not asked again until the file changes.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub refused_lookups: BTreeMap<String, String>,
+    /// Embedded file IDs still waiting on a held `has-attachment` line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unattached: Vec<String>,
+}
+
+impl Writes {
+    /// Keeps the newest refusal when changes supersede one another.
+    pub fn keep_refused(&mut self, refused: Refused) {
+        if self
+            .refused
+            .iter()
+            .any(|held| held.save > refused.save && refused.change.supersedes(&held.change))
+        {
+            return;
+        }
+        self.refused
+            .retain(|held| !refused.change.supersedes(&held.change));
+        self.refused.push(refused);
+    }
 }
 
 /// When an unchanged file held `edges` is judged again.

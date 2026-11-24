@@ -748,6 +748,15 @@ fn the_queue_holds_one_refused_create_of_a_line_however_often_the_file_is_saved(
     .map(|row| row.id)
     .collect();
     assert_eq!(left, [each[3].clone()]);
+    let held = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        held.writes.refused.len(),
+        1,
+        "the file's record names the line once: {:?}",
+        held.writes.refused
+    );
     let file = file_status(folder, "a.md");
     assert_eq!(file.flag, Some("refused"));
     assert!(
