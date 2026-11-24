@@ -8,8 +8,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 
-// A server of its own: the fixture holds `table-row-cleanup`, so the run that keys or removes the
-// rows is one it sees finish, and no other file's clean-up waits on it.
+// A dedicated server lets the fixture hold cleanup without delaying other tests.
 const HELD = "hold:housekeeping:table-row-cleanup";
 
 let server: FreshServer;
@@ -110,7 +109,7 @@ async function settle(since: string): Promise<Cleaned[]> {
 const total = (runs: Cleaned[], of: "keyed" | "keys_removed") =>
   runs.reduce((sum, run) => sum + run[of], 0);
 
-it("sorts a large table by its columns right while table-row-cleanup keeps their order and after, through writes and a change to the columns", async () => {
+it("keeps large table pages in order during key fills, row writes, and column changes", async () => {
   const type = `user.rows-kept-sort-${randomUUID()}`;
   const columns = {
     rank: { type: "integer" },
@@ -186,8 +185,7 @@ it("sorts a large table by its columns right while table-row-cleanup keeps their
     });
   };
 
-  // One change for each held run: a second one while it is held brings the job forward again, and
-  // the run after it would replace the result this fixture reads.
+  // A second change would schedule another run and could replace the result under test.
   for (const [column, values, operations] of [
     [
       "label",

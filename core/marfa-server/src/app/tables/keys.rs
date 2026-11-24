@@ -1,6 +1,4 @@
-//! Which (table, column) pairs a sorted page reads from `table_row_keys`, the walk that keys the
-//! rows already there, and the removal of a dropped pair's keys. Items keep theirs the same way, in
-//! `items::sort_keys`.
+//! Sort keys for table columns requested by readers.
 
 use rusqlite::types::Value as Bound;
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -11,15 +9,13 @@ use crate::app::items::sort_keys;
 pub(crate) use crate::app::items::sort_keys::Standing;
 use crate::app::refusal::{Refusal, Result};
 
-/// A table with fewer rows sorts faster by reading them all than by keeping keys for each write.
+/// Small tables avoid the write cost of keeping sort keys.
 pub(super) const MIN_ROWS: i64 = sort_keys::MIN_ITEMS;
 
-/// Each pair costs every write to its table and a key for each of its rows, so the number a
-/// server keeps is bounded, apart from the pairs items keep.
+/// Each pair adds a key per row and work on every write to its table.
 pub(super) const MAX_PAIRS: i64 = sort_keys::MAX_PAIRS;
 
-/// The columns of a table whose keys the server may keep: every column but `order`, whose key
-/// `table_rows.ord` holds, and the `item` columns, whose values all sort as none.
+/// The declared order already has an index, and item references have no sort value.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Keyed(Vec<Sorted>);
 
@@ -46,7 +42,6 @@ impl Keyed {
     }
 }
 
-/// The pairs kept for a table, which each write to it keys its rows by.
 pub(super) fn kept(tx: &Transaction<'_>, table: i64) -> Result<Vec<Sorted>> {
     Ok(tx
         .prepare_cached("SELECT name, kind FROM table_sort_indexes WHERE table_seq = ?1")?
@@ -99,13 +94,11 @@ fn room(tx: &Transaction<'_>) -> Result<bool> {
     Ok(held < MAX_PAIRS)
 }
 
-/// Whether a page that found the pair absent may ask for it to be kept.
 pub(super) fn addable(tx: &Transaction<'_>, table: i64, sorted: &Sorted) -> Result<bool> {
     Ok(large(tx, table)? && !dropping(tx, table, &sorted.column)? && room(tx)?)
 }
 
-/// Adds a pair that `keyed`, the table's columns now, holds, and says whether it did; `fill_page`
-/// keys the rows already written.
+/// Recheck the table in the writer's transaction because its definition may have changed.
 pub(super) fn add(
     tx: &Transaction<'_>,
     table: i64,
@@ -125,8 +118,7 @@ pub(super) fn add(
     Ok(true)
 }
 
-/// Stops keeping the table's pairs that `keyed` no longer holds; `fill_page` removes their keys.
-/// Says whether it stopped any.
+/// Readers stop using a dropped pair before cleanup starts removing its keys.
 pub(super) fn drop_unkept(tx: &Transaction<'_>, table: i64, keyed: &Keyed) -> Result<bool> {
     let mut dropped = false;
     for sorted in kept(tx, table)? {
@@ -144,7 +136,6 @@ pub(super) fn drop_unkept(tx: &Transaction<'_>, table: i64, keyed: &Keyed) -> Re
     Ok(dropped)
 }
 
-/// The tables of one item, or of every item of one type, that keep a pair.
 pub(super) struct Keeping {
     pub table_seq: i64,
     pub table: String,
@@ -188,7 +179,6 @@ pub(super) fn forget_tables_of(tx: &Transaction<'_>, seq: i64) -> Result<()> {
     Ok(())
 }
 
-/// Brings the row's keys to the pairs kept for its table.
 pub(super) fn keep(tx: &Transaction<'_>, table: i64, id: &str, kept: &[Sorted]) -> Result<()> {
     if kept.is_empty() {
         return Ok(());
@@ -233,8 +223,7 @@ pub(super) fn keep(tx: &Transaction<'_>, table: i64, id: &str, kept: &[Sorted]) 
     Ok(())
 }
 
-/// Removes a deleted row's keys; a table that keeps no pair holds none but a dropped pair's,
-/// which `fill_page` removes.
+/// Cleanup owns any remaining keys of dropped pairs.
 pub(super) fn forget(tx: &Transaction<'_>, table: i64, id: &str, kept: &[Sorted]) -> Result<()> {
     if kept.is_empty() {
         return Ok(());
@@ -244,7 +233,6 @@ pub(super) fn forget(tx: &Transaction<'_>, table: i64, id: &str, kept: &[Sorted]
     Ok(())
 }
 
-/// Removes up to `limit` keys of a purged table.
 pub(super) fn remove_keys(tx: &Transaction<'_>, table: i64, limit: i64) -> Result<i64> {
     Ok(tx
         .prepare_cached(
@@ -254,7 +242,6 @@ pub(super) fn remove_keys(tx: &Transaction<'_>, table: i64, limit: i64) -> Resul
         .execute(params![table, limit])? as i64)
 }
 
-/// One page of keys removed or rows keyed.
 pub(super) enum Filled {
     Removed(i64),
     Keyed(i64),
@@ -284,8 +271,7 @@ fn drop_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<i64>> {
     Ok(Some(removed))
 }
 
-/// One page of work: removing up to `limit` keys of a dropped pair, else keying up to `limit` rows
-/// of the first pair not yet ready. Rows a write keyed meanwhile already hold the same key.
+/// Writes may already have keyed rows ahead of the fill cursor.
 pub(super) fn fill_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<Filled>> {
     if let Some(removed) = drop_page(tx, limit)? {
         return Ok(Some(Filled::Removed(removed)));

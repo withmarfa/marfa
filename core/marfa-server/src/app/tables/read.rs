@@ -73,7 +73,7 @@ impl<'a> Shown<'a> {
     }
 }
 
-/// The SQL a row read selects, sorts and totals by, which reads a withheld value as absent.
+/// Filters and totals treat values withheld from this reader as absent.
 struct Withholding {
     /// Whether the reader may read every type, which shows it an id no item holds.
     every: bool,
@@ -259,7 +259,7 @@ fn selection(
 enum Key {
     Id,
     Updated,
-    /// A column whose key the server keeps in `table_row_keys`.
+    /// A requested column that can be read by scanning or from kept keys.
     Column(Sorted),
     /// The column the table names as its `order`, whose key is stored with each row.
     Order(Sorted),
@@ -689,7 +689,7 @@ pub async fn page(
     Ok(page)
 }
 
-/// A refusal here costs a later page its speed and nothing else, so the page that asked does not fail.
+/// Registration is optional because a later page can still scan.
 async fn keep_sort_keys(app: &App, seq: i64, sorted: Sorted) {
     let cache = app.catalog_handle();
     let at = app.clock.stamp();

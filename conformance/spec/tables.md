@@ -994,9 +994,9 @@ When a change to a type moves the order the server keeps for the rows of its ite
 
 When a page of a table's rows is sorted by a column that is not the table's `order`, the server MUST answer each later page of the table's rows sorted by that column in the order `tables/rows-sort` states, through every write to its rows.
 
-**Reason:** once a table of 20,000 rows or more is sorted by such a column, the server keeps the order of its rows by that column, for at most 16 columns of tables on an instance, so a later page with no `filter` reads only the rows it answers. The server writes that order for the rows the table already holds a page at a time, in `table-row-cleanup`. A page read meanwhile, a page that names a `filter` and a page sorted by a column whose order the server does not keep read the whole table, and each is sorted right. A table that falls under 20,000 rows keeps the order the server keeps for it.
+**Reason:** on a table with at least 20,000 rows, a requested sort can use kept keys after `table-row-cleanup` fills them. The server keeps up to 16 pairs of tables and columns across the instance. The declared `order` has its own index, and `item` columns sort by row ID. Other column sorts scan while a pair is filling or the cap prevents registration. A filter on an unindexed column can require scanning the whole table to find enough matches. A table that shrinks below 20,000 rows keeps its existing pairs.
 
-**Tests:** `compliance/table-rows-kept-sort.test.ts › sorts a large table by its columns right while table-row-cleanup keeps their order and after, through writes and a change to the columns`.
+**Tests:** `compliance/table-rows-kept-sort.test.ts › keeps large table pages in order during key fills, row writes, and column changes`.
 
 ### `tables/sort-kept-bounded`
 
@@ -1004,15 +1004,15 @@ When the server starts or stops keeping the order of a table's rows by a column,
 
 **Reason:** a table can hold any number of rows, and one write that changed the order kept for all of them would hold every other write.
 
-**Tests:** `compliance/table-rows-kept-sort.test.ts › sorts a large table by its columns right while table-row-cleanup keeps their order and after, through writes and a change to the columns`.
+**Tests:** `compliance/table-rows-kept-sort.test.ts › keeps large table pages in order during key fills, row writes, and column changes`.
 
 ### `tables/columns-changed`
 
 When a type's change removes a column from a table or changes the type of one, the server MUST answer each page of the table's rows sorted by any column from then on in the order `tables/rows-sort` states.
 
-**Reason:** the order the server keeps by a column no longer holds once the column is removed or changes type. The server stops keeping it, removes it a page at a time in `table-row-cleanup`, and reads the whole table for a page sorted by the column until it keeps the order again.
+**Reason:** a removed or retyped column invalidates its kept keys. The server stops using those keys immediately, and `table-row-cleanup` removes them in pages. A sort by a retyped column uses its new type even before new keys are ready.
 
-**Tests:** `compliance/table-rows-kept-sort.test.ts › sorts a large table by its columns right while table-row-cleanup keeps their order and after, through writes and a change to the columns`.
+**Tests:** `compliance/table-rows-kept-sort.test.ts › keeps large table pages in order during key fills, row writes, and column changes`.
 
 ### `tables/order-undo`
 

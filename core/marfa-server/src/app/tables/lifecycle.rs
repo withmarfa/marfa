@@ -146,8 +146,6 @@ pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
 
 type Declared = BTreeMap<String, Kept>;
 
-/// What each table of an item of `type_id` holding `properties` keeps. An item's own table keeps
-/// no order.
 fn declared(catalog: &Catalog, type_id: &str, properties: &Map<String, Value>) -> Result<Declared> {
     if !catalog.types.contains(type_id) {
         return Ok(BTreeMap::new());
@@ -158,7 +156,6 @@ fn declared(catalog: &Catalog, type_id: &str, properties: &Map<String, Value>) -
         .collect())
 }
 
-/// The columns of table `table_seq` whose keys the server may keep, as the catalog declares them now.
 pub(super) fn keyable(catalog: &Catalog, tx: &Transaction<'_>, table_seq: i64) -> Result<Keyed> {
     let Some((type_id, properties, table)) = store::host_of_table(tx, table_seq)? else {
         return Ok(Keyed::default());
@@ -222,7 +219,6 @@ struct Rewritten {
     indexed: i64,
 }
 
-/// What the tables of one item, or of every item of one type, keep now.
 struct Held {
     orderings: Vec<Ordering>,
     indexings: Vec<Indexing>,

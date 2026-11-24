@@ -93,7 +93,6 @@ pub(super) fn open(
     table_seq(tx, seq, table)?.ok_or_else(|| Refusal::internal("a table summary did not land"))
 }
 
-/// The type, properties and name of the item and table `table` keys.
 pub(super) fn host_of_table(
     tx: &Transaction<'_>,
     table: i64,
@@ -591,8 +590,7 @@ pub(super) fn own_columns_naming(
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Forgets a purged item's summaries and leaves its rows, their keys and their log for
-/// `table-row-cleanup`.
+/// Cleanup removes the purged rows, keys and log in bounded writes.
 pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
     super::keys::forget_tables_of(tx, seq)?;
     for queue in ["table_rows_reordering", "table_rows_reindexing"] {

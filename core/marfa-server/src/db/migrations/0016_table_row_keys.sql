@@ -1,6 +1,4 @@
--- The (table, column) pairs a sorted page of rows reads from `table_row_keys`, with the kind of the
--- column the keys are made by. Every row write keeps a pair's keys from when it is added;
--- `filled_after` and `ready` track the walk that keys the rows already there.
+-- Writes maintain a pair from registration, but reads use it only after the fill finishes.
 CREATE TABLE IF NOT EXISTS table_sort_indexes (
     table_seq INTEGER NOT NULL,
     name TEXT NOT NULL,
