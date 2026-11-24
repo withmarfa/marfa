@@ -42,6 +42,8 @@ struct Tally {
     reindexed: i64,
     keyed: i64,
     keys_removed: i64,
+    /// The most keys one write of the run kept or removed.
+    largest_key_page: i64,
     pages: i64,
 }
 
@@ -55,8 +57,14 @@ impl Tally {
             }
             Page::Reordered(rows) => self.reordered += rows,
             Page::Reindexed(rows) => self.reindexed += rows,
-            Page::Filled(Filled::Keyed(rows)) => self.keyed += rows,
-            Page::Filled(Filled::Removed(keys)) => self.keys_removed += keys,
+            Page::Filled(Filled::Keyed(rows)) => {
+                self.keyed += rows;
+                self.largest_key_page = self.largest_key_page.max(*rows);
+            }
+            Page::Filled(Filled::Removed(keys)) => {
+                self.keys_removed += keys;
+                self.largest_key_page = self.largest_key_page.max(*keys);
+            }
         }
         self.pages += 1;
     }
@@ -71,6 +79,7 @@ impl Tally {
                 "reindexed": self.reindexed,
                 "keyed": self.keyed,
                 "keys_removed": self.keys_removed,
+                "largest_key_page": self.largest_key_page,
                 "pages": self.pages,
             }),
             again,

@@ -24,3 +24,6 @@ CREATE TABLE IF NOT EXISTS table_row_keys (
     PRIMARY KEY (table_seq, name, key, id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS table_row_keys_of_row ON table_row_keys (table_seq, id);
+-- A descending page ties by id ascending, which the primary key read backwards cannot give.
+CREATE INDEX IF NOT EXISTS table_row_keys_descending
+    ON table_row_keys (table_seq, name, key DESC, id);

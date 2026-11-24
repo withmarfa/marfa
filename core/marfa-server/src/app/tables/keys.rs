@@ -201,24 +201,27 @@ pub(super) fn keep(tx: &Transaction<'_>, table: i64, id: &str, kept: &[Sorted]) 
         })
         .optional()?
         .ok_or_else(|| Refusal::internal("a written row did not read"))?;
-    let mut insert = tx.prepare_cached(
-        "INSERT INTO table_row_keys (table_seq, name, key, id) VALUES (?1, ?2, ?3, ?4)",
-    )?;
+    let mut inserted = Vec::new();
     for (sorted, key) in kept.iter().zip(wanted) {
         match held.iter().position(|(name, _)| *name == sorted.column) {
             Some(at) if held[at].1 == key => {
                 held.swap_remove(at);
             }
-            _ => {
-                insert.execute(params![table, sorted.column, key, id])?;
-            }
+            _ => inserted.push((&sorted.column, key)),
         }
     }
+    // SQLite's key equals 1 and 1.0 where Rust does not, so the old key goes first.
     let mut delete = tx.prepare_cached(
         "DELETE FROM table_row_keys WHERE table_seq = ?1 AND name = ?2 AND key = ?3 AND id = ?4",
     )?;
     for (name, key) in held {
         delete.execute(params![table, name, key, id])?;
+    }
+    let mut insert = tx.prepare_cached(
+        "INSERT INTO table_row_keys (table_seq, name, key, id) VALUES (?1, ?2, ?3, ?4)",
+    )?;
+    for (name, key) in inserted {
+        insert.execute(params![table, name, key, id])?;
     }
     Ok(())
 }
@@ -493,6 +496,45 @@ mod tests {
             MIN_ROWS
         );
         assert!(add(&tx, 1, &keyed("string"), &a("string")).unwrap());
+    }
+
+    #[test]
+    fn a_key_sqlite_holds_equal_to_the_old_one_replaces_it() {
+        let mut db = db(&[(1, MIN_ROWS)]);
+        let tx = db.transaction().unwrap();
+        assert!(add(&tx, 1, &keyed("number"), &a("number")).unwrap());
+        drain(&tx, 5_000);
+        let kept = kept(&tx, 1).unwrap();
+        let id = format!("{:06}", MIN_ROWS - 1);
+        for body in ["{\"a\": 1.0}", "{\"a\": 1}", "{\"a\": -0.5}"] {
+            tx.execute(
+                "UPDATE table_rows SET body = jsonb(?2) WHERE table_seq = 1 AND id = ?1",
+                params![id, body],
+            )
+            .unwrap();
+            keep(&tx, 1, &id, &kept).unwrap();
+            let held: Vec<Bound> = tx
+                .prepare("SELECT key FROM table_row_keys WHERE table_seq = 1 AND id = ?1")
+                .unwrap()
+                .query_map([&id], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            let wanted: Bound = tx
+                .query_row("SELECT json_extract(jsonb(?1), '$.a')", [body], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(held, [wanted], "{body}");
+        }
+        let first: String = tx
+            .query_row(
+                "SELECT id FROM table_row_keys WHERE table_seq = 1 ORDER BY key, id LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(first, id);
     }
 
     #[test]
