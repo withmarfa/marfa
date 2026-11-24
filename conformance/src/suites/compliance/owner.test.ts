@@ -11,6 +11,7 @@ import {
   serverOutput,
 } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { describedWords, markedInvalid } from "../../utils/page-html.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
 let state: string;
@@ -856,7 +857,7 @@ describe("signing the owner in at the claim", () => {
   );
 
   it(
-    "creates the owner from the setup page's form with the optional email left blank, and shows a refused username on the page again",
+    "creates the owner from the setup page's form, and shows a refused username on the page again",
     async () => {
       await withFreshInstance(async (instance) => {
         const origin = instance.url;
@@ -884,11 +885,13 @@ describe("signing the owner in at the claim", () => {
           username: "not a username",
           password: OWNER.password,
           confirm_password: OWNER.password,
-          email: "",
         });
         expect(refused.status).toBe(400);
         const page = await refused.text();
-        expect(page).toContain('id="username-error"');
+        expect(markedInvalid(page, "username")).toBe(true);
+        expect(describedWords(page, "username")).toHaveLength(1);
+        expect(describedWords(page, "username")[0]).not.toBe("");
+        expect(markedInvalid(page, "password")).toBe(false);
         expect(page).toContain('value="not a username"');
         expect(page).not.toContain(OWNER.password);
         const claimed = await form({
@@ -896,7 +899,6 @@ describe("signing the owner in at the claim", () => {
           username: "Form.Owner",
           password: OWNER.password,
           confirm_password: OWNER.password,
-          email: "",
         });
         expect(claimed.status).toBe(303);
         expect(claimed.headers.get("location")).toBe("/auth/sign-in");

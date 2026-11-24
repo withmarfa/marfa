@@ -35,7 +35,7 @@ const CLAIM_ADDRESS = "https://marfa.example";
 const NEW_PASSWORD = "a recovered owner password";
 const HOUR_MS = 60 * 60_000;
 const CODE_SHAPE = /^[A-Z2-7]{5}(-[A-Z2-7]{5}){4}$/;
-const MISMATCH = "The passwords don't match.";
+const MISMATCH = "The passwords don’t match.";
 
 interface Unclaimed {
   state: string;
@@ -868,6 +868,18 @@ describe("owner recovery", () => {
       });
       await sent.body?.cancel();
       expect(sent.status).toBe(303);
+      const landing = sent.headers.get("location") ?? "";
+      expect(landing).toBe("/auth/sign-in?recovered=true");
+      const recovered = visibleText(
+        await (await fetch(`${server.apiUrl}${landing}`)).text(),
+      );
+      expect(recovered).toContain("Your password has been changed.");
+      // The witness: the sign-in page says nothing of the kind without the flag.
+      expect(
+        visibleText(
+          await (await fetch(`${server.apiUrl}/auth/sign-in`)).text(),
+        ),
+      ).not.toContain("Your password has been changed.");
       expect(await afterRecovery(server, before)).toEqual({
         sameOwner: true,
         oldPassword: false,

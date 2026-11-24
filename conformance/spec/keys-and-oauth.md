@@ -3806,13 +3806,13 @@ While an instance has an owner, when an authorization the instance signed, whose
 
 **Tests:** `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`.
 
-### `keys-and-oauth/sign-in-caution`
+### `keys-and-oauth/sign-in-unverified-mark`
 
-When the sign-in page names an app, the server MUST show the unverified-app caution beside it.
+When the sign-in page names an app, the server MUST mark the name unverified beside it.
 
-**Reason:** The name is as unvetted on the page before the sign-in as on the page after it.
+**Reason:** The name is as unvetted on the page before the sign-in as on the page after it, and the mark says so where the person reads the name.
 
-**Tests:** `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`, `compliance/unverified-apps.test.ts › is shown with the caution on the sign-in page`.
+**Tests:** `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`, `compliance/unverified-apps.test.ts › is marked unverified beside its name on the sign-in page`.
 
 ### `keys-and-oauth/sign-in-unsigned-no-app`
 
@@ -3827,6 +3827,38 @@ When the sign-in page is opened by a request that is not an authorization the in
 When a person who holds a session opens `GET /auth/sign-in` without `prompt=login` and no authorization sent them, the server MUST answer a page saying they are signed in, holding no sign-in form.
 
 **Tests:** `compliance/sign-in-surface.test.ts › tells a person who is signed in so, and shows the form to one an authorization sent to sign in again`.
+
+### `keys-and-oauth/forgot-password-page`
+
+When a browser opens `GET /auth/forgot-password`, with or without a session, the server MUST answer a page with `200` that names both ways to reset the owner's password: the `marfa owner recover` command, and `MARFA_OWNER_RECOVERY` set before a restart.
+
+**Reason:** A person who has lost the password cannot sign in, so the page they reach from the sign-in page cannot ask for one.
+
+**Tests:** `compliance/sign-in-surface.test.ts › answers a page that says how to reset the owner's password, without a sign-in and without printing the private socket's path`.
+
+### `keys-and-oauth/forgot-password-no-path`
+
+The server MUST NOT print the path of its private socket on `GET /auth/forgot-password`.
+
+**Reason:** The page is public, and the path says where on the machine the instance's private door is.
+
+**Tests:** `compliance/sign-in-surface.test.ts › answers a page that says how to reset the owner's password, without a sign-in and without printing the private socket's path`.
+
+### `keys-and-oauth/sign-in-recovered-notice`
+
+When `GET /auth/sign-in` carries `recovered=true`, the server MUST say on the page that the password has been changed.
+
+**Reason:** The person came to the sign-in page from a recovery, and should know the new password is the one to use.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`.
+
+### `keys-and-oauth/recovery-form-sign-in`
+
+When a browser's recovery form sets a new password, the server MUST answer `303` to `/auth/sign-in?recovered=true`.
+
+**Reason:** Every browser session ended with the old password, so the next step is to sign in.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`.
 
 ### `keys-and-oauth/signed-in-reauth`
 

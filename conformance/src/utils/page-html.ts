@@ -64,3 +64,29 @@ export function pageFields(html: string): PageField[] {
 export function pageField(html: string, name: string): PageField | undefined {
   return pageFields(html).find((field) => field.name === name);
 }
+
+/** The words of each element the field with this id names in `aria-describedby`. */
+export function describedWords(html: string, fieldId: string): string[] {
+  const field = new RegExp(`<input\\b[^>]*\\sid="${fieldId}"[^>]*>`, "i").exec(
+    html,
+  )?.[0];
+  const ids = /\saria-describedby="([^"]*)"/i.exec(field ?? "")?.[1] ?? "";
+  return ids
+    .split(/\s+/)
+    .filter((id) => id !== "")
+    .map((id) => {
+      const element = new RegExp(
+        `<(\\w+)\\b[^>]*\\sid="${id}"[^>]*>([\\s\\S]*?)</\\1>`,
+        "i",
+      ).exec(html);
+      return visibleText(element?.[2] ?? "");
+    });
+}
+
+/** Whether the page marks the field with this id as holding a wrong value. */
+export function markedInvalid(html: string, fieldId: string): boolean {
+  const field = new RegExp(`<input\\b[^>]*\\sid="${fieldId}"[^>]*>`, "i").exec(
+    html,
+  )?.[0];
+  return /\saria-invalid="true"/i.test(field ?? "");
+}

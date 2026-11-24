@@ -110,17 +110,9 @@ When valid setup proof claims an unclaimed instance with `email` sent as `null`,
 
 If a JSON claim through `POST /owner`, `POST /setup/claim` or the private control socket sends `email` as an empty string or as a value that is neither a string nor `null`, then the server MUST refuse it with `400 validation_error` and `email` as `details.errors[0].path`, without consuming the proof.
 
-**Reason:** An empty string is no address, so it is refused as `PATCH /profile` refuses it, and the setup page's form is the one place a blank field means no email (`instance-claim/owner-email-form-blank`).
+**Reason:** An empty string is no address, so it is refused as `PATCH /profile` refuses it.
 
 **Tests:** `compliance/owner.test.ts › refuses an empty email, and an email that is not a string or null, naming email on every claim route without consuming valid setup proof`.
-
-### `instance-claim/owner-email-form-blank`
-
-When the setup page's form submits `email` left blank with valid owner details, the server MUST create the owner with `email` `null`.
-
-**Reason:** A browser sends an empty field for an optional input the person left alone.
-
-**Tests:** `compliance/owner.test.ts › creates the owner from the setup page's form with the optional email left blank, and shows a refused username on the page again`.
 
 ### `instance-claim/owner-name-default`
 
@@ -286,7 +278,7 @@ If a form post to `POST /setup/claim` is refused because `confirm_password` diff
 
 ### `instance-claim/claim-form-mismatch-page`
 
-If a form post to `POST /setup/claim` that names the instance's own origin and asks for HTML is refused because `confirm_password` differs from `password` or is missing, then the server MUST answer the claim form again with "The passwords don't match." and with both password fields empty.
+If a form post to `POST /setup/claim` that names the instance's own origin and asks for HTML is refused because `confirm_password` differs from `password` or is missing, then the server MUST answer the claim form again with "The passwords don’t match." and with both password fields empty.
 
 **Reason:** A password typed twice and wrong is easier to retype than to correct, and a page that sent it back would hold it in the browser's history. A form that asks for JSON gets the error as JSON (`instance-claim/claim-form-mismatch`).
 
@@ -414,7 +406,7 @@ When an authorization the instance signed, whose window is open and whose redire
 
 **Reason:** The name is whatever the app registered under. The host is where the approval will go, which the person can check before they make the account the app will ask to use.
 
-**Tests:** `compliance/claim-from-app.test.ts › names an app beside the host it sends the person back to, with the caution, and names no app that sends them to the loopback`.
+**Tests:** `compliance/claim-from-app.test.ts › names an app beside the host it sends the person back to, marked unverified, and names no app that sends them to the loopback`.
 
 ### `instance-claim/setup-page-app-loopback`
 
@@ -422,21 +414,21 @@ When an authorization whose redirect URI is on the loopback sends a person to th
 
 **Reason:** A loopback host names no place the person can check, so the app's name would stand on the page alone.
 
-**Tests:** `compliance/claim-from-app.test.ts › names an app beside the host it sends the person back to, with the caution, and names no app that sends them to the loopback`.
+**Tests:** `compliance/claim-from-app.test.ts › names an app beside the host it sends the person back to, marked unverified, and names no app that sends them to the loopback`.
 
-### `instance-claim/setup-page-app-caution`
+### `instance-claim/setup-page-app-unverified-mark`
 
-When the setup code page names an app, the server MUST show the unverified-app caution beside it.
+When the setup code page names an app, the server MUST mark the name unverified beside it.
 
-**Tests:** `compliance/claim-from-app.test.ts › names an app beside the host it sends the person back to, with the caution, and names no app that sends them to the loopback`.
+**Tests:** `compliance/claim-from-app.test.ts › names an app beside the host it sends the person back to, marked unverified, and names no app that sends them to the loopback`.
 
-### `instance-claim/setup-page-approval-after`
+### `instance-claim/setup-page-app-connects-after`
 
-When the setup code page or the owner-details page carries a `return_to` whose path is `/oauth/authorize` or `/auth/device/consent`, the server MUST say on it that the person chooses what the app can access, or turns it down, after the account is made.
+When the setup code page carries a `return_to` whose path is `/oauth/authorize` or `/auth/device/consent`, the server MUST say on it that the app can connect once the account is made.
 
-**Reason:** Claiming the instance does not approve the app, and a person must not think it does.
+**Reason:** A person who came from an app should know the account comes first and the app follows.
 
-**Tests:** `compliance/claim-from-app.test.ts › takes an authorization-code client from 401 through setup to consent and a token listed every admin tool`, `› takes a device-code client from 401 through setup to consent and a token listed every admin tool`, `› names an app beside the host it sends the person back to, with the caution, and names no app that sends them to the loopback`.
+**Tests:** `compliance/claim-from-app.test.ts › takes an authorization-code client from 401 through setup to consent and a token listed every admin tool`, `› takes a device-code client from 401 through setup to consent and a token listed every admin tool`, `› names an app beside the host it sends the person back to, marked unverified, and names no app that sends them to the loopback`.
 
 ### `instance-claim/setup-return-to-pages`
 
@@ -668,7 +660,7 @@ If a form post to `POST /setup/recover` is refused because `confirm_password` di
 
 ### `instance-claim/recover-form-mismatch-page`
 
-If a form post to `POST /setup/recover` that names the instance's own origin and asks for HTML is refused because `confirm_password` differs from `password` or is missing, then the server MUST answer the new password form again with "The passwords don't match." and with both password fields empty.
+If a form post to `POST /setup/recover` that names the instance's own origin and asks for HTML is refused because `confirm_password` differs from `password` or is missing, then the server MUST answer the new password form again with "The passwords don’t match." and with both password fields empty.
 
 **Reason:** A form that asks for JSON gets the error as JSON (`instance-claim/recover-form-mismatch`).
 

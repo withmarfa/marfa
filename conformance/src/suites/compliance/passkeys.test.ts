@@ -157,10 +157,10 @@ const ADVICE = /<[a-z]+\b[^>]*\bdata-passkey-advice\b[^>]*>/;
 
 describe("owner passkeys", () => {
   it("offers no passkey on the sign-in page, nor names one when an owner is told to wait, until the owner has one", async () => {
-    expect(await signInPage()).not.toContain("passkey");
+    expect((await signInPage()).toLowerCase()).not.toContain("passkey");
     const waiting = await signInPage(WAIT);
     expect(waiting).toContain("Try again in 2 minutes.");
-    expect(waiting).not.toContain("passkey");
+    expect(waiting.toLowerCase()).not.toContain("passkey");
     expect(await signInMarkup(WAIT)).not.toMatch(ADVICE);
   });
   it("registers and lists independent owner credentials", async () => {
@@ -211,7 +211,7 @@ describe("owner passkeys", () => {
     ).toBe(200);
   });
   it("offers a passkey on the sign-in page, and names one when an owner is told to wait, once the owner has one for this address", async () => {
-    expect(await signInPage()).toContain("Sign in with a passkey");
+    expect(await signInPage()).toContain("Use Passkey");
     expect(await signInPage(WAIT)).toContain(
       "Try again in 2 minutes, or use a passkey.",
     );
@@ -734,14 +734,14 @@ describe("owner passkeys", () => {
     };
     try {
       // The witness: at the host the passkeys were made for, one is offered and named.
-      expect(await signInPage()).toContain("Sign in with a passkey");
+      expect(await signInPage()).toContain("Use Passkey");
       expect(await signInMarkup(WAIT)).toMatch(ADVICE);
 
       await move(base.replace("localhost", "127.0.0.1"));
-      expect(await signInPage()).not.toContain("passkey");
+      expect((await signInPage()).toLowerCase()).not.toContain("passkey");
       const waiting = await signInPage(WAIT);
       expect(waiting).toContain("Try again in 2 minutes.");
-      expect(waiting).not.toContain("passkey");
+      expect(waiting.toLowerCase()).not.toContain("passkey");
       expect(await signInMarkup(WAIT)).not.toMatch(ADVICE);
     } finally {
       // Last, so the move and its undoing disturb no other test.
