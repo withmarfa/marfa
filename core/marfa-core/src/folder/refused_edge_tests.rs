@@ -443,8 +443,7 @@ fn a_refused_create_a_files_record_still_waits_on_stays() {
 fn a_drain_keeps_a_refusal_the_copy_s_edge_rows_seem_to_answer() {
     let fixture = fixture();
     let folder = &fixture.folder;
-    // As an interrupted catch-up leaves it: the edge row landed, the cursor
-    // short of the server's head.
+    // An interrupted replay can land the edge before it reaches the head.
     held(&fixture, "edge", ONE_TO_ONE, json!({}));
     flag_line(
         folder,
@@ -466,7 +465,7 @@ fn a_drain_keeps_a_refusal_the_copy_s_edge_rows_seem_to_answer() {
     assert_eq!(
         file_status(folder, "a.md").flag,
         None,
-        "the witness: a catch-up at the head clears it"
+        "the witness: the clearing pass removes the mark"
     );
 }
 

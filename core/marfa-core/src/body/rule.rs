@@ -1832,7 +1832,7 @@ fn read_body(
     let target = |kind: Kind, text: &str, resolved: Resolved| -> Result<BodyTarget> {
         let row = recorded.get(&(kind.as_str(), text.to_string()));
         if let Some(row) = row.filter(|row| row.state == "refused") {
-            // A refusal saved with no target stays until the link is saved again.
+            // Only the stored target's edge can answer this refusal.
             return Ok(match row.other_id.clone() {
                 Some(other) => edge_stands(conn, id, other)?,
                 None => None,

@@ -3170,9 +3170,7 @@ impl Folder {
         Ok(())
     }
 
-    /// Takes off a file the refusal of a line whose edge the server now holds.
-    /// Called only once a catch-up has reached the server's head: before that,
-    /// the copy's edge rows may be older than the server.
+    // An interrupted replay can leave stale edge rows.
     fn clear_refusals_at_head(&self) -> Result<()> {
         let conn = self.core.conn()?;
         for mut bound in state::bound_refused(&conn)? {
