@@ -916,7 +916,7 @@ When a document write is refused, a device MUST flag the held file `refused` wit
 
 ### `folder-documents/refused-edge-clears`
 
-When the working copy holds, as the server last gave it, the edge that a file's refused edge line asked for, a device MUST clear that refusal from the file, whether or not the file changed.
+When the working copy is current and holds, as the server last gave it, the edge that a file's refused edge line asked for, a device MUST clear that refusal from the file, whether or not the file changed.
 
 **Reason:** once the edge exists, the corresponding line is in step with the server.
 

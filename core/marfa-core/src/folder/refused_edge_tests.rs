@@ -440,6 +440,43 @@ fn a_refused_create_a_files_record_still_waits_on_stays() {
 }
 
 #[test]
+fn an_expired_copy_keeps_the_refusal_its_old_edge_rows_seem_to_answer() {
+    let fixture = fixture();
+    let folder = &fixture.folder;
+    held(&fixture, "edge", ONE_TO_ONE, json!({}));
+    let refusal = || state::Change::Edge {
+        line: state::Line {
+            edge_type: ONE_TO_ONE.into(),
+            end: End::From,
+            other: fixture.target.clone(),
+        },
+        shown: true,
+    };
+
+    flag_line(folder, "a.md", refusal());
+    folder.clear_refusals_the_copy_has_answered().unwrap();
+    assert_eq!(
+        file_status(folder, "a.md").flag,
+        None,
+        "the witness: a current copy holding the edge clears the mark"
+    );
+
+    flag_line(folder, "a.md", refusal());
+    crate::reach::expire(&folder.core.conn().unwrap()).unwrap();
+    folder.clear_refusals_the_copy_has_answered().unwrap();
+    let held_back = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+        .unwrap()
+        .unwrap()
+        .writes
+        .refused;
+    assert_eq!(
+        held_back.len(),
+        1,
+        "an expired copy's edge rows are not known to be the server's: {held_back:?}"
+    );
+}
+
+#[test]
 fn a_line_refusal_clears_before_its_queue_entry_but_a_default_refusal_stays() {
     let fixture = fixture();
     let folder = &fixture.folder;

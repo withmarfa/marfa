@@ -539,6 +539,11 @@ fn made_to(
     else {
         return Ok(None);
     };
+    edge_stands(conn, host, other)
+}
+
+/// `other`, where the host's edge to it is held and it is out of the bin.
+fn edge_stands(conn: &Connection, host: &str, other: String) -> Result<Option<String>> {
     if store::in_bin(conn, &other)? {
         return Ok(None);
     }
@@ -1827,12 +1832,22 @@ fn read_body(
     let recorded = recorded(conn, id)?;
     let target = |kind: Kind, text: &str, resolved: Resolved| -> Result<BodyTarget> {
         let row = recorded.get(&(kind.as_str(), text.to_string()));
-        // A refused name keeps its answer until the edge stands.
+        // A refused name keeps its answer until the edge stands. A row saved
+        // with no target is checked against the item the name resolves to.
         if let Some(row) = row.filter(|row| row.state == "refused") {
-            return Ok(match made_to(conn, &recorded, kind, id, text)? {
-                Some(id) => BodyTarget::Item { id },
-                None => target_of(&row.state, row.reason.clone()),
-            });
+            let other = match (&row.other_id, &resolved) {
+                (Some(other), _) => Some(other.clone()),
+                (None, Resolved::Found { id, .. }) => Some(id.clone()),
+                (None, _) => None,
+            };
+            return Ok(match other {
+                Some(other) => edge_stands(conn, id, other)?,
+                None => None,
+            }
+            .map_or_else(
+                || target_of(&row.state, row.reason.clone()),
+                |id| BodyTarget::Item { id },
+            ));
         }
         if let Resolved::Found { id, .. } = resolved {
             return Ok(BodyTarget::Item { id });
@@ -2865,6 +2880,40 @@ mod tests {
             targets(&core.body_links(&host).unwrap().links),
             vec![refused],
             "the edge going leaves the refusal as it was"
+        );
+    }
+
+    #[test]
+    fn a_refusal_saved_without_its_target_names_its_item_once_the_edge_stands() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        remote_note(&core, "plan-a", "Plan");
+        let host = note(&core, "Host", "[[plan-a]]");
+        as_the_server_s(&core);
+        {
+            let conn = core.conn().unwrap();
+            conn.execute("DELETE FROM edges", []).unwrap();
+            conn.execute(
+                "UPDATE body_names SET state = 'refused', other_id = NULL, reason = 'not allowed'",
+                [],
+            )
+            .unwrap();
+        }
+        let refused = BodyTarget::Refused {
+            reason: "not allowed".into(),
+        };
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![refused],
+            "the witness: the name is refused while no edge stands"
+        );
+
+        land_remote_edge(&core, link_edge(&host, "plan-a"));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item {
+                id: "plan-a".into()
+            }]
         );
     }
 

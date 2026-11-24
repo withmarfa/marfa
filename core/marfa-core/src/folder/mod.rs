@@ -3168,8 +3168,13 @@ impl Folder {
     }
 
     /// Clears a file's edge refusal when the copy holds the server's edge.
+    /// An expired or refilling copy proves nothing about what the server
+    /// holds now, so its refusals stand.
     fn clear_refusals_the_copy_has_answered(&self) -> Result<()> {
         let conn = self.core.conn()?;
+        if crate::store::refilling(&conn)? || !crate::store::hydrated(&conn)? {
+            return Ok(());
+        }
         for mut bound in state::bound_refused(&conn)? {
             let before = bound.writes.refused.len();
             let item = bound.item_id.clone();
