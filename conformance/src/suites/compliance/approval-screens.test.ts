@@ -380,10 +380,15 @@ describe("what the approval pages offer", () => {
       expect(visibleText(html), page).toContain(
         "Types added later are included.",
       );
+      // A page without scripts shows no choice, so it names the levels.
+      expect(visibleText(html), page).toContain(
+        "Read Only and Read and Edit include types added later. Each Type does not.",
+      );
     }
     // The witness: asked for one type only, the page says nothing of later types.
     for (const [page, html] of await bothPages("core.note:read")) {
       expect(visibleText(html), page).not.toMatch(/added later/i);
+      expect(visibleText(html), page).not.toContain("Each Type does not");
     }
   });
 
@@ -452,20 +457,27 @@ describe("the admin level on the approval pages", () => {
   it("offers Limited only where it holds some of the powers asked and not all, on both pages", async () => {
     for (const [page, html] of await bothPages(
       "core.note:read instance.read keys.mint",
-    ))
+    )) {
       expect(adminLevels(html), page).toEqual([
         "full",
         "limited",
         "none",
         "custom",
       ]);
+      // A page without scripts shows no choice, so it defines Limited.
+      expect(visibleText(html), page).toMatch(
+        /Limited lets the app only [^.]+\./,
+      );
+    }
     for (const asked of ["keys.mint items.purge", "instance.read audit.read"])
-      for (const [page, html] of await bothPages(`core.note:read ${asked}`))
+      for (const [page, html] of await bothPages(`core.note:read ${asked}`)) {
         expect(adminLevels(html), `${page}: ${asked}`).toEqual([
           "full",
           "none",
           "custom",
         ]);
+        expect(visibleText(html), page).not.toContain("Limited lets");
+      }
     // Only what the app does not hold counts: holding keys.mint leaves
     // instance.read alone new, and Limited would give all of it.
     const asked = "core.note:read instance.read keys.mint";
@@ -1435,6 +1447,47 @@ describe("what a page drawn again keeps of the choices posted", () => {
     }
   });
 
+  it("keeps showing what the app already holds beside the open choices on a page drawn again, and grants it with what the page shows", async () => {
+    const app = await register(ASKED);
+    const first = await consentScreen(app, "core.note:read core.task:read");
+    const held = await approveWith(first.consent, asDrawn(first.html));
+    expect((await sentTo(server, held))?.searchParams.get("code")).toBeTruthy();
+    const proof = pkce();
+    const landed = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, ASKED, proof),
+        cookie,
+      ),
+    );
+    const screen = await (await fetch(landed!, { headers: { cookie } })).text();
+    expect(visibleText(screen)).toContain("Already allowed");
+    await narrow(app, ["core.task:read"]);
+
+    const again = await drawnAgain(
+      await approveWith(landed!, [
+        ["held", heldOn(screen)],
+        ["scopes", "core.note:write"],
+        ["admin", "none"],
+      ]),
+    );
+    expect(choicesOpen(again)).toBe(true);
+    expect(chosenOf(again, "Note")).toBe("core.note:write");
+    // What the app still holds is on the page beside the choices.
+    expect(visibleText(again)).toMatch(/Already allowed.*Task/);
+    const sent = await sentTo(
+      server,
+      await approveWith(landed!, asDrawn(again)),
+    );
+    const issued = await redeem(app, sent, proof);
+    expect(sorted(issued.body.scope)).toEqual([
+      "core.note:read",
+      "core.note:write",
+      "core.task:read",
+    ]);
+  });
+
   it("says under the rows a page without scripts shows which choice makes them count, on both pages", async () => {
     const lines = [
       "These count when Settings, keys and more is set to Custom.",
@@ -2161,7 +2214,8 @@ describe("what the approval pages say of item types that share a label", () => {
       expect(byName("types"), page).toContain("aic.me.profile");
       // The page's own row names no identifier, and the page says what it covers.
       expect(byName("scopes"), page).not.toContain("aic.me.profile");
-      expect(visibleText(html), page).toContain(
+      const profile = /<h2>Profile<\/h2>[\s\S]*?<\/section>/.exec(html)?.[0];
+      expect(visibleText(profile ?? ""), page).toContain(
         "Name, username, email and picture.",
       );
     }
