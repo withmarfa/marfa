@@ -101,7 +101,7 @@ impl AdminLevel {
     }
 }
 
-/// The powers a request names that the app does not hold. Full Access comes first and is chosen.
+/// The powers a request names that the app does not hold. Full access comes first and is chosen.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Admin {
     /// In the request's order. Custom shows one row for each, starting at Allow.
