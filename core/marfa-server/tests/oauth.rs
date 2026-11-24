@@ -3092,7 +3092,9 @@ async fn a_check_waiting_behind_a_sign_out_asks_the_browser_to_sign_in() {
     let witness = instance.device_checked(user_code, &leaving).await;
     assert_eq!(witness.status, StatusCode::FOUND, "{}", witness.text);
     assert_eq!(instance.count(CHECKED_CODES).await, 1);
-    instance.stage("UPDATE oauth_device_codes SET checked_by = NULL").await;
+    instance
+        .stage("UPDATE oauth_device_codes SET checked_by = NULL")
+        .await;
 
     let held = Some("auth.device_code.checked");
     instance.app.faults.set("hold:write", held).unwrap();
@@ -3131,7 +3133,9 @@ async fn a_code_expiring_while_its_check_waits_reads_as_expired_and_stays_unchec
         .await;
     assert_eq!(checked.status, StatusCode::FOUND, "{}", checked.text);
     assert_eq!(instance.count(CHECKED_CODES).await, 1);
-    instance.stage("UPDATE oauth_device_codes SET checked_by = NULL").await;
+    instance
+        .stage("UPDATE oauth_device_codes SET checked_by = NULL")
+        .await;
 
     let held = Some("auth.device_code.checked");
     instance.app.faults.set("hold:write", held).unwrap();
