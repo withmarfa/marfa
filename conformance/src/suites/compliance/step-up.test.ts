@@ -15,6 +15,7 @@ import {
   authorize,
   authorizeQuery,
   CALLBACK,
+  chosenFields,
   decide,
   issuerOrigin,
   pkce,
@@ -795,11 +796,7 @@ describe("max_age at the device authorization endpoint", () => {
     const userCode = asked.body.user_code as string;
     expectSignInAgain(await devicePage(userCode, stale), userCode);
     expectSignInAgain(
-      await deviceDecision(
-        userCode,
-        stale,
-        SCOPE.split(" ").map((scope): [string, string] => ["scopes", scope]),
-      ),
+      await deviceDecision(userCode, stale, chosenFields(SCOPE.split(" "))),
       userCode,
     );
     const pending = await devicePoll(clientId, asked.body.device_code);

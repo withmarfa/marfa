@@ -11,12 +11,12 @@ import {
   quiet,
 } from "../../utils/moved-clock.js";
 import {
+  approveAsDrawn,
   authorize,
   authorizeQuery,
   CALLBACK,
   codeFor,
   connect,
-  decide,
   issuerOrigin,
   itemsStatus,
   pkce,
@@ -233,9 +233,7 @@ describe("the resource parameter", () => {
         ),
       );
       expect(consent?.pathname, String(consent)).toBe("/auth/consent");
-      const sent = await decide(server, origin, cookie, consent!, true, [
-        NOTES,
-      ]);
+      const sent = await approveAsDrawn(server, origin, cookie, consent!);
       const issued = await token(server, {
         grant_type: "authorization_code",
         code: sent?.searchParams.get("code") ?? "",
@@ -370,13 +368,12 @@ describe("the resource parameter", () => {
 describe("the MCP endpoint", () => {
   /**
    * A token for `scope`, with `resource` named at authorization and at the
-   * token request, approved with the scopes it names or with `access`.
+   * token request, approved as the page is drawn.
    */
   async function tokenNaming(
     app: App,
     scope: string,
     resource: string,
-    access?: string,
   ): Promise<string> {
     const proof = pkce();
     const consent = await sentTo(
@@ -390,16 +387,7 @@ describe("the MCP endpoint", () => {
         cookie,
       ),
     );
-    const sent = await decide(
-      server,
-      origin,
-      cookie,
-      consent!,
-      true,
-      access === undefined ? scope.split(" ") : [],
-      [],
-      access,
-    );
+    const sent = await approveAsDrawn(server, origin, cookie, consent!);
     const issued = await token(server, {
       grant_type: "authorization_code",
       code: sent?.searchParams.get("code") ?? "",
@@ -480,12 +468,7 @@ describe("the MCP endpoint", () => {
     ).scopes_supported;
     const scope = advertised.join(" ");
     const app = await registerApp(server, scope);
-    const accessToken = await tokenNaming(
-      app,
-      scope,
-      `${origin}/mcp/admin`,
-      "full",
-    );
+    const accessToken = await tokenNaming(app, scope, `${origin}/mcp/admin`);
     const connection = await connectMcp(
       server.apiUrl,
       accessToken,
@@ -570,9 +553,7 @@ describe("registering a type from /mcp/schema", () => {
         cookie,
       ),
     );
-    const sent = await decide(server, origin, cookie, consent!, true, [
-      ...scope.split(" "),
-    ]);
+    const sent = await approveAsDrawn(server, origin, cookie, consent!);
     const issued = await token(server, {
       grant_type: "authorization_code",
       code: sent?.searchParams.get("code") ?? "",

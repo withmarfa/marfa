@@ -169,9 +169,8 @@ describe("an app a person approves", () => {
 function rowLines(html: string): Map<string, string> {
   const rows = new Map<string, string>();
   for (const { control, text } of readRows(html)) {
-    // Full access or Choose access, and the admin level, are how a person
-    // answers, not a grant.
-    if (control.name === "access" || control.name === "admin") continue;
+    // The admin level is how a person answers, not a grant.
+    if (control.name === "admin") continue;
     const name = control.label ?? "";
     const after = text.slice(text.lastIndexOf(name) + name.length).trim();
     for (const literal of control.tag === "select"

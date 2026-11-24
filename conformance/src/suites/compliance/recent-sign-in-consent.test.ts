@@ -8,6 +8,7 @@ import {
   authorize,
   authorizeQuery,
   CALLBACK,
+  chosenFields,
   codeFor,
   issuerOrigin,
   pkce,
@@ -16,7 +17,7 @@ import {
   token,
   type App,
 } from "../../utils/signed-in.js";
-import { readControls } from "../../utils/approval-form.js";
+import { heldOn, readControls } from "../../utils/approval-form.js";
 import { visibleText } from "../../utils/page-html.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
@@ -184,6 +185,7 @@ function deviceApproval(
   cookie: string,
   scopes: readonly string[],
   headers: Record<string, string> = {},
+  held = "",
 ): Promise<Response> {
   return ownerPost(
     "/auth/device/consent",
@@ -191,7 +193,7 @@ function deviceApproval(
     new URLSearchParams([
       ["user_code", device.userCode],
       ["decision", "approve"],
-      ...scopes.map((scope): [string, string] => ["scopes", scope]),
+      ...chosenFields(scopes, held),
     ]),
     headers,
   );
@@ -303,10 +305,14 @@ describe("approving a device", () => {
     expect((await devicePoll(first)).status).toBe(200);
     await pass(16 * MINUTE);
     const again = await deviceCode("core.note:read keys.manage", client);
-    const approved = await deviceApproval(again, stale, [
-      "core.note:read",
-      "keys.manage",
-    ]);
+    const held = heldOn(await (await deviceScreen(again, stale)).text());
+    const approved = await deviceApproval(
+      again,
+      stale,
+      ["core.note:read", "keys.manage"],
+      {},
+      held,
+    );
     expect(approved.status).toBe(200);
     await approved.body?.cancel();
     // The permission it held is not the only one: a second one is refused.
@@ -315,11 +321,13 @@ describe("approving a device", () => {
       client,
     );
     await refused(
-      await deviceApproval(widened, stale, [
-        "core.note:read",
-        "keys.manage",
-        "blobs.manage",
-      ]),
+      await deviceApproval(
+        widened,
+        stale,
+        ["core.note:read", "keys.manage", "blobs.manage"],
+        {},
+        held,
+      ),
     );
   });
 
@@ -403,6 +411,7 @@ function decision(
   cookie: string,
   scopes: readonly string[],
   headers: Record<string, string> = {},
+  held = "",
 ): Promise<Response> {
   return ownerPost(
     "/auth/consent",
@@ -410,10 +419,16 @@ function decision(
     new URLSearchParams([
       ["decision", "approve"],
       ["authorization_request", consent.search.slice(1)],
-      ...scopes.map((scope): [string, string] => ["scopes", scope]),
+      ...chosenFields(scopes, held),
     ]),
     headers,
   );
+}
+
+/** The `held` value of the consent screen at `consent`. */
+async function heldOnScreen(consent: URL, cookie: string): Promise<string> {
+  const screen = await ownerGet(`${consent.pathname}${consent.search}`, cookie);
+  return heldOn(await screen.text());
 }
 
 async function codeOf(response: Response): Promise<string | null | undefined> {
@@ -470,10 +485,26 @@ describe("approving an app", () => {
     // hold, in the same request.
     const wider = `${scope} blobs.manage`;
     const asked = await consentFor(app, wider, first, { prompt: "consent" });
-    await refused(await decision(asked.url, first, wider.split(" ")));
+    await refused(
+      await decision(
+        asked.url,
+        first,
+        wider.split(" "),
+        {},
+        await heldOnScreen(asked.url, first),
+      ),
+    );
     const held = await consentFor(app, scope, first, { prompt: "consent" });
     expect(
-      await codeOf(await decision(held.url, first, scope.split(" "))),
+      await codeOf(
+        await decision(
+          held.url,
+          first,
+          scope.split(" "),
+          {},
+          await heldOnScreen(held.url, first),
+        ),
+      ),
     ).toBeTruthy();
   });
 

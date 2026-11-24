@@ -578,8 +578,8 @@ fn admin_chosen(post: &Post, named: &ScopeSet) -> Option<Vec<Permission>> {
     powers_at(level, &asked, &post.powers)
 }
 
-/// A held scope comes from `held`, never the post, so a page left open while the app was
-/// disconnected gives nothing back. Scopes are compared by what they reach, never merged as text.
+/// A held scope comes from `held`, never the post. Scopes are compared by what they reach, never
+/// merged as text.
 pub fn read_decision(request: &Request<'_>, post: &Post) -> Decision {
     let (named, held) = (request.named, request.held);
     if post.held != fingerprint(held) {
