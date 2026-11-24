@@ -1471,8 +1471,12 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(sentCreates(a)).toEqual([]);
   });
 
-  it.each(["first", "second"])(
-    "keeps a file both folders drop in one change, the %s folder pulling first, and lets go one the other folder still holds once it has pulled",
+  it.each([
+    "the first folder pulls first",
+    "the second folder pulls first",
+    "the other folder cannot be read",
+  ])(
+    "keeps a file both folders drop in one change when %s, and lets go one the other folder still holds once it has pulled",
     async (order) => {
       const gone = {
         id: "01a00000-0000-7000-8000-0000000023f1",
@@ -1483,7 +1487,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         properties: { title: "Moved", body: "kept by one\n" },
       };
       const { a, b, edges } = await onOneMac(
-        `both-drop-${order}`,
+        `both-drop-${order.split(" ")[1]!}`,
         { query: { types: ["core.note"], filter: 'tags contains "a"' } },
         { query: { types: ["core.note"], filter: 'tags contains "b"' } },
         {
@@ -1510,20 +1514,33 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         );
       retag(gone, []);
       retag(moved, ["b"]);
-      const [early, late] = order === "first" ? [a, b] : [b, a];
       const pushed = async (folder: FolderHarness) => {
         const result = await folder.folder.push();
         expect(result.ok, JSON.stringify(result)).toBe(true);
         return result.ok ? result.value.pull : undefined;
       };
-      expect(
-        (await pushed(early))?.let_go,
-        "a folder let a file go to another folder whose copy had not heard the change that drops the item there too",
-      ).toBe(0);
-      expect((await pushed(late))?.let_go).toBe(order === "first" ? 0 : 1);
+      const behind =
+        "a folder let a file go to another folder whose copy had not heard the change that drops the item there too";
+      if (order === "the first folder pulls first") {
+        expect((await pushed(a))?.let_go, behind).toBe(0);
+        expect((await pushed(b))?.let_go).toBe(0);
+      } else if (order === "the second folder pulls first") {
+        expect((await pushed(b))?.let_go, behind).toBe(0);
+      } else {
+        expect((await pushed(b))?.let_go).toBe(0);
+        chmodSync(b.dir, 0o000);
+        try {
+          expect(
+            (await pushed(a))?.let_go,
+            "a folder let a file go to another folder it could not read",
+          ).toBe(0);
+        } finally {
+          chmodSync(b.dir, 0o755);
+        }
+      }
       // The witness: once the other folder has pulled and still holds the
       // item, its file is let go.
-      if (order === "first") expect((await pushed(a))?.let_go).toBe(1);
+      expect((await pushed(a))?.let_go).toBe(1);
       expect(existsSync(join(a.dir, "Moved.md"))).toBe(false);
       expect(existsSync(join(b.dir, "Moved.md"))).toBe(true);
       for (const folder of [a, b]) {

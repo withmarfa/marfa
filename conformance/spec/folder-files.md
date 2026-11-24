@@ -2336,9 +2336,11 @@ When a file bound to an item moves to another registered directory and the moved
 
 ### `folder-files/cross-folder-copy`
 
-When a file’s ID already appears in another directory and the receiving directory already binds that item or its query excludes the item, a device MUST admit the arriving file as a new item.
+When a file’s ID already appears in a registered directory that follows another `system.folder` and the receiving directory already binds that item or its query excludes the item, a device MUST admit the arriving file as a new item.
 
-**Tests:** `device/folders-one-mac.test.ts › tells a copy into another folder from a move`.
+**Reason:** A directory that follows the same `system.folder` holds the item as the receiving directory does, so a file arriving with its ID is read as it would be with one directory (`folder-files/narrowed-arrival-read`).
+
+**Tests:** `device/folders-one-mac.test.ts › tells a copy into another folder from a move`, `› reads a file returned to a narrowed directory while a directory of %s has the item's file`.
 
 ### `folder-files/cross-folder-member-adopted`
 
@@ -2374,7 +2376,7 @@ Where a folder's copy has a query, when a scan finds a file whose `marfa_id` nam
 
 **Reason:** a narrowed copy leaves out items the folder does not show, so a file restored from a backup, copied from another Mac or moved from a directory that is not registered can name an item the server holds. A new item would duplicate it under another id.
 
-**Tests:** `device/folders-copy-shrink.test.ts › sends the file as an edit of the item its id names, not as a new item`, `› sends the same file as an edit from a copy that is not narrowed`.
+**Tests:** `device/folders-copy-shrink.test.ts › sends the file as an edit of the item its id names, not as a new item`, `› sends the same file as an edit from a copy that is not narrowed`, `device/folders-one-mac.test.ts › reads a file returned to a narrowed directory while a directory of %s has the item's file`.
 
 ### `folder-files/narrowed-arrival-read-batched`
 
@@ -2576,15 +2578,23 @@ When the person edits a retained copied source before its removal becomes possib
 
 ### `folder-files/let-go-existing-peer`
 
-When a registered directory that follows another `system.folder` already holds its own file for an item this folder no longer holds, a device MUST remove this directory’s unchanged owned file.
+When a registered directory that follows another `system.folder` already holds its own file for an item this folder no longer holds, and that directory's copy holds the item with the same version, type, state, tier, bin time and tags as this directory's copy, a device MUST remove this directory’s unchanged owned file.
 
-**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`, `› keeps a file both folders drop in one change when %s, and lets go one the other folder still holds once it has pulled`.
 
 ### `folder-files/let-go-existing-peer-let-go-count`
 
-When a registered directory that follows another `system.folder` already holds its own file for an item this folder no longer holds, a device MUST count this directory’s file as `let_go`.
+When a registered directory that follows another `system.folder` already holds its own file for an item this folder no longer holds, and that directory's copy holds the item with the same version, type, state, tier, bin time and tags as this directory's copy, a device MUST count this directory’s file as `let_go`.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
+
+### `folder-files/let-go-peer-behind-kept`
+
+When an item leaves a folder's query for a reason other than its state or purge, and no registered directory that follows another `system.folder` and has its own file of the item has a copy that holds the item, or a document it is attached to, as `folder-files/let-go-existing-peer` or `folder-files/let-go-attachment-with-document` requires, a device MUST retain the bound file.
+
+**Reason:** A copy whose item differs from this copy's may not have heard the change that drops the item from its query too, so its file may not stay. A tag write leaves the version as it is (`items/tags-version-stale`), so the tags are compared as well. A copy that cannot be read is not known to hold the item. This directory lets the file go at a later pull, once that copy holds the item as this one does. Until then the file is kept as unmatched (`folder-setup/query-tier-departure-kept`).
+
+**Tests:** `device/folders-one-mac.test.ts › keeps a file both folders drop in one change when %s, and lets go one the other folder still holds once it has pulled`.
 
 ### `folder-files/let-go-attachment-kept`
 
@@ -2596,7 +2606,7 @@ While a document in a folder embeds an item or has it attached, a device MUST NO
 
 ### `folder-files/let-go-attachment-with-document`
 
-When this folder no longer holds an item or any document the item is attached to, and the query of a registered directory that follows another `system.folder` holds a document the item is attached to and that directory has its own file of the item, a device MUST remove this directory's unchanged owned file of the item and count it as `let_go`.
+When this folder no longer holds an item or any document the item is attached to, and the query of a registered directory that follows another `system.folder` holds a document the item is attached to, that directory has its own file of the item, and both copies hold the document with the same version, type, state, tier, bin time and tags and the attachment edge at the same version, a device MUST remove this directory's unchanged owned file of the item and count it as `let_go`.
 
 **Reason:** the other directory writes the file beside the document it holds, so a file kept here would stay unmatched for good.
 

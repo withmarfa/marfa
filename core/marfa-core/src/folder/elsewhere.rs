@@ -7,6 +7,7 @@ use super::lists::Lists;
 use super::registry::{Registered, Registry, gone};
 use super::{Catalog, Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
 use crate::directory::Directory;
+use crate::model::{Edge, Item};
 use crate::{Core, Result, store};
 
 const META_STORE: &str = "folder_store";
@@ -203,9 +204,10 @@ impl Peer {
         })
     }
 
-    /// Whether its query holds a document the item is attached to, so its
-    /// file of the item is that document's attachment.
-    fn holds_document_of(&self, item_id: &str) -> bool {
+    /// Whether its query holds a document the item is attached to, by an
+    /// edge `heard` passes, so its file of the item is that document's
+    /// attachment.
+    fn holds_document_of(&self, item_id: &str, heard: impl Fn(&Edge) -> bool) -> bool {
         let Some(folder) = &self.folder else {
             return false;
         };
@@ -213,6 +215,7 @@ impl Peer {
             edges.iter().any(|edge| {
                 edge.edge_type == super::embeds::ATTACHMENT_EDGE
                     && self.holds(&edge.to_id) == Some(true)
+                    && heard(edge)
             })
         })
     }
@@ -544,12 +547,32 @@ impl<'a> Peers<'a> {
             .filter(|peer| peer.follows_another(&self.of.folder))
     }
 
+    /// Whether the peer's copy holds the item as this copy does, in all a
+    /// query can judge by. A tag write leaves the version as it is.
+    fn heard(&self, peer: &Peer, item_id: &str) -> bool {
+        let read = |folder: &Folder| folder.core.get(item_id).ok().flatten();
+        let (Some(ours), Some(theirs)) = (read(self.of), peer.folder.as_ref().and_then(read))
+        else {
+            return false;
+        };
+        let tags = |item: &Item| item.tags.iter().cloned().collect::<HashSet<_>>();
+        ours.version == theirs.version
+            && ours.r#type == theirs.r#type
+            && ours.state == theirs.state
+            && ours.tier == theirs.tier
+            && ours.trashed_at == theirs.trashed_at
+            && tags(&ours) == tags(&theirs)
+    }
+
     pub(super) fn unreadable(&self) -> Option<&str> {
         self.loaded().1.as_deref()
     }
 
+    /// Whether a directory of another folder has a file carrying the id. One
+    /// of the same folder holds the item as this one does, so a file
+    /// returning here is read as it would be with one directory.
     pub(super) fn carry(&self, item_id: &str) -> bool {
-        self.all().iter().any(|peer| {
+        self.other_folders().any(|peer| {
             peer.files()
                 .iter()
                 .any(|file| file.id.as_deref() == Some(item_id))
@@ -736,10 +759,19 @@ impl<'a> Peers<'a> {
     }
 
     /// Whether another folder holds the item, or a document it is attached
-    /// to, with a file of it already.
+    /// to, with a file of it already, judged only on rows its copy holds as
+    /// this copy does: a copy behind may not have heard the change that drops
+    /// the item there too.
     pub(super) fn filed_elsewhere(&self, item_id: &str) -> bool {
         self.other_folders().any(|peer| {
-            (peer.holds(item_id) == Some(true) || peer.holds_document_of(item_id))
+            (peer.holds(item_id) == Some(true) && self.heard(peer, item_id)
+                || peer.holds_document_of(item_id, |edge| {
+                    self.heard(peer, &edge.to_id)
+                        && self.of.core.edges_from(item_id).is_ok_and(|ours| {
+                            ours.iter()
+                                .any(|own| own.id == edge.id && own.version == edge.version)
+                        })
+                }))
                 && peer
                     .bound_to(item_id)
                     .is_some_and(|bound| peer.present(&bound.path))
