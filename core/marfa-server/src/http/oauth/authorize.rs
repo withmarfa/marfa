@@ -10,7 +10,7 @@ use crate::app::App;
 use crate::app::auth::Visit;
 use crate::app::oauth::authorize::{self, Decided, Screen};
 use crate::app::refusal::{Code, Refusal};
-use crate::http::answer::{Answer, json_answer};
+use crate::http::answer::{Answer, json_answer, names};
 use crate::http::auth::redirect;
 use crate::http::body::JsonBody;
 use crate::http::pages::{self, Answering, Consent, Notice};
@@ -63,7 +63,7 @@ fn asks_for_json(headers: &HeaderMap) -> bool {
     headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|accept| accept.contains("application/json"))
+        .is_some_and(|accept| names(accept, "application/json"))
 }
 
 pub async fn decide(

@@ -186,6 +186,7 @@ function approveWith(
 function approveDeviceWith(
   screen: DeviceScreen,
   fields: readonly [string, string][],
+  accept?: string,
 ): Promise<Response> {
   return fetch(`${server.apiUrl}/auth/device/consent`, {
     method: "POST",
@@ -194,6 +195,7 @@ function approveDeviceWith(
       cookie,
       origin,
       "content-type": "application/x-www-form-urlencoded",
+      ...(accept ? { accept } : {}),
     },
     body: new URLSearchParams([
       ["user_code", screen.userCode],
@@ -250,6 +252,19 @@ async function grantOf(app: App): Promise<{ id: string; scopes: string[] }> {
   ).data.find((g) => g.client_id === app.clientId);
   expect(grant, "the app holds no grant").toBeDefined();
   return grant!;
+}
+
+/** The app holds no grant, so a refused approval gave it nothing. */
+async function expectNoGrant(app: App, label: string): Promise<void> {
+  const listed = await fetch(`${server.apiUrl}/grants`, {
+    headers: { authorization: `Bearer ${server.managementKey}` },
+  });
+  const grants = ((await listed.json()) as { data: { client_id: string }[] })
+    .data;
+  expect(
+    grants.filter((g) => g.client_id === app.clientId),
+    label,
+  ).toEqual([]);
 }
 
 /** The person disconnects the app from another tab. */
@@ -639,6 +654,7 @@ describe("the admin level on the approval pages", () => {
       const refused = await approveWith(landed!, fields);
       expect(refused.status, JSON.stringify(fields)).toBe(400);
       await refused.body?.cancel();
+      await expectNoGrant(app, JSON.stringify(fields));
     }
     const unasked = await register("core.note:read");
     const plain = await sentTo(
@@ -652,6 +668,10 @@ describe("the admin level on the approval pages", () => {
     const levelled = await approveWith(plain!, [NOTE, ["admin", "none"]]);
     expect(levelled.status).toBe(400);
     await levelled.body?.cancel();
+    await expectNoGrant(
+      unasked,
+      "an admin level the request has no permission for",
+    );
     // The witness: the same requests, posted within them, are codes.
     for (const [consent, fields] of [
       [landed!, [NOTE, ["admin", "custom"], ["powers", "keys.mint"]]],
@@ -1182,22 +1202,29 @@ describe("what an approval grants an app whose access changed while the screen w
 
     // A caller that takes only JSON is told of the conflict, and one that
     // takes a page gets the page drawn again.
-    const json = await approveWith(
-      screen.consent,
-      asDrawn(screen.html),
+    for (const accept of [
       "application/json",
-    );
-    expect(json.status).toBe(409);
-    expect(
-      ((await json.json()) as { error?: { code?: string } }).error?.code,
-    ).toBe("conflict");
-    await drawnAgain(
-      await approveWith(
+      "Application/JSON",
+      "application/json, text/html;q=0",
+    ]) {
+      const json = await approveWith(
         screen.consent,
         asDrawn(screen.html),
-        "application/json, text/html",
-      ),
-    );
+        accept,
+      );
+      expect(json.status, accept).toBe(409);
+      expect(
+        ((await json.json()) as { error?: { code?: string } }).error?.code,
+        accept,
+      ).toBe("conflict");
+    }
+    for (const accept of [
+      "application/json, text/html",
+      "application/json;q=0, text/html",
+    ])
+      await drawnAgain(
+        await approveWith(screen.consent, asDrawn(screen.html), accept),
+      );
     const html = await drawnAgain(
       await approveWith(screen.consent, asDrawn(screen.html)),
     );
@@ -1374,6 +1401,51 @@ describe("what an approval grants an app whose access changed while the screen w
           : ["audit.read", "core.note:read", "instance.read"],
       );
     }
+  });
+});
+
+describe("what the device approval page answers a caller that takes only JSON once the app's access changed", () => {
+  const booted = bootFor("approval-device-json");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  it("answers the conflict a caller that takes only JSON reads, and leaves the code pending", async () => {
+    const asked = "core.note:read core.task:read";
+    const app = await register(asked);
+    const held = await consentScreen(app, "core.note:read");
+    const sent = await sentTo(
+      server,
+      await approveWith(held.consent, asDrawn(held.html)),
+    );
+    expect(sent?.searchParams.get("code")).toBeTruthy();
+    const device = await deviceScreen(app, asked);
+    await narrow(app, []);
+
+    for (const accept of [
+      "application/json",
+      "Application/JSON",
+      "application/json, text/html;q=0",
+    ]) {
+      const json = await approveDeviceWith(
+        device,
+        asDrawn(device.html),
+        accept,
+      );
+      expect(json.status, accept).toBe(409);
+      expect(
+        ((await json.json()) as { error?: { code?: string } }).error?.code,
+        accept,
+      ).toBe("conflict");
+    }
+    // A caller that takes a page gets the page drawn again.
+    await drawnAgain(
+      await approveDeviceWith(
+        device,
+        asDrawn(device.html),
+        "application/json;q=0, text/html",
+      ),
+    );
+    expect((await poll(app, device)).body.error).toBe("authorization_pending");
   });
 });
 
@@ -1584,6 +1656,7 @@ describe("what an approval posted to the approval pages grants", () => {
     });
     expect(raw.status).toBe(400);
     await raw.body?.cancel();
+    await expectNoGrant(app, "a scope the request did not name");
     // Nothing was granted: the app is asked again, not answered silently.
     const asked = await sentTo(
       server,
@@ -1610,6 +1683,7 @@ describe("what an approval posted to the approval pages grants", () => {
     ]);
     expect(refused.status).toBe(400);
     await refused.body?.cancel();
+    await expectNoGrant(app, "a scope the code did not carry");
     const pending = await poll(app, screen);
     expect(pending.status).toBe(400);
     expect(pending.body.error).toBe("authorization_pending");
@@ -1925,6 +1999,7 @@ describe("what the approval pages refuse an app that asks for all data, and deny
       );
       expect(refused.status, bad).toBe(400);
       expect(refused.headers.get("location"), bad).toBeNull();
+      await expectNoGrant(app, bad);
     }
     // The witness: the same post without the stray type is granted.
     const { sent } = await browserToken(
@@ -1948,6 +2023,7 @@ describe("what the approval pages refuse an app that asks for all data, and deny
         ["core.task:read", bad],
       );
       expect(refused.status, bad).toBe(400);
+      await expectNoGrant(app, bad);
       // The code is still pending: nothing was granted.
       expect(["authorization_pending", "slow_down"], bad).toContain(
         (
@@ -2748,7 +2824,8 @@ describe("what the approval pages offer and grant an app that names no scope", (
       "core.unheard:read",
       "*:read",
     ]) {
-      const { consent } = await screenFor(await registerNamingNone(), asked);
+      const app = await registerNamingNone();
+      const { consent } = await screenFor(app, asked);
       const refused = await decideResponse(
         server,
         origin,
@@ -2760,6 +2837,7 @@ describe("what the approval pages offer and grant an app that names no scope", (
       );
       expect(refused.status, bad).toBe(400);
       expect(refused.headers.get("location"), bad).toBeNull();
+      await expectNoGrant(app, bad);
     }
     // The witness: the same post without the stray type is granted.
     const { consent } = await screenFor(await registerNamingNone(), asked);

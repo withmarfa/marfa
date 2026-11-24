@@ -2402,7 +2402,13 @@ fn post_accepting(
 /// conflict for a caller that takes only JSON.
 async fn drawn_again(instance: &Instance, path: &str, fields: &[(&str, &str)]) {
     let changed = "This app's access changed after this page opened.";
-    for accept in [None, Some("text/html"), Some("application/json, text/html")] {
+    let pages = [
+        None,
+        Some("text/html"),
+        Some("application/json, text/html"),
+        Some("application/json;q=0, text/html"),
+    ];
+    for accept in pages {
         let reply = instance
             .send(post_accepting(path, accept, &instance.cookie, fields))
             .await;
@@ -2420,16 +2426,22 @@ async fn drawn_again(instance: &Instance, path: &str, fields: &[(&str, &str)]) {
         assert!(reply.text.contains(changed), "{accept:?} {}", reply.text);
         assert!(reply.text.contains("name=\"held\""), "{accept:?}");
     }
-    let json = instance
-        .send(post_accepting(
-            path,
-            Some("application/json"),
-            &instance.cookie,
-            fields,
-        ))
-        .await;
-    assert_eq!(json.status, StatusCode::CONFLICT, "{}", json.text);
-    assert_eq!(json.json()["error"]["code"], "conflict", "{}", json.text);
+    for accept in [
+        "Application/JSON",
+        "application/json, text/html;q=0",
+        "TEXT/HTML;Q=0.0, Application/Json;q=0.5",
+    ] {
+        let json = instance
+            .send(post_accepting(path, Some(accept), &instance.cookie, fields))
+            .await;
+        assert_eq!(json.status, StatusCode::CONFLICT, "{accept} {}", json.text);
+        assert_eq!(
+            json.json()["error"]["code"],
+            "conflict",
+            "{accept} {}",
+            json.text
+        );
+    }
 }
 
 #[tokio::test]
