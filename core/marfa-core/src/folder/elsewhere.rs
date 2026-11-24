@@ -7,6 +7,7 @@ use super::lists::Lists;
 use super::registry::{Registered, Registry, gone};
 use super::{Catalog, Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
 use crate::directory::Directory;
+use crate::model::Item;
 use crate::{Core, Result, store};
 
 const META_STORE: &str = "folder_store";
@@ -51,6 +52,7 @@ pub(super) fn lost(core: &Core, registry: &Registry) -> bool {
 }
 
 pub(super) struct Peer {
+    entry: Registered,
     root: PathBuf,
     root_dir: Option<Directory>,
     /// Its store, read only; `None` where it cannot be opened.
@@ -93,7 +95,7 @@ impl OnDisk {
 
 impl Peer {
     fn open(entry: Registered) -> Peer {
-        let root = entry.dir;
+        let root = entry.dir.clone();
         let mut root_dir = Directory::open(&root)
             .ok()
             .filter(|root| super::admitted_root(root).is_ok());
@@ -142,6 +144,7 @@ impl Peer {
             root_dir = None;
         }
         Peer {
+            entry,
             root,
             root_dir,
             folder,
@@ -723,14 +726,16 @@ impl<'a> Peers<'a> {
     }
 
     /// A file another folder keeps unmatched, holding the bytes it wrote, to
-    /// take in to the folder whose members are `taking`.
-    pub(super) fn let_go(
-        &self,
-        item_id: &str,
-        taking: &HashSet<String>,
-    ) -> Option<(super::transfer::Entry, state::Bound)> {
+    /// take in to the folder whose members are `taking`. That folder must be
+    /// able to give it up: not paused, nothing of the item waiting to be sent
+    /// from it, and its copy of the item the same as `ours`.
+    pub(super) fn let_go(&self, ours: &Item, taking: &HashSet<String>) -> Option<Offered> {
+        let item_id = ours.id.as_str();
         for peer in self.other_folders() {
             let Some(bound) = peer.bound_to(item_id) else {
+                continue;
+            };
+            let Some(folder) = &peer.folder else {
                 continue;
             };
             if bound.held.is_some()
@@ -740,6 +745,8 @@ impl<'a> Peers<'a> {
                 || peer.holds(item_id) != Some(false)
                 || peer.left_by_state(item_id)
                 || peer.attached_here(item_id, taking)
+                || cannot_give(folder, item_id).is_some()
+                || !agrees(folder, ours)
             {
                 continue;
             }
@@ -750,17 +757,134 @@ impl<'a> Peers<'a> {
                 .read(Path::new(&name))
                 .is_ok_and(|bytes| state::hash(&bytes) == bound.content_hash)
             {
-                return Some((
-                    super::transfer::Entry {
+                return Some(Offered {
+                    entry: super::transfer::Entry {
                         directory,
                         name: name.into(),
                         label: path,
                     },
+                    from: state::TakenFrom {
+                        folder: peer.entry.clone(),
+                        path: bound.path.clone(),
+                    },
                     bound,
-                ));
+                });
             }
         }
         None
+    }
+}
+
+/// A file another folder offers to a take-in, with that folder and the path
+/// it binds the file at.
+pub(super) struct Offered {
+    pub entry: super::transfer::Entry,
+    pub bound: state::Bound,
+    pub from: state::TakenFrom,
+}
+
+/// Why the folder cannot give up its file of `item_id` now, where it cannot:
+/// its sync is paused, or a write naming or reaching the item waits in its
+/// queue. A store that cannot answer cannot give it up either.
+pub(super) fn cannot_give(folder: &Folder, item_id: &str) -> Option<&'static str> {
+    let Ok(conn) = folder.core.conn() else {
+        return Some("its store cannot be read");
+    };
+    match super::paused::paused(&conn) {
+        Ok(false) => {}
+        Ok(true) => return Some("its sync is paused"),
+        Err(_) => return Some("its pause cannot be read"),
+    }
+    let waits = store::waiting_write_names(&conn, item_id).and_then(|named| {
+        Ok(named || !store::waiting_writes_reaching_item(&conn, item_id)?.is_empty())
+    });
+    match waits {
+        Ok(false) => None,
+        Ok(true) => Some("a change of the item waits there to be sent"),
+        Err(_) => Some("its queue cannot be read"),
+    }
+}
+
+/// Whether the folder's copy of the item is the one `ours` is. Tags and state
+/// carry no version of their own, so each is compared, not only the version.
+fn agrees(folder: &Folder, ours: &Item) -> bool {
+    let Ok(Some(theirs)) = folder.core.get(&ours.id) else {
+        return false;
+    };
+    let tags = |item: &Item| {
+        let mut tags = item.tags.clone();
+        tags.sort();
+        tags
+    };
+    theirs.version == ours.version
+        && theirs.state == ours.state
+        && theirs.updated_at == ours.updated_at
+        && theirs.trashed_at == ours.trashed_at
+        && tags(&theirs) == tags(ours)
+}
+
+/// The folder at `from.folder` read again, as a take-in from it, about to
+/// move the file, reads it.
+pub(super) fn source_of(from: &state::TakenFrom) -> Option<Folder> {
+    Peer::open(from.folder.clone()).folder
+}
+
+/// Why the file of `item_id` this folder took in from `from` must stay, where
+/// it must: that folder still binds the item at a path with no file, so its
+/// next scan decides the move from this file, or that folder cannot be read
+/// and is not gone. `None` once it has let go, has a file there again, or is
+/// gone.
+pub(super) fn still_counted_on(from: &state::TakenFrom, item_id: &str) -> Option<String> {
+    const WAITING: &str = "another folder on this computer has not yet seen this file move here";
+    if gone(&from.folder) {
+        return None;
+    }
+    let Some(registry) = Registry::located() else {
+        return Some(format!(
+            "{WAITING}, and the list of folders cannot be found"
+        ));
+    };
+    let listed = match registry.folders() {
+        Ok(listed) => listed,
+        Err(error) => {
+            return Some(format!(
+                "{WAITING}, and the list of folders cannot be read ({error})"
+            ));
+        }
+    };
+    // The folder may have moved to another directory, taking its store along.
+    let entry = from
+        .folder
+        .store
+        .as_ref()
+        .and_then(|store| {
+            listed
+                .into_iter()
+                .find(|entry| entry.store.as_ref() == Some(store))
+        })
+        .unwrap_or_else(|| from.folder.clone());
+    if entry.dir != from.folder.dir && gone(&entry) {
+        return None;
+    }
+    let peer = Peer::open(entry);
+    let Some(folder) = &peer.folder else {
+        return Some(format!(
+            "{WAITING}, and {} cannot be read",
+            peer.root.display()
+        ));
+    };
+    let bound = folder
+        .core
+        .conn()
+        .and_then(|conn| state::bound_to_item(&conn, item_id));
+    match bound {
+        Ok(None) => None,
+        Ok(Some(bound)) if peer.present(&bound.path) => None,
+        Ok(Some(_)) => Some(WAITING.into()),
+        Err(error) => Some(format!(
+            "{WAITING}, and {} cannot be read ({error})",
+            peer.root.display()
+        )),
     }
 }
 

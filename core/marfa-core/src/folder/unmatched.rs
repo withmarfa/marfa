@@ -136,9 +136,11 @@ impl Folder {
                     &row,
                     Some("it changed while it was being removed".into()),
                 )),
-                Ok(TakenAway::Refused(reason) | TakenAway::Busy(reason)) => {
-                    done.kept.push(entry(&row, Some(reason)))
-                }
+                Ok(
+                    TakenAway::Refused(reason)
+                    | TakenAway::Busy(reason)
+                    | TakenAway::Awaiting(reason),
+                ) => done.kept.push(entry(&row, Some(reason))),
                 Err(error) if copy_changed(&error) => return Err(error),
                 Err(error) => done.kept.push(entry(&row, Some(error.to_string()))),
             }

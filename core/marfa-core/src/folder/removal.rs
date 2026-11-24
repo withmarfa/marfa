@@ -98,10 +98,12 @@ impl Folder {
                     path: path.clone(),
                     reason: format!("Marfa left the file rather than remove it: {reason}"),
                 }),
-                super::pull::TakenAway::Busy(reason) => confirmed.refused.push(Unsure {
-                    path: path.clone(),
-                    reason: format!("Marfa left the file for now: {reason}"),
-                }),
+                super::pull::TakenAway::Busy(reason) | super::pull::TakenAway::Awaiting(reason) => {
+                    confirmed.refused.push(Unsure {
+                        path: path.clone(),
+                        reason: format!("Marfa left the file for now: {reason}"),
+                    })
+                }
             }
         }
         {

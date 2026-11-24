@@ -124,7 +124,7 @@ struct Placing<'a> {
     rank: placement::Rank,
     // The order contested names are given out in.
     claim: placement::Rank,
-    taken: Option<(transfer::Entry, state::Bound)>,
+    taken: Option<super::elsewhere::Offered>,
 }
 
 /// What a pull would write, counted without writing it.
@@ -236,6 +236,9 @@ pub(super) enum TakenAway {
     /// A program holds it open for writing, so it stays until a later pass,
     /// for this reason.
     Busy(String),
+    /// Another folder this file was taken in from still counts on it, so it
+    /// stays until a later pass, for this reason.
+    Awaiting(String),
 }
 
 /// The name a new file of `item` takes, from its title or else its id.
@@ -678,7 +681,7 @@ impl Folder {
                 continue;
             }
             let taken = match &bound {
-                None if !*unmatched => peers.let_go(&item.id, &members),
+                None if !*unmatched => peers.let_go(item, &members),
                 _ => None,
             };
             let placed = self.placement(&item.id)?;
@@ -1660,9 +1663,10 @@ impl Folder {
     ) -> Result<TakeIn> {
         let item = entry.item;
         let want = entry.want.as_str();
-        let Some((from, theirs)) = &entry.taken else {
+        let Some(offered) = &entry.taken else {
             return Ok(TakeIn::Inapplicable);
         };
+        let (from, theirs) = (&offered.entry, &offered.bound);
         let path = self.root.join(want);
         if self.exists(&path) {
             return Ok(TakeIn::Inapplicable);
@@ -1691,6 +1695,9 @@ impl Folder {
         rendering.context.borrow().check(&conn)?;
         refuse_unless_held(&conn, &item.id)?;
         let before = state::bound_at(&conn, want)?;
+        // Kept from before the file moves, so no later removal here can take
+        // the file while the folder it left still counts on it.
+        state::set_taken_from(&conn, &item.id, &offered.from)?;
         rendering.bind(
             &conn,
             &state::Bound {
@@ -1707,6 +1714,16 @@ impl Folder {
             landing::crash_if_asked(&path);
             let (target_dir, target_name) = self.location(&path, true)?;
             landing::appear_at(&target_dir, Path::new(&target_name), "create-before-move")?;
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| format!("folder-take-in-decided:{}", item.id));
+            let giving = super::elsewhere::source_of(&offered.from);
+            if let Some(why) = giving.as_ref().map_or(Some("it cannot be read"), |folder| {
+                super::elsewhere::cannot_give(folder, &item.id)
+            }) {
+                return Err(std::io::Error::other(format!(
+                    "the folder it is in cannot give it up now: {why}"
+                )));
+            }
             source.check()?;
             let renamed = if crate::fault::named("cross-volume-move").is_some() {
                 Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices))
@@ -1757,6 +1774,7 @@ impl Folder {
                 Some(before) => rendering.bind(&conn, before)?,
                 None => rendering.unbind(&conn, want)?,
             }
+            state::clear_taken_from(&conn, &item.id)?;
             return Ok(TakeIn::Refused(error.to_string()));
         }
         rendering.bind(&conn, &binding(None))?;
@@ -1951,6 +1969,12 @@ impl Folder {
                     &row.path,
                     "a program has it open for writing, so Marfa removes it once that program closes it",
                 ),
+                TakenAway::Awaiting(reason) => report.not_written(
+                    NotWritten::Unwritten,
+                    &row.item_id,
+                    &row.path,
+                    format!("Marfa left the file for now: {reason}"),
+                ),
             }
         }
         Ok(())
@@ -2090,6 +2114,13 @@ impl Folder {
         row: &state::Bound,
         context: &mut crate::reach::Context,
     ) -> Result<TakenAway> {
+        let taken_from = state::taken_from(&*self.core.conn()?, &row.item_id)?;
+        if let Some(from) = taken_from {
+            if let Some(why) = super::elsewhere::still_counted_on(&from, &row.item_id) {
+                return Ok(TakenAway::Awaiting(why));
+            }
+            state::clear_taken_from(&*self.core.conn()?, &row.item_id)?;
+        }
         // First: a failure leaves the file and its binding, and the next pass
         // finds no placement left to end and takes the file away.
         let ended = self.end_placement(&row.item_id, &row.path)?;

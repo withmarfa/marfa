@@ -418,6 +418,46 @@ pub fn clear_moved_from(conn: &Connection, item_id: &str) -> Result<(), CoreErro
     crate::store::meta_delete(conn, &format!("{MOVED_FROM}{item_id}"))
 }
 
+/// One `meta` row per item whose file a pull took in from another folder,
+/// naming that folder and the path its binding held there. While that
+/// folder still binds the item at a path with no file, its next scan
+/// decides the move from this folder's file, so the file stays.
+const TAKEN_FROM: &str = "folder_taken_from:";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TakenFrom {
+    pub folder: super::registry::Registered,
+    pub path: String,
+}
+
+pub fn set_taken_from(
+    conn: &Connection,
+    item_id: &str,
+    taken: &TakenFrom,
+) -> Result<(), CoreError> {
+    let value =
+        serde_json::to_string(taken).map_err(|error| CoreError::Store(error.to_string()))?;
+    crate::store::meta_set(conn, &format!("{TAKEN_FROM}{item_id}"), &value)
+}
+
+/// The row for `item_id`, where there is one; a row that does not read is
+/// an error, so it is never taken for none.
+pub fn taken_from(conn: &Connection, item_id: &str) -> Result<Option<TakenFrom>, CoreError> {
+    crate::store::meta_get(conn, &format!("{TAKEN_FROM}{item_id}"))?
+        .map(|value| {
+            serde_json::from_str(&value).map_err(|error| {
+                CoreError::Store(format!(
+                    "the record of where a file was taken in from cannot be read: {error}"
+                ))
+            })
+        })
+        .transpose()
+}
+
+pub fn clear_taken_from(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{TAKEN_FROM}{item_id}"))
+}
+
 /// Where each item's file last left in a pull's move, by item. A row that
 /// does not read names nothing.
 pub fn moved_from(conn: &Connection) -> Result<HashMap<String, MovedFrom>, CoreError> {
