@@ -43,7 +43,6 @@ const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const DAY_MS: u64 = 86_400_000;
 const AN_APPROVED_PAGE: &str = "https://approved.example";
 
-/// Whether an `attention.raised` payload is the announcement of the audit fault the approval met.
 fn is_fault_announcement(payload: &str) -> bool {
     let payload: Value = serde_json::from_str(payload).unwrap();
     let entry = &payload["attention"];
@@ -446,8 +445,6 @@ impl Instance {
             .unwrap()
     }
 
-    /// Waits for the announcement of the fault the failed approval met, then answers every
-    /// event row written since `after`, which holds that announcement and nothing else.
     async fn wait_for_fault_announcement(&self, after: i64) -> Vec<(String, String)> {
         for _ in 0..1000 {
             let rows = self.events_after(after).await;

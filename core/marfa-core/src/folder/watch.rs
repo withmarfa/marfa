@@ -3075,10 +3075,6 @@ mod backoff_tests {
 
     const OTHER_INSTANCE: &str = "11111111-1111-7111-8111-111111111111";
 
-    /// Ten simulated minutes, a second at a time. After each second the watch
-    /// gets all the real time it needs: the next second starts once every
-    /// wait the second reached has been asked again, no pass is under way and
-    /// the watch waits on the clock.
     fn ten_minutes(stop: &AtomicBool, ended: &AtomicBool, mut each: impl FnMut(usize)) {
         for second in 0..600 {
             if ended.load(Ordering::SeqCst) {
@@ -3094,10 +3090,6 @@ mod backoff_tests {
         }
     }
 
-    /// Waits, in real time, until the watch ended, or until `reached` waits
-    /// have been asked anew since the clock moved (a wait not yet moved is
-    /// the whole of what it asked), no pass is under way and a wait is held,
-    /// the watch having begun.
     fn settled(stop: &AtomicBool, ended: &AtomicBool, reached: usize) {
         let give_up = std::time::Instant::now() + Duration::from_secs(60);
         loop {
@@ -3226,8 +3218,7 @@ mod backoff_tests {
                     before = passes();
                     let turns_then = turns();
                     change.take().unwrap()();
-                    // The watcher's event arrives on the system's time: the
-                    // watch has it once it takes another turn.
+                    // Filesystem notifications run on the system clock.
                     let give_up = std::time::Instant::now() + Duration::from_secs(60);
                     while turns() == turns_then {
                         if std::time::Instant::now() >= give_up {

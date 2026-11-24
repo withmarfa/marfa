@@ -24,11 +24,8 @@ import { TEST_OWNER } from "../../utils/target.js";
  * enough that a held page outlasts it many times over. The caps are far above
  * what the fixtures send.
  */
-// The server gives up on a write only after it has not heard from the holder for
-// the whole budget, so the budget is longer than a runner stall.
+// The held page must renew its heartbeat within this budget.
 const BUDGET_MS = 1000;
-// How long a queued write is watched: past the first moment the server decides
-// whether to keep it waiting.
 const WATCHED_MS = BUDGET_MS + 250;
 const PAGE = 20;
 const SCHEDULER_NEVER_POLLS_MS = "3600000";
@@ -121,13 +118,7 @@ async function release(page: { response: Promise<Response> }) {
   return page.response;
 }
 
-/**
- * Admits `request`, then watches it past the write wait.
- *
- * The write wait runs on the server's real time, which a fixture cannot
- * advance, so the witness is the server's own queue: at every look the write
- * is still listed as waiting on the writer and has no answer.
- */
+// The fixture clock cannot advance the writer's deadline.
 async function queuedPastBudget(action: string, request: Promise<Response>) {
   const waiting = track(request);
   await server.waitForQueuedWrite(action);
@@ -142,7 +133,6 @@ async function queuedPastBudget(action: string, request: Promise<Response>) {
   return waiting;
 }
 
-/** Lets the page go, and checks that the write the page held up came after it. */
 async function releasedBefore(
   page: { response: Promise<Response> },
   waiting: { response: Promise<Response> },

@@ -33,8 +33,6 @@ fn seed(args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
-/// The server's own event frames after `cursor`, each with its id, type and the start of its
-/// data, so a failure names what arrived.
 fn events_after(cursor: &str) -> String {
     let server = server();
     let output = Command::new("curl")
@@ -173,7 +171,6 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
         );
     }
 
-    // The file's enrichment update would otherwise race the quiet catch-up.
     let read_by_server = |core: &Core| {
         core.get(&file)
             .unwrap()
