@@ -596,7 +596,7 @@ If another program's writes to a directory's store keep a folder watch from writ
 
 ### `folder-sync/pull-flagged-items`
 
-When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a device MUST include the item's ID, intended path, flag and reason in the pull report's `flagged` entries.
+When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a device MUST include the item's ID, its intended path or the path of the file it kept, flag and reason in the pull report's `flagged` entries.
 
 **Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folders.test.ts › refuses to write a file outside the folder`, `device/folders.test.ts › does not write over a file it never wrote`, `device/folders-placement.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`, `device/folders-placement.test.ts › writes no file where its placement would make it another kind of file`, `device/folders-placement.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`.
 

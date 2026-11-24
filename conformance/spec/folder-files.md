@@ -2566,9 +2566,9 @@ When the person edits a retained copied source, a device MUST preserve the edit 
 
 ### `folder-files/departure-kept-beside-other`
 
-When an item leaves a folder's query for a reason other than its state and a registered directory that follows another `system.folder` holds a file of the item, a device MUST keep this folder's file of the item as `unmatched`.
+When an item leaves a folder's query for a reason other than its state and a registered directory that follows another `system.folder` holds a file of the item, a device MUST NOT remove this folder's file of the item on that account.
 
-**Reason:** no device can tell from the copies on one machine that the other directory's file will stay, so a removal here could take the person's last local copy. The person removes a duplicate with `marfa folders unmatched --remove`.
+**Reason:** no device can tell from the copies on one machine that the other directory's file will stay, so a removal here could take the person's last local copy. A file the folder no longer holds is listed as `unmatched`, and the person removes a duplicate with `marfa folders unmatched --remove`. A file the folder still holds as an attachment stays bound, and a directory with no file of the item may still take the file in (`folder-files/take-in-file`), which moves it.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps both folders' files as unmatched when one change drops the item from both, %s pulling first`, `› keeps a departing file as unmatched beside another folder's file of the item until the person removes it`, `› takes in an unmatched file from another folder`, `› moves a note's attachment with the note to another notes folder when %s hears first`, `› takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
