@@ -19,7 +19,7 @@ use super::pages::{self, Notice};
 use crate::app::App;
 use crate::app::attention::faults::Place;
 use crate::app::provenance::{self, Origin};
-use crate::app::refusal::{Code, Refusal};
+use crate::app::refusal::{Code, INTERNAL_MESSAGE, Refusal};
 use crate::listener::{Declaration, Transport};
 use crate::log;
 use crate::telemetry::{Finished, Served};
@@ -66,7 +66,13 @@ fn offer_page(response: &mut Response) {
     if keeps_its_envelope(page.code) {
         return;
     }
-    let notice = Notice::refusal(response.status(), &page.message);
+    let notice = if response.extensions().get::<Unmatched>().is_some() {
+        Notice::missing_page()
+    } else if page.code == Code::InternalError && page.message == INTERNAL_MESSAGE {
+        Notice::fault()
+    } else {
+        Notice::refusal(response.status(), &page.message)
+    };
     if let Ok(rendered) = pages::notice(&notice) {
         rendered.write_over(response);
     }

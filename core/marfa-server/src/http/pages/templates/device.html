@@ -1,7 +1,7 @@
 {% import "partials/parts.html" as parts %}{% call parts::head("Enter the code", "Enter the code your device is showing to connect it to Marfa.") %}{% endcall %}
 <form method="post" action="/auth/device">
 <div class="fields">
-{% call parts::group(note="code-note", hint=lifetime, problem=problem_message.as_deref().unwrap_or_default()) %}
+{% call parts::group(note="code-note", hint="Codes end after 10 minutes.", problem=problem_message.as_deref().unwrap_or_default()) %}
 {% call parts::field("user_code", "Code", name="user_code", value=view.user_code.as_str(), capitalize="characters", mono=true, invalid=invalid_code, note="code-note") %}{% endcall %}
 {% endcall %}
 </div>

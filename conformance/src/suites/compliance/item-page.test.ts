@@ -78,7 +78,9 @@ describe("the page that opens an item in an app", () => {
     expect(response.headers.get("content-type")).toContain("text/html");
     const page = await response.text();
     const link = `marfa://${instanceId}/${id}`;
-    expect(page).toMatch(new RegExp(`<a href="${link}">[^<]+</a>`));
+    expect(page).toMatch(
+      new RegExp(`<a\\b[^>]*\\shref="${link}"[^>]*>Open in Marfa</a>`),
+    );
     expect(page).toMatch(
       new RegExp(`<meta http-equiv="refresh" content="0;url=${link}">`),
     );

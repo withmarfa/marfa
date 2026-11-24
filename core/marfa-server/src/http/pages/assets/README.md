@@ -28,7 +28,7 @@ These hold for every page, so a new page gets them by using the parts.
 - **Focus.** A page puts the cursor in the first empty field, or the first field with a problem, only when the device has a fine pointer, such as a mouse. A phone waits for a tap so the keyboard does not cover the page.
 - **Buttons wait while a form sends.** A form's buttons are disabled until the answer arrives, and come back if the browser shows the page again from its cache.
 - **A dialog returns focus** to the control that opened it.
-- **Sizes are in `rem`.** Controls are 2 rem tall, and 2.75 rem on a phone (600 px wide or less).
+- **Sizes are in `rem`.** Controls are 2 rem tall, compact ones 1.75 rem, and every control is 2.75 rem (44 px) on a phone (600 px wide or less). A button's words wrap and its row of actions wraps, so large text never runs off the page. On a phone the column fills the width.
 - **A palette for light and dark.** Colors are the properties at the top of `page.css`, with one value for each in the dark block. Check the contrast of a new pair in both.
 - **States are styled by what they are.** `:focus`, `:disabled`, `:autofill` and `[aria-invalid="true"]`, not by a class a script adds.
 - **Reduced motion and forced colors** are handled in the stylesheet: no animation under `prefers-reduced-motion`, and system colors under `forced-colors`.

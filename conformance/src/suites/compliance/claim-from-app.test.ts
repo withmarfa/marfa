@@ -199,6 +199,24 @@ function carried(html: string): string[] {
   return offeredValues(html, "return_to");
 }
 
+/** The words of each element the field with this id names in `aria-describedby`. */
+function describedWords(html: string, fieldId: string): string[] {
+  const field = new RegExp(`<input\\b[^>]*\\sid="${fieldId}"[^>]*>`, "i").exec(
+    html,
+  )?.[0];
+  const ids = /\saria-describedby="([^"]*)"/i.exec(field ?? "")?.[1] ?? "";
+  return ids
+    .split(/\s+/)
+    .filter((id) => id !== "")
+    .map((id) => {
+      const element = new RegExp(
+        `<(\\w+)\\b[^>]*\\sid="${id}"[^>]*>([\\s\\S]*?)</\\1>`,
+        "i",
+      ).exec(html);
+      return visibleText(element?.[2] ?? "");
+    });
+}
+
 /** The hidden fields a page's form posts beside what the person types. */
 function hiddenFields(html: string): [string, string][] {
   return readControls(html)
@@ -651,7 +669,7 @@ describe("return_to through setup", () => {
           return {
             status: answer.status,
             carried: carried(html),
-            says: visibleText(html).includes(WRONG_CODE),
+            described: describedWords(html, "code"),
           };
         };
         const replaced = await instance.code();
@@ -660,10 +678,13 @@ describe("return_to through setup", () => {
         expect(wrong).toEqual({
           status: 401,
           carried: [AUTHORIZE],
-          says: true,
+          described: [WRONG_CODE],
         });
-        // The witness: the page before a wrong code does not say it.
+        // The witness: the page before a wrong code describes the field with its hint.
         expect(visibleText(codeHtml)).not.toContain(WRONG_CODE);
+        const hint = describedWords(codeHtml, "code");
+        expect(hint).toHaveLength(1);
+        expect(hint[0]).toContain(CODE_PLACE);
         expect(await refusal(replaced)).toEqual(wrong);
 
         // The setup session the code opens ends after fifteen minutes.

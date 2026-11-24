@@ -151,20 +151,31 @@ impl Notice {
         .linked("Sign In", &through_sign_in(return_to))
     }
 
-    /// A refusal a browser reads. A missing page and a server fault have one drawn notice each;
-    /// any other refusal keeps its own words.
+    /// No route answers the address.
+    pub fn missing_page() -> Notice {
+        Notice::new(
+            StatusCode::NOT_FOUND,
+            "There’s nothing here",
+            "Check the address and try again.",
+        )
+    }
+
+    /// The server's generic internal refusal, which carries no words of its own.
+    pub fn fault() -> Notice {
+        Notice::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Something went wrong",
+            "Marfa couldn’t continue. Go back to the app and try again.",
+        )
+    }
+
+    /// A refusal a browser reads, in the words it carries.
     pub fn refusal(status: StatusCode, message: &str) -> Notice {
         match status {
-            StatusCode::NOT_FOUND => Notice::new(
-                status,
-                "There’s nothing here",
-                "Check the address and try again.",
-            ),
-            status if status.is_server_error() => Notice::new(
-                status,
-                "Something went wrong",
-                "Marfa couldn’t continue. Go back to the app and try again.",
-            ),
+            StatusCode::NOT_FOUND => Notice::new(status, "Not found", message),
+            status if status.is_server_error() => {
+                Notice::new(status, "Something went wrong", message)
+            }
             StatusCode::UNAUTHORIZED => {
                 Notice::new(status, "Sign in needed", message).linked("Sign In", "/auth/sign-in")
             }

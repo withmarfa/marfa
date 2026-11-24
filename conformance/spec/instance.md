@@ -2542,13 +2542,13 @@ When `PUT /config` supplies `name`, the server MUST store it with whitespace at 
 
 If a supplied `name` is empty after trimming, exceeds 200 Unicode code points after trimming, or contains a C0 control, DEL, C1 control or Unicode bidirectional control character, then the server MUST refuse `PUT /config` with `400 validation_error`.
 
-**Tests:** `compliance/instance-config.test.ts › refuses invalid names and escapes the name in pages on later requests`.
+**Tests:** `compliance/instance-config.test.ts › refuses invalid names and keeps the name out of pages on later requests`.
 
 ### `instance/config-name-live`
 
-When `PUT /config` has acknowledged a display name, the server MUST use that name in subsequent root descriptions and existing page labels that identify the instance, without requiring a restart.
+When `PUT /config` has acknowledged a display name, the server MUST use that name in subsequent root descriptions, without requiring a restart.
 
-**Tests:** `compliance/instance-config.test.ts › sets, trims, persists and clears the name without changing identity`, `› refuses invalid names and escapes the name in pages on later requests`.
+**Tests:** `compliance/instance-config.test.ts › sets, trims, persists and clears the name without changing identity`, `› refuses invalid names and keeps the name out of pages on later requests`.
 
 ### `instance/config-name-durable`
 
@@ -2556,11 +2556,11 @@ When the server restarts on the same database, the server MUST retain the config
 
 **Tests:** `compliance/instance-config.test.ts › sets, trims, persists and clears the name without changing identity`.
 
-### `instance/config-name-page-escaped`
+### `instance/config-name-not-in-pages`
 
-When an HTML page identifies the instance by its display name, the server MUST render that name as text.
+The server MUST NOT include the instance's display name in any HTML page it serves.
 
-**Tests:** `compliance/instance-config.test.ts › refuses invalid names and escapes the name in pages on later requests`.
+**Tests:** `compliance/instance-config.test.ts › refuses invalid names and keeps the name out of pages on later requests`.
 
 ### `instance/config-unauthenticated`
 

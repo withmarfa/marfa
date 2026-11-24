@@ -53,7 +53,6 @@ struct DeviceBody<'a> {
     view: &'a DeviceEntry,
     problem_message: Option<String>,
     invalid_code: bool,
-    lifetime: &'static str,
 }
 
 pub fn device_entry(view: &DeviceEntry) -> Result<Page> {
@@ -64,13 +63,6 @@ pub fn device_entry(view: &DeviceEntry) -> Result<Page> {
             view.problem,
             Some(DeviceProblem::InvalidCode | DeviceProblem::ExpiredCode)
         ),
-        // A wait is already said in minutes, and a second figure beside it
-        // reads as a second wait.
-        lifetime: if matches!(view.problem, Some(DeviceProblem::TooManyAttempts(_))) {
-            ""
-        } else {
-            "Codes end after 10 minutes."
-        },
     })?;
     document("Enter the code", &body, Needs::default())
 }

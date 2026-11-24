@@ -3612,7 +3612,7 @@ async fn the_error_page_explains_each_code_and_shows_nothing_of_the_request() {
         .send(get(&format!("/auth/error?error={planted}"), None))
         .await;
     assert!(!fallback.text.contains(planted), "{}", fallback.text);
-    let unexplained = "continue with this request";
+    let unexplained = "Marfa couldn’t continue. Go back to the app and try again.";
     assert!(fallback.text.contains(unexplained));
     for code in [
         "invalid_request",

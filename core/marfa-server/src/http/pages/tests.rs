@@ -302,6 +302,29 @@ fn an_error_code_the_page_does_not_know_is_never_shown() {
 }
 
 #[test]
+fn a_specific_refusal_keeps_its_words_and_only_the_generic_ones_are_drawn() {
+    let specific = [
+        (StatusCode::NOT_FOUND, "This resource is not served here."),
+        (StatusCode::INSUFFICIENT_STORAGE, "The disk is full."),
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "The change may have completed. Read the item again before trying again.",
+        ),
+    ];
+    for (status, words) in specific {
+        let page = notice(&Notice::refusal(status, words)).unwrap();
+        assert!(page.html().contains(words), "{status}");
+        assert!(!page.html().contains("Check the address"), "{status}");
+        assert!(!page.html().contains("Marfa couldn’t continue"), "{status}");
+    }
+    let missing = notice(&Notice::missing_page()).unwrap();
+    assert!(missing.html().contains("There’s nothing here"));
+    assert!(missing.html().contains("Check the address and try again."));
+    let fault = notice(&Notice::fault()).unwrap();
+    assert!(fault.html().contains("Marfa couldn’t continue."));
+}
+
+#[test]
 fn a_page_the_caller_gives_a_status_answers_with_it() {
     let response = notice(&Notice::refusal(StatusCode::NOT_FOUND, "Nothing here."))
         .unwrap()
@@ -608,7 +631,9 @@ mod consent_pages {
 fn only_the_page_that_opens_an_item_refreshes_to_its_link() {
     let url = "marfa://a/b";
     let opening = notice(&Notice::opening_item(url)).unwrap();
-    assert!(opening.html().contains(&format!("href=\"{url}\"")));
+    assert!(opening.html().contains(&format!(
+        "<a class=\"btn primary\" href=\"{url}\">Open in Marfa</a>"
+    )));
     assert!(opening.html().contains(&format!(
         "<meta http-equiv=\"refresh\" content=\"0;url={url}\">"
     )));

@@ -914,13 +914,13 @@ fn states() -> Vec<State> {
             board,
             "notice-nothing-here",
             "A page that does not exist",
-            Notice::refusal(StatusCode::NOT_FOUND, "No such page."),
+            Notice::missing_page(),
         ),
         (
             board,
             "notice-something-went-wrong",
             "A server fault",
-            Notice::refusal(StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong."),
+            Notice::fault(),
         ),
         (
             Some("U20"),

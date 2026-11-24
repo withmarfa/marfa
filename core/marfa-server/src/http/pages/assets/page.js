@@ -25,12 +25,11 @@
     }
   }
 
-  // The control that opened the dialog. It may be disabled while its request is open, so focus
-  // goes back once it can take it.
+  // The control that opened the dialog, kept until it is enabled again and the dialog is closed.
   let opener = null;
 
   function giveFocusBack() {
-    if (!opener || !opener.isConnected || opener.disabled) return;
+    if (dialog?.open || !opener || !opener.isConnected || opener.disabled) return;
     opener.focus();
     opener = null;
   }
@@ -93,10 +92,10 @@
   }
 
   /** Resolves true once the owner has confirmed, false if they gave up. */
-  function confirmItsYou() {
+  function confirmItsYou(opening) {
     return new Promise((resolve) => {
       showConfirmError("none", 0);
-      opener = document.activeElement;
+      opener = opening;
       dialog.addEventListener(
         "close",
         () => {
@@ -119,6 +118,7 @@
   // A form marked data-change is sent with fetch; a stale sign-in opens the dialog and the
   // change is resent after confirming.
   async function sendChange(form, submitter) {
+    const opening = submitter ?? form.querySelector("button[type=submit]");
     const body = new URLSearchParams(
       submitter ? new FormData(form, submitter) : new FormData(form),
     );
@@ -136,7 +136,7 @@
 
     let response = await send();
     if (response && dialog && (await isRecentSignInRefusal(response))) {
-      if (await confirmItsYou()) response = await send();
+      if (await confirmItsYou(opening)) response = await send();
     }
     const text = response ? await response.text() : "";
     const isPage = (response?.headers.get("content-type") ?? "").includes(
@@ -202,8 +202,7 @@
     }
   }
 
-  // A form the browser sends itself leaves the page, so its buttons stay disabled until the
-  // answer arrives, and come back if the browser shows this page again from its cache.
+  // A form the browser sends keeps its buttons disabled until the answer, or the cached page, returns.
   function watchForms() {
     for (const form of document.querySelectorAll("form:not([data-change], [method=dialog])")) {
       if (form.dataset.passkeyRenameForm) continue;
@@ -361,10 +360,10 @@
   const SOMETHING_WENT_WRONG = "Something went wrong. Try again.";
 
   /** Sends a request again once the owner confirms an old sign-in. */
-  async function withRecentSignIn(send) {
+  async function withRecentSignIn(send, opening) {
     const answer = await send();
     if (answer && dialog && (await isRecentSignInRefusal(answer.response))) {
-      if (await confirmItsYou()) return send();
+      if (await confirmItsYou(opening)) return send();
       return null;
     }
     return answer;
@@ -420,8 +419,9 @@
       setBusy([button], true);
       showPasskeyError("");
       try {
-        const asked = await withRecentSignIn(() =>
-          askForOptions("/auth/passkeys/registration/options"),
+        const asked = await withRecentSignIn(
+          () => askForOptions("/auth/passkeys/registration/options"),
+          button,
         );
         if (!asked) return;
         if (asked.status !== 200) {
@@ -481,7 +481,7 @@
         headers: { accept: "application/json" },
       }).catch(() => null);
       return response && { response, status: response.status };
-    });
+    }, button);
     if (answer && answer.status === 200) location.reload();
     else if (answer !== null) showPasskeyError(SOMETHING_WENT_WRONG);
     setBusy([button], false);
@@ -516,6 +516,7 @@
       return;
     }
     const save = form.querySelector("button[type=submit]");
+    const opening = form.contains(document.activeElement) ? document.activeElement : save;
     setBusy([save], true);
     showPasskeyError("");
     const answer = await withRecentSignIn(async () => {
@@ -527,7 +528,7 @@
         body: JSON.stringify({ name }),
       }).catch(() => null);
       return response && { response, status: response.status };
-    });
+    }, opening);
     if (answer && answer.status === 200) location.reload();
     else if (answer !== null) {
       const body = answer ? await answer.response.json().catch(() => null) : null;

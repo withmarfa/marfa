@@ -104,7 +104,7 @@ pub fn signed_in(view: &SignedIn) -> Result<Page> {
     };
     let body = render_body(&SignedInBody { view: &view })?;
     document(
-        "You're signed in",
+        "You’re signed in",
         &body,
         Needs {
             connect: true,
