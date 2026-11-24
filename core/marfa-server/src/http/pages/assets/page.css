@@ -386,7 +386,8 @@ dialog::backdrop {
   color: inherit;
 }
 
-.js .types:not(.open) {
+.js .types:not(.open),
+.js .without-script {
   display: none;
 }
 

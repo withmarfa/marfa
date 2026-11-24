@@ -13,6 +13,7 @@ pub fn level(level: Level) -> &'static str {
 
 pub const CHOOSE_TYPES_WORD: &str = "Choose types";
 pub const EDIT_LINE: &str = "Edit includes adding and deleting items.";
+pub const ADMIN_HEADING: &str = "Admin";
 pub const ADMIN_TITLE: &str = "Settings, keys and more";
 pub const ALLOW: &str = "Allow";
 pub const DONT_ALLOW: &str = "Don't allow";
@@ -24,6 +25,11 @@ pub fn admin_level(level: AdminLevel) -> &'static str {
         AdminLevel::None => "No access",
         AdminLevel::Custom => "Custom",
     }
+}
+
+/// Under a group of rows that counts only at one choice of the control above it.
+pub fn counts_when(control: &str, choice: &str) -> String {
+    format!("These count when {control} is set to {choice}.")
 }
 
 /// Follows the app's name, which the app chose itself.

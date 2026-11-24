@@ -444,7 +444,7 @@ mod consent_pages {
     use super::*;
     use crate::app::access::{Level, Permission};
     use crate::app::oauth::offer::{
-        Admin, AdminLevel, AppShown, Choice, Held, LevelRow, Offer, Reach,
+        Admin, AdminLevel, AppShown, CHOOSE_TYPES, Choice, Held, LevelRow, Offer, Post, Reach,
     };
 
     fn row(reach: Reach, pattern: &str, label: Option<&str>, levels: &[(Level, &str)]) -> LevelRow {
@@ -528,9 +528,148 @@ mod consent_pages {
             instance_name: HOSTILE.into(),
             offer,
             answering,
-            changed: false,
+            again: None,
         })
         .unwrap()
+    }
+
+    fn drawn_again(offer: Offer, posted: Post) -> String {
+        without_code(
+            &consent(&Consent {
+                instance_name: HOSTILE.into(),
+                offer,
+                answering: Answering::Authorization("q".into()),
+                again: Some(posted),
+            })
+            .unwrap(),
+        )
+        .replace("&#39;", "'")
+    }
+
+    fn values(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn a_page_drawn_again_opens_its_choices_where_the_post_left_them() {
+        let first = without_code(&page_of(Answering::Authorization("q".into()), offer()))
+            .replace("&#39;", "'");
+        assert!(first.contains("<details class=\"choose\">"));
+        assert_eq!(
+            options_of(&first, "admin"),
+            ["<option value=\"full\" selected>Full access</option>\
+              <option value=\"none\">No access</option>\
+              <option value=\"custom\">Custom</option>"]
+        );
+        let html = drawn_again(
+            offer(),
+            Post {
+                held: "before".into(),
+                scopes: values(&["core.note:read", "", "offline_access"]),
+                types: Vec::new(),
+                admin: Some("custom".into()),
+                powers: values(&["", "items.purge"]),
+            },
+        );
+        assert!(html.contains("<details class=\"choose\" open>"), "{html}");
+        let scopes = options_of(&html, "scopes");
+        assert_eq!(
+            scopes[0],
+            "<option value=\"\">No access</option>\
+             <option value=\"core.note:read\" selected>Read only</option>\
+             <option value=\"core.note:write\">Read and edit</option>"
+        );
+        assert!(
+            scopes[1].starts_with("<option value=\"\" selected>"),
+            "{}",
+            scopes[1]
+        );
+        assert!(
+            scopes[2].starts_with("<option value=\"\" selected>"),
+            "{}",
+            scopes[2]
+        );
+        assert_eq!(
+            options_of(&html, "admin"),
+            ["<option value=\"full\">Full access</option>\
+              <option value=\"none\">No access</option>\
+              <option value=\"custom\" selected>Custom</option>"]
+        );
+        assert_eq!(
+            options_of(&html, "powers"),
+            [
+                "<option value=\"\" selected>Don't allow</option>\
+                 <option value=\"keys.mint\">Allow</option>",
+                "<option value=\"\">Don't allow</option>\
+                 <option value=\"items.purge\" selected>Allow</option>",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_page_drawn_again_starts_what_the_post_did_not_choose_at_the_least() {
+        let mut wide = offer();
+        wide.data[1].types = vec![row(
+            Reach::Type,
+            "core.bookmark",
+            None,
+            &[(Level::Read, "core.bookmark:read")],
+        )];
+        let html = drawn_again(
+            wide.clone(),
+            Post {
+                held: "before".into(),
+                scopes: values(&["core.note:write", CHOOSE_TYPES]),
+                types: values(&["core.bookmark:read"]),
+                admin: Some("limited".into()),
+                powers: Vec::new(),
+            },
+        );
+        let scopes = options_of(&html, "scopes");
+        assert!(
+            scopes[0].contains("value=\"core.note:write\" selected"),
+            "{}",
+            scopes[0]
+        );
+        assert!(scopes[1].contains(&format!("value=\"{CHOOSE_TYPES}\" selected")));
+        assert!(options_of(&html, "types")[0].contains("value=\"core.bookmark:read\" selected"));
+        assert!(options_of(&html, "admin")[0].contains("value=\"none\" selected"));
+        let unsaid = drawn_again(
+            wide,
+            Post {
+                held: "before".into(),
+                ..Post::default()
+            },
+        );
+        for (name, at) in [("scopes", 0), ("scopes", 1), ("types", 0), ("powers", 0)] {
+            assert!(
+                options_of(&unsaid, name)[at].starts_with("<option value=\"\" selected>"),
+                "{name} {at}: {unsaid}"
+            );
+        }
+        assert!(options_of(&unsaid, "admin")[0].contains("value=\"none\" selected"));
+    }
+
+    #[test]
+    fn rows_under_a_level_say_without_scripts_which_level_counts_them() {
+        let mut wide = offer();
+        wide.data[1].types = vec![row(
+            Reach::Type,
+            "core.bookmark",
+            None,
+            &[(Level::Read, "core.bookmark:read")],
+        )];
+        let html = without_code(&page_of(Answering::Authorization("q".into()), wide));
+        let admin = html.find("data-shown-by=\"admin-level\"").unwrap();
+        assert!(html[admin..].contains(
+            "<p class=\"hint without-script\">These count when Admin is set to Custom.</p>"
+        ));
+        let types = html.find("data-shown-at=\"choose-types\"").unwrap();
+        assert!(html[types..admin].contains(
+            "<p class=\"hint without-script\">These count when Your custom types is set to \
+             Choose types.</p>"
+        ));
+        assert!(include_str!("assets/page.css").contains(".js .without-script"));
     }
 
     #[test]
@@ -544,14 +683,8 @@ mod consent_pages {
         let line = "This app's access changed after this page opened.";
         let quiet = without_code(&page_of(Answering::Authorization("q".into()), offer()));
         assert!(!quiet.contains(line));
-        let changed = consent(&Consent {
-            instance_name: HOSTILE.into(),
-            offer: offer(),
-            answering: Answering::Authorization("q".into()),
-            changed: true,
-        })
-        .unwrap();
-        assert!(without_code(&changed).contains(line));
+        let changed = drawn_again(offer(), Post::default());
+        assert!(changed.contains(line.replace("&#39;", "'").as_str()));
     }
 
     #[test]
@@ -612,7 +745,7 @@ mod consent_pages {
     }
 
     fn options_of<'a>(html: &'a str, name: &str) -> Vec<&'a str> {
-        html.match_indices(&format!("name=\"{name}\""))
+        html.match_indices(&format!("name=\"{name}\" aria-label="))
             .map(|(at, _)| {
                 let from = at + html[at..].find('>').unwrap() + 1;
                 &html[from..from + html[from..].find("</select>").unwrap()]

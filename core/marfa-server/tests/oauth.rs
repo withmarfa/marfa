@@ -2383,6 +2383,95 @@ async fn a_narrowing_the_same_set_in_any_order_changes_nothing() {
     assert_eq!(exchanged.status, StatusCode::OK, "{}", exchanged.text);
 }
 
+fn post_accepting(
+    path: &str,
+    accept: Option<&str>,
+    cookie: &str,
+    fields: &[(&str, &str)],
+) -> Request<Body> {
+    let mut request = post_form(path, Some(cookie), fields);
+    if let Some(accept) = accept {
+        request
+            .headers_mut()
+            .insert(header::ACCEPT, accept.parse().unwrap());
+    }
+    request
+}
+
+/// An approval answered with its page drawn again: a page for a caller that takes one, the JSON
+/// conflict for a caller that takes only JSON.
+async fn drawn_again(instance: &Instance, path: &str, fields: &[(&str, &str)]) {
+    let changed = "This app's access changed after this page opened.";
+    for accept in [None, Some("text/html"), Some("application/json, text/html")] {
+        let reply = instance
+            .send(post_accepting(path, accept, &instance.cookie, fields))
+            .await;
+        assert_eq!(
+            reply.status,
+            StatusCode::CONFLICT,
+            "{accept:?} {}",
+            reply.text
+        );
+        let kind = reply.headers.get(header::CONTENT_TYPE).unwrap();
+        assert!(
+            kind.to_str().unwrap().starts_with("text/html"),
+            "{accept:?}"
+        );
+        assert!(reply.text.contains(changed), "{accept:?} {}", reply.text);
+        assert!(reply.text.contains("name=\"held\""), "{accept:?}");
+    }
+    let json = instance
+        .send(post_accepting(
+            path,
+            Some("application/json"),
+            &instance.cookie,
+            fields,
+        ))
+        .await;
+    assert_eq!(json.status, StatusCode::CONFLICT, "{}", json.text);
+    assert_eq!(json.json()["error"]["code"], "conflict", "{}", json.text);
+}
+
+#[tokio::test]
+async fn an_approval_from_a_page_built_on_other_held_access_is_answered_409_with_the_page() {
+    let instance = Instance::signed_in().await;
+    let both = "core.note:read core.task:read";
+    let client = instance.register(both).await;
+    instance.tokens(&client, NOTES).await;
+    let link = instance.consent_link(&client, both).await;
+    let stale = [
+        ("decision", "approve"),
+        ("authorization_request", link.as_str()),
+        ("held", ""),
+        ("scopes", "core.task:read"),
+    ];
+    drawn_again(&instance, "/auth/consent", &stale).await;
+    assert!(
+        !instance.grant_of(&client).await["scopes"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("core.task:read"))
+    );
+    // The witness: the page as it is drawn now approves.
+    let approved = instance.decide(&link, &["core.task:read"]).await;
+    assert!(code_in(&approved).is_some(), "{}", approved.text);
+
+    let device = instance.register_device(both).await;
+    instance.device_approved(&device, NOTES).await;
+    let asked = instance.device_asked(&device, both).await;
+    let stale = [
+        ("user_code", text_at(&asked, "user_code")),
+        ("decision", "approve"),
+        ("held", ""),
+        ("scopes", "core.task:read"),
+    ];
+    drawn_again(&instance, "/auth/device/consent", &stale).await;
+    refused_as(
+        &instance.poll(&device, text_at(&asked, "device_code")).await,
+        "authorization_pending",
+    );
+}
+
 #[tokio::test]
 async fn an_approval_landing_before_a_narrowing_commits_stops_it() {
     let instance = Instance::signed_in().await;

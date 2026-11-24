@@ -4,7 +4,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::IntoResponse;
 
-use super::{Browser, Fields, problem_answer};
+use super::{Browser, Fields, drawn_again, problem_answer};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::auth::Visit;
@@ -135,7 +135,7 @@ pub async fn screen(
                 instance_name: instance::name(&app).await?,
                 offer: *offer,
                 answering: Answering::Device(typed),
-                changed: false,
+                again: None,
             };
             Ok(pages::consent(&view)?.into_response())
         }
@@ -151,6 +151,7 @@ pub async fn answer(
     State(app): State<Arc<App>>,
     visit: Visit,
     Browser(owner): Browser,
+    headers: HeaderMap,
     body: JsonBody,
 ) -> Answer {
     let fields = Fields(body.form_pairs().await?);
@@ -169,7 +170,8 @@ pub async fn answer(
     if let Some(wait) = device::admit_lookup(&app, visit.address, Some(&owner)) {
         return too_many(wait);
     }
-    let answered = device::answer(&app, &owner, typed, approve, fields.post()).await?;
+    let post = fields.post();
+    let answered = device::answer(&app, &owner, typed, approve, post.clone()).await?;
     let name = instance::name(&app).await?;
     match answered {
         Answered::Approved => Ok(pages::notice(&Notice::device_approved(&name))?.into_response()),
@@ -184,9 +186,9 @@ pub async fn answer(
                 instance_name: name,
                 offer: *offer,
                 answering: Answering::Device(typed.to_string()),
-                changed: true,
+                again: Some(post),
             };
-            Ok(pages::consent(&view)?.into_response())
+            drawn_again(&view, &headers)
         }
     }
 }

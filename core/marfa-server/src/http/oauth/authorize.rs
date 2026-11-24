@@ -5,7 +5,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use serde_json::json;
 
-use super::{Browser, Fields, problem_answer};
+use super::{Browser, Fields, drawn_again, problem_answer};
 use crate::app::App;
 use crate::app::auth::Visit;
 use crate::app::instance;
@@ -55,7 +55,7 @@ pub async fn screen(
                 instance_name: instance::name(&app).await?,
                 offer: *offer,
                 answering: Answering::Authorization(query),
-                changed: false,
+                again: None,
             };
             Ok(pages::consent(&view)?.into_response())
         }
@@ -84,7 +84,8 @@ pub async fn decide(
         Some("deny") => false,
         _ => return Err(Refusal::validation("Provide `decision` as approve or deny.").into()),
     };
-    match authorize::decide(&app, owner.as_ref(), link, approve, fields.post()).await? {
+    let post = fields.post();
+    match authorize::decide(&app, owner.as_ref(), link, approve, post.clone()).await? {
         Decided::Unverified => refused_link(&app, false).await,
         Decided::Expired => refused_link(&app, true).await,
         Decided::SignIn(location) => redirect(StatusCode::FOUND, &location),
@@ -97,9 +98,9 @@ pub async fn decide(
                 instance_name: instance::name(&app).await?,
                 offer: *offer,
                 answering: Answering::Authorization(link.to_string()),
-                changed: true,
+                again: Some(post),
             };
-            Ok(pages::consent(&view)?.into_response())
+            drawn_again(&view, &headers)
         }
     }
 }

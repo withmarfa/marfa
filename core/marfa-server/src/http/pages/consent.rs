@@ -4,7 +4,7 @@ use super::words;
 use super::{Needs, Page, document, render_body};
 use crate::app::access::{Level, Permission};
 use crate::app::oauth::offer::{
-    Admin, AdminLevel, CHOOSE_TYPES, Choice, Held, LevelRow, Offer, Reach,
+    Admin, AdminLevel, CHOOSE_TYPES, Choice, Held, LevelRow, Offer, Post, Reach,
 };
 use crate::app::refusal::Result;
 
@@ -19,8 +19,9 @@ pub struct Consent {
     pub instance_name: String,
     pub offer: Offer,
     pub answering: Answering,
-    /// An approval was posted from a page built on access the app no longer holds as it did.
-    pub changed: bool,
+    /// An approval posted from a page built on access the app no longer holds as it did, drawn
+    /// again with the choices it made.
+    pub again: Option<Post>,
 }
 
 struct Pick {
@@ -47,6 +48,8 @@ struct Row {
 struct DataRow {
     row: Row,
     types: Vec<Row>,
+    /// Without scripts every type row shows, and counts only under Choose types.
+    counts: String,
 }
 
 struct PowerRow {
@@ -85,6 +88,26 @@ fn titled(row: &LevelRow) -> Titled {
     }
 }
 
+/// What a row shows chosen: its default on a first draw, and on a redraw the posted choice it
+/// still offers, or its least.
+fn chosen_of<'a>(row: &'a LevelRow, posted: Option<&'a [String]>) -> &'a str {
+    let Some(posted) = posted else {
+        return &row.selected;
+    };
+    if let Some(choice) = row
+        .choices
+        .iter()
+        .rev()
+        .find(|choice| !choice.value.is_empty() && posted.contains(&choice.value))
+    {
+        return &choice.value;
+    }
+    if !row.types.is_empty() && posted.iter().any(|value| value == CHOOSE_TYPES) {
+        return CHOOSE_TYPES;
+    }
+    ""
+}
+
 fn option_of(choice: &Choice, selected: &str, yes_or_no: bool) -> Pick {
     let word = match (yes_or_no, choice.level) {
         (true, Level::None) => words::DONT_ALLOW,
@@ -104,7 +127,7 @@ struct Numbering {
 }
 
 impl Numbering {
-    fn row(&mut self, row: &LevelRow, field: &'static str) -> Row {
+    fn row(&mut self, row: &LevelRow, field: &'static str, posted: Option<&[String]>) -> Row {
         self.next += 1;
         let own = titled(row);
         let clashes = own.type_id.as_ref().is_some_and(|id| {
@@ -119,16 +142,17 @@ impl Numbering {
         if row.open_ended {
             lines.push(words::reach_line(&row.covers));
         }
+        let chosen = chosen_of(row, posted);
         let mut options: Vec<Pick> = row
             .choices
             .iter()
-            .map(|choice| option_of(choice, &row.selected, row.yes_or_no))
+            .map(|choice| option_of(choice, chosen, row.yes_or_no))
             .collect();
         if !row.types.is_empty() {
             options.push(Pick {
                 value: CHOOSE_TYPES.to_string(),
                 word: words::CHOOSE_TYPES_WORD,
-                selected: false,
+                selected: chosen == CHOOSE_TYPES,
             });
         }
         Row {
@@ -151,7 +175,7 @@ fn power_title(power: Permission) -> String {
         .map_or_else(|| power.word().to_string(), |words| words.title.to_string())
 }
 
-fn power_row(index: usize, power: Permission) -> PowerRow {
+fn power_row(index: usize, power: Permission, allowed: bool) -> PowerRow {
     PowerRow {
         id: format!("power-{index}"),
         title: power_title(power),
@@ -160,36 +184,52 @@ fn power_row(index: usize, power: Permission) -> PowerRow {
             Pick {
                 value: String::new(),
                 word: words::DONT_ALLOW,
-                selected: false,
+                selected: !allowed,
             },
             Pick {
                 value: power.word().to_string(),
                 word: words::ALLOW,
-                selected: true,
+                selected: allowed,
             },
         ],
     }
 }
 
-fn admin_row(admin: &Admin) -> AdminRow {
+/// On a redraw, the posted level where it is still offered and No access otherwise, and Allow
+/// only on a row the post allowed.
+fn admin_row(admin: &Admin, again: Option<&Post>) -> AdminRow {
     let mut ordered = admin.powers.clone();
     ordered.sort_by_key(|power| words::power_rank(power.word()));
+    let level = match again {
+        None => admin.levels.first().copied(),
+        Some(post) => Some(
+            admin
+                .levels
+                .iter()
+                .copied()
+                .find(|level| post.admin.as_deref() == Some(level.word()))
+                .unwrap_or(AdminLevel::None),
+        ),
+    };
     AdminRow {
         title: words::ADMIN_TITLE,
         options: admin
             .levels
             .iter()
-            .enumerate()
-            .map(|(at, level)| Pick {
-                value: level.word().to_string(),
-                word: words::admin_level(*level),
-                selected: at == 0,
+            .map(|one| Pick {
+                value: one.word().to_string(),
+                word: words::admin_level(*one),
+                selected: Some(*one) == level,
             })
             .collect(),
         powers: ordered
             .into_iter()
             .enumerate()
-            .map(|(index, power)| power_row(index, power))
+            .map(|(index, power)| {
+                let allowed =
+                    again.is_none_or(|post| post.powers.iter().any(|row| row == power.word()));
+                power_row(index, power, allowed)
+            })
             .collect(),
     }
 }
@@ -249,6 +289,8 @@ struct ConsentBody<'a> {
     admin: Option<AdminRow>,
     custom: &'static str,
     choose_types: &'static str,
+    admin_heading: &'static str,
+    admin_counts: String,
 }
 
 fn shown_code(code: &str) -> String {
@@ -286,24 +328,31 @@ pub fn consent(view: &Consent) -> Result<Page> {
         .map(titled)
         .collect();
     let mut numbering = Numbering { next: 0, shared };
+    let again = view.again.as_ref();
+    let scopes = again.map(|post| post.scopes.as_slice());
+    let types = again.map(|post| post.types.as_slice());
     let data = offer
         .data
         .iter()
-        .map(|row| DataRow {
-            row: numbering.row(row, "scopes"),
-            types: row
-                .types
-                .iter()
-                .map(|one| numbering.row(one, "types"))
-                .collect(),
+        .map(|row| {
+            let row_drawn = numbering.row(row, "scopes", scopes);
+            DataRow {
+                counts: words::counts_when(&row_drawn.title, words::CHOOSE_TYPES_WORD),
+                types: row
+                    .types
+                    .iter()
+                    .map(|one| numbering.row(one, "types", types))
+                    .collect(),
+                row: row_drawn,
+            }
         })
         .collect();
     let profile = offer
         .profile
         .iter()
-        .map(|row| numbering.row(row, "scopes"))
+        .map(|row| numbering.row(row, "scopes", scopes))
         .collect();
-    let admin = offer.admin.as_ref().map(admin_row);
+    let admin = offer.admin.as_ref().map(|admin| admin_row(admin, again));
     let held = offer
         .held
         .iter()
@@ -334,6 +383,11 @@ pub fn consent(view: &Consent) -> Result<Page> {
         admin,
         custom: AdminLevel::Custom.word(),
         choose_types: CHOOSE_TYPES,
+        admin_heading: words::ADMIN_HEADING,
+        admin_counts: words::counts_when(
+            words::ADMIN_HEADING,
+            words::admin_level(AdminLevel::Custom),
+        ),
     })?;
     document(
         "Allow access",

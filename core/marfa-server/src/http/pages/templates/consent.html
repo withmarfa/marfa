@@ -3,7 +3,7 @@
 {% if device_code.is_some() %}<p class="lede">An app showing the code below is asking to connect to Marfa. Check that the code matches the one the app shows.</p>
 {% endif %}<p class="lede"><bdi>{{ view.offer.app.name }}</bdi> {{ app_bracket }} wants to connect to your Marfa.</p>
 {% if let Some(line) = app_line %}<p class="facts">{{ line }}</p>
-{% endif %}{% if view.changed %}<p class="notice caution" role="status">This app's access changed after this page opened. Check what to allow, then try again.</p>
+{% endif %}{% if view.again.is_some() %}<p class="notice caution" role="status">This app's access changed after this page opened. Check what to allow, then try again.</p>
 {% endif %}{% if !held.is_empty() %}<section class="held" aria-labelledby="held-title">
 <h2 id="held-title">Already allowed</h2>
 <ul>
@@ -20,14 +20,15 @@
 {% for line in gives %}<li>{{ line.text }}</li>
 {% endfor %}</ul>
 </section>
-<details class="choose">
+<details class="choose"{% if view.again.is_some() %} open{% endif %}>
 <summary>Choose…</summary>
 {% if view.offer.offers_edit %}<p class="hint">{{ edit_line }}</p>
 {% endif %}{% for item in data %}{% call rows::level(item.row) %}{% endcall %}{% if !item.types.is_empty() %}<div class="types" data-shown-by="{{ item.row.id }}" data-shown-at="{{ choose_types }}">
 <p class="hint">Choose which types to allow. A type left at No access is not included.</p>
-{% for one in item.types %}{% call rows::level(one) %}{% endcall %}{% endfor %}</div>
+{% for one in item.types %}{% call rows::level(one) %}{% endcall %}{% endfor %}<p class="hint without-script">{{ item.counts }}</p>
+</div>
 {% endif %}{% endfor %}{% if !profile.is_empty() %}<h3>Your profile</h3>
-{% for row in profile %}{% call rows::level(row) %}{% endcall %}{% endfor %}{% endif %}{% if let Some(admin) = admin %}<h3>Admin</h3>
+{% for row in profile %}{% call rows::level(row) %}{% endcall %}{% endfor %}{% endif %}{% if let Some(admin) = admin %}<h3>{{ admin_heading }}</h3>
 <div class="row">
 <div class="text">
 <label class="title" for="admin-level">{{ admin.title }}</label>
@@ -36,7 +37,8 @@
 </div>
 <div class="types" data-shown-by="admin-level" data-shown-at="{{ custom }}">
 <p class="hint">With Custom, choose which to allow.</p>
-{% for power in admin.powers %}{% call rows::power(power) %}{% endcall %}{% endfor %}</div>
+{% for power in admin.powers %}{% call rows::power(power) %}{% endcall %}{% endfor %}<p class="hint without-script">{{ admin_counts }}</p>
+</div>
 {% endif %}</details>
 {% endif %}<p class="notice error" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
 {% if view.offer.confirm %}<p class="hint">Changes like this need a sign-in from the last 15 minutes.</p>
