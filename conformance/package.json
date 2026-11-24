@@ -33,6 +33,7 @@
     "marfa:up": "MARFA_BLOB_CLEANUP_GRACE_SECONDS=0 MARFA_RATE_LIMIT_ENABLED=false MARFA_ENRICHMENT_ENABLED=false MARFA_ENRICHMENT_OCR_ENABLED=false MARFA_ALLOW_PRIVATE_ADDRESSES=true tsx scripts/marfa-server.ts up",
     "marfa:down": "tsx scripts/marfa-server.ts down",
     "marfa:status": "tsx scripts/marfa-server.ts status",
+    "marfa:stage-logs": "tsx scripts/stage-logs.ts",
     "garage:up": "tsx scripts/garage.ts up",
     "garage:down": "tsx scripts/garage.ts down",
     "drill:restore": "MARFA_RATE_LIMIT_ENABLED=false tsx scripts/restore-drill.ts"

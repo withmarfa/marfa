@@ -443,7 +443,10 @@ fn a_stop_clears_a_hold_finishes_the_write_and_exits_cleanly() {
     assert_eq!(status(&held.join().unwrap()), 201);
     assert!(!server.socket.exists());
     let log = server.log.lock().unwrap().join("\n");
-    assert!(log.contains("\"status\":201"), "{log}");
+    assert!(
+        log.contains("\"status\":201"),
+        "the held write was not logged as answered"
+    );
     drop(server);
 
     let next = Server::start(dir.path());

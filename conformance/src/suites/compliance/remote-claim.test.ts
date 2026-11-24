@@ -2,6 +2,8 @@ import { rm } from "node:fs/promises";
 import { request } from "node:http";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  type BootOptions,
+  bootControlServer,
   bootUnclaimedServer,
   stopServer,
 } from "../../../scripts/marfa-server.js";
@@ -290,12 +292,47 @@ describe("the setup code", () => {
         const line = serverOutput(server.state)
           .split("\n")
           .find((one) => one.includes("setup code:"))!;
-        expect(line).toMatch(/setup code: [A-Z2-7-]+/);
+        // The line holds a live code, so a failure names the check, not the line.
+        expect(
+          /setup code: [A-Z2-7-]+/.test(line),
+          "the line has no code",
+        ).toBe(true);
+        return line.includes("#handoff=");
+      };
+      // A start with no public listener has no page for a link to open,
+      // whatever address it holds: port 0 with an https address, and a port
+      // with no address.
+      const controlOnly = async (
+        label: string,
+        boot: Omit<BootOptions, "state">,
+      ) => {
+        const state = tempFolder(`marfa-${label}-`);
+        states.push(state);
+        await bootControlServer({ ...boot, state });
+        const line = serverOutput(state)
+          .split("\n")
+          .find((one) => one.includes("setup code:"))!;
+        // The line holds a live code, so a failure names the check, not the line.
+        expect(
+          /setup code: [A-Z2-7-]+/.test(line),
+          "the line has no code",
+        ).toBe(true);
         return line.includes("#handoff=");
       };
       // The witness: an address the page serves on is given the link.
       expect(await linked("link-https", "https://marfa.example")).toBe(true);
       expect(await linked("link-http", "http://marfa.example")).toBe(false);
+      expect(
+        await controlOnly("link-control-port-0", {
+          port: 0,
+          env: { MARFA_SIGN_IN_ADDRESS: CLAIM_ADDRESS },
+        }),
+      ).toBe(false);
+      expect(
+        await controlOnly("link-control-no-address", {
+          env: { MARFA_SIGN_IN_ADDRESS: "" },
+        }),
+      ).toBe(false);
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
   );
@@ -371,6 +408,26 @@ describe("the setup code", () => {
       expect(refusedAgain.status).toBe(400);
       expect(await claimed()).toBe(false);
 
+      // Each refusal below is the first of the ones the form meets: a key the
+      // page does not declare is said before the proof and the mismatch.
+      const undeclared = await claim(
+        { confirm_password: `${TEST_OWNER.password}!`, bogus: "x" },
+        { ...session, accept: "application/json" },
+      );
+      expect(undeclared.status).toBe(400);
+      const refusal = (await undeclared.json()) as {
+        error: { details: { unknown_body_fields?: string[] } };
+      };
+      expect(refusal.error.details.unknown_body_fields).toEqual(["bogus"]);
+      expect(
+        (
+          await claim(
+            { confirm_password: `${TEST_OWNER.password}!`, bogus: "x" },
+            { cookie: "marfa_setup=ended", accept: "application/json" },
+          )
+        ).status,
+      ).toBe(400);
+
       // A session that has ended is said before a mismatch.
       expect(
         await answer(
@@ -388,6 +445,16 @@ describe("the setup code", () => {
       );
       expect(matched.status).toBe(303);
       expect(await claimed()).toBe(true);
+
+      // An owner is said before an undeclared key and a mismatch.
+      expect(
+        await answer(
+          await claim(
+            { confirm_password: `${TEST_OWNER.password}!`, bogus: "x" },
+            { cookie: "marfa_setup=ended", accept: "application/json" },
+          ),
+        ),
+      ).toEqual({ status: 409, code: "owner_exists" });
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -653,6 +720,17 @@ describe("owner recovery", () => {
           }),
         ),
       ).toEqual({ status: 404, code: "owner_not_found" });
+      // A key the page does not declare is said before the missing owner.
+      expect(
+        await answer(
+          await formPost(
+            server.url,
+            "/setup/recover",
+            { code: setupCode!, password: NEW_PASSWORD, bogus: "x" },
+            { accept: "application/json" },
+          ),
+        ),
+      ).toEqual({ status: 400, code: "validation_error" });
       // The owner is judged before the passwords: a mismatched form has none to recover either.
       for (const confirm_password of [`${NEW_PASSWORD}!`, undefined]) {
         const form = await formPost(
@@ -954,6 +1032,16 @@ describe("owner recovery", () => {
         ),
       ).toEqual({ status: 400, code: "validation_error" });
 
+      // A key the page does not declare is said before the proof and the mismatch.
+      expect(
+        await answer(
+          await recover(
+            { confirm_password: `${NEW_PASSWORD}!`, bogus: "x" },
+            { cookie: "marfa_setup=ended", accept: "application/json" },
+          ),
+        ),
+      ).toEqual({ status: 400, code: "validation_error" });
+
       // A session that has ended is said before a mismatch.
       expect(
         await answer(
@@ -980,6 +1068,35 @@ describe("owner recovery", () => {
           ),
         ),
       ).toEqual({ status: 401, code: "setup_proof_invalid" });
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps a recovery code through a mismatched form sent with it, and recovers with the same code",
+    async () => {
+      const server = await recoverable("recovery-confirm-direct");
+      await server.restart();
+      const code = await lastRecoveryCode(server);
+      const typed = { code, password: NEW_PASSWORD };
+      const mismatched = await formPost(
+        server.apiUrl,
+        "/setup/recover",
+        { ...typed, confirm_password: `${NEW_PASSWORD}!` },
+        { accept: "application/json" },
+      );
+      expect(await answer(mismatched)).toEqual({
+        status: 400,
+        code: "validation_error",
+      });
+      expect(await signsIn(server, TEST_OWNER.password)).toBe(true);
+      // The witness: the same code, with the passwords alike, recovers.
+      const recovered = await formPost(server.apiUrl, "/setup/recover", {
+        ...typed,
+        confirm_password: NEW_PASSWORD,
+      });
+      expect(recovered.status).toBe(303);
+      expect(await signsIn(server, NEW_PASSWORD)).toBe(true);
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
   );

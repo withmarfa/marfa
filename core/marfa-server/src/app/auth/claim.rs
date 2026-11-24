@@ -214,8 +214,6 @@ pub fn handoff_link(app: &App, ticket: &str) -> String {
     )
 }
 
-/// The line that offers the setup code of an instance with no owner, and the link
-/// beside it only where the setup page in a browser can take it.
 pub async fn claim_notice(app: &App) -> Result<Option<String>> {
     if status(app).await?.claimed {
         return Ok(None);
@@ -223,7 +221,7 @@ pub async fn claim_notice(app: &App) -> Result<Option<String>> {
     let (code, _) = issue_code(app, &Caller::Server).await?;
     let page = setup_page(app);
     let sign_in = app.addresses().sign_in();
-    if sign_in.port() == 0 || !carries_sessions(&sign_in) {
+    if app.bound().is_none() || sign_in.port() == 0 || !carries_sessions(&sign_in) {
         return Ok(Some(format!(
             "Claim this Marfa at {page} with setup code: {code}"
         )));
@@ -576,8 +574,6 @@ fn proof_stands(
     }
 }
 
-/// A page asks for the new password twice, after the proof is judged and before anything is
-/// written. A script's body has no second field, so it passes `None`.
 fn require_repeated(password: &str, confirmation: Option<&str>) -> Result<()> {
     match confirmation {
         Some(typed) if typed != password => Err(Refusal::invalid_at(

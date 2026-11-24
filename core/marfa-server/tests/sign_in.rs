@@ -966,6 +966,7 @@ async fn a_form_that_sets_a_password_must_repeat_it() {
 async fn a_start_without_an_owner_issues_a_setup_link_beside_its_code() {
     let dir = TempDir::new().unwrap();
     let app = boot(&dir).await;
+    app.record_bound(ORIGIN.trim_start_matches("http://").parse().unwrap());
     claim::announce_at_start(&app).await.unwrap();
     let held = |kind: &'static str| {
         app.db.read(move |tx| {
@@ -1003,11 +1004,14 @@ async fn a_start_without_an_owner_issues_a_setup_link_beside_its_code() {
 
 #[tokio::test]
 async fn a_start_offers_its_link_only_where_the_setup_page_can_take_it() {
-    let notice = |extra: &'static [(&'static str, &'static str)]| async move {
+    let notice = |extra: &'static [(&'static str, &'static str)], listening: bool| async move {
         let dir = TempDir::new().unwrap();
         let mut pairs = vec![("MARFA_TEST_HOOKS", "true")];
         pairs.extend_from_slice(extra);
         let app = boot_with(&dir, &pairs).await;
+        if listening {
+            app.record_bound("127.0.0.1:8600".parse().unwrap());
+        }
         let line = claim::claim_notice(&app).await.unwrap().unwrap();
         let tickets: i64 = app
             .db
@@ -1024,30 +1028,44 @@ async fn a_start_offers_its_link_only_where_the_setup_page_can_take_it() {
     };
 
     // The witness: an address the page serves on carries the link, and its ticket is held.
-    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", ORIGIN)]).await;
-    assert!(line.contains("setup code: "), "{line}");
-    assert!(line.contains(&format!("{ORIGIN}/setup#handoff=")), "{line}");
+    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", ORIGIN)], true).await;
+    assert!(line.contains("setup code: "), "the notice lost its code");
+    assert!(
+        line.contains(&format!("{ORIGIN}/setup#handoff=")),
+        "the loopback notice has no link"
+    );
     assert_eq!(tickets, 1);
-    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", "https://marfa.example")]).await;
+    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", "https://marfa.example")], true).await;
     assert!(
         line.contains("https://marfa.example/setup#handoff="),
-        "{line}"
+        "the https notice has no link"
     );
     assert_eq!(tickets, 1);
 
-    let (line, tickets) = notice(&[("MARFA_CONTROL_ONLY", "true"), ("MARFA_PORT", "0")]).await;
-    assert!(line.contains("setup code: "), "{line}");
-    assert!(
-        !line.contains("handoff") && !line.contains("link"),
-        "{line}"
-    );
-    assert_eq!(tickets, 0);
+    // A control-only start has no public listener, so no address it holds can open the page.
+    let control_only: [&'static [(&'static str, &'static str)]; 2] = [
+        &[
+            ("MARFA_CONTROL_ONLY", "true"),
+            ("MARFA_PORT", "0"),
+            ("MARFA_SIGN_IN_ADDRESS", "https://marfa.example"),
+        ],
+        &[("MARFA_CONTROL_ONLY", "true"), ("MARFA_PORT", "8600")],
+    ];
+    for extra in control_only {
+        let (line, tickets) = notice(extra, false).await;
+        assert!(line.contains("setup code: "), "the notice lost its code");
+        assert!(
+            !line.contains("handoff") && !line.contains("link"),
+            "a control-only start printed a link"
+        );
+        assert_eq!(tickets, 0);
+    }
 
-    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", "http://marfa.example")]).await;
-    assert!(line.contains("setup code: "), "{line}");
+    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", "http://marfa.example")], true).await;
+    assert!(line.contains("setup code: "), "the notice lost its code");
     assert!(
         !line.contains("handoff") && !line.contains("link"),
-        "{line}"
+        "a plain http address printed a link"
     );
     assert_eq!(tickets, 0);
 }
