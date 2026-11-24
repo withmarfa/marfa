@@ -534,15 +534,11 @@ fn made_to(
 ) -> Result<Option<String>> {
     let Some(other) = recorded
         .get(&(kind.as_str(), text.to_string()))
-        .filter(|row| matches!(row.state.as_str(), "resolved" | "refused"))
+        .filter(|row| row.state == "resolved")
         .and_then(|row| row.other_id.clone())
     else {
         return Ok(None);
     };
-    edge_stands(conn, host, other)
-}
-
-fn edge_stands(conn: &Connection, host: &str, other: String) -> Result<Option<String>> {
     if store::in_bin(conn, &other)? {
         return Ok(None);
     }
@@ -750,28 +746,17 @@ pub(crate) fn derive(
     for (kind, text, resolved) in &now.unresolved {
         // A name the body carried before keeps what the server said of it,
         // so a dangling link costs no lookup at every save.
-        let mut kept = recorded.get(&(kind.as_str(), text.clone())).filter(|row| {
+        let kept = recorded.get(&(kind.as_str(), text.clone())).filter(|row| {
             matches!(
                 row.state.as_str(),
                 "missing" | "ambiguous" | "unanswered" | "refused"
             )
         });
-        // A refusal gives way once the edge it refused stands.
-        if kept.is_some_and(|row| row.state == "refused")
-            && made_to(conn, &recorded, *kind, host, text)?.is_some()
-        {
-            kept = None;
-        }
-        let (state, reason, held, other_id) = match kept {
-            Some(row) => (
-                row.state.clone(),
-                row.reason.clone(),
-                row.held,
-                row.other_id.clone(),
-            ),
+        let (state, reason, held) = match kept {
+            Some(row) => (row.state.clone(), row.reason.clone(), row.held),
             None => {
                 let (state, reason) = state_of(resolved);
-                (state.to_string(), reason, None, None)
+                (state.to_string(), reason, None)
             }
         };
         put_row(
@@ -781,7 +766,7 @@ pub(crate) fn derive(
                 kind: *kind,
                 text: text.clone(),
                 state,
-                other_id,
+                other_id: None,
                 reason,
                 held,
                 write_id: Some(write.to_string()),
@@ -902,7 +887,11 @@ fn record_host(conn: &Connection, catalog: &Catalog, host: &str) -> Result<()> {
     Ok(())
 }
 
-/// Whether a recorded resolution or refusal still agrees with the held edge.
+/// Whether a link or embed's row still answers for it: it names an item the
+/// edge to which stands, or it says the server refused the edge, which stays
+/// the answer whatever becomes of the refused write (`device/body-name-refused`).
+/// Any other row, a name the server has not settled or one whose edge has
+/// gone, is replaced by what the copy reads now.
 fn answered(
     conn: &Connection,
     held: &Recorded,
@@ -911,7 +900,7 @@ fn answered(
     text: &str,
 ) -> Result<bool> {
     Ok(match held.get(&(kind.as_str(), text.to_string())) {
-        Some(row) if row.state == "refused" => made_to(conn, held, kind, host, text)?.is_none(),
+        Some(row) if row.state == "refused" => true,
         Some(row) if row.state == "resolved" => made_to(conn, held, kind, host, text)?.is_some(),
         _ => false,
     })
@@ -1682,6 +1671,7 @@ fn refuse_names_of(conn: &Connection, host: &str, other: &str, reason: &str) -> 
                 conn,
                 &Row {
                     state: "refused".into(),
+                    other_id: None,
                     reason: Some(reason.to_string()),
                     ..row
                 },
@@ -1829,30 +1819,24 @@ fn read_body(
         return Ok(links);
     }
     let recorded = recorded(conn, id)?;
-    let target = |kind: Kind, text: &str, resolved: Resolved| -> Result<BodyTarget> {
+    let target = |kind: Kind, text: &str, resolved: Resolved| -> BodyTarget {
         let row = recorded.get(&(kind.as_str(), text.to_string()));
+        // An edge the server refused leaves the copy as it was, so only the
+        // record says the name names nothing yet.
         if let Some(row) = row.filter(|row| row.state == "refused") {
-            // Only the stored target's edge can answer this refusal.
-            return Ok(match row.other_id.clone() {
-                Some(other) => edge_stands(conn, id, other)?,
-                None => None,
-            }
-            .map_or_else(
-                || target_of(&row.state, row.reason.clone()),
-                |id| BodyTarget::Item { id },
-            ));
+            return target_of(&row.state, row.reason.clone());
         }
         if let Resolved::Found { id, .. } = resolved {
-            return Ok(BodyTarget::Item { id });
+            return BodyTarget::Item { id };
         }
-        Ok(match row {
+        match row {
             Some(row) => target_of(&row.state, row.reason.clone()),
             None => match resolved {
                 Resolved::Ambiguous => BodyTarget::Ambiguous,
                 Resolved::Unmatched => BodyTarget::Missing,
                 _ => BodyTarget::Pending,
             },
-        })
+        }
     };
     if !names.is_empty() {
         let references = Others::load(conn, catalog, &Placements, &references_of(conn, id)?)?;
@@ -1868,7 +1852,7 @@ fn read_body(
             )?;
             links.links.push(BodyName {
                 text: text::render_link(&link.written),
-                target: target(Kind::Link, &link.target, resolved)?,
+                target: target(Kind::Link, &link.target, resolved),
                 name: typed.name,
             });
         }
@@ -1882,7 +1866,7 @@ fn read_body(
             let resolved = or_made_to(conn, &recorded, Kind::Embed, id, embed.raw(), resolved)?;
             links.embeds.push(BodyName {
                 text: embed.raw().to_string(),
-                target: target(Kind::Embed, embed.raw(), resolved)?,
+                target: target(Kind::Embed, embed.raw(), resolved),
                 name,
             });
         }
@@ -2828,98 +2812,6 @@ mod tests {
             targets(&core.body_links(&host).unwrap().links),
             vec![BodyTarget::Refused {
                 reason: "not allowed".into()
-            }]
-        );
-    }
-
-    #[test]
-    fn a_refused_link_names_its_item_once_the_edge_stands() {
-        let dir = tempfile::tempdir().unwrap();
-        let core = copy(&dir);
-        remote_note(&core, "plan-a", "Plan");
-        let host = note(&core, "Host", "[[plan-a]]");
-        as_the_server_s(&core);
-        {
-            let conn = core.conn().unwrap();
-            conn.execute("DELETE FROM edges", []).unwrap();
-            conn.execute(
-                "UPDATE body_names SET state = 'resolved', other_id = 'plan-a'",
-                [],
-            )
-            .unwrap();
-            refuse_names_of(&conn, &host, "plan-a", "not allowed").unwrap();
-        }
-        let refused = BodyTarget::Refused {
-            reason: "not allowed".into(),
-        };
-        assert_eq!(
-            targets(&core.body_links(&host).unwrap().links),
-            vec![refused.clone()],
-            "the witness: the name is refused while no edge stands"
-        );
-
-        land_remote_edge(&core, link_edge(&host, "plan-a"));
-        assert_eq!(
-            targets(&core.body_links(&host).unwrap().links),
-            vec![BodyTarget::Item {
-                id: "plan-a".into()
-            }]
-        );
-        core.conn()
-            .unwrap()
-            .execute("DELETE FROM edges", [])
-            .unwrap();
-        assert_eq!(
-            targets(&core.body_links(&host).unwrap().links),
-            vec![refused],
-            "the edge going leaves the refusal as it was"
-        );
-    }
-
-    #[test]
-    fn a_refusal_saved_without_its_target_stays_though_its_title_now_names_a_linked_item() {
-        let dir = tempfile::tempdir().unwrap();
-        let core = copy(&dir);
-        remote_note(&core, "plan-a", "Plan");
-        let host = note(&core, "Host", "[[Plan]]");
-        as_the_server_s(&core);
-        {
-            let conn = core.conn().unwrap();
-            conn.execute("DELETE FROM edges", []).unwrap();
-            conn.execute(
-                "UPDATE body_names SET state = 'refused', other_id = NULL, reason = 'not allowed'",
-                [],
-            )
-            .unwrap();
-        }
-        // The refused item is renamed and another takes its title and an edge.
-        remote_note(&core, "plan-a", "Old plan");
-        remote_note(&core, "plan-b", "Plan");
-        land_remote_edge(&core, link_edge(&host, "plan-b"));
-        assert_eq!(
-            targets(&core.body_links(&host).unwrap().links),
-            vec![BodyTarget::Refused {
-                reason: "not allowed".into()
-            }]
-        );
-
-        edit(
-            &core,
-            &host,
-            serde_json::json!({ "body": "[[Plan]] again" }),
-        );
-        let rows = rows_of(&core.conn().unwrap(), &host).unwrap();
-        assert_eq!(
-            rows.iter()
-                .map(|row| (row.text.as_str(), row.other_id.as_deref()))
-                .collect::<Vec<_>>(),
-            [("Plan", Some("plan-b"))],
-            "a save records the link with its target"
-        );
-        assert_eq!(
-            targets(&core.body_links(&host).unwrap().links),
-            vec![BodyTarget::Item {
-                id: "plan-b".into()
             }]
         );
     }

@@ -440,36 +440,6 @@ fn a_refused_create_a_files_record_still_waits_on_stays() {
 }
 
 #[test]
-fn a_drain_keeps_a_refusal_the_copy_s_edge_rows_seem_to_answer() {
-    let fixture = fixture();
-    let folder = &fixture.folder;
-    // An interrupted replay can land the edge before it reaches the head.
-    held(&fixture, "edge", ONE_TO_ONE, json!({}));
-    flag_line(
-        folder,
-        "a.md",
-        state::Change::Edge {
-            line: state::Line {
-                edge_type: ONE_TO_ONE.into(),
-                end: End::From,
-                other: fixture.target.clone(),
-            },
-            shown: true,
-        },
-    );
-
-    folder.drain().unwrap();
-    assert_eq!(file_status(folder, "a.md").flag, Some("refused"));
-
-    folder.clear_refusals_at_head().unwrap();
-    assert_eq!(
-        file_status(folder, "a.md").flag,
-        None,
-        "the witness: the clearing pass removes the mark"
-    );
-}
-
-#[test]
 fn a_refused_create_a_files_flag_shows_stays_with_its_reason() {
     let fixture = fixture();
     let folder = &fixture.folder;

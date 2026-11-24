@@ -1062,19 +1062,15 @@ impl Folder {
 
     pub fn catch_up(&self) -> Result<CaughtUp> {
         match self.core.catch_up() {
-            Ok(report) => {
-                self.clear_refusals_at_head()?;
-                // Settings changed elsewhere can ask for another slice.
-                let hydrated = if self.slice_moved()? {
-                    Some(self.hydrate()?)
-                } else {
-                    None
-                };
-                Ok(CaughtUp {
-                    caught_up: Some(report),
-                    hydrated,
-                })
-            }
+            // Settings changed elsewhere can ask for another slice.
+            Ok(report) if self.slice_moved()? => Ok(CaughtUp {
+                caught_up: Some(report),
+                hydrated: Some(self.hydrate()?),
+            }),
+            Ok(report) => Ok(CaughtUp {
+                caught_up: Some(report),
+                hydrated: None,
+            }),
             Err(CoreError::CopyExpired { .. }) => Ok(CaughtUp {
                 caught_up: None,
                 hydrated: Some(self.hydrate()?),
@@ -3164,37 +3160,6 @@ impl Folder {
             if (&bound.writes, &bound.lines, bound.edit_line, &bound.held)
                 != (&was.0, &was.1, was.2, &was.3)
             {
-                state::bind(&conn, &bound)?;
-            }
-        }
-        Ok(())
-    }
-
-    // An interrupted replay can leave stale edge rows.
-    fn clear_refusals_at_head(&self) -> Result<()> {
-        let conn = self.core.conn()?;
-        for mut bound in state::bound_refused(&conn)? {
-            let before = bound.writes.refused.len();
-            let item = bound.item_id.clone();
-            let mut standing = Vec::new();
-            for refused in std::mem::take(&mut bound.writes.refused) {
-                let answered = match &refused.change {
-                    state::Change::Edge { line, shown: true } => {
-                        let (from, to) = match line.end {
-                            marfa_rules::catalog::End::From => (&item, &line.other),
-                            marfa_rules::catalog::End::To => (&line.other, &item),
-                        };
-                        !crate::store::edge_as_server_gave(&conn, from, &line.edge_type, to)?
-                            .is_empty()
-                    }
-                    _ => false,
-                };
-                if !answered {
-                    standing.push(refused);
-                }
-            }
-            bound.writes.refused = standing;
-            if bound.writes.refused.len() != before {
                 state::bind(&conn, &bound)?;
             }
         }

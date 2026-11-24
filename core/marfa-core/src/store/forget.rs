@@ -90,15 +90,26 @@ impl RefusedEdgeCreate {
     /// 0, and one with a write waiting or a read owed may not be the server's
     /// as it stands.
     pub(crate) fn satisfied_by_server(&self, conn: &Connection) -> Result<bool, CoreError> {
-        let held = edge_as_server_gave(
-            conn,
-            &self.asked.from_id,
-            &self.asked.edge_type,
-            &self.asked.to_id,
+        let mut statement = conn.prepare_cached(
+            "SELECT properties FROM edges AS edge
+              WHERE from_id = ?1 AND edge_type = ?2 AND to_id = ?3 AND version > 0
+                AND NOT EXISTS (SELECT 1 FROM queue AS write WHERE write.edge_id = edge.id
+                      AND (write.verdict IS NULL OR write.verdict IN ('blocked', 'dead')))
+                AND NOT EXISTS (SELECT 1 FROM read_backs AS owed
+                      WHERE owed.subject = 'edge' AND owed.id = edge.id)",
         )?;
-        Ok(held
-            .iter()
-            .any(|properties| carries(properties, &self.asked.properties)))
+        let held = statement.query_map(
+            params![self.asked.from_id, self.asked.edge_type, self.asked.to_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        for properties in held {
+            if serde_json::from_str::<Map<String, Value>>(&properties?)
+                .is_ok_and(|properties| carries(&properties, &self.asked.properties))
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether a later create of the same edge carries everything this one
@@ -143,33 +154,6 @@ impl RefusedEdgeCreate {
             |row| row.get(0),
         )?)
     }
-}
-
-/// Properties of matching server edges without a pending write or read-back.
-pub(crate) fn edge_as_server_gave(
-    conn: &Connection,
-    from_id: &str,
-    edge_type: &str,
-    to_id: &str,
-) -> Result<Vec<Map<String, Value>>, CoreError> {
-    let mut statement = conn.prepare_cached(
-        "SELECT properties FROM edges AS edge
-          WHERE from_id = ?1 AND edge_type = ?2 AND to_id = ?3 AND version > 0
-            AND NOT EXISTS (SELECT 1 FROM queue AS write WHERE write.edge_id = edge.id
-                  AND (write.verdict IS NULL OR write.verdict IN ('blocked', 'dead')))
-            AND NOT EXISTS (SELECT 1 FROM read_backs AS owed
-                  WHERE owed.subject = 'edge' AND owed.id = edge.id)",
-    )?;
-    let held = statement.query_map(params![from_id, edge_type, to_id], |row| {
-        row.get::<_, String>(0)
-    })?;
-    let mut found = Vec::new();
-    for properties in held {
-        if let Ok(properties) = serde_json::from_str::<Map<String, Value>>(&properties?) {
-            found.push(properties);
-        }
-    }
-    Ok(found)
 }
 
 /// Whether `held` holds each of `asked`'s properties with its value.
