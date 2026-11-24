@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { answers, refusal } from "../../device/marfa-answers.js";
+import {
+  answers,
+  connected,
+  copyStreamCursor,
+  refusal,
+} from "../../device/marfa-answers.js";
+import type { RecordedRequest } from "../../device/scripted-server.js";
 import type { FolderDoor } from "../../device/folder-door.js";
 import { folderHarness, type FolderHarness } from "./harness.js";
 import {
@@ -116,7 +122,22 @@ describe("a folder's refused edge creates", () => {
   /** A folder of two notes, its first naming nothing yet. */
   async function twoNotes(label: string) {
     const edges = new EdgeDoor();
-    harness = await folderHarness(label, { events: [edges.stream()] });
+    const stream = edges.stream();
+    const replay = { cut: false };
+    // A cut replay ends after its events, before the stream says it is live.
+    const events = (request: RecordedRequest) => {
+      const after = request.headers["last-event-id"];
+      if (!replay.cut || after === undefined) return stream(request);
+      return {
+        kind: "sse" as const,
+        frames: [
+          connected,
+          copyStreamCursor(String(edges.events.length + 1)),
+          ...edges.events.filter((frame) => Number(frame.id) > Number(after)),
+        ],
+      };
+    };
+    harness = await folderHarness(label, { events: [events] });
     scriptFolderWrites(harness, { edges });
     const made = harness;
     put(made, "Source.md", "source\n");
@@ -128,7 +149,13 @@ describe("a folder's refused edge creates", () => {
       edge.edge_type === "about"
         ? answers.edgeCardinality({ to_id: target, edge_type: "about" })
         : undefined;
-    return { made, edges, source: idIn(made, "Source.md") ?? "", target };
+    return {
+      made,
+      edges,
+      replay,
+      source: idIn(made, "Source.md") ?? "",
+      target,
+    };
   }
 
   async function refused(made: FolderHarness) {
@@ -227,6 +254,42 @@ describe("a folder's refused edge creates", () => {
     expect(file.flag, "one push clears the refused mark").toBeUndefined();
     expect(file.status).toBe("in_step");
     expect(read(made, "Source.md")).toContain(`about: "[[${target}]]"`);
+  });
+
+  it("keeps a file's refused mark while each catch-up ends short of the server's head, though the copy holds the edge", async () => {
+    const { made, edges, replay, source, target } = await twoNotes(
+      "folder-refused-edge-mark-cut",
+    );
+    edit(made, "Source.md", /marfa_id:/, `about: "[[${target}]]"\nmarfa_id:`);
+    expect((await made.folder.push()).ok).toBe(true);
+    expect((await statusOf(made, "Source.md")).flag).toBe("refused");
+
+    edges.placing = undefined;
+    edges.create({
+      id: "01a00000-0000-7000-8000-0000000e0003",
+      from_id: source,
+      to_id: target,
+      edge_type: "about",
+    });
+    replay.cut = true;
+    await made.folder.push();
+    const held = await made.folder.device().edgesFrom(source);
+    expect(
+      held.ok && held.value.some((edge) => edge.to_id === target),
+      "the cut replay landed the edge in the copy",
+    ).toBe(true);
+    await made.folder.push();
+    expect(
+      (await statusOf(made, "Source.md")).flag,
+      "a push whose catch-up ends short keeps the mark",
+    ).toBe("refused");
+
+    replay.cut = false;
+    expect((await made.folder.push()).ok).toBe(true);
+    expect(
+      (await statusOf(made, "Source.md")).flag,
+      "the witness: a catch-up that reaches the head clears it",
+    ).toBeUndefined();
   });
 
   it("holds one refused edge create of a line however often its file is saved, and the file keeps its reason", async () => {

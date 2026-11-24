@@ -1832,12 +1832,8 @@ fn read_body(
     let target = |kind: Kind, text: &str, resolved: Resolved| -> Result<BodyTarget> {
         let row = recorded.get(&(kind.as_str(), text.to_string()));
         if let Some(row) = row.filter(|row| row.state == "refused") {
-            let other = match (&row.other_id, &resolved) {
-                (Some(other), _) => Some(other.clone()),
-                (None, Resolved::Found { id, .. }) => Some(id.clone()),
-                (None, _) => None,
-            };
-            return Ok(match other {
+            // A refusal saved with no target stays until the link is saved again.
+            return Ok(match row.other_id.clone() {
                 Some(other) => edge_stands(conn, id, other)?,
                 None => None,
             }
@@ -2881,11 +2877,11 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_saved_without_its_target_names_its_item_once_the_edge_stands() {
+    fn a_refusal_saved_without_its_target_stays_though_its_title_now_names_a_linked_item() {
         let dir = tempfile::tempdir().unwrap();
         let core = copy(&dir);
         remote_note(&core, "plan-a", "Plan");
-        let host = note(&core, "Host", "[[plan-a]]");
+        let host = note(&core, "Host", "[[Plan]]");
         as_the_server_s(&core);
         {
             let conn = core.conn().unwrap();
@@ -2896,20 +2892,30 @@ mod tests {
             )
             .unwrap();
         }
-        let refused = BodyTarget::Refused {
-            reason: "not allowed".into(),
-        };
+        // The refused item is renamed and another takes its title and an edge.
+        remote_note(&core, "plan-a", "Old plan");
+        remote_note(&core, "plan-b", "Plan");
+        land_remote_edge(&core, link_edge(&host, "plan-b"));
         assert_eq!(
             targets(&core.body_links(&host).unwrap().links),
-            vec![refused],
-            "the witness: the name is refused while no edge stands"
+            vec![BodyTarget::Refused {
+                reason: "not allowed".into()
+            }]
         );
 
-        land_remote_edge(&core, link_edge(&host, "plan-a"));
+        edit(&core, &host, serde_json::json!({ "body": "[[Plan]] again" }));
+        let rows = rows_of(&core.conn().unwrap(), &host).unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.text.as_str(), row.other_id.as_deref()))
+                .collect::<Vec<_>>(),
+            [("Plan", Some("plan-b"))],
+            "a save records the link with its target"
+        );
         assert_eq!(
             targets(&core.body_links(&host).unwrap().links),
             vec![BodyTarget::Item {
-                id: "plan-a".into()
+                id: "plan-b".into()
             }]
         );
     }

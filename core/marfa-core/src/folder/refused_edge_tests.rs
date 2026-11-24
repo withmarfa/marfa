@@ -440,44 +440,38 @@ fn a_refused_create_a_files_record_still_waits_on_stays() {
 }
 
 #[test]
-fn an_expired_copy_keeps_the_refusal_its_old_edge_rows_seem_to_answer() {
+fn a_drain_keeps_a_refusal_the_copy_s_edge_rows_seem_to_answer() {
     let fixture = fixture();
     let folder = &fixture.folder;
+    // As an interrupted catch-up leaves it: the edge row landed, the cursor
+    // short of the server's head.
     held(&fixture, "edge", ONE_TO_ONE, json!({}));
-    let refusal = || state::Change::Edge {
-        line: state::Line {
-            edge_type: ONE_TO_ONE.into(),
-            end: End::From,
-            other: fixture.target.clone(),
+    flag_line(
+        folder,
+        "a.md",
+        state::Change::Edge {
+            line: state::Line {
+                edge_type: ONE_TO_ONE.into(),
+                end: End::From,
+                other: fixture.target.clone(),
+            },
+            shown: true,
         },
-        shown: true,
-    };
+    );
 
-    flag_line(folder, "a.md", refusal());
-    folder.clear_refusals_the_copy_has_answered().unwrap();
+    folder.drain().unwrap();
+    assert_eq!(file_status(folder, "a.md").flag, Some("refused"));
+
+    folder.clear_refusals_at_head().unwrap();
     assert_eq!(
         file_status(folder, "a.md").flag,
         None,
-        "the witness: a current copy holding the edge clears the mark"
-    );
-
-    flag_line(folder, "a.md", refusal());
-    crate::reach::expire(&folder.core.conn().unwrap()).unwrap();
-    folder.clear_refusals_the_copy_has_answered().unwrap();
-    let held_back = state::bound_at(&folder.core.conn().unwrap(), "a.md")
-        .unwrap()
-        .unwrap()
-        .writes
-        .refused;
-    assert_eq!(
-        held_back.len(),
-        1,
-        "an expired copy's edge rows are not known to be the server's: {held_back:?}"
+        "the witness: a catch-up at the head clears it"
     );
 }
 
 #[test]
-fn a_line_refusal_clears_before_its_queue_entry_but_a_default_refusal_stays() {
+fn a_refused_create_a_files_flag_shows_stays_with_its_reason() {
     let fixture = fixture();
     let folder = &fixture.folder;
     let line = |end, other: &str| state::Line {
@@ -514,17 +508,12 @@ fn a_line_refusal_clears_before_its_queue_entry_but_a_default_refusal_stays() {
     ];
     for (n, (path, change)) in shown_by.into_iter().enumerate() {
         let refused = seeded(&fixture, &format!("refused-{n}"), ONE_TO_ONE, json!({}));
-        let line_refusal = matches!(change, state::Change::Edge { .. });
         flag_line(folder, path, change);
         let before = folder.status().unwrap();
 
         folder.drain().unwrap();
         assert!(in_queue(folder, &refused), "shown on {path}");
-        if line_refusal {
-            assert_eq!(file_status(folder, path).flag, None, "the mark on {path}");
-        } else {
-            assert_eq!(folder.status().unwrap(), before);
-        }
+        assert_eq!(folder.status().unwrap(), before);
 
         unflag(folder, path);
         folder.drain().unwrap();

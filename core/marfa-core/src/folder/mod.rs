@@ -1062,15 +1062,19 @@ impl Folder {
 
     pub fn catch_up(&self) -> Result<CaughtUp> {
         match self.core.catch_up() {
-            // Settings changed elsewhere can ask for another slice.
-            Ok(report) if self.slice_moved()? => Ok(CaughtUp {
-                caught_up: Some(report),
-                hydrated: Some(self.hydrate()?),
-            }),
-            Ok(report) => Ok(CaughtUp {
-                caught_up: Some(report),
-                hydrated: None,
-            }),
+            Ok(report) => {
+                self.clear_refusals_at_head()?;
+                // Settings changed elsewhere can ask for another slice.
+                let hydrated = if self.slice_moved()? {
+                    Some(self.hydrate()?)
+                } else {
+                    None
+                };
+                Ok(CaughtUp {
+                    caught_up: Some(report),
+                    hydrated,
+                })
+            }
             Err(CoreError::CopyExpired { .. }) => Ok(CaughtUp {
                 caught_up: None,
                 hydrated: Some(self.hydrate()?),
@@ -2974,7 +2978,6 @@ impl Folder {
             let gave_way = self.settle_placements(&mut report, watched)?;
             self.keep_wait(&report)?;
             self.hold_refused()?;
-            self.clear_refusals_the_copy_has_answered()?;
             Ok(gave_way)
         })();
         let drained = |report, (gave_way, withdrawn)| Drained {
@@ -3167,12 +3170,11 @@ impl Folder {
         Ok(())
     }
 
-    fn clear_refusals_the_copy_has_answered(&self) -> Result<()> {
+    /// Takes off a file the refusal of a line whose edge the server now holds.
+    /// Called only once a catch-up has reached the server's head: before that,
+    /// the copy's edge rows may be older than the server.
+    fn clear_refusals_at_head(&self) -> Result<()> {
         let conn = self.core.conn()?;
-        // Expiry leaves old edge rows in the copy.
-        if crate::store::refilling(&conn)? || !crate::store::hydrated(&conn)? {
-            return Ok(());
-        }
         for mut bound in state::bound_refused(&conn)? {
             let before = bound.writes.refused.len();
             let item = bound.item_id.clone();

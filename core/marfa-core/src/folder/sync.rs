@@ -186,10 +186,6 @@ impl Folder {
             Err(error) if error.is_environmental() => Err(error),
             Err(error) => return Err(error),
         };
-        // The catch-up may have landed the edge a refused line names.
-        if catch_up.is_ok() {
-            self.clear_refusals_the_copy_has_answered()?;
-        }
         let mut pull = match self.pull() {
             Ok(pulled) => Some(pulled),
             Err(CoreError::HydrationIncomplete) if catch_up.is_err() => None,
