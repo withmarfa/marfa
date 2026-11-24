@@ -58,7 +58,7 @@ If `POST /owner` carries a top-level body key the operation does not declare, th
 
 ### `instance-claim/setup-undeclared-key`
 
-If `POST /setup/exchange` or `POST /setup/claim`, with a JSON body or a form, carries a key the setup page's request does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields` without consuming valid setup proof.
+If `POST /setup/exchange` or `POST /setup/claim`, from the instance's own origin on an instance with no owner, with a JSON body or a form, carries a key the setup page's request does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields` without consuming valid setup proof.
 
 **Reason:** these two doors are the browser's way to the same claim as `POST /owner`, which refuses an undeclared key, so a key dropped here would be a claim half performed and answered as success.
 
@@ -294,7 +294,7 @@ If a form post to `POST /setup/claim` that names the instance's own origin and a
 
 ### `instance-claim/claim-form-order`
 
-If a form post to `POST /setup/claim` meets more than one refusal, then the server MUST answer the first of these: `409 owner_exists` while the instance has an owner; `400 validation_error` for a key the setup page's request does not declare; `401 setup_proof_invalid` for a setup code or session that has ended or never stood; `400 validation_error` for a `confirm_password` that differs from `password` or is missing.
+If a form post to `POST /setup/claim` from the instance's own origin, which carries no setup code or comes from an address that has not used its setup-code attempts, meets more than one refusal, then the server MUST answer the first of these: `409 owner_exists` while the instance has an owner; `400 validation_error` for a key the setup page's request does not declare; `401 setup_proof_invalid` for a setup code or session that has ended or never stood; `400 validation_error` for a `confirm_password` that differs from `password` or is missing.
 
 **Reason:** A person whose session has ended is told so instead of being asked to retype passwords that cannot be used, and a form for an instance that already has an owner has nothing to claim whatever it holds.
 
@@ -572,7 +572,7 @@ While an instance has no owner, the server MUST NOT print a recovery code.
 
 ### `instance-claim/recovery-no-owner`
 
-While an instance has no owner, the server MUST answer `POST /setup/recover` with `404 owner_not_found`.
+While an instance has no owner, if `POST /setup/recover` from the instance's own origin or from a script carries only keys the recovery page's request declares, then the server MUST answer `404 owner_not_found`.
 
 **Tests:** `compliance/remote-claim.test.ts › prints no recovery code and creates no owner while the instance has none`.
 
@@ -676,7 +676,7 @@ If a form post to `POST /setup/recover` that names the instance's own origin and
 
 ### `instance-claim/recover-form-order`
 
-If a form post to `POST /setup/recover` meets more than one refusal, then the server MUST answer the first of these: `400 validation_error` for a key the recovery page's request does not declare; `404 owner_not_found` while the instance has no owner; `401 setup_proof_invalid` for a recovery code or session that has ended or never stood; `400 validation_error` for a `confirm_password` that differs from `password` or is missing.
+If a form post to `POST /setup/recover` from the instance's own origin, which carries no recovery code or comes from an address that has not used its recovery code attempts, meets more than one refusal, then the server MUST answer the first of these: `400 validation_error` for a key the recovery page's request does not declare; `404 owner_not_found` while the instance has no owner; `401 setup_proof_invalid` for a recovery code or session that has ended or never stood; `400 validation_error` for a `confirm_password` that differs from `password` or is missing.
 
 **Reason:** A person whose session has ended is told so instead of being asked to retype passwords that cannot be used, and a form for an instance with no owner has nothing to recover whatever it holds.
 

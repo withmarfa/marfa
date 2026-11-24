@@ -459,6 +459,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/src\/utils\/(platform|plugin-connector|fresh-server-teardown|temp-folder-teardown|rust-score)\.ts$/,
     [...FIXTURES, RELEASE],
   ],
+  [
+    /^conformance\/src\/utils\/stage-logs\.ts$/,
+    [...FIXTURES, "mcp-conformance", RELEASE],
+  ],
   [/^conformance\/src\/utils\//, FIXTURES],
   // The typed client and the owner's sign-in, which every one of those jobs
   // loads.

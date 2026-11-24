@@ -738,12 +738,18 @@ describe("owner passkeys", () => {
       expect(await signInPage()).toContain("Sign in with a passkey");
       expect(await signInMarkup(WAIT)).toMatch(ADVICE);
 
-      await move("https://elsewhere.example");
-      expect(await signInPage()).not.toContain("passkey");
-      const waiting = await signInPage(WAIT);
-      expect(waiting).toContain("Try again in 2 minutes.");
-      expect(waiting).not.toContain("passkey");
-      expect(await signInMarkup(WAIT)).not.toMatch(ADVICE);
+      // An address where passkeys cannot work at all, and another host.
+      for (const address of [
+        base.replace("localhost", "127.0.0.1"),
+        "https://elsewhere.example",
+      ]) {
+        await move(address);
+        expect(await signInPage(), address).not.toContain("passkey");
+        const waiting = await signInPage(WAIT);
+        expect(waiting, address).toContain("Try again in 2 minutes.");
+        expect(waiting, address).not.toContain("passkey");
+        expect(await signInMarkup(WAIT), address).not.toMatch(ADVICE);
+      }
     } finally {
       // Last, so the move and its undoing disturb no other test.
       await move(base);
