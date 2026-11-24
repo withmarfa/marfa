@@ -723,70 +723,28 @@ fn the_backlog_counts_follow_every_change_to_a_delivery() {
     assert_eq!(rows("b"), (0, 0), "the deliveries went with their key");
 }
 
-#[test]
-fn an_upgrade_counts_the_backlog_each_subscription_already_holds() {
-    use crate::db::migrate::{MIGRATIONS, upgrade};
-    let mut db = rusqlite::Connection::open_in_memory().unwrap();
+/// A database at schema version 14, holding the key `k1`.
+#[cfg(test)]
+fn before_backlog() -> rusqlite::Connection {
+    use crate::db::migrate::MIGRATIONS;
+    let db = rusqlite::Connection::open_in_memory().unwrap();
     db.pragma_update(None, "foreign_keys", false).unwrap();
     for migration in MIGRATIONS.iter().filter(|migration| migration.version < 15) {
         db.execute_batch(migration.sql).unwrap();
     }
     db.execute_batch(KEY).unwrap();
-    db.execute_batch(&webhooks(&[("a", "k1", ""), ("b", "k1", "")]))
-        .unwrap();
-    db.execute_batch(&deliveries(&[
-        (1, "a", "pending", 0),
-        (2, "a", "pending", 0),
-        (3, "a", "succeeded", 0),
-        (4, "b", "failed", 0),
-    ]))
-    .unwrap();
-    upgrade(&mut db, MIGRATIONS, 14).unwrap();
-    let tx = db.transaction().unwrap();
-    assert_eq!(backlog(&tx, "a").unwrap(), (2, 4));
-    assert_eq!(backlog(&tx, "b").unwrap(), (0, 0));
-    assert_eq!(failing(&tx).unwrap(), vec![]);
+    db
 }
 
-#[test]
-fn an_upgrade_fails_a_subscription_from_its_earliest_failure_since_its_last_success() {
-    use crate::db::migrate::{MIGRATIONS, upgrade};
-    let mut db = rusqlite::Connection::open_in_memory().unwrap();
-    db.pragma_update(None, "foreign_keys", false).unwrap();
-    for migration in MIGRATIONS.iter().filter(|migration| migration.version < 15) {
-        db.execute_batch(migration.sql).unwrap();
-    }
-    db.execute_batch(KEY).unwrap();
-    db.execute_batch(&webhooks(&[
-        ("recovered", "k1", ""),
-        ("failing", "k1", ""),
-        ("never", "k1", ""),
-        ("redelivered", "k1", ""),
-        ("off", "k1", ""),
-        ("changed", "k1", ""),
-    ]))
-    .unwrap();
-    db.execute_batch(
-        "UPDATE webhooks SET active = 0 WHERE id = 'off'; \
-         UPDATE webhooks SET updated_at = '2026-01-09T00:00:00.000Z' WHERE id = 'changed';",
-    )
-    .unwrap();
-    let rows = [
-        ("recovered", "failed", 8, "2026-01-02T00:00:00.000Z"),
-        ("recovered", "succeeded", 1, "2026-01-03T00:00:00.000Z"),
-        ("failing", "failed", 8, "2026-01-02T00:00:00.000Z"),
-        ("failing", "succeeded", 1, "2026-01-03T00:00:00.000Z"),
-        ("failing", "pending", 2, "2026-01-05T00:00:00.000Z"),
-        ("failing", "failed", 8, "2026-01-04T00:00:00.000Z"),
-        ("failing", "canceled", 3, "2026-01-03T12:00:00.000Z"),
-        ("never", "pending", 1, "2026-01-06T00:00:00.000Z"),
-        ("never", "failed", 8, "2026-01-07T00:00:00.000Z"),
-        ("redelivered", "pending", 0, "2026-01-04T00:00:00.000Z"),
-        ("off", "pending", 1, "2026-01-04T00:00:00.000Z"),
-        ("changed", "pending", 1, "2026-01-08T00:00:00.000Z"),
-        ("changed", "pending", 1, "2026-01-10T00:00:00.000Z"),
-    ];
-    for (seq, (hook, status, cycle, at)) in (1_i64..).zip(rows.iter()) {
+#[cfg(test)]
+fn upgraded(db: &mut rusqlite::Connection) {
+    crate::db::migrate::upgrade(db, crate::db::migrate::MIGRATIONS, 14).unwrap();
+}
+
+/// Delivery rows `(webhook_id, status, cycle_attempt, updated_at)`, numbered from `first`.
+#[cfg(test)]
+fn attempted(db: &rusqlite::Connection, first: i64, rows: &[(&str, &str, i64, &str)]) {
+    for (seq, (hook, status, cycle, at)) in (first..).zip(rows.iter()) {
         let payload = if *status == "pending" || *status == "failed" {
             "'{}'"
         } else {
@@ -803,7 +761,74 @@ fn an_upgrade_fails_a_subscription_from_its_earliest_failure_since_its_last_succ
         )
         .unwrap();
     }
-    upgrade(&mut db, MIGRATIONS, 14).unwrap();
+}
+
+#[cfg(test)]
+fn edited(db: &rusqlite::Connection, id: &str, at: &str) {
+    db.execute(
+        "UPDATE webhooks SET updated_at = ?2 WHERE id = ?1",
+        [id, at],
+    )
+    .unwrap();
+}
+
+#[test]
+fn an_upgrade_counts_the_backlog_each_subscription_already_holds() {
+    let mut db = before_backlog();
+    db.execute_batch(&webhooks(&[("a", "k1", ""), ("b", "k1", "")]))
+        .unwrap();
+    db.execute_batch(&deliveries(&[
+        (1, "a", "pending", 0),
+        (2, "a", "pending", 0),
+        (3, "a", "succeeded", 0),
+        (4, "b", "failed", 0),
+    ]))
+    .unwrap();
+    upgraded(&mut db);
+    let tx = db.transaction().unwrap();
+    assert_eq!(backlog(&tx, "a").unwrap(), (2, 4));
+    assert_eq!(backlog(&tx, "b").unwrap(), (0, 0));
+    assert_eq!(failing(&tx).unwrap(), vec![]);
+}
+
+#[test]
+fn an_upgrade_fails_a_subscription_from_its_earliest_failure_since_its_last_success() {
+    let mut db = before_backlog();
+    db.execute_batch(&webhooks(&[
+        ("recovered", "k1", ""),
+        ("failing", "k1", ""),
+        ("never", "k1", ""),
+        ("redelivered", "k1", ""),
+        ("off", "k1", ""),
+        ("changed", "k1", ""),
+        ("tied", "k1", ""),
+    ]))
+    .unwrap();
+    db.execute("UPDATE webhooks SET active = 0 WHERE id = 'off'", [])
+        .unwrap();
+    edited(&db, "changed", "2026-01-09T00:00:00.000Z");
+    attempted(
+        &db,
+        1,
+        &[
+            ("recovered", "failed", 8, "2026-01-02T00:00:00.000Z"),
+            ("recovered", "succeeded", 1, "2026-01-03T00:00:00.000Z"),
+            ("failing", "failed", 8, "2026-01-02T00:00:00.000Z"),
+            ("failing", "succeeded", 1, "2026-01-03T00:00:00.000Z"),
+            ("failing", "pending", 2, "2026-01-05T00:00:00.000Z"),
+            ("failing", "failed", 8, "2026-01-04T00:00:00.000Z"),
+            ("failing", "canceled", 3, "2026-01-03T12:00:00.000Z"),
+            ("never", "pending", 1, "2026-01-06T00:00:00.000Z"),
+            ("never", "failed", 8, "2026-01-07T00:00:00.000Z"),
+            ("redelivered", "pending", 0, "2026-01-04T00:00:00.000Z"),
+            ("off", "pending", 1, "2026-01-04T00:00:00.000Z"),
+            ("changed", "pending", 1, "2026-01-08T00:00:00.000Z"),
+            ("changed", "pending", 1, "2026-01-10T00:00:00.000Z"),
+            ("tied", "succeeded", 1, "2026-01-04T00:00:00.000Z"),
+            ("tied", "pending", 1, "2026-01-04T00:00:00.000Z"),
+        ],
+    );
+    upgraded(&mut db);
     let tx = db.transaction().unwrap();
     assert_eq!(
         failing(&tx).unwrap(),
@@ -818,6 +843,74 @@ fn an_upgrade_fails_a_subscription_from_its_earliest_failure_since_its_last_succ
                 "2026-01-10T00:00:00.000Z".to_string()
             ),
         ]
+    );
+}
+
+#[test]
+fn an_upgrade_leaves_unproven_failures_to_the_next_recorded_attempt() {
+    let mut db = before_backlog();
+    db.execute_batch(&webhooks(&[("edited", "k1", ""), ("repointed", "k1", "")]))
+        .unwrap();
+    // An events-only edit after the failure cannot be told from a repoint.
+    edited(&db, "edited", "2026-01-05T00:00:00.000Z");
+    // A repoint in the same millisecond as the old receiver's failure.
+    edited(&db, "repointed", "2026-01-04T00:00:00.000Z");
+    attempted(
+        &db,
+        1,
+        &[
+            ("edited", "pending", 1, "2026-01-04T00:00:00.000Z"),
+            ("repointed", "pending", 1, "2026-01-04T00:00:00.000Z"),
+        ],
+    );
+    upgraded(&mut db);
+    let tx = db.transaction().unwrap();
+    assert_eq!(failing(&tx).unwrap(), vec![]);
+    let failed = Recorded {
+        status: Status::Pending,
+        status_code: Some(503),
+        error: Some("HTTP 503"),
+        due_at: 0,
+    };
+    record(&tx, "d1", &failed, "2026-01-06T00:00:00.000Z").unwrap();
+    assert_eq!(
+        failing(&tx).unwrap(),
+        vec![("edited".to_string(), "2026-01-06T00:00:00.000Z".to_string())]
+    );
+}
+
+#[test]
+fn an_upgrade_dates_a_long_failing_backlog_in_one_pass() {
+    const FAILED: i64 = 25_000;
+    let mut db = before_backlog();
+    db.execute_batch(&webhooks(&[("busy", "k1", "")])).unwrap();
+    attempted(
+        &db,
+        1,
+        &[("busy", "succeeded", 1, "2026-01-01T12:00:00.000Z")],
+    );
+    db.execute(
+        "WITH RECURSIVE n(seq) AS (SELECT 2 UNION ALL SELECT seq + 1 FROM n WHERE seq <= ?1) \
+         INSERT INTO webhook_deliveries (seq, id, webhook_id, event_id, event_type, type, \
+         source, payload, status, attempt, cycle_attempt, due_at, created_at, updated_at) \
+         SELECT seq, 'd' || seq, 'busy', seq, 'item.created', 'core.note', 'test', '{}', \
+         'failed', 8, 8, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', \
+         strftime('%Y-%m-%dT%H:%M:%fZ', '2026-01-02', '+' || seq || ' seconds') FROM n",
+        [FAILED],
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    upgraded(&mut db);
+    let took = started.elapsed();
+    eprintln!("the upgrade over {FAILED} failed deliveries took {took:?}");
+    assert!(
+        took < std::time::Duration::from_secs(2),
+        "the upgrade took {took:?}"
+    );
+    let tx = db.transaction().unwrap();
+    assert_eq!(
+        failing(&tx).unwrap(),
+        vec![("busy".to_string(), "2026-01-02T00:00:02.000Z".to_string())]
     );
 }
 
