@@ -862,7 +862,9 @@ describe("a watch of every folder", () => {
         expect(stopped[0].reason).toContain(
           "redo there the changes `marfa folders remove` names",
         );
-        expect(stopped[0].reason).toContain("`--from` with the moved directory");
+        expect(stopped[0].reason).toContain(
+          "`--from` with the moved directory",
+        );
         expect(stopped[0].reason).toContain("marfa folders push --send-newer");
         expect(stopped[0].reason).toContain(
           "push again until `marfa folders status` shows nothing waiting",

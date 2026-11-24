@@ -1116,7 +1116,7 @@ When `folders remove` removes a folder whose server answers as another Marfa ins
 
 **Reason:** a change the folder sent after the backup the other instance was restored from was made is in no queue, so the route is printed whether or not writes waited.
 
-**Tests:** `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`, `› sends no file whose item the instance changed after the add or holds at the same or a newer version, and names one it lacks or that is gone`.
+**Tests:** `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`, `› sends no file whose item the instance changed after the add or holds at the same or a newer version, and names one it lacks or that is gone`, `device/folders.test.ts › says, removing a folder whose server answers as another instance, how many writes were not sent, each file holding a change by kind, and the folders add command with the directory and folder ID`.
 
 ### `folder-setup/remove-records-sent`
 

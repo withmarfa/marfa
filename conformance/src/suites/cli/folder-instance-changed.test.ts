@@ -50,7 +50,12 @@ interface Listed {
 
 interface Added {
   from: {
-    older: Array<{ path: string; sent: number; held: number; changed: boolean }>;
+    older: Array<{
+      path: string;
+      sent: number;
+      held: number;
+      changed: boolean;
+    }>;
     absent: string[];
     gone: string[];
     unknown?: string;
@@ -339,7 +344,9 @@ describe("a directory whose server is now another instance", () => {
       const removed = await cli.run(["folders", "remove", dir]);
       expect(removed.code, removed.stderr).toBe(0);
       expect(removed.stdout).not.toContain("could not be sent");
-      expect(removed.stdout).toContain(`marfa folders push ${dir} --send-newer`);
+      expect(removed.stdout).toContain(
+        `marfa folders push ${dir} --send-newer`,
+      );
       rmSync(join(dir, "Dropped.md"));
       renameSync(dir, aside);
 

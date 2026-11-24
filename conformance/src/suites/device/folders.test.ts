@@ -6515,9 +6515,8 @@ describe("a folder whose server answers as another instance", () => {
     );
     expect(said).toContain("delete each deleted file again");
     expect(said).toContain("move each moved file again");
-    expect(said).toContain(
-      "A file that differs but is not named above may hold a change this folder sent that the new instance lacks",
-    );
+    expect(said).toContain(`--from ${harness.dir}.before-restore`);
+    expect(said).toContain(`marfa folders push ${harness.dir} --send-newer`);
     expect(said).toContain(
       `until \`marfa folders status ${harness.dir}\` shows nothing waiting`,
     );
