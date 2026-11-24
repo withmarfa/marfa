@@ -27,13 +27,9 @@ pub enum FoldersCommand {
     /// `folders create` makes. Needs read on `system.folder`. Warns on
     /// standard error, once, and goes on, if the directory is in iCloud Drive,
     /// a cloud service's synced location or a network file system, or if git
-    /// tracks it. Where the directory holds the record `folders remove` left of
-    /// a sync with another instance, the add says, for each file it names,
-    /// what the first sync will do: a file whose item the instance holds as a
-    /// restored backup left it is sent as an edit of that version; one whose
-    /// item the instance changed since is merged from the last version both
-    /// held, keeping both edits; and one whose item the instance lacks, or
-    /// whose shared version cannot be told, is not sent and waits.
+    /// tracks it. If `folders remove` left a record from another instance,
+    /// the command reports which files it expects the first sync to send,
+    /// merge, or hold.
     Add {
         /// The directory. It is made if it is not there.
         dir: PathBuf,
@@ -62,19 +58,17 @@ pub enum FoldersCommand {
         #[command(flatten)]
         page: crate::commands::PageArgs,
     },
-    /// Make a directory stop following its folder: its own state under
-    /// `.marfa` goes, and its files stay as plain files. Empty administrative directories
-    /// remain. Where the first sync was confirmed, `.marfa/removed.json` stays,
-    /// recording the version and content each file last synced, written before
-    /// anything is removed; the command is refused where it cannot be written. Refused while writes wait, except for a first sync still
-    /// waiting to be confirmed, which this cancels, and except where another
-    /// Marfa instance answers at the folder's server, which none of them can
-    /// reach: the command then names each file holding a change the folder
-    /// could not send, and how to send the changes there. Follows no symbolic
-    /// link, and takes a path through one only where it is the path
-    /// `folders list` shows. Where that path is gone, passes through a link,
-    /// or holds state the registry does not show to be the directory's own, the
-    /// directory is only taken off the list and nothing is deleted.
+    /// Stop syncing a directory and keep its files. For a confirmed folder,
+    /// the command saves item versions and available content hashes in
+    /// `.marfa/removed.json`. If it cannot save the record, removal stops.
+    /// Removal cancels a first sync awaiting confirmation. Pending writes
+    /// otherwise prevent removal unless another instance answers at the
+    /// folder's address or last answered there and the server is unreachable.
+    /// In that case, the command lists unsent changes and
+    /// explains how to add the directory again. A path through a symbolic
+    /// link must match the path in `folders list`. If a listed directory is
+    /// missing, reached through a link, or holds a different store, the
+    /// command removes only its registry entry.
     Remove {
         /// The directory.
         dir: PathBuf,
@@ -1567,10 +1561,6 @@ struct FolderStatus<'a> {
     watch_stopped: Option<&'a str>,
 }
 
-/// What `folders remove` says of a folder whose state went, and where
-/// another instance at its server never received changes the folder held,
-/// What `folders remove` says of a folder whose state went, and where
-/// another instance answers at its server, how to follow the folder there.
 fn removed_said(dir: &Path, folder: &str, removed: &marfa_core::folder::Removed) -> String {
     use marfa_core::folder::UnsentChange;
     let unsent = &removed.unsent;

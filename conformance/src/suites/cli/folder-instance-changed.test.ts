@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
   existsSync,
@@ -11,11 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import {
-  bootFreshServer,
-  FRESH_SERVER_TIMEOUT_MS,
-  type FreshServer,
-} from "../../utils/fresh-server.js";
+import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
 import { DISK_ONLY, everythingClient } from "../../utils/own-blob-server.js";
 import { Cli, requireBinary } from "./harness.js";
 import type { ItemEnvelope } from "./harness.js";

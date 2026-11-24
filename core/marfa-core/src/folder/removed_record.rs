@@ -1,5 +1,4 @@
-//! The record a removal leaves in `.marfa`, and what a folder added again in
-//! the same directory decides from it when another instance answers.
+//! Removal records and first-sync decisions for a directory added back in place.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -21,7 +20,6 @@ pub(super) const AS_NEW: &str =
     "; to send it as a new item, take out its marfa_id line, or delete it to keep the instance's";
 const STAGED: &str = "removed.json.tmp";
 const FORMAT: u32 = 1;
-/// Far above a record of a million files.
 const LIMIT: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -391,7 +389,7 @@ impl Folder {
     }
 }
 
-/// Stages the record, flushes it and its directory, then names it.
+/// Flush the staged file before the rename and the directory afterwards.
 fn durable_write(dir: &Directory, bytes: &[u8]) -> std::io::Result<()> {
     let staged = Path::new(STAGED);
     let _ = dir.unlink(staged);
