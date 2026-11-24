@@ -24,12 +24,7 @@ import { tempFolder } from "../../utils/temp-folder.js";
  * address that is not public, so a fetch the server makes answers
  * `invalid_client` and one a limit keeps it from making answers
  * `temporarily_unavailable`. The server believes a header naming the
- * caller's address, and each case starts a new minute. The documents a client
- * publishes with a value past a registration bound are served by an `https`
- * server of the fixture's own, whose certificate the target is told to trust
- * for that one host (`trust:<hostname>`), and whose host resolves, by a
- * scripted lookup, to a public address the connection is sent from to this
- * machine.
+ * caller's address, and each case starts a new minute.
  */
 let server: FreshServer;
 let origin: string;
@@ -45,7 +40,6 @@ const DOCUMENT_HOST = "published.client-documents.example";
 const PUBLIC_ADDRESS = "93.184.216.34";
 let published: Server;
 let publishedPort: number;
-/** The documents the fixture's server answers with, by path. */
 const documents = new Map<string, string>();
 
 beforeAll(async () => {
@@ -312,7 +306,6 @@ function scopeOf(length: number): string {
   return `${scope} ${"z".repeat(length - scope.length - 1)}`;
 }
 
-/** What a registration of one member is held to: a value at the bound and one past it. */
 const OPTIONAL_MEMBERS: [string, unknown, unknown][] = [
   ["client_uri", URI_AT_BOUND, URI_PAST_BOUND],
   ["logo_uri", URI_AT_BOUND, URI_PAST_BOUND],
@@ -331,7 +324,6 @@ const OPTIONAL_MEMBERS: [string, unknown, unknown][] = [
   ],
 ];
 
-/** Serves a document that sets `members`, answering the client ID that names it. */
 function publish(members: Record<string, unknown>): string {
   const path = `/clients/${randomUUID()}.json`;
   const id = `https://${DOCUMENT_HOST}:${String(publishedPort)}${path}`;
@@ -339,7 +331,6 @@ function publish(members: Record<string, unknown>): string {
   return id;
 }
 
-/** The audit records of `action` that name `id`, as the management key reads them. */
 async function auditedFor(action: string, id: string): Promise<unknown[]> {
   const response = await fetch(
     `${server.apiUrl}/audit?${new URLSearchParams({ action, limit: "200" })}`,
@@ -352,7 +343,6 @@ async function auditedFor(action: string, id: string): Promise<unknown[]> {
   return data.filter((row) => row.resource_id === id);
 }
 
-/** The signed-in owner's authorization request for `id`, which asks for a scope the document may not name. */
 function authorizingFor(id: string): Promise<Response> {
   return fetch(
     `${server.apiUrl}/oauth/authorize?${authorizeQuery(id, "content:read content:write", pkce()).toString()}`,
@@ -362,7 +352,7 @@ function authorizingFor(id: string): Promise<Response> {
 
 describe("a client ID metadata document that sets an optional member past its bound", () => {
   it.each(OPTIONAL_MEMBERS)(
-    "keeps %s at its bound and leaves it out past its bound, accepting the client either way",
+    "accepts the client when %s is at or past its registration bound",
     async (member, atBound, pastBound) => {
       const kept = publish({ [member]: atBound });
       const keptAnswer = await authorizingFor(kept);
@@ -382,9 +372,7 @@ describe("a client ID metadata document that sets an optional member past its bo
       ).toBe("/auth/consent");
       expect(await auditedFor("auth.client.created", dropped)).toHaveLength(1);
 
-      // The witness: a scope the document names is the app's ceiling, so
-      // asking for one it does not name widens the ceiling; a scope left out
-      // leaves the default ceiling, which already covers the request.
+      // Only the explicit scope excludes the requested write permission.
       const widened = async (id: string) =>
         (await auditedFor("auth.client.scopes_widened", id)).length;
       expect(await widened(kept), `${member} at its bound`).toBe(

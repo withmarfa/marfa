@@ -112,10 +112,10 @@ export interface FreshServer {
    * webhook sender read events, or its place in the log, as absent,
    * `store-check-deadline=<ms>` shortens how long a blob store may go
    * unanswered, `release:<point>` clears `hold:<point>` as the next
-   * `GET /health` arrives, and `resolve:<hostname>=<answers>` scripts the name
-   * lookups of webhooks and of files the MCP tools fetch, and
-   * `trust:<hostname>=<PEM certificate>` makes the fetch of a client ID
-   * metadata document from that host trust that one certificate. The points are
+   * `GET /health` arrives. `resolve:<hostname>=<answers>` scripts DNS for
+   * webhooks, MCP file fetches and client ID metadata documents.
+   * `trust:<hostname>=<PEM certificate>` sets trust for metadata document
+   * fetches from that host. The points are
    * stated in `conformance/TARGET-INTERFACE.md`, "Faults".
    * The fault is cleared by `clearFault`, by `restart`, and by `stop`, so
    * none outlives the fixture that set it.
