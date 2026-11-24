@@ -260,7 +260,7 @@ When a claim carries a setup code typed in lowercase, with spaces or line breaks
 
 When an instance with no owner starts, the server MUST print, on the log line that holds its setup code, a link to its setup page in the form of `/setup#handoff=…` that carries a handoff ticket.
 
-**Reason:** A person with the log in front of them can open one link instead of copying the code. The ticket is the one the private local command issues, so it works once and ends after five minutes.
+**Reason:** A person with the log in front of them can open one link instead of copying the code. The ticket is a handoff ticket like the one `marfa setup open` gets, so `instance-claim/handoff-single-use` and `instance-claim/handoff-expiry` hold for it.
 
 **Tests:** `compliance/remote-claim.test.ts › is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once`.
 
