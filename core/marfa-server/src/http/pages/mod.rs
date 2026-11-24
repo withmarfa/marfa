@@ -155,4 +155,6 @@ fn render_body<T: Template>(template: &T) -> Result<String> {
 }
 
 #[cfg(test)]
+mod preview;
+#[cfg(test)]
 mod tests;
