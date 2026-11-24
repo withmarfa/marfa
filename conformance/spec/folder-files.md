@@ -2570,7 +2570,7 @@ When an item leaves a folder's query for a reason other than its state and a reg
 
 **Reason:** no device can tell from the copies on one machine that the other directory's file will stay, so a removal here could take the person's last local copy. The person removes a duplicate with `marfa folders unmatched --remove`.
 
-**Tests:** `device/folders-one-mac.test.ts › keeps both folders' files as unmatched when one change drops the item from both, %s pulling first`, `› keeps a departing file as unmatched beside another folder's file of the item until the person removes it`, `› takes in a file another folder let go`, `› moves a note's attachment with the note to another notes folder when %s hears first`, `› keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again`, `› takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders-one-mac.test.ts › keeps both folders' files as unmatched when one change drops the item from both, %s pulling first`, `› keeps a departing file as unmatched beside another folder's file of the item until the person removes it`, `› takes in a file another folder let go`, `› moves a note's attachment with the note to another notes folder when %s hears first`, `› takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folder-files/unmatched-missing-not-rewritten`
 
