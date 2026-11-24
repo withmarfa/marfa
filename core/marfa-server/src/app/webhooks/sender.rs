@@ -9,7 +9,7 @@ use tokio::task::{Id, JoinSet};
 
 use super::deferred::Deferred;
 use super::roster::{self, Roster};
-use super::schedule::{self, Context, Gap, Pass};
+use super::schedule::{self, Backlog, Context, Gap, Pass};
 use super::{send, store};
 use crate::app::App;
 use crate::app::attention::faults::Place;
@@ -222,6 +222,7 @@ impl Sender {
                             pulse: &pulse,
                             at: &at,
                             now_ms: app.clock.now_ms(),
+                            backlog: Backlog::read(tx, &app.settings.seeds())?,
                         },
                     )
                     .map(Some)

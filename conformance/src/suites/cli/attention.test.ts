@@ -89,6 +89,7 @@ it(
       ["connectors", "Connectors"],
       ["folders", "Folders"],
       ["keys", "API keys"],
+      ["webhooks", "Webhooks"],
     ] as const) {
       await server.setFault(`fail:attention=${check}`);
       try {

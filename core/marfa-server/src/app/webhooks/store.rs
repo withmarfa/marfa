@@ -90,8 +90,8 @@ pub fn insert(tx: &Transaction<'_>, subscription: &Subscription) -> Result<()> {
 
 pub fn update(tx: &Transaction<'_>, subscription: &Subscription) -> Result<()> {
     tx.execute(
-        "UPDATE webhooks SET url = ?2, events = ?3, type_filter = ?4, active = ?5, updated_at = ?6 \
-         WHERE id = ?1",
+        "UPDATE webhooks SET url = ?2, events = ?3, type_filter = ?4, active = ?5, updated_at = ?6, \
+         failing_since = CASE WHEN url = ?2 AND active = ?5 THEN failing_since END WHERE id = ?1",
         params![
             subscription.id,
             subscription.url,
@@ -292,6 +292,8 @@ fn delivery_of(row: &Row<'_>) -> rusqlite::Result<Delivery> {
 
 pub struct Queued<'a> {
     pub id: &'a str,
+    /// Why the delivery is recorded canceled instead of queued, keeping no payload.
+    pub unsent: Option<&'a str>,
     pub webhook_id: &'a str,
     pub event_id: i64,
     pub event_type: &'a str,
@@ -306,8 +308,9 @@ pub struct Queued<'a> {
 pub fn queue(tx: &Transaction<'_>, queued: &Queued<'_>) -> Result<bool> {
     let added = tx.execute(
         "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, type, source, \
-         payload, status, due_at, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', ?8, ?9, ?9) \
+         payload, status, error, due_at, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, CASE WHEN ?10 IS NULL THEN ?7 END, \
+         CASE WHEN ?10 IS NULL THEN 'pending' ELSE 'canceled' END, ?10, ?8, ?9, ?9) \
          ON CONFLICT (webhook_id, event_id) DO NOTHING",
         params![
             queued.id,
@@ -319,9 +322,27 @@ pub fn queue(tx: &Transaction<'_>, queued: &Queued<'_>) -> Result<bool> {
             queued.payload,
             Stamp::from_ms(queued.due_at)?,
             queued.at,
+            queued.unsent,
         ],
     )?;
     Ok(added == 1)
+}
+
+/// The deliveries a subscription holds pending, and the bytes of their payloads.
+pub fn backlog(tx: &Transaction<'_>, webhook_id: &str) -> Result<(i64, i64)> {
+    Ok(tx
+        .prepare_cached("SELECT pending, pending_bytes FROM webhooks WHERE id = ?1")?
+        .query_row([webhook_id], |row| Ok((row.get(0)?, row.get(1)?)))?)
+}
+
+/// Returns each active subscription's first consecutive failure, oldest first.
+pub fn failing(tx: &Transaction<'_>) -> Result<Vec<(String, String)>> {
+    let mut statement = tx.prepare(
+        "SELECT id, failing_since FROM webhooks WHERE active = 1 AND failing_since IS NOT NULL \
+         ORDER BY failing_since, id",
+    )?;
+    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 pub fn delivery(tx: &Transaction<'_>, webhook_id: &str, id: &str) -> Result<Option<Delivery>> {
@@ -612,6 +633,269 @@ fn a_due_time_that_does_not_read_is_refused() {
     assert!(next_due(&tx, 0, &[]).is_err());
 }
 
+#[cfg(test)]
+const KEY: &str = "INSERT INTO api_keys (id, hash, label, source, permissions, \
+     type_permissions, edge_permissions, extension_permissions, metadata_permissions, \
+     profile_permissions, created_at) VALUES ('k1', 'k1', 'k1', 'k1', '[]', '{}', '{}', '{}', \
+     '{}', '{}', '2026-01-01T00:00:00.000Z');";
+
+#[test]
+fn the_backlog_counts_follow_every_change_to_a_delivery() {
+    let mut db = baseline();
+    db.pragma_update(None, "foreign_keys", true).unwrap();
+    let tx = db.transaction().unwrap();
+    tx.execute_batch(KEY).unwrap();
+    tx.execute_batch(&webhooks(&[("a", "k1", ""), ("b", "k1", "")]))
+        .unwrap();
+    let at = "2026-01-01T00:00:00.000Z";
+    let rows = |hook: &str| -> (i64, i64) {
+        tx.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(octet_length(payload)), 0) FROM webhook_deliveries \
+             WHERE webhook_id = ?1 AND status = 'pending'",
+            [hook],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+    };
+    let agrees = |step: &str| {
+        for hook in ["a", "b"] {
+            assert_eq!(backlog(&tx, hook).unwrap(), rows(hook), "{step}, {hook}");
+        }
+    };
+    let put = |id: &str, hook: &str, event_id: i64, payload: &str, unsent: Option<&str>| {
+        queue(
+            &tx,
+            &Queued {
+                id,
+                unsent,
+                webhook_id: hook,
+                event_id,
+                event_type: "item.created",
+                type_id: "core.note",
+                source: "test",
+                payload,
+                due_at: 0,
+                at,
+            },
+        )
+        .unwrap()
+    };
+    assert!(put("d1", "a", 1, "{\"é\":1}", None));
+    assert!(put("d2", "a", 2, "{}", None));
+    assert!(put("d3", "a", 3, "[1,2,3]", None));
+    assert!(put("d4", "b", 1, "{\"b\":true}", None));
+    assert!(
+        !put("d5", "a", 1, "{\"again\":1}", None),
+        "a repeat is not queued"
+    );
+    assert!(put("d6", "a", 4, "{\"full\":1}", Some("full")));
+    agrees("queued");
+    assert_eq!(backlog(&tx, "a").unwrap(), (3, 8 + 2 + 7));
+    let outcome = |status, due_at| Recorded {
+        status,
+        status_code: None,
+        error: Some("HTTP 503"),
+        due_at,
+    };
+    record(&tx, "d1", &outcome(Status::Pending, 5), at).unwrap();
+    agrees("retried");
+    record(&tx, "d1", &outcome(Status::Succeeded, 5), at).unwrap();
+    agrees("succeeded");
+    record(&tx, "d2", &outcome(Status::Failed, 5), at).unwrap();
+    agrees("failed");
+    record(&tx, "d2", &outcome(Status::Failed, 5), at).unwrap();
+    agrees("a settled delivery takes no outcome");
+    redeliver(&tx, seq_by_id(&tx, "d2"), 6, at).unwrap();
+    agrees("redelivered");
+    cancel(&tx, "d3", "gone", at).unwrap();
+    agrees("canceled");
+    assert_eq!(expire(&tx, "2027-01-01T00:00:00.000Z", 100).unwrap(), 3);
+    agrees("expired");
+    assert_eq!(backlog(&tx, "a").unwrap(), (1, 2));
+    cancel_all(&tx, "a", "off", at).unwrap();
+    agrees("all canceled");
+    assert!(put("d7", "b", 2, "{}", None));
+    tx.execute("DELETE FROM webhooks WHERE id = 'a'", [])
+        .unwrap();
+    assert_eq!(backlog(&tx, "b").unwrap(), rows("b"), "another's delete");
+    tx.execute("DELETE FROM api_keys WHERE id = 'k1'", [])
+        .unwrap();
+    assert_eq!(rows("b"), (0, 0), "the deliveries went with their key");
+}
+
+/// A database at schema version 14, holding the key `k1`.
+#[cfg(test)]
+fn before_backlog() -> rusqlite::Connection {
+    use crate::db::migrate::MIGRATIONS;
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    db.pragma_update(None, "foreign_keys", false).unwrap();
+    for migration in MIGRATIONS.iter().filter(|migration| migration.version < 15) {
+        db.execute_batch(migration.sql).unwrap();
+    }
+    db.execute_batch(KEY).unwrap();
+    db
+}
+
+#[cfg(test)]
+fn upgraded(db: &mut rusqlite::Connection) {
+    crate::db::migrate::upgrade(db, crate::db::migrate::MIGRATIONS, 14).unwrap();
+}
+
+/// Delivery rows `(webhook_id, status, cycle_attempt, updated_at)`, numbered from `first`.
+#[cfg(test)]
+fn attempted(db: &rusqlite::Connection, first: i64, rows: &[(&str, &str, i64, &str)]) {
+    for (seq, (hook, status, cycle, at)) in (first..).zip(rows.iter()) {
+        let payload = if *status == "pending" || *status == "failed" {
+            "'{}'"
+        } else {
+            "NULL"
+        };
+        db.execute(
+            &format!(
+                "INSERT INTO webhook_deliveries (seq, id, webhook_id, event_id, event_type, type, \
+                 source, payload, status, attempt, cycle_attempt, due_at, created_at, updated_at) \
+                 VALUES (?1, 'd' || ?1, ?2, ?1, 'item.created', 'core.note', 'test', {payload}, \
+                 ?3, ?4, ?4, ?5, '2026-01-01T00:00:00.000Z', ?5)"
+            ),
+            params![seq, hook, status, cycle, at],
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn an_upgrade_counts_the_backlog_each_subscription_already_holds() {
+    let mut db = before_backlog();
+    db.execute_batch(&webhooks(&[("a", "k1", ""), ("b", "k1", "")]))
+        .unwrap();
+    db.execute_batch(&deliveries(&[
+        (1, "a", "pending", 0),
+        (2, "a", "pending", 0),
+        (3, "a", "succeeded", 0),
+        (4, "b", "failed", 0),
+    ]))
+    .unwrap();
+    upgraded(&mut db);
+    let tx = db.transaction().unwrap();
+    assert_eq!(backlog(&tx, "a").unwrap(), (2, 4));
+    assert_eq!(backlog(&tx, "b").unwrap(), (0, 0));
+    assert_eq!(failing(&tx).unwrap(), vec![]);
+}
+
+#[test]
+fn an_upgrade_starts_no_failure_and_the_next_recorded_failure_does() {
+    let mut db = before_backlog();
+    db.execute_batch(&webhooks(&[("failing", "k1", ""), ("recovered", "k1", "")]))
+        .unwrap();
+    // Expiry by creation time can keep a newer failure and drop an older success.
+    attempted(
+        &db,
+        1,
+        &[
+            ("failing", "failed", 8, "2026-01-02T00:00:00.000Z"),
+            ("failing", "pending", 1, "2026-01-04T00:00:00.000Z"),
+            ("recovered", "failed", 8, "2026-01-03T00:00:00.000Z"),
+        ],
+    );
+    upgraded(&mut db);
+    let tx = db.transaction().unwrap();
+    assert_eq!(failing(&tx).unwrap(), vec![]);
+    let failed = Recorded {
+        status: Status::Pending,
+        status_code: Some(503),
+        error: Some("HTTP 503"),
+        due_at: 0,
+    };
+    record(&tx, "d2", &failed, "2026-01-06T00:00:00.000Z").unwrap();
+    assert_eq!(
+        failing(&tx).unwrap(),
+        vec![(
+            "failing".to_string(),
+            "2026-01-06T00:00:00.000Z".to_string()
+        )]
+    );
+}
+
+#[cfg(test)]
+fn seq_by_id(tx: &Transaction<'_>, id: &str) -> i64 {
+    tx.query_row(
+        "SELECT seq FROM webhook_deliveries WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_subscription_fails_from_its_first_failed_attempt_until_one_succeeds_or_it_changes() {
+    let mut db = baseline();
+    let tx = db.transaction().unwrap();
+    tx.execute_batch(&webhooks(&[("a", "k1", "")])).unwrap();
+    tx.execute_batch(&deliveries(&[
+        (1, "a", "pending", 0),
+        (2, "a", "pending", 0),
+    ]))
+    .unwrap();
+    let since = || failing(&tx).unwrap();
+    let outcome = |status| Recorded {
+        status,
+        status_code: None,
+        error: None,
+        due_at: 0,
+    };
+    record(
+        &tx,
+        "d1",
+        &outcome(Status::Pending),
+        "2026-01-02T00:00:00.000Z",
+    )
+    .unwrap();
+    record(
+        &tx,
+        "d1",
+        &outcome(Status::Failed),
+        "2026-01-03T00:00:00.000Z",
+    )
+    .unwrap();
+    assert_eq!(
+        since(),
+        vec![("a".to_string(), "2026-01-02T00:00:00.000Z".to_string())]
+    );
+    record(
+        &tx,
+        "d2",
+        &outcome(Status::Succeeded),
+        "2026-01-04T00:00:00.000Z",
+    )
+    .unwrap();
+    assert_eq!(since(), vec![]);
+    tx.execute(
+        "UPDATE webhook_deliveries SET status = 'pending' WHERE id = 'd1'",
+        [],
+    )
+    .unwrap();
+    record(
+        &tx,
+        "d1",
+        &outcome(Status::Pending),
+        "2026-01-05T00:00:00.000Z",
+    )
+    .unwrap();
+    let mut hook = by_id(&tx, "a", None).unwrap().unwrap();
+    hook.updated_at = "2026-01-06T00:00:00.000Z".to_string();
+    update(&tx, &hook).unwrap();
+    assert_eq!(
+        since().len(),
+        1,
+        "a change that keeps the url and active keeps it"
+    );
+    hook.active = false;
+    update(&tx, &hook).unwrap();
+    hook.active = true;
+    update(&tx, &hook).unwrap();
+    assert_eq!(since(), vec![], "turning it off and on starts afresh");
+}
+
 /// An empty database made from the baseline, with no foreign keys so a test need not make each maker.
 #[cfg(test)]
 fn baseline() -> rusqlite::Connection {
@@ -708,7 +992,7 @@ pub struct Recorded<'a> {
 
 /// Only a delivery still pending takes the outcome, so one settled while it was attempted stays settled.
 pub fn record(tx: &Transaction<'_>, id: &str, recorded: &Recorded<'_>, at: &str) -> Result<()> {
-    tx.execute(
+    let changed = tx.execute(
         "UPDATE webhook_deliveries SET status = ?2, status_code = ?3, error = ?4, due_at = ?5, \
          attempt = attempt + 1, cycle_attempt = cycle_attempt + 1, updated_at = ?6, \
          payload = CASE WHEN ?2 = 'succeeded' THEN NULL ELSE payload END \
@@ -722,6 +1006,14 @@ pub fn record(tx: &Transaction<'_>, id: &str, recorded: &Recorded<'_>, at: &str)
             at
         ],
     )?;
+    if changed == 1 {
+        tx.execute(
+            "UPDATE webhooks SET failing_since = CASE WHEN ?2 = 'succeeded' THEN NULL \
+             ELSE COALESCE(failing_since, ?3) END \
+             WHERE id = (SELECT webhook_id FROM webhook_deliveries WHERE id = ?1)",
+            params![id, recorded.status.wire(), at],
+        )?;
+    }
     Ok(())
 }
 

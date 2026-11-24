@@ -7912,17 +7912,18 @@
               "connector",
               "folder",
               "key",
+              "webhook",
               "backup",
               "setting",
               "clock",
               "fault",
               "unavailable"
             ],
-            "description": "health: degraded or down; job: last run failed; connector: failed, problems or quiet; folder: sync problems; key: expiring; backup: none, off or failing; setting: secret to set again; clock: ahead or behind; fault: met lately; unavailable: no answer."
+            "description": "health: degraded or down; job: run failed; connector: failing or quiet; folder: sync problems; key: expiring; webhook: failing a day; backup: none, off or failing; setting: secret to set; clock: ahead or behind; fault: recent; unavailable: no answer."
           },
           "reference": {
             "type": "string",
-            "description": "The component, job, connector, folder or key ID, the check that couldn't answer, a backup concern such as `store`, a secret setting's key, `clock_ahead` or `clock_behind`, or a fault's kind and place, such as `database:POST /items/{id}`, or `other`."
+            "description": "A component, job, connector, folder, key or webhook ID, a check that couldn't answer, a backup concern, like `store`, a secret setting's key, `clock_ahead` or `clock_behind`, a fault's kind and place, such as `database:POST /items/{id}`, or `other`."
           },
           "title": {
             "type": "string",
@@ -9465,6 +9466,20 @@
             "maximum": 1099511627776,
             "default": 1073741824,
             "description": "The bytes of unhandled deliveries one registration may hold before Marfa refuses more for it."
+          },
+          "webhook_backlog_deliveries": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "default": 10000,
+            "description": "Maximum number of pending deliveries per webhook. Marfa records a new delivery as `canceled` if adding it would exceed this limit."
+          },
+          "webhook_backlog_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1099511627776,
+            "default": 67108864,
+            "description": "Maximum total payload size in bytes for a webhook's pending deliveries. Marfa records a new delivery as `canceled` if adding its payload would exceed this total."
           },
           "inbound_retained_deliveries": {
             "type": "integer",
@@ -13004,6 +13019,7 @@
               "connector",
               "folder",
               "key",
+              "webhook",
               "backup",
               "setting",
               "clock",
@@ -52423,7 +52439,7 @@
             }
           },
           "409": {
-            "description": "- `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; or `delivery_expired`, past audit retention.",
+            "description": "- `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; `delivery_expired`, past audit retention; or `backlog_full`, sending it again would pass `webhook_backlog_deliveries` or `webhook_backlog_bytes`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -74162,6 +74178,20 @@
                     "default": 1073741824,
                     "description": "The bytes of unhandled deliveries one registration may hold before Marfa refuses more for it. Absent: the server's default applies."
                   },
+                  "webhook_backlog_deliveries": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 10000,
+                    "description": "Maximum number of pending deliveries per webhook. Marfa records a new delivery as `canceled` if adding it would exceed this limit. Absent: the server's default applies."
+                  },
+                  "webhook_backlog_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 67108864,
+                    "description": "Maximum total payload size in bytes for a webhook's pending deliveries. Marfa records a new delivery as `canceled` if adding its payload would exceed this total. Absent: the server's default applies."
+                  },
                   "inbound_retained_deliveries": {
                     "type": "integer",
                     "minimum": 1,
@@ -75199,6 +75229,26 @@
                     "maximum": 1099511627776,
                     "default": 1073741824,
                     "description": "The bytes of unhandled deliveries one registration may hold before Marfa refuses more for it. `null` removes it, so the server's default applies."
+                  },
+                  "webhook_backlog_deliveries": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 10000,
+                    "description": "Maximum number of pending deliveries per webhook. Marfa records a new delivery as `canceled` if adding it would exceed this limit. `null` removes it, so the server's default applies."
+                  },
+                  "webhook_backlog_bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 67108864,
+                    "description": "Maximum total payload size in bytes for a webhook's pending deliveries. Marfa records a new delivery as `canceled` if adding its payload would exceed this total. `null` removes it, so the server's default applies."
                   },
                   "inbound_retained_deliveries": {
                     "type": [

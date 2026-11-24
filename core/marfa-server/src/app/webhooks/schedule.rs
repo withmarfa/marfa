@@ -11,8 +11,10 @@ use crate::app::events::fanout::{self, Logged};
 use crate::app::events::{Filter, Judge, Judged};
 use crate::app::faults::{Faults, HOLD_WEBHOOK_SCHEDULE_QUEUED};
 use crate::app::item_links::Links;
-use crate::app::refusal::Result;
+use crate::app::refusal::{Refusal, Result};
+use crate::app::stored;
 use crate::db::Pulse;
+use crate::settings::registry::{Seeds, WEBHOOK_BACKLOG_BYTES, WEBHOOK_BACKLOG_DELIVERIES};
 
 /// Bounds each write transaction when crossing a backlog.
 const PAGE: usize = 2_000;
@@ -52,6 +54,7 @@ pub struct Context<'a> {
     pub pulse: &'a Pulse,
     pub at: &'a str,
     pub now_ms: i64,
+    pub backlog: Backlog,
 }
 
 struct Entitled {
@@ -242,10 +245,15 @@ fn queue(
             }
         }
         let id = uuid::Uuid::now_v7().to_string();
+        let unsent = context
+            .backlog
+            .passed(tx, &subscription.id, 1, payload.len())?
+            .then_some(super::CANCEL_BACKLOG);
         let added = store::queue(
             tx,
             &Queued {
                 id: &id,
+                unsent,
                 webhook_id: &subscription.id,
                 event_id: logged.id,
                 event_type: &logged.event_type,
@@ -256,9 +264,45 @@ fn queue(
                 at: context.at,
             },
         )?;
-        queued += usize::from(added);
+        queued += usize::from(added && unsent.is_none());
     }
     Ok(queued)
+}
+
+/// The pending deliveries, and the bytes of their payloads, one subscription may hold.
+#[derive(Clone, Copy)]
+pub struct Backlog {
+    deliveries: u64,
+    bytes: u64,
+}
+
+impl Backlog {
+    /// Read in the transaction that reads the counts, so a change to either limit is seen.
+    pub fn read(tx: &Transaction<'_>, seeds: &Seeds) -> Result<Self> {
+        Ok(Self {
+            deliveries: stored::setting(tx, seeds, WEBHOOK_BACKLOG_DELIVERIES)?,
+            bytes: stored::setting(tx, seeds, WEBHOOK_BACKLOG_BYTES)?,
+        })
+    }
+
+    /// Redelivery has already updated the counts and passes zero for both additions.
+    pub fn passed(
+        &self,
+        tx: &Transaction<'_>,
+        webhook_id: &str,
+        more: u64,
+        bytes: usize,
+    ) -> Result<bool> {
+        let (pending, pending_bytes) = store::backlog(tx, webhook_id)?;
+        let (Ok(pending), Ok(pending_bytes)) =
+            (u64::try_from(pending), u64::try_from(pending_bytes))
+        else {
+            return Err(Refusal::internal("a webhook's backlog count does not read"));
+        };
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        Ok(pending.saturating_add(more) > self.deliveries
+            || pending_bytes.saturating_add(bytes) > self.bytes)
+    }
 }
 
 #[cfg(test)]
