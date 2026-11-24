@@ -498,7 +498,10 @@ describe("the setup code", () => {
         code: code!,
       };
 
-      for (const headers of [{ accept: "application/json" }, {}]) {
+      for (const headers of [{ accept: "application/json" }, {}] as Record<
+        string,
+        string
+      >[]) {
         const refused = await formPost(
           server.url,
           "/setup/claim",
