@@ -306,21 +306,29 @@ function scopeOf(length: number): string {
   return `${scope} ${"z".repeat(length - scope.length - 1)}`;
 }
 
-const OPTIONAL_MEMBERS: [string, unknown, unknown][] = [
-  ["client_uri", URI_AT_BOUND, URI_PAST_BOUND],
-  ["logo_uri", URI_AT_BOUND, URI_PAST_BOUND],
-  ["tos_uri", URI_AT_BOUND, URI_PAST_BOUND],
-  ["policy_uri", URI_AT_BOUND, URI_PAST_BOUND],
-  ["software_id", "i".repeat(100), "i".repeat(101)],
-  ["software_version", "v".repeat(100), "v".repeat(101)],
-  ["scope", scopeOf(1024), scopeOf(1025)],
+/** Each case: its name in the test title, the member, a value at its bound and one past it. */
+const OPTIONAL_MEMBERS: [string, string, unknown, unknown][] = [
+  ["client_uri", "client_uri", URI_AT_BOUND, URI_PAST_BOUND],
+  ["logo_uri", "logo_uri", URI_AT_BOUND, URI_PAST_BOUND],
+  ["tos_uri", "tos_uri", URI_AT_BOUND, URI_PAST_BOUND],
+  ["policy_uri", "policy_uri", URI_AT_BOUND, URI_PAST_BOUND],
+  ["software_id", "software_id", "i".repeat(100), "i".repeat(101)],
+  ["software_version", "software_version", "v".repeat(100), "v".repeat(101)],
+  ["scope", "scope", scopeOf(1024), scopeOf(1025)],
   [
+    "the number of contacts",
     "contacts",
     Array.from(
       { length: 5 },
       (_, i) => `${String(i)}${"c".repeat(241)}@app.example`,
     ),
     Array.from({ length: 6 }, (_, i) => `${String(i)}@app.example`),
+  ],
+  [
+    "a contact's length",
+    "contacts",
+    [`${"c".repeat(242)}@app.example`],
+    [`${"c".repeat(243)}@app.example`],
   ],
 ];
 
@@ -353,7 +361,7 @@ function authorizingFor(id: string): Promise<Response> {
 describe("a client ID metadata document that sets an optional member past its bound", () => {
   it.each(OPTIONAL_MEMBERS)(
     "accepts the client when %s is at or past its registration bound",
-    async (member, atBound, pastBound) => {
+    async (_case, member, atBound, pastBound) => {
       const kept = publish({ [member]: atBound });
       const keptAnswer = await authorizingFor(kept);
       expect(keptAnswer.status, `${member} at its bound`).toBe(302);

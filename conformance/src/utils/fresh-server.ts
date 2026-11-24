@@ -114,8 +114,8 @@ export interface FreshServer {
    * unanswered, `release:<point>` clears `hold:<point>` as the next
    * `GET /health` arrives. `resolve:<hostname>=<answers>` scripts DNS for
    * webhooks, MCP file fetches and client ID metadata documents.
-   * `trust:<hostname>=<PEM certificate>` sets trust for metadata document
-   * fetches from that host. The points are
+   * `trust:<hostname>=<PEM certificate>` has metadata document fetches from
+   * that host accept that certificate alone. The points are
    * stated in `conformance/TARGET-INTERFACE.md`, "Faults".
    * The fault is cleared by `clearFault`, by `restart`, and by `stop`, so
    * none outlives the fixture that set it.

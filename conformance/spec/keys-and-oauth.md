@@ -1662,11 +1662,19 @@ If an authorization request names as `client_id` an `https` URL whose host is `l
 
 ### `keys-and-oauth/metadata-document-long-value`
 
-When a client ID metadata document sets `client_uri`, `logo_uri`, `tos_uri`, `policy_uri`, `software_id`, `software_version`, `scope` or `contacts` past the bound a registration is held to (`keys-and-oauth/register-name-bound`, `keys-and-oauth/register-uri-bound`, `keys-and-oauth/register-scope-bound`, `keys-and-oauth/register-contacts-bound`), the server MUST accept the client as if the document left that member out.
+When an otherwise valid client ID metadata document exceeds a registration bound for `client_uri`, `logo_uri`, `tos_uri`, `policy_uri`, `software_id`, `software_version`, `scope` or `contacts`, the server MUST accept the client.
 
-**Reason:** A document is published for every server, so a value past this server's bound is ignored, as a grant type it does not support is, rather than refusing the client. A `client_name` or a redirect URI past its bound still refuses the document, because the document must name the client and list where it may be sent.
+**Reason:** A document is published for every server, so one server's bound on a member the client can do without must not refuse a client that other servers accept.
 
-**Tests:** `compliance/client-document-limits.test.ts › accepts the client when %s is at or past its registration bound`, `› refuses a client_name past its bound while one at its bound names the app on the consent screen`.
+**Tests:** `compliance/client-document-limits.test.ts › accepts the client when %s is at or past its registration bound`.
+
+### `keys-and-oauth/metadata-document-long-name`
+
+If an authorization request names an otherwise valid client ID metadata document whose `client_name` exceeds 100 characters, then the server MUST answer `400 invalid_client`.
+
+**Reason:** The consent screen shows the owner the name the document gives, so a name the server would cut short is not the name the owner approves.
+
+**Tests:** `compliance/client-document-limits.test.ts › refuses a client_name past its bound while one at its bound names the app on the consent screen`.
 
 ## Authorization with consent
 
