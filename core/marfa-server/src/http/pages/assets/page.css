@@ -423,8 +423,7 @@ code {
     center / contain no-repeat;
 }
 
-/* A short code: one cell per character, in two groups. The cells shrink to the column.
-   Typed: the input lies over the cells once the script draws in them, and shows its own text without it. */
+/* A short code in cells. Without the script, a typed code shows in its input instead. */
 .code {
   position: relative;
 }

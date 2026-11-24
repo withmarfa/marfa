@@ -215,8 +215,7 @@ impl From<NotOpen> for Blocked {
     }
 }
 
-/// A pending code this browser session may act on, given the code's `max_age` and the
-/// client's `prompt=login`.
+/// The pending code, if this session began recently enough for `max_age` and `prompt=login`.
 fn pending_for(
     tx: &Connection,
     found: Option<DeviceCode>,
@@ -237,8 +236,7 @@ fn pending_for(
     Ok(Ok(code))
 }
 
-/// Only the browser session that confirmed the code may see or answer its approval page.
-/// A code that is not there reads the same, so the page tells nothing about codes.
+/// The code, only for the session that confirmed it; a missing code reads the same.
 fn checked_here(found: Option<DeviceCode>, session: &Session) -> Option<DeviceCode> {
     found.filter(|code| code.checked_by.as_deref() == Some(session.id.as_str()))
 }

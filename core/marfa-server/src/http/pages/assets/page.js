@@ -221,8 +221,7 @@
     });
   }
 
-  // A code field draws what is typed in its cells, as the server reads it: letters and digits,
-  // in capitals. The input stays the field, and the cell after the last character takes focus.
+  // Draws a code field's input in its cells as the server reads it: letters and digits, in capitals.
   function watchCodes() {
     for (const input of document.querySelectorAll(".code > .in")) {
       const cells = [...input.parentElement.querySelectorAll(".cell")];

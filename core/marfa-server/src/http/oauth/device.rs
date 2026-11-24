@@ -124,8 +124,7 @@ fn typed_in(uri: &Uri) -> Result<Option<String>, Refusal> {
         .filter(|value| !value.is_empty()))
 }
 
-/// Asks the owner to compare the code with the device's before the approval page opens, so a
-/// link someone sent cannot carry their device past the owner.
+/// Asks the owner to compare the code with the device's before the approval page opens.
 pub async fn check_screen(
     State(app): State<Arc<App>>,
     visit: Visit,

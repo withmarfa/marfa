@@ -315,8 +315,7 @@ pub(super) fn ended(
     )
 }
 
-/// Ends a session a confirmation has just replaced in the same browser, which keeps what the
-/// session had confirmed.
+/// Ends a session a confirmation has just replaced, moving its device code checks to the new one.
 pub(super) fn end_replaced(
     tx: &Transaction<'_>,
     at: &str,

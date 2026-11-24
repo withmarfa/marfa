@@ -3234,7 +3234,7 @@ When the `credential-cleanup` job runs, the server MUST remove each device code 
 
 When the server stores a device code while it holds 1000 other device codes that no owner has confirmed on the check page and that nobody has decided, the server MUST, in the same write, remove the one of those 1000 it stored first.
 
-**Reason:** A device code request takes no credential, and the limit for one address (`keys-and-oauth/device-code-address-limit`) does not bound what many addresses send. Refusing requests past a count for every address together would also refuse the owner's `marfa login`, so the oldest code nobody has entered makes room instead, and a code the owner has confirmed is never removed this way. A removed code is answered as a code the server never issued: a poll gets `400 invalid_grant`, and the check page does not know its user code.
+**Reason:** A device code request takes no credential, and the limit for one address (`keys-and-oauth/device-code-address-limit`) does not bound what many addresses send. Refusing requests past a count for every address together would also refuse the owner's `marfa login`, so the oldest code nobody has confirmed makes room instead, and a code the owner has confirmed is never removed this way. A removed code is answered as a code the server never issued: a poll gets `400 invalid_grant`, and the check page does not know its user code.
 
 **Tests:** `compliance/sign-in-door-limits.test.ts › keeps at most 1000 device codes nobody has confirmed, removing the oldest, and keeps a confirmed one`.
 
