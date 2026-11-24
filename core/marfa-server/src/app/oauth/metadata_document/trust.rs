@@ -97,7 +97,18 @@ fn serves_now(end_entity: &CertificateDer<'_>, now: UnixTime) -> Result<(), Cert
     let (_, certificate) = X509Certificate::from_der(end_entity.as_ref())
         .map_err(|_| CertificateError::BadEncoding)?;
     let now = i64::try_from(now.as_secs()).map_err(|_| CertificateError::Expired)?;
+    // webpki refuses an extension it cannot read and a date before 1970; x509-parser reads both as absent or valid.
+    if certificate
+        .extensions()
+        .iter()
+        .any(|extension| extension.parsed_extension().error().is_some())
+    {
+        return Err(CertificateError::BadEncoding);
+    }
     let validity = certificate.validity();
+    if validity.not_before.timestamp() < 0 || validity.not_after.timestamp() < 0 {
+        return Err(CertificateError::BadEncoding);
+    }
     if now < validity.not_before.timestamp() {
         return Err(CertificateError::NotValidYet);
     }
@@ -217,6 +228,27 @@ mod tests {
 
     use super::*;
     use crate::app::outbound::Pinned;
+
+    #[test]
+    fn a_pinned_certificate_production_would_refuse_does_not_serve() {
+        let mut serving =
+            rcgen::CertificateParams::new(vec!["a.test".to_string()]).expect("params");
+        serving.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+        let mut unreadable = serving.clone();
+        unreadable.custom_extensions = vec![rcgen::CustomExtension::from_oid_content(
+            &[2, 5, 29, 19],
+            vec![0xff, 0x00],
+        )];
+        let mut before_1970 = serving.clone();
+        before_1970.not_before = rcgen::date_time_ymd(1969, 12, 31);
+        let now = UnixTime::since_unix_epoch(Duration::from_secs(1_800_000_000));
+        for (params, serves) in [(unreadable, false), (before_1970, false), (serving, true)] {
+            let key = rcgen::KeyPair::generate().expect("a key");
+            let certificate = params.self_signed(&key).expect("a certificate");
+            let outcome = serves_now(certificate.der(), now);
+            assert_eq!(outcome.is_ok(), serves, "{outcome:?}");
+        }
+    }
 
     /// Passes the connection on after a pause, as a slow connect would.
     #[derive(Debug)]
