@@ -1448,7 +1448,7 @@ fn expected(catalog: &Catalog, types: &[String], counts: &HashMap<String, u64>) 
 
 /// A `system.*` type is listed at both tiers, as the slice takes it
 /// (`store::slice_takes`).
-fn listed_tier(declared: Option<&str>, tier: SliceTier) -> SliceTier {
+pub(crate) fn listed_tier(declared: Option<&str>, tier: SliceTier) -> SliceTier {
     match declared {
         Some(declared) if store::is_system(declared) => SliceTier::All,
         _ => tier,

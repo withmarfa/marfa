@@ -6,9 +6,14 @@ use std::path::{Path, PathBuf};
 use super::lists::Lists;
 use super::registry::{Registered, Registry, gone};
 use super::{Catalog, Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
+use super::settings::Settings;
 use crate::directory::Directory;
-use crate::model::{Edge, Item};
+use crate::http::ByIdRead;
 use crate::{Core, Result, store};
+use marfa_rules::filter::{
+    FilterCondition, FilterExpression, FilterField, FilterJoin, FilterOperator, FilterValue,
+    SystemField,
+};
 
 const META_STORE: &str = "folder_store";
 const META_LISTED_IN: &str = "folder_listed_in";
@@ -61,6 +66,8 @@ pub(super) struct Peer {
     /// Its bindings by path, as item and bytes.
     bound: OnceCell<HashMap<String, (String, String)>>,
     catalog: OnceCell<Option<Catalog>>,
+    /// Its folder's settings as the server now holds them.
+    current: OnceCell<Option<Settings>>,
 }
 
 /// Another folder's directory, walked once a pass.
@@ -150,6 +157,7 @@ impl Peer {
             walked: OnceCell::new(),
             bound: OnceCell::new(),
             catalog: OnceCell::new(),
+            current: OnceCell::new(),
         }
     }
 
@@ -204,7 +212,7 @@ impl Peer {
         })
     }
 
-    fn holds_document_of(&self, item_id: &str, heard: impl Fn(&Edge) -> bool) -> bool {
+    fn holds_document_of(&self, item_id: &str) -> bool {
         let Some(folder) = &self.folder else {
             return false;
         };
@@ -212,7 +220,6 @@ impl Peer {
             edges.iter().any(|edge| {
                 edge.edge_type == super::embeds::ATTACHMENT_EDGE
                     && self.holds(&edge.to_id) == Some(true)
-                    && heard(edge)
             })
         })
     }
@@ -272,6 +279,28 @@ impl Peer {
         self.root_dir.as_ref().is_some_and(|root| {
             plainly_inside(root, key) && root.entry_metadata(Path::new(key)).is_ok()
         })
+    }
+
+    /// Whether its file of the item is on disk and is that item's, read now:
+    /// a document by its id line, bytes by the hash it bound.
+    fn carries(&self, item_id: &str) -> bool {
+        let (Some(bound), Some(root)) = (self.bound_to(item_id), &self.root_dir) else {
+            return false;
+        };
+        if !plainly_inside(root, &bound.path) {
+            return false;
+        }
+        let Ok((directory, name)) = root.parent(Path::new(&bound.path), false) else {
+            return false;
+        };
+        let Ok(bytes) = directory.read(Path::new(&name)) else {
+            return false;
+        };
+        if carries_frontmatter(Path::new(&bound.path)) && !self.file_item(item_id) {
+            id_of_reader(bytes.as_slice()).ok().flatten().as_deref() == Some(item_id)
+        } else {
+            state::hash(&bytes) == bound.content_hash
+        }
     }
 
     fn walked(&self) -> &Walked {
@@ -544,22 +573,6 @@ impl<'a> Peers<'a> {
             .filter(|peer| peer.follows_another(&self.of.folder))
     }
 
-    /// A tag write can change query membership without advancing the item's version.
-    fn heard(&self, peer: &Peer, item_id: &str) -> bool {
-        let read = |folder: &Folder| folder.core.get(item_id).ok().flatten();
-        let (Some(ours), Some(theirs)) = (read(self.of), peer.folder.as_ref().and_then(read))
-        else {
-            return false;
-        };
-        let tags = |item: &Item| item.tags.iter().cloned().collect::<HashSet<_>>();
-        ours.version == theirs.version
-            && ours.r#type == theirs.r#type
-            && ours.state == theirs.state
-            && ours.tier == theirs.tier
-            && ours.trashed_at == theirs.trashed_at
-            && tags(&ours) == tags(&theirs)
-    }
-
     pub(super) fn unreadable(&self) -> Option<&str> {
         self.loaded().1.as_deref()
     }
@@ -752,20 +765,108 @@ impl<'a> Peers<'a> {
         }
     }
 
+    /// Whether another folder files the item: its copy holds the item or a
+    /// document it is attached to, its file of the item is on disk as
+    /// bound, and the server, asked now, says that folder's query holds it.
     pub(super) fn filed_elsewhere(&self, item_id: &str) -> bool {
         self.other_folders().any(|peer| {
-            (peer.holds(item_id) == Some(true) && self.heard(peer, item_id)
-                || peer.holds_document_of(item_id, |edge| {
-                    self.heard(peer, &edge.to_id)
-                        && self.of.core.edges_from(item_id).is_ok_and(|ours| {
-                            ours.iter()
-                                .any(|own| own.id == edge.id && own.version == edge.version)
-                        })
-                }))
-                && peer
-                    .bound_to(item_id)
-                    .is_some_and(|bound| peer.present(&bound.path))
+            (peer.holds(item_id) == Some(true) || peer.holds_document_of(item_id))
+                && peer.carries(item_id)
+                && self.proven(peer, item_id)
         })
+    }
+
+    /// Whether the server says the other folder's current query holds the
+    /// item, or a document the item is attached to.
+    fn proven(&self, peer: &Peer, item_id: &str) -> bool {
+        let Some(settings) = self.current(peer) else {
+            return false;
+        };
+        match self.query_holds(settings, item_id) {
+            Some(true) => return true,
+            None => return false,
+            Some(false) => {}
+        }
+        let Ok(http) = self.of.core.http() else {
+            return false;
+        };
+        let Ok(ByIdRead::Row((_, edges))) = crate::hydrate::read_with_edges_answered(http, item_id)
+        else {
+            return false;
+        };
+        edges.iter().any(|edge| {
+            edge.edge_type == super::embeds::ATTACHMENT_EDGE
+                && edge.from_id == item_id
+                && self.query_holds(settings, &edge.to_id) == Some(true)
+        })
+    }
+
+    fn current<'p>(&self, peer: &'p Peer) -> Option<&'p Settings> {
+        peer.current
+            .get_or_init(|| {
+                let id = &peer.folder.as_ref()?.folder;
+                match self.of.core.http().ok()?.item_answered(id).ok()? {
+                    ByIdRead::Row(row) if row.item.state == "active" => {
+                        Settings::of_wire(&row.item).ok()
+                    }
+                    _ => None,
+                }
+            })
+            .as_ref()
+    }
+
+    /// What the server lists of the item under `settings`; `None` where it
+    /// cannot say. The grammar has no grouping, so a filter joined by `OR`
+    /// is asked one condition at a time.
+    fn query_holds(&self, settings: &Settings, item_id: &str) -> Option<bool> {
+        if settings.pending_beneath().is_some() {
+            return Some(false);
+        }
+        let query = settings.slice_query();
+        let id = FilterCondition {
+            field: FilterField::System {
+                name: SystemField::Id,
+            },
+            operator: FilterOperator::Eq,
+            value: Some(FilterValue::Text(item_id.to_string())),
+        };
+        let groups = match &query.filter {
+            None => vec![Vec::new()],
+            Some(filter) => {
+                let read = FilterExpression::decode(filter).ok()?;
+                match read.join {
+                    FilterJoin::All => vec![read.conditions],
+                    FilterJoin::Any => read.conditions.into_iter().map(|one| vec![one]).collect(),
+                }
+            }
+        };
+        let filters = groups
+            .into_iter()
+            .map(|mut conditions| {
+                conditions.push(id.clone());
+                FilterExpression {
+                    join: FilterJoin::All,
+                    conditions,
+                }
+                .encode()
+                .ok()
+            })
+            .collect::<Option<Vec<String>>>()?;
+        let http = self.of.core.http().ok()?;
+        for declared in settings.slice_types() {
+            let declared = (declared != store::EVERY_TYPE).then_some(declared);
+            let tier = crate::hydrate::listed_tier(declared.as_deref(), settings.tier());
+            for filter in &filters {
+                let narrowing = query.members_listing(filter.clone());
+                if http
+                    .lists_item(declared.as_deref(), tier, &narrowing, item_id)
+                    .ok()?
+                {
+                    return Some(true);
+                }
+            }
+        }
+        Some(false)
     }
 
     /// A file another folder let go of, holding the bytes it wrote, to take
@@ -841,6 +942,7 @@ mod tests {
             walked: OnceCell::new(),
             bound: OnceCell::new(),
             catalog: OnceCell::new(),
+            current: OnceCell::new(),
         };
         let moved = to.join("moved.md");
         std::fs::rename(&note, &moved).unwrap();
@@ -968,6 +1070,7 @@ mod tests {
             walked: OnceCell::new(),
             bound: OnceCell::new(),
             catalog: OnceCell::new(),
+            current: OnceCell::new(),
         };
         let walked = peer.walked();
         assert_eq!(walked.files.len(), 6);
@@ -1015,6 +1118,7 @@ mod tests {
             walked: OnceCell::new(),
             bound: OnceCell::new(),
             catalog: OnceCell::new(),
+            current: OnceCell::new(),
         };
         let partial = peer.walked().partial.clone();
         std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o600)).unwrap();

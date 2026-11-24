@@ -1384,6 +1384,23 @@ impl Http {
             .map(drop)
     }
 
+    /// Whether a listing narrowed by `narrowing` holds the item `id`.
+    pub(crate) fn lists_item(
+        &self,
+        declared: Option<&str>,
+        tier: SliceTier,
+        narrowing: &crate::slice::Listing,
+        id: &str,
+    ) -> Result<bool, CoreError> {
+        let mut params: Vec<(&str, &str)> =
+            declared.map(|named| ("type", named)).into_iter().collect();
+        params.push(("tier", tier.as_str()));
+        narrowed(&mut params, narrowing);
+        params.extend([("include", "metadata"), ("limit", "1")]);
+        let page: WirePage<WireItemWithMetadata> = self.get_json(&["items"], &params)?;
+        Ok(page.data.iter().any(|row| row.item.id == id))
+    }
+
     /// `GET /items/stats?by=type`: the rows at `tier`, counted by type, of
     /// every state or of those `narrowing` names and filters, with
     /// hidden types counted only where `hidden` asks for it. The count is not

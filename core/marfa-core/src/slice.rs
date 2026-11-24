@@ -258,6 +258,16 @@ impl SliceQuery {
         self.filter.is_some() || self.beneath.is_some()
     }
 
+    /// A listing of the query's members alone, with `filter` in place of its own.
+    pub(crate) fn members_listing(&self, filter: String) -> Listing {
+        Listing {
+            state: self.member_states().join(","),
+            filter: Some(filter),
+            beneath: self.beneath.clone(),
+            tags: None,
+        }
+    }
+
     pub(crate) fn listing(&self, conflicted: bool) -> Listing {
         Listing {
             state: self.listed_states().join(","),

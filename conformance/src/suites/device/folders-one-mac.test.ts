@@ -253,6 +253,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         ? { edges: { "attached-to": attachments } }
         : {}),
       events: [edges.stream()],
+      follow: edges.events,
     });
     // Before the item doors, whose read would answer for any id.
     const otherRow =
