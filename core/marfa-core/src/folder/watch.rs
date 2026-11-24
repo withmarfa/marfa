@@ -3075,16 +3075,54 @@ mod backoff_tests {
 
     const OTHER_INSTANCE: &str = "11111111-1111-7111-8111-111111111111";
 
-    /// Ten simulated minutes, a second at a time, giving the watch a moment
-    /// of real time at each step for what it sends.
-    fn ten_minutes(ended: &AtomicBool, mut each: impl FnMut(usize)) {
+    /// Ten simulated minutes, a second at a time. After each second the watch
+    /// gets all the real time it needs: the next second starts once every
+    /// wait the second reached has been asked again, no pass is under way and
+    /// the watch waits on the clock.
+    fn ten_minutes(stop: &AtomicBool, ended: &AtomicBool, mut each: impl FnMut(usize)) {
         for second in 0..600 {
             if ended.load(Ordering::SeqCst) {
                 return;
             }
             each(second);
+            let reached = crate::clock::waits()
+                .iter()
+                .filter(|wait| wait.left.is_some_and(|left| left <= SECOND))
+                .count();
             crate::clock::advance(SECOND);
-            std::thread::sleep(Duration::from_millis(5));
+            settled(stop, ended, reached);
+        }
+    }
+
+    /// Waits, in real time, until the watch ended, or until `reached` waits
+    /// have been asked anew since the clock moved (a wait not yet moved is
+    /// the whole of what it asked), no pass is under way and a wait is held,
+    /// the watch having begun.
+    fn settled(stop: &AtomicBool, ended: &AtomicBool, reached: usize) {
+        let give_up = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let waits = crate::clock::waits();
+            let asked_anew = waits
+                .iter()
+                .filter(|wait| wait.left.is_none_or(|left| left == wait.asked))
+                .count();
+            if ended.load(Ordering::SeqCst)
+                || (turns() > TURNS_FROM.load(Ordering::SeqCst)
+                    && asked_anew >= reached
+                    && passes() == passes_ended()
+                    && !waits.is_empty())
+            {
+                return;
+            }
+            if std::time::Instant::now() >= give_up {
+                stop.store(true, Ordering::SeqCst);
+                panic!(
+                    "the watch neither ended nor waited on the clock: {} passes started, {} ended, waits {waits:?}, {reached} reached",
+                    passes(),
+                    passes_ended(),
+                );
+            }
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 
@@ -3097,14 +3135,27 @@ mod backoff_tests {
 
     /// The process-wide pass count at the start of the test.
     static COUNTED_FROM: AtomicUsize = AtomicUsize::new(0);
+    static ENDED_FROM: AtomicUsize = AtomicUsize::new(0);
+    static TURNS_FROM: AtomicUsize = AtomicUsize::new(0);
 
     fn start_counting() {
         crate::fault::observe(true);
         COUNTED_FROM.store(crate::fault::reached("folder-pass-start"), Ordering::SeqCst);
+        ENDED_FROM.store(crate::fault::reached("folder-pass-ended"), Ordering::SeqCst);
+        TURNS_FROM.store(turns(), Ordering::SeqCst);
     }
 
     fn passes() -> usize {
         crate::fault::reached("folder-pass-start") - COUNTED_FROM.load(Ordering::SeqCst)
+    }
+
+    fn passes_ended() -> usize {
+        crate::fault::reached("folder-pass-ended") - ENDED_FROM.load(Ordering::SeqCst)
+    }
+
+    /// Turns of the watch's loop, in the process.
+    fn turns() -> usize {
+        crate::fault::reached("folder-watch-turn")
     }
 
     #[test]
@@ -3122,7 +3173,7 @@ mod backoff_tests {
                 ended.store(true, Ordering::SeqCst);
                 watched
             });
-            ten_minutes(&ended, |_| {});
+            ten_minutes(&stop, &ended, |_| {});
             stop.store(true, Ordering::SeqCst);
             watching.join().unwrap()
         });
@@ -3170,12 +3221,21 @@ mod backoff_tests {
                 let _ = folder.watch(&stop, |_| Ok::<(), ()>(()));
                 ended.store(true, Ordering::SeqCst);
             });
-            ten_minutes(&ended, |second| match second {
+            ten_minutes(&stop, &ended, |second| match second {
                 590 => {
                     before = passes();
+                    let turns_then = turns();
                     change.take().unwrap()();
-                    // The watcher's event arrives on the system's time.
-                    std::thread::sleep(Duration::from_millis(500));
+                    // The watcher's event arrives on the system's time: the
+                    // watch has it once it takes another turn.
+                    let give_up = std::time::Instant::now() + Duration::from_secs(60);
+                    while turns() == turns_then {
+                        if std::time::Instant::now() >= give_up {
+                            stop.store(true, Ordering::SeqCst);
+                            panic!("the watch took no turn after the change on disk");
+                        }
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
                 }
                 595 => after = passes(),
                 _ => {}
