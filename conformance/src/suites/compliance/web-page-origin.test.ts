@@ -7,7 +7,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { checkDeviceCode } from "../../utils/device-check.js";
-import { visibleText } from "../../utils/approval-form.js";
+import { heldOn, visibleText } from "../../utils/approval-form.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import {
   authorize,
@@ -124,7 +124,17 @@ async function approvedCode(
     ),
   );
   expect(consent?.pathname).toBe("/auth/consent");
-  const landed = await decide(server, issuer, cookie, consent!, true, ticked);
+  const screen = await fetch(consent!, { headers: { cookie } });
+  const landed = await decide(
+    server,
+    issuer,
+    cookie,
+    consent!,
+    true,
+    ticked,
+    [],
+    heldOn(await screen.text()),
+  );
   const code = landed?.searchParams.get("code");
   expect(code, `no code on ${String(landed)}`).toBeTruthy();
   return { code: code!, verifier: proof.verifier };

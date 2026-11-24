@@ -102,7 +102,7 @@ pub fn setup_code(view: &SetupCode) -> Result<Page> {
         &body,
         Needs {
             connect: true,
-            confirm_dialog: false,
+            confirm_dialog: None,
         },
     )
 }

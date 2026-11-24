@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { offeredValues } from "../../utils/approval-form.js";
+import { everythingOffered } from "../../utils/approval-form.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -163,12 +163,13 @@ describe("the owner", () => {
     );
     expect(consent.status).toBe(200);
     const html = await consent.text();
-    const scopes = offeredValues(html, "scopes");
-    expect(scopes.length).toBeGreaterThan(0);
-    const form = new URLSearchParams();
-    form.set("user_code", first.user_code);
-    form.set("decision", "approve");
-    for (const scope of scopes) form.append("scopes", scope);
+    const offered = everythingOffered(html);
+    expect(offered.length).toBeGreaterThan(0);
+    const form = new URLSearchParams([
+      ["user_code", first.user_code],
+      ["decision", "approve"],
+      ...offered,
+    ]);
     const approved = await fetch(`${origin}/auth/device/consent`, {
       method: "POST",
       headers: {
@@ -322,12 +323,11 @@ describe("a fresh sign-in", () => {
     await checkDeviceCode(page, page, cookie, first.user_code);
     const consent = await fetch(consentAt, { headers: { cookie } });
     expect(consent.status).toBe(200);
-    const form = new URLSearchParams();
-    form.set("user_code", first.user_code);
-    form.set("decision", "approve");
-    for (const scope of offeredValues(await consent.text(), "scopes")) {
-      form.append("scopes", scope);
-    }
+    const form = new URLSearchParams([
+      ["user_code", first.user_code],
+      ["decision", "approve"],
+      ...everythingOffered(await consent.text()),
+    ]);
     const approved = await fetch(`${page}/auth/device/consent`, {
       method: "POST",
       headers: {

@@ -99,20 +99,20 @@ Access is read the same way wherever a person sees it: on the pages where they a
 
 | Level   | The word      |
 | ------- | ------------- |
-| `none`  | No access     |
-| `read`  | Read only     |
-| `write` | Read and edit |
+| `none`  | No Access     |
+| `read`  | Read Only     |
+| `write` | Read and Edit |
 
 | Row                   | The title                  |
 | --------------------- | -------------------------- |
-| `*`                   | All your data              |
+| `*`                   | Your items                 |
 | `content`             | Your content               |
 | `user.*`              | Your custom types          |
 | `core.*`              | Built-in types             |
 | `common.*`            | Shared types               |
 | `app.*`               | Every app's own data       |
 | `edge.*`              | Links between items        |
-| `profile`             | Profile                    |
+| `profile`             | Your profile               |
 | `profile.name`        | Name                       |
 | `profile.username`    | Username                   |
 | `profile.email`       | Email address              |
@@ -121,22 +121,22 @@ Access is read the same way wherever a person sees it: on the pages where they a
 | `metadata.types`      | Custom data types          |
 | `metadata.edge_types` | Custom relationship types  |
 
-| Power               | The title                                          |
-| ------------------- | -------------------------------------------------- |
-| `keys.mint`         | Make, see, edit and revoke keys                    |
-| `keys.manage`       | See, edit, narrow and revoke every key             |
-| `grants.manage`     | See and disconnect other apps                      |
-| `config.manage`     | See and change Marfa's settings                    |
-| `instance.read`     | See health, metrics, storage and job status        |
-| `instance.maintain` | Run housekeeping and update the server             |
-| `schema.write`      | Replace or remove type definitions                 |
-| `blobs.manage`      | Read and add any file, and manage file storage     |
-| `webhooks.manage`   | Manage webhooks that send events to other services |
-| `connectors.manage` | See, manage and remove all connectors              |
-| `audit.read`        | Read the activity log                              |
-| `items.purge`       | Delete items in the trash for good                 |
-| `backups.manage`    | See, take, adopt and restore backups               |
-| `sign_ins.manage`   | See, rename and end sign-ins and passkeys          |
+| Power               | The title                    |
+| ------------------- | ---------------------------- |
+| `keys.mint`         | Make keys                    |
+| `keys.manage`       | Manage every key             |
+| `grants.manage`     | Disconnect other apps        |
+| `config.manage`     | Change settings              |
+| `instance.read`     | See server health            |
+| `instance.maintain` | Run housekeeping and updates |
+| `schema.write`      | Replace or remove types      |
+| `blobs.manage`      | Manage files                 |
+| `webhooks.manage`   | Manage webhooks              |
+| `connectors.manage` | Manage connectors            |
+| `audit.read`        | Read the activity log        |
+| `items.purge`       | Empty the trash              |
+| `backups.manage`    | Back up and restore          |
+| `sign_ins.manage`   | Manage sign-ins and passkeys |
 
 ### The instance
 

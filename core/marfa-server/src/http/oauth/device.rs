@@ -4,7 +4,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::IntoResponse;
 
-use super::{Browser, Fields, problem_answer};
+use super::{Browser, Fields, drawn_again, problem_answer};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::auth::Visit;
@@ -196,6 +196,7 @@ pub async fn screen(State(app): State<Arc<App>>, Browser(owner): Browser, uri: U
             let view = Consent {
                 offer: *offer,
                 answering: Answering::Device(typed),
+                again: None,
             };
             Ok(pages::consent(&view)?.into_response())
         }
@@ -210,6 +211,7 @@ pub async fn screen(State(app): State<Arc<App>>, Browser(owner): Browser, uri: U
 pub async fn answer(
     State(app): State<Arc<App>>,
     Browser(owner): Browser,
+    headers: HeaderMap,
     body: JsonBody,
 ) -> Answer {
     let fields = Fields(body.form_pairs().await?);
@@ -225,11 +227,20 @@ pub async fn answer(
         Some("deny") => false,
         _ => return Err(Refusal::validation("Provide `decision` as approve or deny.").into()),
     };
-    let answered = device::answer(&app, &owner, typed, approve, fields.post()).await?;
+    let post = fields.post();
+    let answered = device::answer(&app, &owner, typed, approve, post.clone()).await?;
     match answered {
         Answered::Approved => Ok(pages::notice(&Notice::device_approved())?.into_response()),
         Answered::Denied => Ok(pages::notice(&Notice::device_denied())?.into_response()),
         Answered::Unchecked => to_check(typed),
         Answered::Closed(closed) => not_open(&app, closed, typed),
+        Answered::Changed(offer) => {
+            let view = Consent {
+                offer: *offer,
+                answering: Answering::Device(typed.to_string()),
+                again: Some(post),
+            };
+            drawn_again(&view, &headers)
+        }
     }
 }

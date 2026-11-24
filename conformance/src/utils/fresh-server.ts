@@ -10,7 +10,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { signInOwnerWithPassword } from "../client/owner-session.js";
-import { offeredValues } from "./approval-form.js";
+import { everythingOffered } from "./approval-form.js";
 import { checkDeviceCode } from "./device-check.js";
 import { parseEnvFile, redactSetupProof, TEST_OWNER } from "./target.js";
 import {
@@ -895,14 +895,12 @@ export async function startDeviceFlow(
         );
       }
       const html = await consent.text();
-      const form = new URLSearchParams({
-        user_code: code.user_code,
-        decision: "approve",
-      });
       // The owner approves everything the device asked for.
-      for (const scope of offeredValues(html, "scopes")) {
-        form.append("scopes", scope);
-      }
+      const form = new URLSearchParams([
+        ["user_code", code.user_code],
+        ["decision", "approve"],
+        ...everythingOffered(html),
+      ]);
       const approved = await fetch(`${origin}/auth/device/consent`, {
         method: "POST",
         redirect: "manual",
@@ -913,9 +911,14 @@ export async function startDeviceFlow(
         },
         body: form,
       });
-      if (approved.status !== 200) {
+      // A page drawn again or a denial is not an approval.
+      const answer = await approved.text();
+      if (
+        approved.status !== 200 ||
+        !answer.includes("Your device is connected")
+      ) {
         throw new Error(
-          `the owner's approval was refused: ${String(approved.status)}`,
+          `the owner's approval was not taken: ${String(approved.status)}`,
         );
       }
     },

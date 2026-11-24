@@ -762,7 +762,7 @@ mod access_tests {
     fn a_key_is_named_and_then_says_what_it_holds() {
         assert_eq!(
             key_text(&key()),
-            "key_1  Reader  tier library  no expiry\n  source reader-source\n  claims shared-a, shared-b\n  created 2026-10-01T09:00:00.000Z  last used 2026-10-19T12:30:00.000Z\n  core.note  Read and edit\n  core.task  Read only\n  Powers: Read the activity log"
+            "key_1  Reader  tier library  no expiry\n  source reader-source\n  claims shared-a, shared-b\n  created 2026-10-01T09:00:00.000Z  last used 2026-10-19T12:30:00.000Z\n  core.note  Read and Edit\n  core.task  Read Only\n  Powers: Read the activity log"
         );
     }
 
@@ -798,11 +798,11 @@ mod access_tests {
     #[test]
     fn a_key_text_escapes_a_claimed_source_that_would_forge_a_line() {
         let mut key = key();
-        key["sources"] = json!(["a\n  core.note  Read and edit"]);
+        key["sources"] = json!(["a\n  core.note  Read and Edit"]);
         let text = key_text(&key);
         let forged = text
             .lines()
-            .filter(|line| line.starts_with("  core.note  Read and edit"))
+            .filter(|line| line.starts_with("  core.note  Read and Edit"))
             .count();
         assert_eq!(forged, 1, "{text}");
     }
@@ -817,7 +817,7 @@ mod access_tests {
         let text = listing(&json!({ "data": [key(), second], "next_cursor": null }));
         assert!(text.contains("key_1  Reader  tier library  no expiry\n  source reader-source"));
         assert!(text.ends_with(
-            "  created 2026-10-01T09:00:00.000Z  last used 2026-10-19T12:30:00.000Z\n  No access"
+            "  created 2026-10-01T09:00:00.000Z  last used 2026-10-19T12:30:00.000Z\n  No Access"
         ));
         assert_eq!(
             listing(&json!({ "data": [], "next_cursor": null })),

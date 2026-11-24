@@ -1,6 +1,7 @@
 import { signInOwnerWithPassword } from "../../client/owner-session.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { checkDeviceCode } from "../../utils/device-check.js";
+import { heldOn } from "../../utils/approval-form.js";
 import { createHash, randomBytes } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
@@ -246,10 +247,10 @@ describe("a device signing in", () => {
       { headers: { cookie }, redirect: "manual" },
     );
     expect(claimed.status).toBe(200);
-    await claimed.body?.cancel();
     const form = new URLSearchParams({
       user_code: userCode,
       decision: "approve",
+      held: heldOn(await claimed.text()),
     });
     for (const scope of ticked) form.append("scopes", scope);
     const decision = await fetch(`${server!.apiUrl}/auth/device/consent`, {
