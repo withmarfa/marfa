@@ -163,6 +163,7 @@ async function decideDevice(
 function approveWith(
   consent: URL,
   fields: readonly [string, string][],
+  accept?: string,
 ): Promise<Response> {
   return fetch(`${server.apiUrl}/auth/consent`, {
     method: "POST",
@@ -171,6 +172,7 @@ function approveWith(
       cookie,
       origin,
       "content-type": "application/x-www-form-urlencoded",
+      ...(accept ? { accept } : {}),
     },
     body: new URLSearchParams([
       ["decision", "approve"],
@@ -235,6 +237,57 @@ const adminLevels = (html: string): string[] =>
   readControls(html)
     .find((c) => c.name === "admin")
     ?.options.map((o) => o.value) ?? [];
+
+/** The app's grant, as the owner's grant list shows it. */
+async function grantOf(app: App): Promise<{ id: string; scopes: string[] }> {
+  const listed = await fetch(`${server.apiUrl}/grants`, {
+    headers: { authorization: `Bearer ${server.managementKey}` },
+  });
+  const grant = (
+    (await listed.json()) as {
+      data: { id: string; client_id: string; scopes: string[] }[];
+    }
+  ).data.find((g) => g.client_id === app.clientId);
+  expect(grant, "the app holds no grant").toBeDefined();
+  return grant!;
+}
+
+/** The person disconnects the app from another tab. */
+async function disconnect(app: App): Promise<void> {
+  const revoked = await fetch(
+    `${server.apiUrl}/grants/${(await grantOf(app)).id}`,
+    {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${server.managementKey}` },
+    },
+  );
+  expect(revoked.status).toBe(200);
+}
+
+/** The person narrows the app's access to `scopes` from another tab. */
+async function narrow(app: App, scopes: string[]): Promise<void> {
+  const grant = await grantOf(app);
+  const narrowed = await fetch(`${server.apiUrl}/grants/${grant.id}`, {
+    method: "PATCH",
+    headers: {
+      authorization: `Bearer ${server.managementKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ scopes, expected_scopes: grant.scopes }),
+  });
+  expect(narrowed.status, await narrowed.text()).toBe(200);
+}
+
+const CHANGED = "This app's access changed after this page opened.";
+
+/** A post answered with the approval page drawn again, saying the access changed. */
+async function drawnAgain(answered: Response): Promise<string> {
+  expect(answered.status).toBe(409);
+  expect(answered.headers.get("content-type")).toContain("text/html");
+  const html = await answered.text();
+  expect(visibleText(html)).toContain(CHANGED);
+  return html;
+}
 
 describe("what the approval pages offer", () => {
   const booted = bootFor("approval-offers");
@@ -413,6 +466,15 @@ describe("the admin level on the approval pages", () => {
           "none",
           "custom",
         ]);
+    // Only what the app does not hold counts: holding keys.mint leaves
+    // instance.read alone new, and Limited would give all of it.
+    const asked = "core.note:read instance.read keys.mint";
+    const app = await register(asked);
+    const first = await consentScreen(app, "core.note:read keys.mint");
+    const held = await approveWith(first.consent, asDrawn(first.html));
+    expect((await sentTo(server, held))?.searchParams.get("code")).toBeTruthy();
+    const again = await consentScreen(app, asked);
+    expect(adminLevels(again.html)).toEqual(["full", "none", "custom"]);
   });
 
   it("shows no admin level to a request that names no permission, on both pages", async () => {
@@ -985,7 +1047,6 @@ describe("what an approval grants an app whose access changed while the screen w
 
   const HELD = "core.note:write keys.mint";
   const ASKED = `${HELD} core.task:read`;
-  const CHANGED = "This app's access changed after this page opened.";
 
   /** The app holds `held`, having been approved on the consent screen as drawn. */
   async function holder(held = HELD, asked = ASKED): Promise<App> {
@@ -997,46 +1058,6 @@ describe("what an approval grants an app whose access changed while the screen w
     );
     expect(sent?.searchParams.get("code")).toBeTruthy();
     return app;
-  }
-
-  /** The app's grant, as the owner's grant list shows it. */
-  async function grantOf(app: App): Promise<{ id: string; scopes: string[] }> {
-    const listed = await fetch(`${server.apiUrl}/grants`, {
-      headers: { authorization: `Bearer ${server.managementKey}` },
-    });
-    const grant = (
-      (await listed.json()) as {
-        data: { id: string; client_id: string; scopes: string[] }[];
-      }
-    ).data.find((g) => g.client_id === app.clientId);
-    expect(grant, "the app holds no grant").toBeDefined();
-    return grant!;
-  }
-
-  /** The person disconnects the app from another tab. */
-  async function disconnect(app: App): Promise<void> {
-    const revoked = await fetch(
-      `${server.apiUrl}/grants/${(await grantOf(app)).id}`,
-      {
-        method: "DELETE",
-        headers: { authorization: `Bearer ${server.managementKey}` },
-      },
-    );
-    expect(revoked.status).toBe(200);
-  }
-
-  /** The person narrows the app's access to `scopes` from another tab. */
-  async function narrow(app: App, scopes: string[]): Promise<void> {
-    const grant = await grantOf(app);
-    const narrowed = await fetch(`${server.apiUrl}/grants/${grant.id}`, {
-      method: "PATCH",
-      headers: {
-        authorization: `Bearer ${server.managementKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ scopes, expected_scopes: grant.scopes }),
-    });
-    expect(narrowed.status, await narrowed.text()).toBe(200);
   }
 
   /** The scopes the code of an approval on the consent screen exchanges for. */
@@ -1077,15 +1098,6 @@ describe("what an approval grants an app whose access changed while the screen w
     expect(landed?.pathname, String(landed)).toBe("/auth/consent");
     const page = await fetch(landed!, { headers: { cookie } });
     return { screen: { html: await page.text(), consent: landed! }, proof };
-  }
-
-  /** A post answered with the approval page drawn again, saying the access changed. */
-  async function drawnAgain(answered: Response): Promise<string> {
-    expect(answered.status).toBe(200);
-    expect(answered.headers.get("content-type")).toContain("text/html");
-    const html = await answered.text();
-    expect(visibleText(html)).toContain(CHANGED);
-    return html;
   }
 
   /** Whether a browser request for `scope` is answered with a code and no screen. */
@@ -1153,6 +1165,24 @@ describe("what an approval grants an app whose access changed while the screen w
     const { screen, proof } = await askAgain(app);
     await disconnect(app);
 
+    // A caller that takes only JSON is told of the conflict, and one that
+    // takes a page gets the page drawn again.
+    const json = await approveWith(
+      screen.consent,
+      asDrawn(screen.html),
+      "application/json",
+    );
+    expect(json.status).toBe(409);
+    expect(
+      ((await json.json()) as { error?: { code?: string } }).error?.code,
+    ).toBe("conflict");
+    await drawnAgain(
+      await approveWith(
+        screen.consent,
+        asDrawn(screen.html),
+        "application/json, text/html",
+      ),
+    );
     const html = await drawnAgain(
       await approveWith(screen.consent, asDrawn(screen.html)),
     );
@@ -1176,21 +1206,25 @@ describe("what an approval grants an app whose access changed while the screen w
   it("gives back no held read through Read only beside the write once the app is disconnected", async () => {
     const asked = "core.note:read core.note:write core.task:read";
     /** Approve the read alone, then post Read only and the tasks on a second screen. */
-    async function readOnlyAndTasks(cut: boolean): Promise<Response> {
+    async function readOnlyAndTasks(cut: boolean): Promise<{
+      app: App;
+      answered: Response;
+      proof: ReturnType<typeof pkce>;
+    }> {
       const app = await register(asked);
       const first = await consentScreen(app, "core.note:read");
       const held = await decide(server, origin, cookie, first.consent, true, [
         "core.note:read",
       ]);
       expect(held?.searchParams.get("code")).toBeTruthy();
-      const { screen } = await askAgain(app, asked);
+      const { screen, proof } = await askAgain(app, asked);
       const readOnly = selectNamed(screen.html, "Note")?.options.find(
         (o) => o.label === "Read only",
       );
       // The held level is offered, and posts nothing.
       expect(readOnly?.value).toBe("");
       if (cut) await disconnect(app);
-      return decideResponse(
+      const answered = await decideResponse(
         server,
         origin,
         cookie,
@@ -1200,13 +1234,37 @@ describe("what an approval grants an app whose access changed while the screen w
         [],
         heldOn(screen.html),
       );
+      return { app, answered, proof };
     }
 
     // The witness: while the read is held, it comes with the approval.
-    const kept = await sentTo(server, await readOnlyAndTasks(false));
-    expect(kept?.searchParams.get("code")).toBeTruthy();
+    const kept = await readOnlyAndTasks(false);
+    expect(
+      await exchanged(
+        kept.app,
+        await sentTo(server, kept.answered),
+        kept.proof,
+      ),
+    ).toEqual(["core.note:read", "core.task:read"]);
     const cut = await readOnlyAndTasks(true);
-    await drawnAgain(cut);
+    await drawnAgain(cut.answered);
+    expect(await holds(cut.app, "core.note:read")).toBe(false);
+    expect(await holds(cut.app, "core.task:read")).toBe(false);
+  });
+
+  it("draws the page again for a stale post that names more than the request, rather than refusing it", async () => {
+    const app = await holder();
+    const { screen } = await askAgain(app);
+    const beyond: [string, string][] = [
+      ...asDrawn(screen.html),
+      ["scopes", "core.bookmark:read"],
+    ];
+    // The witness: on the access the page was drawn on, the post is refused.
+    const refused = await approveWith(screen.consent, beyond);
+    expect(refused.status, await refused.text()).toBe(400);
+    await disconnect(app);
+    await drawnAgain(await approveWith(screen.consent, beyond));
+    expect(await holds(app, "core.task:read")).toBe(false);
   });
 
   it("draws the page again for a post with no held field from an app that holds access, and approves one from an app that holds none", async () => {
@@ -1249,12 +1307,18 @@ describe("what an approval grants an app whose access changed while the screen w
   });
 
   it("draws the page again and restores no power the person removed while it was open, at Full and at Limited, on both pages", async () => {
-    const powers = "core.note:read keys.mint items.purge";
+    const asked = "core.note:read audit.read instance.read keys.mint";
     for (const level of ["full", "limited"]) {
-      const app = await holder("keys.mint", powers);
-      const { screen } = await askAgain(app, powers);
-      const device = await deviceScreen(app, powers);
-      expect(visibleText(screen.html)).toMatch(/Already allowed.*Make keys/);
+      const app = await holder("audit.read", asked);
+      const { screen } = await askAgain(app, asked);
+      const device = await deviceScreen(app, asked);
+      for (const html of [screen.html, device.html]) {
+        expect(visibleText(html), level).toMatch(
+          /Already allowed.*Read the activity log/,
+        );
+        // Limited gives instance.read and not keys.mint, so it is offered.
+        expect(adminLevels(html), level).toContain("limited");
+      }
       await narrow(app, []);
 
       const fields = (html: string): [string, string][] => [
@@ -1267,29 +1331,118 @@ describe("what an approval grants an app whose access changed while the screen w
       const onDevice = await drawnAgain(
         await approveDeviceWith(device, fields(device.html)),
       );
-      expect(await holds(app, "keys.mint"), level).toBe(false);
+      // Read against the access the page was drawn on, either level would
+      // keep audit.read; nothing is granted instead.
+      expect(await holds(app, "audit.read"), level).toBe(false);
+      expect(await holds(app, "instance.read"), level).toBe(false);
       const pending = await poll(app, device);
       expect(pending.body.error, level).toBe("authorization_pending");
-      // Each page drawn again offers the power as new.
+      // Each page drawn again offers the power removed as new.
       for (const html of [browser, onDevice])
         expect(
           readControls(html)
             .filter((c) => c.name === "powers")
-            .map((c) => c.value)
+            .flatMap((c) => c.options.map((o) => o.value).filter(Boolean))
             .sort(),
           level,
-        ).toEqual(["items.purge", "keys.mint"]);
+        ).toEqual(["audit.read", "instance.read", "keys.mint"]);
 
       // The witness: the page drawn again grants the level it shows.
       const approved = await approveDeviceWith(device, fields(onDevice));
+      expect(approved.status, level).toBe(200);
       await approved.body?.cancel();
       const issued = await poll(app, device);
       expect(issued.status, JSON.stringify(issued.body)).toBe(200);
       expect(issued.body.scope?.split(" ").sort(), level).toEqual(
         level === "full"
-          ? ["core.note:read", "items.purge", "keys.mint"]
-          : ["core.note:read"],
+          ? ["audit.read", "core.note:read", "instance.read", "keys.mint"]
+          : ["audit.read", "core.note:read", "instance.read"],
       );
+    }
+  });
+});
+
+describe("what a page drawn again keeps of the choices posted", () => {
+  const booted = bootFor("approval-redrawn");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  const ASKED =
+    "core.note:read core.note:write core.task:read audit.read instance.read keys.mint";
+
+  const chosenOf = (html: string, label: string) =>
+    selectNamed(html, label)?.options.find((o) => o.selected)?.value;
+  const levelOf = (html: string) =>
+    readControls(html)
+      .find((c) => c.name === "admin")
+      ?.options.find((o) => o.selected)?.value;
+  const allowed = (html: string) =>
+    readControls(html)
+      .filter((c) => c.name === "powers")
+      .flatMap((c) => c.options.filter((o) => o.selected && o.value))
+      .map((o) => o.value)
+      .sort();
+  const choicesOpen = (html: string) => /<details\b[^>]*\sopen[\s>]/.test(html);
+
+  it("draws the page again with the choices the post made that it still offers, open, on both pages", async () => {
+    const app = await register(ASKED);
+    const first = await consentScreen(app, "core.task:read");
+    const held = await approveWith(first.consent, asDrawn(first.html));
+    expect((await sentTo(server, held))?.searchParams.get("code")).toBeTruthy();
+    const browser = await consentScreen(app, ASKED);
+    const device = await deviceScreen(app, ASKED);
+    // The witness: a page opened starts at what the request names, its
+    // choices closed.
+    for (const html of [browser.html, device.html]) {
+      expect(chosenOf(html, "Note")).toBe("core.note:write");
+      expect(levelOf(html)).toBe("full");
+      expect(allowed(html)).toEqual([
+        "audit.read",
+        "instance.read",
+        "keys.mint",
+      ]);
+      expect(choicesOpen(html)).toBe(false);
+    }
+    await narrow(app, []);
+
+    const chosen = (html: string): [string, string][] => [
+      ["held", heldOn(html)],
+      ["scopes", "core.note:read"],
+      ["admin", "custom"],
+      ["powers", ""],
+      ["powers", "instance.read"],
+      ["powers", ""],
+    ];
+    const pages = [
+      await drawnAgain(
+        await approveWith(browser.consent, chosen(browser.html)),
+      ),
+      await drawnAgain(await approveDeviceWith(device, chosen(device.html))),
+    ];
+    for (const html of pages) {
+      expect(choicesOpen(html)).toBe(true);
+      expect(chosenOf(html, "Note")).toBe("core.note:read");
+      // Task is new on the page drawn again, and the post chose nothing for it.
+      expect(selectNamed(html, "Task")?.options.map((o) => o.value)).toContain(
+        "core.task:read",
+      );
+      expect(chosenOf(html, "Task")).toBe("");
+      expect(levelOf(html)).toBe("custom");
+      expect(allowed(html)).toEqual(["instance.read"]);
+    }
+  });
+
+  it("says under the rows a page without scripts shows which choice makes them count, on both pages", async () => {
+    const lines = [
+      "These count when Admin is set to Custom.",
+      "These count when All your data is set to Choose types.",
+    ];
+    for (const [page, html] of await bothPages("*:read keys.mint")) {
+      for (const line of lines) expect(visibleText(html), page).toContain(line);
+    }
+    // The witness: with no level above them, no row needs the line.
+    for (const [page, html] of await bothPages("core.note:read")) {
+      expect(visibleText(html), page).not.toContain("These count when");
     }
   });
 });
