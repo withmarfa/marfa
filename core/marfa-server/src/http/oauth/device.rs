@@ -4,7 +4,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::IntoResponse;
 
-use super::{Browser, Fields, problem_answer};
+use super::{Browser, Fields, drawn_again, problem_answer};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::auth::Visit;
@@ -133,6 +133,7 @@ pub async fn screen(
             let view = Consent {
                 offer: *offer,
                 answering: Answering::Device(typed),
+                again: None,
             };
             Ok(pages::consent(&view)?.into_response())
         }
@@ -148,6 +149,7 @@ pub async fn answer(
     State(app): State<Arc<App>>,
     visit: Visit,
     Browser(owner): Browser,
+    headers: HeaderMap,
     body: JsonBody,
 ) -> Answer {
     let fields = Fields(body.form_pairs().await?);
@@ -166,7 +168,8 @@ pub async fn answer(
     if let Some(wait) = device::admit_lookup(&app, visit.address, Some(&owner)) {
         return too_many(wait);
     }
-    let answered = device::answer(&app, &owner, typed, approve, fields.post()).await?;
+    let post = fields.post();
+    let answered = device::answer(&app, &owner, typed, approve, post.clone()).await?;
     match answered {
         Answered::Approved => Ok(pages::notice(&Notice::device_approved())?.into_response()),
         Answered::Denied => Ok(pages::notice(&Notice::device_denied())?.into_response()),
@@ -175,5 +178,13 @@ pub async fn answer(
         }
         Answered::Code(lookup) => blocked(lookup, typed),
         Answered::SignInAgain => to_sign_in_again(&app, typed),
+        Answered::Changed(offer) => {
+            let view = Consent {
+                offer: *offer,
+                answering: Answering::Device(typed.to_string()),
+                again: Some(post),
+            };
+            drawn_again(&view, &headers)
+        }
     }
 }

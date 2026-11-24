@@ -23,7 +23,6 @@ let origin: string;
 let cookie: string;
 
 const CALLBACK = "http://127.0.0.1:9/callback";
-const CAUTION = "can't confirm who made this app";
 const SIGN_IN_CAUTION = "hasn't verified this app";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -143,11 +142,10 @@ async function deviceApprovalPage(
 }
 
 describe("an app a person approves", () => {
-  it("is shown with the caution on the consent page", async () => {
+  it("is marked unverified beside its name on the consent page", async () => {
     const app = await register("Consent App", ["authorization_code"]);
     const page = visibleText(await consentPage(app.clientId));
-    expect(page).toContain("Consent App");
-    expect(page).toContain(CAUTION);
+    expect(page).toMatch(/Consent App \(unverified[,)]/);
   });
 
   it("is shown with the caution on the sign-in page", async () => {
@@ -157,11 +155,10 @@ describe("an app a person approves", () => {
     expect(page).toContain(SIGN_IN_CAUTION);
   });
 
-  it("is shown with the caution on the device approval page", async () => {
+  it("is marked unverified beside its name on the device approval page", async () => {
     const app = await register("Device App", [DEVICE_GRANT]);
     const page = visibleText(await deviceApprovalPage(app));
-    expect(page).toContain("Device App");
-    expect(page).toContain(CAUTION);
+    expect(page).toMatch(/Device App \(unverified[,)]/);
   });
 });
 
@@ -172,9 +169,8 @@ describe("an app a person approves", () => {
 function rowLines(html: string): Map<string, string> {
   const rows = new Map<string, string>();
   for (const { control, text } of readRows(html)) {
-    // Full access or Choose access, and the switch over every permission,
-    // are how a person answers, not a grant.
-    if (control.name === "access" || control.name === "") continue;
+    // The admin level is how a person answers, not a grant.
+    if (control.name === "admin") continue;
     const name = control.label ?? "";
     const after = text.slice(text.lastIndexOf(name) + name.length).trim();
     for (const literal of control.tag === "select"
@@ -215,9 +211,9 @@ describe("a grant a person reads", () => {
       (c) => c.tag === "select" && c.label === "Note",
     );
     expect(notes?.options.map((o) => [o.value, o.label])).toEqual([
-      ["", "No access"],
-      ["core.note:read", "Read only"],
-      ["core.note:write", "Read and edit"],
+      ["core.note:write", "Read and Edit"],
+      ["core.note:read", "Read Only"],
+      ["", "No Access"],
     ]);
     // A wildcard names the types it covers today and says it grows; a
     // grant of one type says no reach beyond it.

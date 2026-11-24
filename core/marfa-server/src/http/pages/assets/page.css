@@ -62,7 +62,7 @@
 @media (max-width: 600px) {
   :root {
     --control: 2.75rem;
-    --small: 2.75rem;
+    --small: 2.25rem;
     --field: 3.5rem;
     --field-text: 1.0625rem;
     --field-x: 0.9375rem;
@@ -111,13 +111,8 @@ body {
   min-width: 0;
 }
 
-.col:has(.wide-page) {
-  flex-basis: 38rem;
-}
-
 @media (max-width: 600px) {
-  .col,
-  .col:has(.wide-page) {
+  .col {
     flex: 1 1 auto;
   }
 }
@@ -386,16 +381,33 @@ code {
   margin-top: 0.5rem;
 }
 
-.under a {
+.under a,
+.under .link {
   display: inline-flex;
   align-items: center;
 }
 
 @media (max-width: 600px) {
-  .under a {
+  .under a,
+  .under .link {
     min-height: 2.75rem;
     margin: -0.8125rem 0;
   }
+}
+
+/* A button drawn as a link: it acts, where a link goes. */
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  cursor: default;
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .hint {
@@ -571,13 +583,8 @@ dialog .lede {
   color: var(--t2);
 }
 
-dialog .err + .fields,
 dialog .lede + .fields {
   margin-top: 1.125rem;
-}
-
-dialog .err {
-  margin-bottom: 0.75rem;
 }
 
 dialog .actions {
@@ -621,7 +628,7 @@ details p + p {
   margin-top: 0.5rem;
 }
 
-/* Parts the allow and passkeys pages still draw their own way. */
+/* Parts the passkeys and sign-in pages still draw their own way. */
 .flow > * + * {
   margin-top: 1rem;
 }
@@ -648,9 +655,7 @@ details p + p {
   border-top: 1px solid var(--line);
 }
 
-.part h2,
-.wide-page h2,
-.wide-page h3 {
+.part h2 {
   font-size: 1.0625rem;
   line-height: 1.3;
   font-weight: 600;
@@ -664,243 +669,145 @@ details p + p {
   font-weight: 600;
 }
 
-.device-check {
-  margin: 1.25rem 0 1rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  background: var(--well);
+/* Sections: a heading over a box, on the column's edges. */
+.sec {
+  margin-top: 1.5rem;
 }
 
-.device-check h2 {
-  margin: 0 0 0.25rem;
-  font-size: 1rem;
-}
-
-.device-check p {
-  margin: 0.25rem 0 0;
-}
-
-.device-check .user-code {
-  margin: 0.25rem 0 0.5rem;
-  font: 700 1.75rem/1.3 ui-monospace, "SF Mono", Menlo, monospace;
-  letter-spacing: 0.08em;
-}
-
-.facts,
-.held ul,
-.gives {
-  margin: 0 0 1rem;
-  padding-left: 1.25rem;
-}
-
-.facts,
-.gives {
-  list-style: disc;
-  color: var(--t2);
-}
-
-.facts {
-  font-size: 0.9375rem;
-}
-
-.held {
-  margin-bottom: 1.25rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-}
-
-.held h2 {
-  margin-bottom: 0.25rem;
-  font-size: 1rem;
-}
-
-.held ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.held li {
+.sec > h2 {
   display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.held .level {
-  color: var(--t2);
-  white-space: nowrap;
-}
-
-fieldset.access {
-  min-width: 0;
-  margin: 0 0 1rem;
-  border: 0;
-}
-
-fieldset.access legend {
-  margin-bottom: 0.5rem;
-  padding: 0;
-  font-size: 1.0625rem;
+  align-items: center;
+  min-height: 1.75rem;
+  margin-bottom: 0.375rem;
+  font-size: 0.8125rem;
+  line-height: 1.2;
   font-weight: 600;
 }
 
-fieldset.access > p {
-  margin-bottom: 0.25rem;
-}
-
-.gives .danger,
-.line.danger {
-  color: var(--red);
-}
-
-.choice {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: 0.75rem;
-  align-items: start;
+/* A line under a box, saying what the box's choices mean together. */
+.after {
   margin-top: 0.5rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--edge);
-  border-radius: 0.5rem;
-  cursor: default;
+  color: var(--t2);
+  font-size: 0.8125rem;
 }
 
-.choice:has(input:checked) {
-  border-color: var(--blue);
-  box-shadow: inset 0 0 0 1px var(--blue);
+/* Rows that start with an icon: the dividers line up with the words. */
+.box.sym > li + li::before {
+  left: 2.75rem;
 }
 
-.choice:has(input:focus-visible) {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-}
-
-.choice input {
-  grid-column: 1;
-  grid-row: 1 / span 2;
+.box > li > .ic {
+  flex: none;
   width: 1.125rem;
   height: 1.125rem;
-  margin: 0.2rem 0 0;
-  accent-color: var(--blue);
-}
-
-.choice .name {
-  grid-column: 2;
-  font-weight: 600;
-}
-
-.choice .sub {
-  grid-column: 2;
   color: var(--t2);
-  font-size: 0.9375rem;
 }
 
-.choose {
-  margin-bottom: 1rem;
+/* A row under another row, and a row with a second line. */
+.box > li.sub .t {
+  padding-left: 1rem;
 }
 
-.js .choose[data-needs-choice]:not(.open),
-.js .types:not(.open) {
+.box > li.sub::before {
+  left: 1.875rem;
+}
+
+.box > li.noted {
+  padding-block: 0.5625rem;
+}
+
+.box .m {
+  display: block;
+  color: var(--t2);
+  font-size: 0.8125rem;
+  line-height: 1.0625rem;
+}
+
+.box .m.ident {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.78125rem;
+}
+
+.box > li.hint {
+  min-height: 0;
+  padding-block: 0.5rem;
+}
+
+/* A part a choice shows or hides is shown by script only; without script every part shows,
+   and the sentences that depend on a choice give way to the ones that hold for all. */
+.js [data-shown-by]:not(.open),
+.js .without-script,
+html:not(.js) .when,
+html:not(.js) .after.whens,
+.js .after.whens:not(:has(.when.open)) {
   display: none;
 }
 
-.choose h3 {
-  margin: 1.25rem 0 0.25rem;
-  font-size: 1rem;
+/* The allow page. */
+/* The sections carry their own space above, so the head leaves none below. */
+.head:has(~ .consent) {
+  margin-bottom: 0;
 }
 
-.choose .hint {
-  margin: 0 0 0.5rem;
+.consent .err[data-form-error] {
+  margin-top: 1rem;
 }
 
-.types {
-  margin: 0 0 0 0.75rem;
-  padding-left: 0.75rem;
-  border-left: 2px solid var(--line);
+.user-code {
+  font: 600 1.75rem/1.3 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.08em;
 }
 
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.625rem 0;
-  border-top: 1px solid var(--line);
+/* Allow comes first in the markup, so Return sends it; it is drawn last. */
+.consent .actions .btn:not(.primary) {
+  order: 1;
 }
 
-.choose > .row:first-child,
-.types > .hint + .row {
-  border-top: 0;
+.consent .actions .btn.primary {
+  order: 2;
 }
 
-.row .text {
-  min-width: 0;
-}
-
-.row .title {
-  font-weight: 600;
-}
-
-.row .line,
-.row .ident {
-  color: var(--t2);
-  font-size: 0.875rem;
-}
-
-.row .ident {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-}
-
-.row input[type="checkbox"][role="switch"] {
-  appearance: none;
+/* Choose is a button drawn over the start of the actions while the choices are closed. */
+.consent .choose {
   position: relative;
-  flex: none;
-  width: 2.75rem;
-  height: 1.625rem;
-  margin: 0;
-  border: 1px solid var(--edge);
-  border-radius: 1rem;
-  background: var(--well);
-  cursor: default;
+  display: flow-root;
+  font-size: inherit;
 }
 
-.row input[type="checkbox"][role="switch"]::after {
-  content: "";
+.consent .choose:not([open]) > summary {
   position: absolute;
-  top: 0.125rem;
-  left: 0.125rem;
-  width: 1.25rem;
-  height: 1.25rem;
-  border-radius: 50%;
-  background: var(--t2);
-  transition: transform 0.15s;
+  top: 1.75rem;
+  left: 0;
+  z-index: 1;
 }
 
-.row input[type="checkbox"][role="switch"]:checked {
-  border-color: var(--blue);
-  background: var(--blue);
+.consent .choose[open] > summary {
+  display: none;
 }
 
-.row input[type="checkbox"][role="switch"]:checked::after {
-  background: var(--on-blue);
-  transform: translateX(1.125rem);
+.consent .choose > summary {
+  list-style: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .row input[type="checkbox"][role="switch"]::after {
-    transition: none;
-  }
+.consent .choose > summary::-webkit-details-marker {
+  display: none;
+}
+
+.consent .choose:not([open]) ~ .actions {
+  padding-left: 6rem;
+}
+
+.consent .choose > :not(summary) {
+  color: var(--t1);
+}
+
+.consent:has(.choose[open]) :is(.glance, .already) {
+  display: none;
 }
 
 @media (max-width: 600px) {
-  .row:not(.power) {
-    flex-wrap: wrap;
-  }
-
-  .row .pop {
-    width: 100%;
+  .user-code {
+    font-size: 1.5rem;
   }
 }
 
@@ -921,12 +828,8 @@ fieldset.access > p {
     outline: 2px solid Highlight;
   }
 
-  .row input[type="checkbox"][role="switch"]:checked {
-    background: Highlight;
-  }
-
-  .row input[type="checkbox"][role="switch"]::after {
-    background: ButtonText;
+  .link {
+    color: LinkText;
   }
 
   .err::before,

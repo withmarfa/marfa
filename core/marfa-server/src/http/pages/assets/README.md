@@ -12,9 +12,12 @@ Every page is built from the parts below. A page names its parts and adds none o
 | Field | `parts::field(id, label, ...)` | One input with its label inside the box. |
 | Joined group | `parts::group(...)` | Fields that answer one question, in one box, with one hint or problem under it. |
 | Actions | `parts::actions()` | Buttons at the trailing edge, the main action last. |
-| Box of rows | `parts::box_of_rows()` | A list of rows, each with words and at most one control. |
+| Box of rows | `parts::box_of_rows(symbols)` | A list of rows, each with words and at most one control. `symbols` lines the dividers up with the words of rows that start with an icon. |
+| Icon | `parts::icon(name)` | The icon at the start of a row: `items`, `link`, `person` or `sliders`. |
 | Pop-up | `parts::pop(id, name, label, ...)` | A choice between levels, as a real `select`. |
 | Dialog | `parts::dialog(id, title, ...)` | A window over the page, drawn as a sheet at the bottom on a phone. |
+
+The rows of the allow page are macros of their own in `../templates/partials/rows.html`: `rows::level` is a row with a pop-up of levels, and `rows::power` is a row of the admin powers with Allow or Don't Allow.
 
 To add a part, write its macro in `parts.html` and its rules in `page.css`, and add a state that shows it to `preview.rs`. Name the part for what it is, not for a page that uses it.
 
@@ -33,6 +36,17 @@ These hold for every page, so a new page gets them by using the parts.
 - **States are styled by what they are.** `:focus`, `:disabled`, `:autofill` and `[aria-invalid="true"]`, not by a class a script adds.
 - **Reduced motion and forced colors** are handled in the stylesheet: no animation under `prefers-reduced-motion`, and system colors under `forced-colors`.
 - **Nothing depends on JavaScript to be readable.** A page without its script shows the same words and fields; the script only adds the checks and passkey steps.
+
+## The allow page
+
+One page, `consent.html`, asks for an app's access and for a device's, so a change to it changes both.
+
+- **A summary, then the choices.** The box at the top says in one line each what the app gets. **Choose…** is a `details` at the start of the actions, and it opens the choices in place: Items, Profile and the admin level, each a real `select` with a label. It is a `details`, not a button, so it works without the script, and Return never opens it.
+- **Allow submits.** Allow is the first button in the markup, so Return in the page submits it, and the stylesheet's `order` draws it last. The tab order therefore reaches Allow before Don't Allow, the reverse of how they are drawn.
+- **Rows count only under their choice.** The rows under Each Type and Custom count only while the pop-up above them is set to that choice. A page without its script shows every row with a line saying so, and a page with its script shows the rows only under that choice.
+- **A level is a word in title case,** from `words.rs`, which also holds the other words of the page. The command line and `GLOSSARY.md` use the same words for the levels, and `ci/access-words.test.ts` holds the three equal.
+- **No caution notice.** An app with a name nobody checked is marked "(unverified)" beside its name, and its name is in `bdi` so a long or right-to-left name wraps and keeps its place.
+- **Confirm it's you** is the shared dialog, a sheet at the bottom on a phone. Its password comes first and "Use a passkey" sits under it.
 
 ## Preview
 
@@ -66,6 +80,6 @@ Open `preview.rs`, in the folder above this one, and add a `State::new(board, sl
 - `slug` is the file's name after the board. Every file name is unique, and the test fails if one repeats.
 - `page` is the result of the page function for a view you build on made-up data.
 
-A state that needs a click, such as a dialog open or a detail opened, takes `.after(&[...])` with preview-only scripts: the generator adds them after the page's own script, in the file only. `OPEN_CONFIRM_DIALOG` and `OPEN_DETAILS` are examples. `.without_javascript()` writes the page with its script removed, to check what a reader sees with JavaScript off.
+A state that needs a click, such as a dialog open or a detail opened, takes `.after(&[...])` with preview-only scripts: the generator adds them after the page's own script, in the file only. `OPEN_CONFIRM_DIALOG` and `OPEN_DETAILS` are examples. `.choose_open()` opens the allow page's Choose… in the file, and `PICK` is a helper for picking a level in a row by its title. `.without_javascript()` writes the page with its script removed, to check what a reader sees with JavaScript off.
 
 A new view gets a state for each thing it can show: its plain page, each problem it can name, and a long or right-to-left name where one is shown.

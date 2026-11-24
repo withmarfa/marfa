@@ -29,7 +29,7 @@
   let opener = null;
 
   function giveFocusBack() {
-    if (dialog?.open || !opener || !opener.isConnected || opener.disabled) return;
+    if (confirmDialog()?.open || !opener || !opener.isConnected || opener.disabled) return;
     opener.focus();
     opener = null;
   }
@@ -63,12 +63,30 @@
     });
   }
 
-  const dialog = document.getElementById("confirm-dialog");
+  // A page drawn again brings its own dialog, so the dialog is looked up each time.
+  function confirmDialog() {
+    return document.getElementById("confirm-dialog");
+  }
+
+  // Each watcher binds an element once, so every watcher can run again after a redraw.
+  const bound = new Map();
+  function bindOnce(kind, element) {
+    if (!element) return false;
+    if (!bound.has(kind)) bound.set(kind, new WeakSet());
+    const seen = bound.get(kind);
+    if (seen.has(element)) return false;
+    seen.add(element);
+    return true;
+  }
 
   function showConfirmError(kind, waitSeconds) {
+    const dialog = confirmDialog();
     for (const element of dialog.querySelectorAll("[data-confirm-error]")) {
       element.hidden = element.dataset.confirmError !== kind;
     }
+    const field = dialog.querySelector("#confirm-password");
+    if (kind === "password") field?.setAttribute("aria-invalid", "true");
+    else field?.removeAttribute("aria-invalid");
     const wait = dialog.querySelector("[data-wait]");
     if (kind === "locked" && wait) {
       const minutes = Math.max(1, Math.ceil(waitSeconds / 60));
@@ -84,6 +102,7 @@
     const answer = await postJson("/auth/confirm", { password: password.value });
     setBusy(buttons, false);
     password.value = "";
+    const dialog = confirmDialog();
     if (answer && answer.status === 200) dialog.close("confirmed");
     else if (answer && answer.status === 401) showConfirmError("password", 0);
     else if (answer && answer.status === 429)
@@ -93,6 +112,7 @@
 
   /** Resolves true once the owner has confirmed, false if they gave up. */
   function confirmItsYou(opening) {
+    const dialog = confirmDialog();
     return new Promise((resolve) => {
       showConfirmError("none", 0);
       opener = opening;
@@ -128,21 +148,26 @@
         credentials: "same-origin",
         cache: "no-store",
         headers: {
-          accept: "application/json",
+          accept: "application/json, text/html",
           "content-type": "application/x-www-form-urlencoded",
         },
         body,
       }).catch(() => null);
 
     let response = await send();
-    if (response && dialog && (await isRecentSignInRefusal(response))) {
+    if (response && confirmDialog() && (await isRecentSignInRefusal(response))) {
       if (await confirmItsYou(opening)) response = await send();
     }
     const text = response ? await response.text() : "";
     const isPage = (response?.headers.get("content-type") ?? "").includes(
       "text/html",
     );
-    const answer = isPage ? null : (() => {
+    // A page comes back whatever its status, such as one drawn again after a conflict.
+    if (isPage) {
+      showPage(text);
+      return;
+    }
+    const answer = (() => {
       try {
         return JSON.parse(text);
       } catch {
@@ -153,8 +178,7 @@
     const done = form.querySelector("[data-form-done]");
     if (done) done.hidden = true;
     if (response && response.ok) {
-      if (isPage) showPage(text);
-      else if (done) {
+      if (done) {
         form.reset();
         if (failure) failure.hidden = true;
         done.hidden = false;
@@ -186,11 +210,18 @@
     const title = next.content.querySelector("title");
     if (title) document.title = title.textContent;
     main.replaceChildren(...incoming.childNodes);
+    const dialog = confirmDialog();
+    const incomingDialog = next.content.querySelector("#confirm-dialog");
+    if (incomingDialog && dialog) dialog.replaceWith(incomingDialog);
+    else if (incomingDialog) main.after(incomingDialog);
+    else if (dialog) dialog.remove();
+    enhance();
     window.scrollTo(0, 0);
   }
 
   function watchChanges() {
     for (const form of document.querySelectorAll("form[data-change]")) {
+      if (!bindOnce("change", form)) continue;
       form.addEventListener("submit", (event) => {
         if (event.defaultPrevented) return;
         event.preventDefault();
@@ -205,7 +236,7 @@
   // A form the browser sends keeps its buttons disabled until the answer, or the cached page, returns.
   function watchForms() {
     for (const form of document.querySelectorAll("form:not([data-change], [method=dialog])")) {
-      if (form.dataset.passkeyRenameForm) continue;
+      if (form.dataset.passkeyRenameForm || !bindOnce("form", form)) continue;
       form.addEventListener("submit", (event) => {
         if (event.defaultPrevented) return;
         const buttons = form.querySelectorAll("button[type=submit]");
@@ -213,13 +244,14 @@
         setTimeout(() => setBusy(buttons, true));
       });
     }
-    addEventListener("pageshow", (event) => {
-      if (!event.persisted) return;
-      for (const button of document.querySelectorAll("button[type=submit]")) {
-        button.disabled = false;
-      }
-    });
   }
+
+  addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+    for (const button of document.querySelectorAll("button[type=submit]")) {
+      button.disabled = false;
+    }
+  });
 
   // A computer puts the cursor in the first field to fill. A phone waits for a tap, because
   // focus would raise the keyboard over the page before it is read.
@@ -236,7 +268,8 @@
   }
 
   function watchDialog() {
-    if (!dialog) return;
+    const dialog = confirmDialog();
+    if (!bindOnce("dialog", dialog)) return;
     const form = dialog.querySelector("form");
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -362,7 +395,7 @@
   /** Sends a request again once the owner confirms an old sign-in. */
   async function withRecentSignIn(send, opening) {
     const answer = await send();
-    if (answer && dialog && (await isRecentSignInRefusal(answer.response))) {
+    if (answer && confirmDialog() && (await isRecentSignInRefusal(answer.response))) {
       if (await confirmItsYou(opening)) return send();
       return null;
     }
@@ -406,7 +439,7 @@
         const passkey = await askForAssertion();
         if (!passkey) return;
         const answer = await postJson("/auth/confirm", { passkey });
-        if (answer && answer.status === 200) dialog.close("confirmed");
+        if (answer && answer.status === 200) confirmDialog().close("confirmed");
         else showConfirmError("other", 0);
       } catch {
         showConfirmError("other", 0);
@@ -460,6 +493,7 @@
   function watchPasskeys() {
     if (!window.PublicKeyCredential || !addressTakesPasskeys()) return;
     for (const button of document.querySelectorAll("[data-passkey]")) {
+      if (!bindOnce("passkey", button)) continue;
       button.hidden = false;
       const group = button.closest("[data-passkey-group]");
       if (group) group.hidden = false;
@@ -543,9 +577,11 @@
 
   function watchPasskeyRenames() {
     for (const button of document.querySelectorAll("[data-passkey-rename]")) {
+      if (!bindOnce("rename", button)) continue;
       button.addEventListener("click", () => openRename(button));
     }
     for (const form of document.querySelectorAll("[data-passkey-rename-form]")) {
+      if (!bindOnce("rename-form", form)) continue;
       form.addEventListener("submit", (event) => {
         event.preventDefault();
         void renamePasskey(form);
@@ -558,59 +594,52 @@
 
   function watchPasskeyRemovals() {
     for (const button of document.querySelectorAll("[data-passkey-remove]")) {
+      if (!bindOnce("remove", button)) continue;
       button.addEventListener("click", () => void removePasskey(button));
     }
   }
 
-  function watchChoices() {
-    const choose = document.querySelector("[data-needs-choice]");
-    const radios = document.querySelectorAll("input[name=access]");
-    const sync = () => {
-      if (choose) {
-        const picked = document.querySelector("input[name=access]:checked");
-        choose.classList.toggle("open", picked?.value === "choose");
-      }
-      for (const list of document.querySelectorAll("[data-types-list]")) {
-        const all = document.querySelector("select[data-types-switch]");
-        list.classList.toggle("open", all?.value === "choose-types");
-      }
-    };
-    for (const radio of radios) radio.addEventListener("change", sync);
-    for (const select of document.querySelectorAll("select[data-types-switch]")) {
-      select.addEventListener("change", sync);
+  // Without scripts every part shows, and the server reads only what the control's value counts.
+  // A part shows while its control is at `data-shown-at`, or anywhere but `data-hidden-at`.
+  function syncChoices() {
+    for (const part of document.querySelectorAll("[data-shown-by]")) {
+      const control = document.getElementById(part.dataset.shownBy);
+      const { shownAt, hiddenAt } = part.dataset;
+      const shown = shownAt === undefined ? control?.value !== hiddenAt : control?.value === shownAt;
+      part.classList.toggle("open", shown);
     }
-    sync();
   }
 
-  /** One switch turns every permission on or off; each still posts on its own. */
-  function watchPowers() {
-    for (const group of document.querySelectorAll("[data-powers]")) {
-      const all = group.querySelector("[data-powers-all]");
-      const each = [...group.querySelectorAll("[data-powers-each] input[name=scopes]")];
-      if (!all || each.length === 0) continue;
-      all.hidden = false;
-      const sync = () => {
-        const on = each.filter((input) => input.checked).length;
-        all.checked = on === each.length;
-        all.indeterminate = on > 0 && on < each.length;
-      };
-      all.addEventListener("change", () => {
-        for (const input of each) input.checked = all.checked;
-        sync();
-      });
-      for (const input of each) input.addEventListener("change", sync);
-      sync();
+  function watchChoices() {
+    for (const part of document.querySelectorAll("[data-shown-by]")) {
+      const control = document.getElementById(part.dataset.shownBy);
+      if (bindOnce("choice", control)) control.addEventListener("change", syncChoices);
     }
+    syncChoices();
+  }
+
+  // Opening Choose takes the summary away, so focus moves to the first choice.
+  function watchChoose() {
+    for (const details of document.querySelectorAll("details.choose")) {
+      if (!bindOnce("choose", details)) continue;
+      details.addEventListener("toggle", () => {
+        if (details.open) details.querySelector("select")?.focus();
+      });
+    }
+  }
+
+  function enhance() {
+    watchChoices();
+    watchChoose();
+    watchChanges();
+    watchForms();
+    watchDialog();
+    watchPasskeys();
+    watchPasskeyRemovals();
+    watchPasskeyRenames();
   }
 
   exchangeHandoff();
-  watchChoices();
-  watchPowers();
-  watchChanges();
-  watchForms();
-  watchDialog();
-  watchPasskeys();
-  watchPasskeyRemovals();
-  watchPasskeyRenames();
+  enhance();
   focusFirstField();
 })();

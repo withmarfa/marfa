@@ -46,12 +46,10 @@ describe("the access a key holds, as the terminal prints it", () => {
     const lines = outcome.stdout.split("\n").map((line) => line.trim());
     const row = (title: string, level: string) =>
       lines.some((line) => line.replace(/\s+/g, " ") === `${title} ${level}`);
-    expect(row("core.note", "Read and edit"), outcome.stdout).toBe(true);
-    expect(row("core.task", "Read only"), outcome.stdout).toBe(true);
-    expect(row("edge.references", "Read only"), outcome.stdout).toBe(true);
-    expect(lines).toContain(
-      "Powers: Make, see, edit and revoke keys; Delete items in the trash for good",
-    );
+    expect(row("core.note", "Read and Edit"), outcome.stdout).toBe(true);
+    expect(row("core.task", "Read Only"), outcome.stdout).toBe(true);
+    expect(row("edge.references", "Read Only"), outcome.stdout).toBe(true);
+    expect(lines).toContain("Powers: Make keys; Empty the trash");
     // What the key claims and when it was made stay in the readable output.
     expect(outcome.stdout).toMatch(/^ {2}source /m);
     expect(outcome.stdout).toMatch(/^ {2}claims /m);
@@ -82,6 +80,6 @@ describe("the access a key holds, as the terminal prints it", () => {
     trackKey(c.ctx, minted.id);
     const outcome = await c.cli.as(minted.key).run(["keys", "current"]);
     expect(outcome.code, outcome.stderr).toBe(0);
-    expect(outcome.stdout).toContain("No access");
+    expect(outcome.stdout).toContain("No Access");
   });
 });

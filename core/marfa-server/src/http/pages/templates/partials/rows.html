@@ -1,18 +1,12 @@
-{% import "partials/parts.html" as parts %}{% macro level(row) %}<div class="row">
-<div class="text">
-<label class="title" for="{{ row.id }}">{{ row.title }}</label>
-{% for line in row.lines %}<div class="line">{{ line }}</div>
-{% endfor %}{% if let Some(ident) = row.ident %}<div class="ident" id="{{ ident.id }}">{{ ident.text }}</div>
-{% endif %}{% if let Some(now) = row.now %}<div class="line">Now: {{ now }}</div>
-{% endif %}</div>
-{% call parts::pop(row.id, row.field, row.title, described=row.described_by(), switches=row.switches_types) %}{% for option in row.options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.word }}</option>{% endfor %}{% endcall %}
-</div>
+{% import "partials/parts.html" as parts %}{# A row with a choice: its title, the lines under it, then its pop-up. A `sub` row sits under the row above it, shown only while the control `by` is at `at`. #}
+{% macro level(row, sub=false, by="", at="") %}<li{% if sub || !row.lines.is_empty() || row.ident.is_some() || row.now.is_some() %} class="{% if sub %}sub{% endif %}{% if !row.lines.is_empty() || row.ident.is_some() || row.now.is_some() %}{% if sub %} {% endif %}noted{% endif %}"{% endif %}{% if !by.is_empty() %} data-shown-by="{{ by }}" data-shown-at="{{ at }}"{% endif %}>
+<span class="t"><label for="{{ row.id }}">{{ row.title }}</label>{% for line in row.lines %}<span class="m">{{ line }}</span>{% endfor %}{% if let Some(ident) = row.ident %}<span class="m ident" id="{{ ident.id }}">{{ ident.text }}</span>{% endif %}{% if let Some(now) = row.now %}<span class="m">Now: {{ now }}</span>{% endif %}</span>
+{% call parts::pop(row.id, row.field, row.title, described=row.described_by()) %}{% for option in row.options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.word }}</option>{% endfor %}{% endcall %}
+</li>
 {% endmacro %}
-{% macro power(power) %}<div class="row power">
-<div class="text">
-<label class="title" for="{{ power.id }}">{{ power.title }}</label>
-{% if let Some(line) = power.line %}<div class="line{% if power.cannot_be_undone %} danger{% endif %}" id="{{ power.id }}-note">{{ line }}</div>
-{% endif %}</div>
-<input type="checkbox" role="switch" id="{{ power.id }}" name="scopes" value="{{ power.literal }}"{% if power.line.is_some() %} aria-describedby="{{ power.id }}-note"{% endif %}>
-</div>
+{# One power of Custom: Allow or Don't Allow, shown while the admin level is Custom. #}
+{% macro power(power, by, at) %}<li class="sub{% if power.line.is_some() %} noted{% endif %}" data-shown-by="{{ by }}" data-shown-at="{{ at }}">
+<span class="t"><label for="{{ power.id }}">{{ power.title }}</label>{% if let Some(line) = power.line %}<span class="m" id="{{ power.id }}-note">{{ line }}</span>{% endif %}</span>
+{% call parts::pop(power.id, "powers", power.title, described=power.note_id()) %}{% for option in power.options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.word }}</option>{% endfor %}{% endcall %}
+</li>
 {% endmacro %}

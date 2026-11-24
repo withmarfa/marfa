@@ -5,6 +5,7 @@ import {
   stopServer,
 } from "../../../scripts/marfa-server.js";
 import {
+  asDrawn,
   offeredValues,
   readControls,
   visibleText,
@@ -403,7 +404,7 @@ describe("claiming in the sign-in page an app opens", () => {
         const decided = await browser.post("/auth/consent", [
           ["decision", "approve"],
           ["authorization_request", consentUrl.search.slice(1)],
-          ["access", "full"],
+          ...asDrawn(await consent.text()),
         ]);
         const landed = new URL(location(decided));
         expect(`${landed.origin}${landed.pathname}`).toBe(CALLBACK);
@@ -454,7 +455,7 @@ describe("claiming in the sign-in page an app opens", () => {
         const approved = await browser.post("/auth/device/consent", [
           ["user_code", flow.userCode],
           ["decision", "approve"],
-          ["access", "full"],
+          ...asDrawn(await consent.text()),
         ]);
         expect(approved.status).toBe(200);
 
