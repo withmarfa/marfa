@@ -26,7 +26,6 @@ import type {
   Answer,
   RecordedRequest,
   Responder,
-  SseFrame,
 } from "../../device/scripted-server.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
@@ -342,8 +341,6 @@ export function scriptHydration(
     /** A reading of a filter the scripted one does not read, such as a
      *  `status_group` term, which needs the catalog the fixture serves. */
     reading?: FilterReading;
-    /** Events that update rows supplied by the fixture. */
-    follow?: readonly SseFrame[];
   },
 ): void {
   server.answer(
@@ -451,23 +448,12 @@ export function scriptHydration(
   server.copyAnswer("GET", "/items", (request) => {
     const type = request.query.get("type");
     // No type is every type the key reads, which leaves hidden types out.
-    const latest = new Map<string, FilteredItem>();
-    for (const frame of options.follow ?? []) {
-      const data = frame.data as
-        { item?: WireItemOptions; metadata?: { tags?: string[] } } | undefined;
-      if (typeof data?.item?.id === "string")
-        latest.set(data.item.id, {
-          item: data.item,
-          tags: data.metadata?.tags ?? [],
-        });
-    }
-    const forType = (
+    const forType =
       type === null
         ? Object.values(items)
             .flat()
             .filter((row) => !isHiddenType(row.item.type ?? ""))
-        : (items[type] ?? [])
-    ).map((row) => latest.get(row.item.id) ?? row);
+        : (items[type] ?? []);
     // The state parameter is honored rather than ignored, because a
     // scripted server more generous than the real one lets a device that
     // stopped asking for every state stay green while a real copy silently
@@ -1072,7 +1058,6 @@ export async function folderHarness(
     /** A reading of a filter the scripted one does not read, as
      *  `scriptHydration` takes it. */
     reading?: FilterReading;
-    follow?: readonly SseFrame[];
   } = {},
 ): Promise<FolderHarness> {
   const server = options.sharing?.server ?? (await ScriptedServer.start());
@@ -1122,7 +1107,6 @@ export async function folderHarness(
       pagesHeldUntil: options.pagesHeldUntil,
       firstPageDropped: options.firstPageDropped,
       reading: options.reading,
-      follow: options.follow,
     });
   }
   for (const [name, text] of Object.entries(options.files ?? {})) {

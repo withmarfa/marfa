@@ -2578,25 +2578,15 @@ When the person edits a retained copied source before its removal becomes possib
 
 ### `folder-files/let-go-existing-peer`
 
-When an item leaves a folder's query for a reason other than its state or purge, a registered directory that follows another `system.folder` has on disk the file it binds to the item, carrying the item's `marfa_id`, or for a file item the bytes it bound, and the server answers, when the device asks at that pull, that the current query of that `system.folder` holds the item, a device MUST remove this directory’s unchanged owned file of the item.
+When a registered directory that follows another `system.folder` already holds its own file for an item this folder no longer holds, a device MUST remove this directory’s unchanged owned file.
 
-**Reason:** The other directory's copy can be behind the server: its query, the item or a `parent-of` edge can have changed since it last read them, and its file can have been replaced since its last scan.
-
-**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`, `› keeps a file both folders drop in one change when %s, and lets go one the other folder still holds`, `› keeps a file and its attachment another folder's copy holds while %s, and lets them go once the server says that folder holds them`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folder-files/let-go-existing-peer-let-go-count`
 
-When a device removes a file under `folder-files/let-go-existing-peer` or `folder-files/let-go-attachment-with-document`, a device MUST count it as `let_go`.
+When a registered directory that follows another `system.folder` already holds its own file for an item this folder no longer holds, a device MUST count this directory’s file as `let_go`.
 
-**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`, `› keeps a file and its attachment another folder's copy holds while %s, and lets them go once the server says that folder holds them`, `› lets a file folder's image go to a notes folder holding the note it is attached to`.
-
-### `folder-files/let-go-unproven-kept`
-
-When an item leaves a folder's query for a reason other than its state or purge, and the server does not answer at that pull that the current query of another `system.folder`, whose registered directory has the item's file on disk, holds the item or a document it is attached to, a device MUST retain the bound file.
-
-**Reason:** Another directory's copy can still show an item its query no longer holds, and a failed read, a timeout or an unreachable server is no answer. A later pull lets the file go once the server answers.
-
-**Tests:** `device/folders-one-mac.test.ts › keeps a file and its attachment another folder's copy holds while %s, and lets them go once the server says that folder holds them`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folder-files/let-go-attachment-kept`
 
@@ -2608,11 +2598,11 @@ While a document in a folder embeds an item or has it attached, a device MUST NO
 
 ### `folder-files/let-go-attachment-with-document`
 
-When this folder no longer holds an item or any document the item is attached to, a registered directory that follows another `system.folder` has on disk the file it binds to the item, with the bytes it bound, and the server answers, when the device asks at that pull, that the item is attached to a document the current query of that `system.folder` holds, a device MUST remove this directory's unchanged owned file of the item.
+When this folder no longer holds an item or any document the item is attached to, and the query of a registered directory that follows another `system.folder` holds a document the item is attached to and that directory has its own file of the item, a device MUST remove this directory's unchanged owned file of the item and count it as `let_go`.
 
 **Reason:** the other directory writes the file beside the document it holds, so a file kept here would stay unmatched for good.
 
-**Tests:** `device/folders-one-mac.test.ts › moves a note's attachment with the note to another notes folder when %s hears first`, `› keeps a file and its attachment another folder's copy holds while %s, and lets them go once the server says that folder holds them`, `› lets a file folder's image go to a notes folder holding the note it is attached to`.
+**Tests:** `device/folders-one-mac.test.ts › moves a note's attachment with the note to another notes folder when %s hears first`.
 
 ### `folder-files/unmatched-missing-not-rewritten`
 
