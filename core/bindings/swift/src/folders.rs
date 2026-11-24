@@ -365,7 +365,7 @@ impl From<marfa_core::Removal> for FolderRemoval {
             marfa_core::Removal::Deleted {
                 dir,
                 folder,
-                unsent,
+                removed: marfa_core::folder::Removed { unsent, .. },
             } => FolderRemoval {
                 dir: dir.display().to_string(),
                 removed: true,
@@ -691,8 +691,8 @@ guarded! {
             })
         }
 
-        /// Takes the folder off this machine: its state under `.marfa` goes and
-        /// its files stay. Refused while writes wait, except for a first sync
+        /// Takes the folder off this machine: its state under `.marfa` goes,
+        /// but for a record of what it last sent, and its files stay. Refused while writes wait, except for a first sync
         /// still waiting to be confirmed, which this cancels, and except where
         /// another Marfa instance answers at the folder's server, which none of
         /// them can reach; the answer then names each file holding a change the

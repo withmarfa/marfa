@@ -25,6 +25,7 @@ mod push;
 mod refused;
 mod relink;
 mod removal;
+mod removed_record;
 mod retained;
 mod scan;
 mod scoped;
@@ -56,6 +57,7 @@ pub use every::{
     follows, watch_every,
 };
 pub use handover::{HANDOVER_WAIT, held_by_another, not_handed_over};
+pub use removed_record::{Compared, NewerOutcome, Older, Recorded, Removed, SentNewer};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
 pub use storage::StorageCause;
 #[cfg(unix)]
@@ -781,7 +783,7 @@ impl Folder {
     /// server, which no write from it can reach, and its server does not now
     /// answer as the copy's own instance. Answers the writes that waited
     /// unsent there, and the files that hold changes the server never received.
-    pub fn remove(self) -> Result<UnsentChanges> {
+    pub fn remove(self) -> Result<Removed> {
         // A first sync still waiting has sent nothing, so its queue holds
         // only what the scan read from files that stay.
         let waiting = if self.awaiting_confirmation()? {
@@ -792,7 +794,8 @@ impl Folder {
                 .filter(state::unsent)
                 .collect()
         };
-        let unsent = if self.another_instance_answers()? {
+        let instance_changed = self.another_instance_answers()?;
+        let unsent = if instance_changed {
             UnsentChanges {
                 writes: waiting.len(),
                 files: self.unsent_files(&waiting)?,
@@ -805,6 +808,12 @@ impl Folder {
                 self.root.display(),
                 waiting.len()
             )));
+        };
+        // Nothing was agreed with the server before the first sync.
+        let record = if self.awaiting_confirmation()? {
+            None
+        } else {
+            Some(self.sent_record())
         };
         if let Some(registry) = Registry::located() {
             registry.unregister(&self.root, elsewhere::listed_store(&self.core).as_deref())?;
@@ -824,7 +833,19 @@ impl Folder {
                 root.join(STATE_DIR).display()
             ))
         })?;
-        Ok(unsent)
+        let recorded = record.map(|record| {
+            match record.and_then(|(bytes, files)| {
+                removed_record::write(&state_dir, &bytes).map(|()| files)
+            }) {
+                Ok(files) => Recorded::Written(files),
+                Err(error) => Recorded::NotWritten(error.to_string()),
+            }
+        });
+        Ok(Removed {
+            unsent,
+            instance_changed,
+            recorded,
+        })
     }
 
     /// Whether the copy's origin answers as another instance: asked of its

@@ -251,7 +251,7 @@ fn put_back_read_at(
 
 /// Where in `text` its front matter's `marfa_version` line is, with its
 /// line ending.
-fn version_line(text: &str) -> Option<std::ops::Range<usize>> {
+pub(super) fn version_line(text: &str) -> Option<std::ops::Range<usize>> {
     let mut lines = text.split_inclusive('\n');
     let first = lines.next()?;
     if first.trim_end() != "---" {

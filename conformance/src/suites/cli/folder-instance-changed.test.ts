@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   cpSync,
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -45,6 +46,15 @@ interface Listed {
     type: string;
     properties: { title?: string; body?: string };
   }>;
+}
+
+interface Added {
+  from: {
+    older: Array<{ path: string; sent: number; held: number; changed: boolean }>;
+    absent: string[];
+    gone: string[];
+    unknown?: string;
+  };
 }
 
 const note = (title: string, body: string): string =>
@@ -141,23 +151,44 @@ describe("a directory whose server is now another instance", () => {
     }
     expect(removed.stdout).not.toContain("Unchanged.md");
     expect(removed.stdout).not.toContain("Late.md");
-    expect(removed.stdout).toContain(
-      "A file that differs but is not named above may hold a change this folder sent that the new instance lacks",
-    );
+    expect(removed.stdout).toContain(`--from ${aside}`);
+    expect(removed.stdout).toContain(`marfa folders push ${dir} --send-newer`);
     expect(removed.stdout).toContain(
       `until \`marfa folders status ${dir}\` shows nothing waiting`,
     );
     expect(removed.stdout).toContain(
       `The changes to changed, new and moved files stay in the files in ${dir}`,
     );
-    const command = `marfa folders add ${dir} --folder ${folder}`;
+    const command = `marfa folders add ${dir} --folder ${folder} --from ${aside}`;
     expect(removed.stdout).toContain(command);
     expect(existsSync(join(dir, ".marfa", "core.sqlite"))).toBe(false);
     expect(files()).toEqual(before);
 
     // The route the removal names.
     renameSync(dir, aside);
-    await cli.json(["folders", "add", dir, "--folder", folder, "--yes"]);
+    // Changed after the removal: the file as it is now is what is sent.
+    writeFileSync(
+      join(aside, "Late.md"),
+      readFileSync(join(aside, "Late.md"), "utf8").replace(
+        "sent after the backup",
+        "changed after the removal",
+      ),
+    );
+    const added = await cli.json<Added>([
+      "folders",
+      "add",
+      dir,
+      "--folder",
+      folder,
+      "--from",
+      aside,
+      "--yes",
+    ]);
+    // Sent after the backup was made: the only file the instance holds at
+    // an older version than the folder last sent.
+    expect(added.from.older.map((file) => file.path)).toEqual(["Late.md"]);
+    expect(added.from.older[0]!.held).toBeLessThan(added.from.older[0]!.sent);
+    expect(added.from.older[0]!.changed).toBe(true);
     const written = await cli.run(["folders", "push", dir]);
     expect(written.code, written.stderr).toBe(0);
     // The witness: the backup brings back the file deleted while the server
@@ -168,21 +199,17 @@ describe("a directory whose server is now another instance", () => {
     for (const name of named) {
       cpSync(join(aside, name), join(dir, name));
     }
-    // Step 4: a file that differs but is not named was sent after the backup.
-    const differs = readdirSync(aside)
-      .filter((name) => name !== ".marfa" && !named.includes(name))
-      .filter(
-        (name) =>
-          !existsSync(join(dir, name)) ||
-          readFileSync(join(dir, name), "utf8") !==
-            readFileSync(join(aside, name), "utf8"),
-      );
-    expect(differs).toEqual(["Late.md"]);
-    cpSync(join(aside, "Late.md"), join(dir, "Late.md"));
-    // Step 5. The witness: one push leaves the deletion waiting out the
+    // The witness: the instance's copy of the late file lacks the edit.
+    expect(readFileSync(join(dir, "Late.md"), "utf8")).toContain(
+      "in the backup",
+    );
+    // Step 4. The witness: one push leaves the deletion waiting out the
     // folder's grace for a rename.
-    const sent = await cli.run(["folders", "push", dir]);
+    const sent = await cli.run(["folders", "push", dir, "--send-newer"]);
     expect(sent.code, sent.stderr).toBe(0);
+    expect(sent.stdout).toContain(
+      "Late.md: the moved directory's version is sent",
+    );
     const waiting = await cli.run(["folders", "status", dir]);
     expect(waiting.stdout).toContain("Dropped.md: waiting");
     await vi.waitFor(
@@ -217,7 +244,7 @@ describe("a directory whose server is now another instance", () => {
     expect(body("Packing list")).toContain("boots");
     expect(body("Plan")).toContain("and second");
     expect(body("New idea")).toContain("brand new");
-    expect(body("Late")).toContain("sent after the backup");
+    expect(body("Late")).toContain("changed after the removal");
     expect(
       readdirSync(dir)
         .filter((name) => name !== ".marfa")
@@ -231,5 +258,218 @@ describe("a directory whose server is now another instance", () => {
     ]);
     const status = await cli.run(["folders", "status", dir]);
     expect(status.stdout).toContain("5 file(s) in step");
+  });
+
+  it("sends no file whose item the instance changed after the add or holds at the same or a newer version, and names one it lacks or that is gone", async () => {
+    const binary = requireBinary();
+    const registry = join(root, "registry-guards", "folders.json");
+    const dir = join(root, "Guards");
+    const aside = join(root, "Guards.before-restore");
+    const lost = await bootFreshServer("cli-folder-guards-origin", DISK_ONLY);
+    let found: FreshServer | undefined;
+    try {
+      const first = new Cli(binary, lost.apiUrl, lost.workingKey).withEnv({
+        MARFA_FOLDER_REGISTRY: registry,
+      });
+      const made = await first.json<ItemEnvelope>([
+        "folders",
+        "create",
+        "--title",
+        "Guards",
+        "--query",
+        JSON.stringify({ types: ["core.note"] }),
+      ]);
+      const folder = made.item.id;
+      await first.json(["folders", "add", dir, "--folder", folder, "--yes"]);
+      for (const title of ["Raced", "Same", "Dropped"]) {
+        writeFileSync(join(dir, `${title}.md`), note(title, "in the backup"));
+      }
+      expect((await first.run(["folders", "push", dir])).code).toBe(0);
+      const backup = await (await everythingClient(lost)).exportArchive();
+      expect(backup.status).toBe(200);
+      const archive = join(root, "guards.tar");
+      writeFileSync(archive, backup.data);
+      for (const title of ["Raced", "Dropped", "Fresh"]) {
+        writeFileSync(join(dir, `${title}.md`), note(title, "sent after"));
+      }
+      expect((await first.run(["folders", "push", dir])).code).toBe(0);
+      const port = new URL(lost.apiUrl).port;
+      await lost.stop();
+
+      found = await bootFreshServer("cli-folder-guards-target", {
+        ...DISK_ONLY,
+        MARFA_PORT: port,
+      });
+      const restored = await new Cli(binary, found.apiUrl, undefined)
+        .viaSocket(found.controlSocket)
+        .run(["restore", archive]);
+      expect(restored.code, restored.stderr).toBe(0);
+      const cli = new Cli(binary, found.apiUrl, found.workingKey).withEnv({
+        MARFA_FOLDER_REGISTRY: registry,
+      });
+      const notes = async (): Promise<Listed["data"]> =>
+        (
+          await cli.json<Listed>([
+            "items",
+            "list",
+            "--type",
+            "core.note",
+            "--limit",
+            "100",
+          ])
+        ).data;
+      const id = async (title: string): Promise<string> =>
+        (await notes()).find((item) => item.properties.title === title)!.id;
+      const body = async (title: string): Promise<string | undefined> =>
+        (await notes()).find((item) => item.properties.title === title)
+          ?.properties.body;
+      // Edited on the new instance after the restore, so it holds a version
+      // as new as the one the folder sent.
+      await cli.json([
+        "items",
+        "update",
+        await id("Same"),
+        "--version",
+        "1",
+        "--prop",
+        "body=edited after the restore",
+      ]);
+      const stopped = await cli.refused(["folders", "push", dir]);
+      expect(JSON.stringify(stopped.envelope)).toContain("instance_changed");
+      const removed = await cli.run(["folders", "remove", dir]);
+      expect(removed.code, removed.stderr).toBe(0);
+      expect(removed.stdout).not.toContain("could not be sent");
+      expect(removed.stdout).toContain(`marfa folders push ${dir} --send-newer`);
+      rmSync(join(dir, "Dropped.md"));
+      renameSync(dir, aside);
+
+      const added = await cli.json<Added>([
+        "folders",
+        "add",
+        dir,
+        "--folder",
+        folder,
+        "--from",
+        aside,
+        "--yes",
+      ]);
+      // The witness: a file sent after the backup is named.
+      expect(added.from.older.map((file) => file.path)).toEqual(["Raced.md"]);
+      expect(added.from.absent).toEqual(["Fresh.md"]);
+      expect(added.from.gone).toEqual(["Dropped.md"]);
+      expect((await cli.run(["folders", "push", dir])).code).toBe(0);
+      await cli.json([
+        "items",
+        "update",
+        await id("Raced"),
+        "--version",
+        "1",
+        "--prop",
+        "body=edited after the add",
+      ]);
+      const sent = await cli.run(["folders", "push", dir, "--send-newer"]);
+      expect(sent.code, sent.stderr).toBe(0);
+      expect(sent.stdout).toContain(
+        "Raced.md: not sent, because the instance changed its item after the add read it",
+      );
+      expect(await body("Raced")).toBe("edited after the add");
+      expect(await body("Same")).toBe("edited after the restore");
+      expect(await body("Fresh")).toBeUndefined();
+      expect(readFileSync(join(dir, "Raced.md"), "utf8")).toContain(
+        "edited after the add",
+      );
+    } finally {
+      await lost.stop();
+      await found?.stop();
+    }
+  });
+
+  it("names no file a folder added back on the instance it was removed from sent, and says nothing is known of a directory with no record or one it cannot read", async () => {
+    const binary = requireBinary();
+    const registry = join(root, "registry-same", "folders.json");
+    const dir = join(root, "Same");
+    const aside = join(root, "Same.before");
+    const plain = join(root, "Plain");
+    const server = await bootFreshServer("cli-folder-same-instance", DISK_ONLY);
+    try {
+      const cli = new Cli(binary, server.apiUrl, server.workingKey).withEnv({
+        MARFA_FOLDER_REGISTRY: registry,
+      });
+      const made = await cli.json<ItemEnvelope>([
+        "folders",
+        "create",
+        "--title",
+        "Same",
+        "--query",
+        JSON.stringify({ types: ["core.note"] }),
+      ]);
+      const folder = made.item.id;
+      await cli.json(["folders", "add", dir, "--folder", folder, "--yes"]);
+      writeFileSync(join(dir, "Kept.md"), note("Kept", "first"));
+      expect((await cli.run(["folders", "push", dir])).code).toBe(0);
+      writeFileSync(join(dir, "Kept.md"), note("Kept", "second"));
+      expect((await cli.run(["folders", "push", dir])).code).toBe(0);
+      expect((await cli.run(["folders", "remove", dir])).code).toBe(0);
+
+      const inPlace = await cli.run([
+        "folders",
+        "add",
+        dir,
+        "--folder",
+        folder,
+        "--from",
+        dir,
+      ]);
+      expect(inPlace.code).toBe(2);
+      expect(existsSync(join(dir, ".marfa", "core.sqlite"))).toBe(false);
+
+      renameSync(dir, aside);
+      const added = await cli.json<Added>([
+        "folders",
+        "add",
+        dir,
+        "--folder",
+        folder,
+        "--from",
+        aside,
+        "--yes",
+      ]);
+      expect(added.from.unknown).toBeUndefined();
+      expect(added.from).toMatchObject({ older: [], absent: [], gone: [] });
+
+      mkdirSync(plain);
+      writeFileSync(join(plain, "Plain.md"), note("Plain", "no folder"));
+      const other = join(root, "Other");
+      const unknown = await cli.json<Added>([
+        "folders",
+        "add",
+        other,
+        "--folder",
+        folder,
+        "--from",
+        plain,
+        "--yes",
+      ]);
+      expect(unknown.from.unknown).toContain("holds no record");
+      expect(existsSync(join(other, ".marfa", "core.sqlite"))).toBe(true);
+
+      mkdirSync(join(plain, ".marfa"));
+      writeFileSync(join(plain, ".marfa", "removed.json"), "{ not a record");
+      const third = join(root, "Third");
+      const unreadable = await cli.json<Added>([
+        "folders",
+        "add",
+        third,
+        "--folder",
+        folder,
+        "--from",
+        plain,
+        "--yes",
+      ]);
+      expect(unreadable.from.unknown).toContain("cannot be read");
+      expect(existsSync(join(third, ".marfa", "core.sqlite"))).toBe(true);
+    } finally {
+      await server.stop();
+    }
   });
 });

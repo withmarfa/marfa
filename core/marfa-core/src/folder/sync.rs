@@ -248,7 +248,7 @@ impl Folder {
     }
 
     /// Takes the folder at `dir` off this machine: its own state under
-    /// `.marfa` goes, and its files stay. Refused while writes wait, unless
+    /// `.marfa` goes, but for a record of what it last sent, and its files stay. Refused while writes wait, unless
     /// the first sync still waits to be confirmed or another instance
     /// answered at the folder's server (`Folder::remove`). No symbolic link is
     /// followed, and a path through one is taken only where it is the path
@@ -305,11 +305,10 @@ impl Folder {
             None => {
                 let folder = Folder::open_without_listing(root.clone(), None, wait)?;
                 let id = folder.folder_id().to_string();
-                let unsent = folder.remove()?;
                 Ok(Removal::Deleted {
                     dir: root,
                     folder: id,
-                    unsent,
+                    removed: folder.remove()?,
                 })
             }
         }
@@ -327,11 +326,10 @@ impl Folder {
             match (&entry.store, elsewhere::listed_store(&folder.core)) {
                 (Some(listed), Some(found)) if *listed == found => {
                     let id = folder.folder_id().to_string();
-                    let unsent = folder.remove()?;
                     return Ok(Removal::Deleted {
                         dir: entry.dir,
                         folder: id,
-                        unsent,
+                        removed: folder.remove()?,
                     });
                 }
                 (None, _) => "the registry lists no store for it, so the state there cannot be shown to be its own".to_string(),
@@ -354,12 +352,12 @@ impl Folder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Removal {
     /// The folder's own state at this directory went; its files stay.
-    /// `unsent` is what waited that no server could take, because another
-    /// instance answers at the folder's server.
+    /// `removed.unsent` is what waited that no server could take, because
+    /// another instance answers at the folder's server.
     Deleted {
         dir: PathBuf,
         folder: String,
-        unsent: super::UnsentChanges,
+        removed: super::Removed,
     },
     /// Only the registry entry for this directory went, and nothing was
     /// deleted, for the reason given.

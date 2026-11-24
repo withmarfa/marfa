@@ -738,7 +738,7 @@ fn folder_removal(removal: marfa_core::Removal) -> FolderRemoval {
         marfa_core::Removal::Deleted {
             dir,
             folder,
-            unsent,
+            removed: marfa_core::folder::Removed { unsent, .. },
         } => FolderRemoval {
             dir: dir.display().to_string(),
             removed: true,
