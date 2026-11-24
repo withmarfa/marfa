@@ -113,7 +113,9 @@ export interface FreshServer {
    * `store-check-deadline=<ms>` shortens how long a blob store may go
    * unanswered, `release:<point>` clears `hold:<point>` as the next
    * `GET /health` arrives, and `resolve:<hostname>=<answers>` scripts the name
-   * lookups of webhooks and of files the MCP tools fetch. The points are
+   * lookups of webhooks and of files the MCP tools fetch, and
+   * `trust:<hostname>=<PEM certificate>` makes the fetch of a client ID
+   * metadata document from that host trust that one certificate. The points are
    * stated in `conformance/TARGET-INTERFACE.md`, "Faults".
    * The fault is cleared by `clearFault`, by `restart`, and by `stop`, so
    * none outlives the fixture that set it.
@@ -157,8 +159,8 @@ export interface ArmedFault {
   /** Callers waiting at a `hold:` fault now. */
   waiting: number;
   /**
-   * Times a `fail:` fault has acted, a `resolve:` fault has answered or a
-   * `release:` fault has released its hold.
+   * Times a `fail:` fault has acted, a `resolve:` fault has answered, a `trust:` fault has been
+   * used or a `release:` fault has released its hold.
    */
   fired: number;
   /**

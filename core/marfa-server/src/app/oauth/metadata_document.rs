@@ -12,7 +12,7 @@ use serde_json::Value;
 use tokio::runtime::Handle;
 use ureq::Agent;
 use ureq::http::header;
-use ureq::tls::TlsConfig;
+use ureq::tls::{Certificate, RootCerts, TlsConfig};
 use ureq::unversioned::transport::DefaultConnector;
 use url::{Host, Url};
 
@@ -142,7 +142,7 @@ impl Fetcher {
             .http_status_as_error(false)
             .timeout_global(Some(self.limit))
             .max_response_header_size(MAX_HEADER_BYTES)
-            .tls_config(self.tls.clone())
+            .tls_config(self.tls_for(&url))
             .user_agent("marfa-server")
             .build();
         let agent = Agent::with_parts(config, DefaultConnector::default(), Pinned(addresses));
@@ -193,6 +193,20 @@ impl Fetcher {
             ));
         }
         Ok(document)
+    }
+
+    /// The default roots, or under a test fault the one certificate trusted for this host alone.
+    fn tls_for(&self, url: &Url) -> TlsConfig {
+        let pinned = url
+            .host_str()
+            .and_then(|host| self.faults.trusted_certificate(host))
+            .and_then(|pem| Certificate::from_pem(pem.as_bytes()).ok());
+        match pinned {
+            Some(certificate) => TlsConfig::builder()
+                .root_certs(RootCerts::new_with_certs(&[certificate]))
+                .build(),
+            None => self.tls.clone(),
+        }
     }
 
     /// Resolved once by the outbound path, which judges every answer: a name that also answers an
@@ -330,7 +344,6 @@ mod tests {
     use proptest::prelude::*;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
     use serde_json::json;
-    use ureq::tls::{Certificate, RootCerts};
 
     use super::super::client::{GrantType, ResponseType};
     use super::super::redirect::AppKind;
@@ -343,12 +356,14 @@ mod tests {
         address: SocketAddr,
         accepted: Arc<AtomicUsize>,
         certificate: Vec<u8>,
+        pem: String,
     }
 
     fn listen(cert_name: &str, response: Vec<u8>) -> Listener {
         let certified =
             rcgen::generate_simple_self_signed(vec![cert_name.to_string()]).expect("a certificate");
         let certificate = certified.cert.der().to_vec();
+        let pem = certified.cert.pem();
         let key = PrivateKeyDer::try_from(certified.signing_key.serialize_der()).expect("a key");
         let config = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
@@ -375,6 +390,7 @@ mod tests {
             address,
             accepted,
             certificate,
+            pem,
         }
     }
 
@@ -533,6 +549,41 @@ mod tests {
             }
         }
         assert_eq!(live.accepted.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_trust_fault_trusts_one_certificate_for_its_own_host_alone() {
+        let listener = listen(NAME, reply("200 OK", "application/json", b"{}"));
+        let trusting = |host: &str, pem: &str| {
+            let faults = scripted("8.8.8.8>127.0.0.1");
+            faults
+                .set(&format!("trust:{host}"), Some(pem))
+                .expect("a trust fault");
+            Fetcher {
+                tls: TlsConfig::default(),
+                ..fetcher(faults, &[])
+            }
+        };
+        assert_eq!(
+            trusting(NAME, &listener.pem)
+                .fetch(&id_at(&listener))
+                .expect("a document"),
+            b"{}"
+        );
+        assert!(matches!(
+            trusting("other.example.com", &listener.pem).fetch(&id_at(&listener)),
+            Err(Failure::Unavailable(_))
+        ));
+        let stranger = listen(NAME, reply("200 OK", "application/json", b"{}"));
+        assert!(matches!(
+            trusting(NAME, &listener.pem).fetch(&id_at(&stranger)),
+            Err(Failure::Unavailable(_))
+        ));
+        assert!(
+            Faults::default()
+                .set(&format!("trust:{NAME}"), Some("nope"))
+                .is_err()
+        );
     }
 
     #[test]

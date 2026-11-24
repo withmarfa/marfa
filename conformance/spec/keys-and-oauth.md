@@ -1666,7 +1666,7 @@ When a client ID metadata document sets `client_uri`, `logo_uri`, `tos_uri`, `po
 
 **Reason:** A document is published for every server, so a value past this server's bound is ignored, as a grant type it does not support is, rather than refusing the client. A `client_name` or a redirect URI past its bound still refuses the document, because the document must name the client and list where it may be sent.
 
-**Tests:** waiting on #2892.
+**Tests:** `compliance/client-document-limits.test.ts › keeps %s at its bound and leaves it out past its bound, accepting the client either way`, `› refuses a client_name past its bound while one at its bound names the app on the consent screen`.
 
 ## Authorization with consent
 

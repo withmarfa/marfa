@@ -110,6 +110,7 @@ impl Volume {
 const HIDE_POSITION: &str = "hide:webhook-position";
 const HIDE_EVENTS: &str = "hide:event";
 const RESOLVE: &str = "resolve:";
+const TRUST: &str = "trust:";
 /// The argument prefix that makes every lookup of a host take the milliseconds after it.
 const STALL: &str = "stall:";
 /// The argument suffix that has a `fail` fault act on every reach of its write.
@@ -424,6 +425,21 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
                 None => answers(arg).map(|_| (None, None)),
             }
         }
+        "trust" => {
+            if rest.is_empty()
+                || !rest
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-._".contains(&b))
+            {
+                return Err("a trust fault is named for a host name".to_string());
+            }
+            match arg {
+                Some(pem) if ureq::tls::Certificate::from_pem(pem.as_bytes()).is_ok() => {
+                    Ok((None, None))
+                }
+                _ => Err("a trust fault takes the PEM certificate the host is trusted by".to_string()),
+            }
+        }
         "limit" => {
             if !LIMIT_LANES.contains(&rest) {
                 return Err(format!(
@@ -492,7 +508,7 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
         }
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
-             deadline:<job>, unfold-deadline, free:<volume>, size:<volume>, resolve:<host>, limit:<lane>, \
+             deadline:<job>, unfold-deadline, free:<volume>, size:<volume>, resolve:<host>, trust:<host>, limit:<lane>, \
              unreadable:<stored>, lose:blob, damage:blob, damage:blob-unreadable, \
              store-check-deadline, hide:event, hide:webhook-position, release-feed, sign-in-provider \
              or sign-in-deadline"
@@ -552,7 +568,7 @@ impl Faults {
             (aim, number, HashSet::new())
         };
         let lowered;
-        let name = if name.starts_with(RESOLVE) {
+        let name = if name.starts_with(RESOLVE) || name.starts_with(TRUST) {
             lowered = name.to_ascii_lowercase();
             lowered.as_str()
         } else {
@@ -739,6 +755,15 @@ impl Faults {
         fault.seen = fault.seen.saturating_add(1);
         fault.fired += 1;
         lookups.into_iter().nth(at)
+    }
+
+    /// The one certificate a metadata document fetch trusts for `host`, in PEM.
+    pub fn trusted_certificate(&self, host: &str) -> Option<String> {
+        let name = format!("{TRUST}{}", host.to_ascii_lowercase());
+        let mut armed = self.armed();
+        let fault = armed.iter_mut().find(|fault| fault.name == name)?;
+        fault.fired += 1;
+        fault.arg.clone()
     }
 
     /// How long a lookup of `host` takes before it answers, when a fault stalls it.
@@ -1131,6 +1156,9 @@ mod tests {
         assert!(refused("hide:event", Some("0")));
         assert!(refused("hide:event", None));
         assert!(refused("hide:elsewhere", None));
+        assert!(refused("trust:", Some("-----BEGIN CERTIFICATE-----")));
+        assert!(refused("trust:a.test", None));
+        assert!(refused("trust:a.test", Some("not a certificate")));
         assert!(refused("resolve:", Some("127.0.0.1")));
         assert!(refused("resolve:a.test", None));
         assert!(refused("resolve:a.test", Some("not-an-address")));
