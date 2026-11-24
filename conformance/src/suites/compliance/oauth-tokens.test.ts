@@ -243,6 +243,7 @@ describe("the resource parameter", () => {
         resource,
       });
       expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+      expect(issued.body.scope).toBe(NOTES);
       expect(issued.body.access_token).toMatch(/^marfa_at_/);
       expect(await itemsStatus(server, issued.body.access_token!)).toBe(200);
     }
@@ -397,6 +398,9 @@ describe("the MCP endpoint", () => {
       resource,
     });
     expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    expect(issued.body.scope?.split(" ").sort()).toEqual(
+      scope.split(" ").sort(),
+    );
     return issued.body.access_token!;
   }
 
@@ -563,6 +567,9 @@ describe("registering a type from /mcp/schema", () => {
       resource,
     });
     expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    expect(issued.body.scope?.split(" ").sort()).toEqual(
+      scope.split(" ").sort(),
+    );
     return issued.body.access_token!;
   }
 

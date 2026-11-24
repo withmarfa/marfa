@@ -900,9 +900,11 @@ export async function startDeviceFlow(
         },
         body: form,
       });
-      if (approved.status !== 200) {
+      // A page drawn again or a denial is not an approval.
+      const answer = await approved.text();
+      if (approved.status !== 200 || !answer.includes("Device connected")) {
         throw new Error(
-          `the owner's approval was refused: ${String(approved.status)}`,
+          `the owner's approval was not taken: ${String(approved.status)}`,
         );
       }
     },

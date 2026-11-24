@@ -129,11 +129,7 @@ export async function sentTo(
   return body.url === undefined ? undefined : new URL(body.url, server.apiUrl);
 }
 
-/**
- * The fields an approval posts for `chosen`: each scope as `scopes`, and each
- * permission as a power of the Custom admin level, which is the only way a
- * page grants one. `held` is posted where given.
- */
+/** Posts individual permissions through Custom and the remaining scopes through scopes. */
 export function chosenFields(
   chosen: readonly string[],
   held?: string,

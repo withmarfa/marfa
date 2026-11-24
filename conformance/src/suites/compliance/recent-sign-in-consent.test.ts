@@ -315,6 +315,12 @@ describe("approving a device", () => {
     );
     expect(approved.status).toBe(200);
     await approved.body?.cancel();
+    const issued = await devicePoll(again);
+    expect(issued.status).toBe(200);
+    expect(issued.scope?.split(" ").sort()).toEqual([
+      "core.note:read",
+      "keys.manage",
+    ]);
     // The permission it held is not the only one: a second one is refused.
     const widened = await deviceCode(
       "core.note:read keys.manage blobs.manage",
