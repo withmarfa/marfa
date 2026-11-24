@@ -4,10 +4,12 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use marfa_core::{
-    Core, CoreError, Hydration, ItemState, ListFilters, SearchFilters, Server, SliceTier, Sort,
+    ChangeEvent, Core, CoreError, FileBudget, Hydration, ItemState, ListFilters, SearchFilters,
+    Server, SliceTier, Sort,
 };
 
 fn server() -> Server {
@@ -42,9 +44,19 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("core.sqlite");
     let marker = nonce();
-    let first = seed(&["note", "First", &format!("{marker} one"), "live,alpha"]);
+    let first = seed(&[
+        "note",
+        "First",
+        &format!("{marker} one"),
+        &format!("live{marker},alpha{marker}"),
+    ]);
     // Equal token counts and match frequencies give the first two rows tied ranks.
-    let second = seed(&["note", "Second", &format!("{marker} two"), "live,beta"]);
+    let second = seed(&[
+        "note",
+        "Second",
+        &format!("{marker} two"),
+        &format!("live{marker},beta{marker}"),
+    ]);
     let third = seed(&[
         "note",
         "Third",
@@ -55,6 +67,8 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     let core = Core::open(&path, Some(server()))
         .unwrap()
         .with_catch_up_idle(Duration::from_secs(2));
+    // The default budget follows free space, so reopening can change the status.
+    core.set_file_budget(FileBudget::KeepAll).unwrap();
     let report = core
         .hydrate(
             &["core.note".into(), "core.file".into()],
@@ -94,7 +108,7 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     let tagged = core
         .list(
             &ListFilters {
-                tags: vec!["live".into(), "alpha".into()],
+                tags: vec![format!("live{marker}"), format!("alpha{marker}")],
                 ..Default::default()
             },
             Sort::default(),
@@ -134,6 +148,36 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
             "hits rank by score descending, then identifier ascending: {hits:?}"
         );
     }
+
+    let read_by_server = |core: &Core| {
+        core.get(&file)
+            .unwrap()
+            .is_some_and(|item| item.properties.contains_key("extracted_text"))
+    };
+    if !read_by_server(&core) {
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for _ in 0..600 {
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                stop.store(true, Ordering::Relaxed);
+            });
+            let followed = core.follow(&stop, false, |change| {
+                if change.item_id.as_deref() == Some(file.as_str())
+                    && matches!(&change.event, ChangeEvent::Applied(kind) if kind == "item.updated")
+                {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            });
+            stop.store(true, Ordering::Relaxed);
+            followed.unwrap();
+        });
+    }
+    assert!(read_by_server(&core), "the file's text never arrived");
 
     let fourth = seed(&["note", "Fourth", &format!("{marker} four")]);
     seed(&["trash", &first]);

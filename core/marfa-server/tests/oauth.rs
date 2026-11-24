@@ -43,6 +43,15 @@ const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const DAY_MS: u64 = 86_400_000;
 const AN_APPROVED_PAGE: &str = "https://approved.example";
 
+fn is_fault_announcement(payload: &str) -> bool {
+    let payload: Value = serde_json::from_str(payload).unwrap();
+    let entry = &payload["attention"];
+    entry["kind"] == "fault"
+        && entry["reference"]
+            .as_str()
+            .is_some_and(|reference| reference.contains("POST /auth/consent"))
+}
+
 struct Cleaned {
     deleted: u64,
     retired: u64,
@@ -428,6 +437,47 @@ impl Instance {
             .unwrap()
     }
 
+    async fn count_after(&self, query: &'static str, after: i64) -> i64 {
+        self.app
+            .db
+            .read(move |tx| Ok(tx.query_row(query, [after], |row| row.get(0))?))
+            .await
+            .unwrap()
+    }
+
+    async fn wait_for_fault_announcement(&self, after: i64) -> Vec<(String, String)> {
+        for _ in 0..1000 {
+            let rows = self.events_after(after).await;
+            if rows
+                .iter()
+                .any(|(kind, payload)| kind == "attention.raised" && is_fault_announcement(payload))
+            {
+                return rows;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!(
+            "the fault was never announced: {:?}",
+            self.events_after(after).await
+        );
+    }
+
+    async fn events_after(&self, after: i64) -> Vec<(String, String)> {
+        self.app
+            .db
+            .read(move |tx| {
+                let mut statement = tx.prepare(
+                    "SELECT event_type, payload FROM event_log WHERE id > ?1 ORDER BY id",
+                )?;
+                let rows = statement
+                    .query_map([after], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(rows)
+            })
+            .await
+            .unwrap()
+    }
+
     async fn text_of(&self, query: &'static str) -> String {
         self.app
             .db
@@ -717,26 +767,30 @@ async fn a_failed_audit_undoes_the_whole_approval() {
     let link = instance.consent_link(&client, NOTES).await;
     let grants = "SELECT count(*) FROM items WHERE type = 'system.connection'";
     let consents = "SELECT count(*) FROM oauth_consents";
-    let events = "SELECT count(*) FROM event_log";
     let codes = "SELECT count(*) FROM oauth_codes";
-    let events_before = instance.count(events).await;
+    let last_event = "SELECT coalesce(max(id), 0) FROM event_log";
+    let events_before = instance.count(last_event).await;
 
     let aim = Some("item.create");
     instance.app.faults.set("fail:audit", aim).unwrap();
     let reply = instance.decide(&link, &[NOTES]).await;
     instance.app.faults.clear(None);
     assert!(reply.status.is_server_error(), "{}", reply.text);
+    // The request's fault reporter announces the fault in the background.
+    let announced = instance.wait_for_fault_announcement(events_before).await;
+    assert_eq!(announced.len(), 1, "{announced:?}");
     assert_eq!(instance.count(grants).await, 0);
     assert_eq!(instance.count(consents).await, 0);
     assert_eq!(instance.count(codes).await, 0);
-    assert_eq!(instance.count(events).await, events_before);
 
     let reply = instance.decide(&link, &[NOTES]).await;
     assert!(code_in(&reply).is_some(), "{}", reply.text);
     assert_eq!(instance.count(grants).await, 1);
     assert_eq!(instance.count(consents).await, 1);
     assert_eq!(instance.count(codes).await, 1);
-    assert!(instance.count(events).await > events_before);
+    let granted = "SELECT count(*) FROM event_log WHERE id > ?1 AND event_type = 'item.created' \
+                   AND type = 'system.connection'";
+    assert_eq!(instance.count_after(granted, events_before).await, 1);
 }
 
 #[tokio::test]
