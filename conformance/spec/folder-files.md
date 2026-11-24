@@ -2396,13 +2396,13 @@ Where a folder's copy has a query, when the server has answered that it shows no
 
 ### `folder-files/take-in-file`
 
-When a registered directory that follows another `system.folder` no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST take that file into its placement.
+When a registered directory that follows another `system.folder` no longer holds an item for a non-state reason, still holds only its own written file bytes, can give the file up (`folder-files/take-in-paused-source-kept`, `folder-files/take-in-waiting-write-kept`, `folder-files/take-in-copies-agree`), and the receiving folder’s query holds that item without a file, a device MUST take that file into its placement.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in an unmatched file from another folder`.
 
 ### `folder-files/take-in-file-taken-count`
 
-When a registered directory that follows another `system.folder` no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST count the file as `taken`.
+When a registered directory that follows another `system.folder` no longer holds an item for a non-state reason, still holds only its own written file bytes, can give the file up (`folder-files/take-in-paused-source-kept`, `folder-files/take-in-waiting-write-kept`, `folder-files/take-in-copies-agree`), and the receiving folder’s query holds that item without a file, a device MUST count the file as `taken`.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in an unmatched file from another folder`.
 
@@ -2439,6 +2439,38 @@ When a folder's query holds an item without a file, a device MUST NOT take in th
 **Reason:** That directory's query is this folder's, perhaps not yet read there, so its file is its own copy of the item, not one it keeps unmatched. The folder writes a file of its own.
 
 **Tests:** `device/folders-one-mac.test.ts › writes its own file, and takes none from the other directory of the folder, when a widened query brings an item back`.
+
+### `folder-files/take-in-paused-source-kept`
+
+While a registered directory's sync is paused, or its pause cannot be read, a device MUST NOT take in a file from that directory.
+
+**Reason:** a pause stops the directory's sync, and a take-in moves a file out of it. The receiving folder writes a file of its own instead.
+
+**Tests:** `device/folders-one-mac.test.ts › takes in a file from a folder whose sync is %s only when it is not paused`.
+
+### `folder-files/take-in-waiting-write-kept`
+
+While a registered directory that follows another `system.folder` has a write waiting to be sent, held or refused that names an item or reaches it, a device MUST NOT take in that directory's file of the item.
+
+**Reason:** the waiting write may be what the file shows, and the receiving folder's next pull would write its own copy of the item over the moved file. A write names an item as its subject or as an end of an edge, and reaches it as a create under its natural key or a move of an edge to start from it.
+
+**Tests:** `device/folders-one-mac.test.ts › takes in no file whose folder has an edit of the item waiting to be sent, and the edit reaches the server`.
+
+### `folder-files/take-in-copies-agree`
+
+If the copy of a registered directory that follows another `system.folder` differs from the receiving folder's copy of an item in its version, state, tags, `updated_at` or `trashed_at`, or cannot be read, then a device MUST NOT take in that directory's file of the item.
+
+**Reason:** one copy has heard a change the other has not. Tags and state carry no version of their own, so a receiving folder behind an archive could take the only file and then remove it as a departure by state.
+
+**Tests:** `device/folders-one-mac.test.ts › takes in no file from a folder whose copy of the item differs, and keeps a file of an item the receiving folder later finds %s`.
+
+### `folder-files/taken-in-kept-until-source-lets-go`
+
+While the directory a file was taken in from still binds the file's item at a path that holds no file, or cannot be read and is not gone, a device MUST NOT remove the file it took in.
+
+**Reason:** that directory's next scan decides the move from the taken-in file, and finding no file it would send a delete for the item. A departure, a confirmed removal and `marfa folders unmatched --remove` each leave the file in place and report why, and a later pass decides again. Once that directory has let go of the path, the file leaves as any of the folder's files does.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps a file it took in until the folder it came from lets go, when the item is then %s, and sends no delete`.
 
 ### `folder-files/take-in-attachment-excluded`
 
