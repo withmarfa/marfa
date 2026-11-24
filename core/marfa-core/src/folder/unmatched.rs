@@ -151,7 +151,7 @@ impl Folder {
     /// Why removing `row`'s file would leave it, where it would: it is not
     /// the folder's to take, or something of the person's is in it or waits
     /// behind it.
-    fn kept_because(
+    pub(super) fn kept_because(
         &self,
         row: &state::Bound,
         members: &HashSet<String>,

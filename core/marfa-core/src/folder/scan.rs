@@ -2923,8 +2923,19 @@ impl Folder {
         let journaled: Vec<state::Journaled> =
             journaled.into_iter().filter(|row| !row.carried()).collect();
         // Counted over every missing file, not only those past the grace, so
-        // files a watch meets a pass apart are one removal.
-        if settings.removal_threshold.exceeded(journaled.len(), of) {
+        // files a watch meets a pass apart are one removal. A file another
+        // folder let go is no removal.
+        let mut removals = 0;
+        for row in &journaled {
+            let bound = state::bound_at(&*self.core.conn()?, &row.path)?;
+            if !bound
+                .and_then(|bound| bound.written_hash.filter(|_| bound.item_id == row.item_id))
+                .is_some_and(|hash| peers.let_go_here(&row.path, &row.item_id, &hash))
+            {
+                removals += 1;
+            }
+        }
+        if settings.removal_threshold.exceeded(removals, of) {
             let paths: Vec<String> = journaled.into_iter().map(|row| row.path).collect();
             state::set_paused(&*self.core.conn()?, state::Removal::Disk, &paths)?;
             report.paused = paths.len();

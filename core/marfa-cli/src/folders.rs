@@ -1458,7 +1458,7 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
         ),
         (
             report.let_go,
-            "file(s) removed whose item another directory on this machine holds, with nothing trashed",
+            "unmatched copies removed from other directories on this machine, whose item this directory holds, with nothing trashed",
         ),
         (
             report.ended,

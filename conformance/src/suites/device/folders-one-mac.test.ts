@@ -933,13 +933,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
           const retained = await a.folder.pull();
           expect(retained.ok, JSON.stringify(retained)).toBe(true);
           if (!retained.ok) return;
-          expect(retained.value.unwritten).toBe(1);
           expect(retained.value.unmatched).toBeGreaterThanOrEqual(1);
           expect(retained.value.let_go).toBe(0);
-          expect(
-            retained.value.flagged.find((file) => file.path === sourceKey)
-              ?.flag,
-          ).toBe("retained");
           expect(read(a, "Stay.md")).toContain("continuation after");
           expect(read(a, sourceKey)).toBe(before);
           expect(statSync(source).ino).toBe(sourceIdentity);
@@ -956,19 +951,28 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
               status.value.files.find((file) => file.path === sourceKey)
                 ?.status,
           ).toBe("unmatched");
+          // The folder holding the item cannot let the source go.
           const repeated = await b.folder.pull();
-          expect(repeated.ok && repeated.value.taken).toBe(0);
+          expect(repeated.ok, JSON.stringify(repeated)).toBe(true);
+          if (!repeated.ok) return;
+          expect([
+            repeated.value.taken,
+            repeated.value.let_go,
+            repeated.value.unwritten,
+          ]).toEqual([0, 0, 1]);
+          expect(
+            repeated.value.flagged.find((file) => file.path === "Locked.md")
+              ?.flag,
+          ).toBe("retained");
         }
-        const visible = await a.folder.pullText();
-        expect(visible.ok && visible.value).toContain(
-          "cannot let it go to another folder",
-        );
+        const visible = await b.folder.pullText();
+        expect(visible.ok && visible.value).toContain("cannot let go of");
         expect(sourceState()).toBe(owned);
         expect(sourceJournal()).toBe(journal);
         allowRemoval();
         if (later === "edit") {
           appendFileSync(source, "owner edit\n");
-          const kept = await a.folder.pull();
+          const kept = await b.folder.pull();
           expect(kept.ok && kept.value.let_go).toBe(0);
           expect(read(a, sourceKey)).toBe(before + "owner edit\n");
           const scanned = await a.folder.scan();
@@ -982,9 +986,11 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
               ),
           ).toBe(true);
         } else {
-          const released = await a.folder.pull();
+          const released = await b.folder.pull();
           expect(released.ok && released.value.let_go).toBe(1);
           expect(existsSync(source)).toBe(false);
+          // The folder it left reads the file as let go at its next scan.
+          expect((await a.folder.scan()).ok).toBe(true);
           expect(sourceState().trim()).toBe("");
           expect(sourceJournal().trim()).toBe("");
           expect((await a.folder.scan()).ok).toBe(true);
@@ -1205,7 +1211,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(edges.placements(b.settings.id).get(plan.id)).toBe("Plan.md");
 
     // The other way round: the folder that holds it now hears first and
-    // writes a file of its own, and the folder it left lets its file go.
+    // writes a file of its own. The folder it left keeps its file, and the
+    // folder holding the item lets that copy go.
     edges.events.push(
       copyItemEvent(
         String(edges.events.length + 2),
@@ -1216,16 +1223,23 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     );
     const first = await b.folder.push();
     expect(first.ok && first.value.pull?.written).toBe(1);
-    const letGo = await a.folder.push();
-    expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
-    if (!letGo.ok) return;
+    const kept = await a.folder.push();
+    expect(kept.ok, JSON.stringify(kept)).toBe(true);
+    if (!kept.ok) return;
     expect(
       existsSync(join(a.dir, "Plan.md")),
       "a file another folder took in was written back where it was taken from",
     ).toBe(false);
+    // The file taken in counts until its scan reads it gone.
+    expect([kept.value.pull?.let_go, kept.value.pull?.unmatched]).toEqual([
+      0, 2,
+    ]);
+    const letGo = await b.folder.push();
+    expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
+    if (!letGo.ok) return;
     expect(
       letGo.value.pull?.let_go,
-      "the folder that no longer holds the item kept its file beside the other folder's",
+      "the folder holding the item left the other folder's copy beside its own",
     ).toBe(1);
     expect(existsSync(join(a.dir, "Brief.md"))).toBe(false);
     expect(existsSync(join(b.dir, "Brief.md"))).toBe(true);
@@ -1236,7 +1250,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const swept = await a.folder.push();
     expect(swept.ok, JSON.stringify(swept)).toBe(true);
     if (!swept.ok) return;
-    expect(swept.value.scan.moved_away).toBe(1);
+    expect(swept.value.scan.moved_away).toBe(2);
     expect(deletesOf(a.server, plan.id)).toBe(0);
     expect(deletesOf(a.server, brief.id)).toBe(0);
 
@@ -1250,6 +1264,269 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       later.value.scan.created,
       "a later copy at the path the item was taken from took the item over",
     ).toBe(1);
+  });
+
+  it.each([
+    { cause: "tag", first: "a" },
+    { cause: "tag", first: "b" },
+    { cause: "query", first: "a" },
+    { cause: "query", first: "b" },
+  ])(
+    "keeps both folders' files of an item both drop in one change ($cause, $first pushes first)",
+    async ({ cause, first }) => {
+      const plan = {
+        id: "01a00000-0000-7000-8000-0000000024a1",
+        properties: { title: "Plan", body: "the plan\n" },
+      };
+      const { a, b, edges } = await onOneMac(
+        `both-drop-${cause}-${first}`,
+        { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+        {
+          query: {
+            types: ["core.note"],
+            filter: cause === "tag" ? 'tags contains "a"' : 'tags contains "b"',
+          },
+        },
+        { "core.note": [{ item: plan, tags: ["a", "b"] }] },
+      );
+      expect((await a.folder.push()).ok).toBe(true);
+      expect((await b.folder.push()).ok).toBe(true);
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "metadata.changed",
+          wireItem(plan),
+          { tags: cause === "tag" ? [] : ["b"] },
+        ),
+      );
+      // The other folder's query changes with it, unread by its copy.
+      if (cause === "query") {
+        b.settings.settings = {
+          query: { types: ["core.note"], filter: 'tags contains "c"' },
+        };
+        b.settings.version += 1;
+        edges.events.push(
+          copyItemEvent(
+            String(edges.events.length + 2),
+            "item.updated",
+            folderItem(b.settings),
+          ),
+        );
+      }
+      for (const folder of first === "a" ? [a, b, a, b] : [b, a, b, a]) {
+        const pushed = await folder.folder.push();
+        expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+        if (!pushed.ok) return;
+        expect(
+          pushed.value.pull?.let_go,
+          "a folder removed a file of an item that left both folders",
+        ).toBe(0);
+      }
+      expect([idIn(a, "Plan.md"), idIn(b, "Plan.md")]).toEqual([
+        plan.id,
+        plan.id,
+      ]);
+      expect(deletesOf(a.server, plan.id)).toBe(0);
+    },
+  );
+
+  it("lets go of another folder's unmatched copy of an item it keeps, but not one edited since that folder wrote it", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-0000000024b1",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const brief = {
+      id: "01a00000-0000-7000-8000-0000000024b2",
+      properties: { title: "Brief", body: "the brief\n" },
+    };
+    const { a, b, edges } = await onOneMac(
+      "keeper-lets-go",
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+      {
+        "core.note": [
+          { item: plan, tags: ["a", "b"] },
+          { item: brief, tags: ["a", "b"] },
+        ],
+      },
+    );
+    expect((await a.folder.push()).ok).toBe(true);
+    expect((await b.folder.push()).ok).toBe(true);
+    for (const item of [plan, brief]) {
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "metadata.changed",
+          wireItem(item),
+          { tags: ["b"] },
+        ),
+      );
+    }
+    const left = await a.folder.push();
+    expect(left.ok, JSON.stringify(left)).toBe(true);
+    if (!left.ok) return;
+    expect(
+      [left.value.pull?.let_go, left.value.pull?.unmatched],
+      "the folder the items left removed its own files because another folder holds them",
+    ).toEqual([0, 2]);
+    appendFileSync(join(a.dir, "Brief.md"), "an edit\n");
+
+    const kept = await b.folder.push();
+    expect(kept.ok, JSON.stringify(kept)).toBe(true);
+    if (!kept.ok) return;
+    expect(
+      kept.value.pull?.let_go,
+      "the folder holding the items left the other folder's unchanged copy in place",
+    ).toBe(1);
+    expect(existsSync(join(a.dir, "Plan.md"))).toBe(false);
+    expect(
+      read(a, "Brief.md"),
+      "a copy edited since its folder wrote it was removed",
+    ).toContain("an edit");
+    expect(idIn(b, "Plan.md")).toBe(plan.id);
+    expect(idIn(b, "Brief.md")).toBe(brief.id);
+
+    // The folder the item left reads its file as moved, and trashes nothing.
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    expect(swept.value.scan.moved_away).toBe(1);
+    expect(deletesOf(a.server, plan.id) + deletesOf(a.server, brief.id)).toBe(
+      0,
+    );
+    expect(edges.placements(a.settings.id).has(plan.id)).toBe(false);
+  });
+
+  it("trashes nothing, and writes its file again, when a folder's copy brought back an item whose unmatched copy another folder let go", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-0000000024c1",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const { a, b, edges } = await onOneMac(
+      "keeper-stale-list",
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { "core.note": [{ item: plan, tags: ["a", "b"] }] },
+    );
+    const retag = (tags: string[]) =>
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "metadata.changed",
+          wireItem(plan),
+          { tags },
+        ),
+      );
+    expect((await a.folder.push()).ok).toBe(true);
+    expect((await b.folder.push()).ok).toBe(true);
+    retag(["b"]);
+    const left = await a.folder.push();
+    expect(left.ok && left.value.pull?.unmatched).toBe(1);
+    // The first folder's query takes the item back, unchanged, before that
+    // folder pulls.
+    a.settings.settings = {
+      query: { types: ["core.note"], filter: 'tags contains "b"' },
+    };
+    a.settings.version += 1;
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "item.updated",
+        folderItem(a.settings),
+      ),
+    );
+    const letGo = await b.folder.push();
+    expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
+    if (!letGo.ok) return;
+    expect(letGo.value.pull?.let_go).toBe(1);
+    expect(existsSync(join(a.dir, "Plan.md"))).toBe(false);
+
+    for (const pass of ["inside", "past"]) {
+      if (pass === "past") await pastTheGrace();
+      const back = await a.folder.push();
+      expect(back.ok, JSON.stringify(back)).toBe(true);
+    }
+    expect(
+      deletesOf(a.server, plan.id),
+      "the file another folder let go was sent as a delete of an item both folders hold",
+    ).toBe(0);
+    expect(idIn(a, "Plan.md")).toBe(plan.id);
+    expect(idIn(b, "Plan.md")).toBe(plan.id);
+  });
+
+  it("lets a file folder's unmatched image go only from the notes folder that holds the note it is attached to", async () => {
+    const bytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x24, 0xd1,
+    ]);
+    const host = {
+      id: "01a00000-0000-7000-8000-0000000024d1",
+      properties: { title: "Host", body: "no picture\n" },
+    };
+    const scan = {
+      id: "01a00000-0000-7000-8000-0000000024d2",
+      type: "core.file.image",
+      properties: {
+        title: "scan.png",
+        blob_ref: hashOf(bytes),
+        mime_type: "image/png",
+      },
+    };
+    const { a, b, edges } = await onOneMac(
+      "keeper-attachment",
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.file"] } },
+      { "core.note": [{ item: host }], "core.file": [{ item: scan }] },
+      (server) => scriptBlob(server, bytes),
+      [
+        {
+          id: "01a00000-0000-7000-8000-0000000024d3",
+          from_id: scan.id,
+          to_id: host.id,
+          edge_type: "attached-to",
+        },
+      ],
+    );
+    expect((await a.folder.push()).ok).toBe(true);
+    expect((await b.folder.push()).ok).toBe(true);
+    for (const made of [a, b]) {
+      expect(readFileSync(join(made.dir, "scan.png"))).toEqual(bytes);
+    }
+    // The file folder's query no longer holds the image.
+    b.settings.settings = {
+      query: { types: ["core.file"], filter: 'tags contains "x"' },
+    };
+    b.settings.version += 1;
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "item.updated",
+        folderItem(b.settings),
+      ),
+    );
+    const left = await b.folder.push();
+    expect(left.ok, JSON.stringify(left)).toBe(true);
+    if (!left.ok) return;
+    expect(
+      [left.value.pull?.let_go, readFileSync(join(b.dir, "scan.png"))],
+      "the folder the image left removed its own file",
+    ).toEqual([0, bytes]);
+
+    const kept = await a.folder.push();
+    expect(kept.ok, JSON.stringify(kept)).toBe(true);
+    if (!kept.ok) return;
+    expect(
+      kept.value.pull?.let_go,
+      "the notes folder left the file folder's unmatched copy of its note's image",
+    ).toBe(1);
+    expect(existsSync(join(b.dir, "scan.png"))).toBe(false);
+    expect(readFileSync(join(a.dir, "scan.png"))).toEqual(bytes);
+    expect((await b.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await b.folder.push();
+    expect(swept.ok && swept.value.scan.moved_away).toBe(1);
+    expect(deletesOf(a.server, scan.id)).toBe(0);
   });
 
   it("ends a folder's placement of an item whose file another folder took in or let go", async () => {
@@ -1313,13 +1590,19 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(edges.placements(b.settings.id).get(plan.id)).toBe("Plan.md");
 
     // The other way round: the folder holding the item writes its own file
-    // first, and the folder it left lets its file go.
+    // first and lets the other folder's copy go, and the folder it left
+    // ends its placement once its scan reads the file as let go.
     retag(brief);
     expect((await b.folder.push()).ok).toBe(true);
-    const letGo = await a.folder.push();
-    expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
-    if (!letGo.ok) return;
-    expect(letGo.value.pull?.let_go).toBe(1);
+    expect((await a.folder.push()).ok).toBe(true);
+    const letGo = await b.folder.push();
+    expect(letGo.ok && letGo.value.pull?.let_go).toBe(1);
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const ended = await a.folder.push();
+    expect(ended.ok, JSON.stringify(ended)).toBe(true);
+    if (!ended.ok) return;
+    expect(ended.value.scan.moved_away).toBe(1);
     expect(
       edges.placements(a.settings.id),
       "a folder went on placing an item whose file it let go",
@@ -1539,7 +1822,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     },
   );
 
-  it("leaves the binding of a file it let go where ending the placement fails, and the scan ends it past the grace", async () => {
+  it("keeps the binding of a file another folder let go where ending the placement fails, and ends it at the next push", async () => {
     const brief = {
       id: "01a00000-0000-7000-8000-0000000023e3",
       properties: { title: "Brief", body: "the brief\n" },
@@ -1561,14 +1844,10 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       ),
     );
     expect((await b.folder.push()).ok).toBe(true);
-
-    // The file is let go, and ending the placement fails after it.
-    const failed = await withFault("end-placement-fails", () =>
-      a.folder.push(),
-    );
-    expect(failed.ok, "the injected failure did not fail the push").toBe(false);
+    expect((await a.folder.push()).ok).toBe(true);
+    const letGo = await b.folder.push();
+    expect(letGo.ok && letGo.value.pull?.let_go).toBe(1);
     expect(existsSync(join(a.dir, "Brief.md"))).toBe(false);
-    expect(edges.placements(a.settings.id).has(brief.id)).toBe(true);
 
     // Inside the grace the scan finds the file missing and sends nothing.
     const writes = () =>
@@ -1588,7 +1867,13 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(writes(), "a write went out inside the grace").toBe(before);
     expect(edges.placements(a.settings.id).has(brief.id)).toBe(true);
 
+    // Past the grace, ending the placement fails, and the binding stays.
     await pastTheGrace();
+    const failed = await withFault("end-placement-fails", () =>
+      a.folder.push(),
+    );
+    expect(failed.ok, "the injected failure did not fail the push").toBe(false);
+    expect(edges.placements(a.settings.id).has(brief.id)).toBe(true);
     const swept = await a.folder.push();
     expect(swept.ok, JSON.stringify(swept)).toBe(true);
     if (!swept.ok) return;
@@ -1819,7 +2104,9 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       })();
       expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
       const unopposed = mode.startsWith("unopposed-");
-      if (unopposed && !retained) expect(existsSync(source)).toBe(false);
+      // A file already the item's here lets the other folder's copy go.
+      if ((unopposed && !retained) || mode === "already-present")
+        expect(existsSync(source)).toBe(false);
       else expect(readFileSync(source)).toEqual(bytes);
       expect(readFileSync(join(b.dir, "photo.png"))).toEqual(bytes);
       const status = await b.folder.status();
@@ -1834,8 +2121,12 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         ).toBe(photo.id);
       } else if (mode === "already-present") {
         expect(
-          pulled.ok && [pulled.value.unwritten, pulled.value.unchanged],
-        ).toEqual([0, 1]);
+          pulled.ok && [
+            pulled.value.unwritten,
+            pulled.value.unchanged,
+            pulled.value.let_go,
+          ],
+        ).toEqual([0, 1, 1]);
         expect(
           status.ok &&
             status.value.files.find((file) => file.path === "photo.png")
@@ -1854,14 +2145,17 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
             status.value.files.find((file) => file.path === "photo.png")
               ?.item_id,
         ).toBe(previous ? gone.id : undefined);
+        // Bound as the item's file, it lets the other folder's unmatched
+        // copy go.
         const reconsidered = await b.folder.pull();
         expect(
           reconsidered.ok && [
             reconsidered.value.unwritten,
             reconsidered.value.unchanged,
+            reconsidered.value.let_go,
           ],
-        ).toEqual([0, 1]);
-        expect(readFileSync(source)).toEqual(bytes);
+        ).toEqual([0, 1, 1]);
+        expect(existsSync(source)).toBe(false);
         expect(readFileSync(join(b.dir, "photo.png"))).toEqual(bytes);
         const rebound = await b.folder.status();
         expect(
@@ -2070,11 +2364,25 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       ).toEqual(leftFirst ? [2, 0] : [0, 2]);
       expect(readFileSync(join(b.dir, "scan.png"))).toEqual(bytes);
       expect(existsSync(join(b.dir, "Plan.md"))).toBe(true);
-      const letGo = await a.folder.push();
-      expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
-      if (!letGo.ok) return;
-      expect(letGo.value.pull?.let_go).toBe(leftFirst ? 0 : 2);
-      await pastTheGrace();
+      const left = await a.folder.push();
+      expect(left.ok, JSON.stringify(left)).toBe(true);
+      if (!left.ok) return;
+      expect(left.value.pull?.let_go).toBe(0);
+      if (leftFirst) await pastTheGrace();
+      else {
+        // The folder holding the note lets the other folder's copies go: the
+        // note, then its image once the image is unmatched there too.
+        for (const kind of ["note", "image"]) {
+          const kept = await b.folder.push();
+          expect(
+            kept.ok && kept.value.pull?.let_go,
+            `the folder holding the note left the other folder's ${kind}`,
+          ).toBe(1);
+          expect((await a.folder.push()).ok).toBe(true);
+          await pastTheGrace();
+          expect((await a.folder.push()).ok).toBe(true);
+        }
+      }
       for (const pass of ["first", "second"]) {
         const left = await a.folder.push();
         expect(left.ok, JSON.stringify(left)).toBe(true);
@@ -4549,7 +4857,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     ["before", "save-before-last-look", "saved meanwhile"],
     ["after", "save-after-last-look", "saved after the last look"],
   ])(
-    "leaves a file it let go where the person saved it %s its last look",
+    "leaves another folder's copy in place where the person saved it %s the last look before it is let go",
     async (_, fault, saved) => {
       const brief = {
         id: "01a00000-0000-7000-8000-00000000fa41",
@@ -4570,9 +4878,10 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       );
       const first = await b.folder.push();
       expect(first.ok && first.value.pull?.written).toBe(1);
-      // The person saves the file in the folder it leaves just as the pull
-      // takes it away.
-      const letGo = await withFault(fault, () => a.folder.push());
+      expect((await a.folder.push()).ok).toBe(true);
+      // The person saves the file in the folder it left just as the folder
+      // holding the item lets it go.
+      const letGo = await withFault(fault, () => b.folder.push());
       expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
       if (!letGo.ok) return;
       expect(
@@ -4584,7 +4893,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         "a file moved out of its path was left under a name Marfa keeps",
       ).toEqual([]);
       // The save landed after the pull chose to let the file go, which
-      // `› takes in a file another folder let go` shows it does unsaved.
+      // `› lets go of another folder's unmatched copy of an item it keeps, but not one edited since that folder wrote it`
+      // shows it does unsaved.
     },
   );
 });

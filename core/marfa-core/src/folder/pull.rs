@@ -109,12 +109,6 @@ enum PlacementWrite {
     Refused,
 }
 
-enum LetGo {
-    Inapplicable,
-    Removed,
-    Retained,
-}
-
 enum TakeIn {
     Inapplicable,
     Taken,
@@ -173,6 +167,7 @@ pub struct PullReport {
     pub unmatched: usize,
     pub taken: usize,
     pub elsewhere: usize,
+    /// Other folders' unmatched copies of items this folder holds, removed.
     pub let_go: usize,
     /// Documents whose body the pull rewrote so their links follow an item
     /// retitled since they were written. Each rewrite is queued, not yet
@@ -495,22 +490,14 @@ impl Folder {
             .collect();
         let held = crate::store::items_by_ids(&*self.core.conn()?, &outside)?;
         let peers = Peers::of(self, None);
-        let mut retained = Vec::new();
         // A folder that has never synced writes no file, so what a pass
-        // would let go of is not its to count.
+        // would keep is not its to count. Each file is kept, unmatched,
+        // whatever other folder holds its item (`folder-setup/query-tier-departure-kept`).
         let (files, documents): (Vec<Item>, Vec<Item>) = held
             .into_iter()
             .filter(|item| settings.holds_state(item.state) && planning.is_none())
             .partition(|item| bytes_of(item, &catalog).is_some());
-        // Documents first: one let go embeds and has attached nothing here.
-        self.let_go_outside(
-            documents,
-            &peers,
-            &context,
-            report,
-            &mut work,
-            &mut retained,
-        )?;
+        work.extend(documents.into_iter().map(|item| (item, true)));
         let (unread, pinned) =
             self.hold_edge_ends(&work, &edge_types, &catalog, narrow.is_none())?;
         // A narrow pull renders by the names it kept, which an end pinned
@@ -531,13 +518,7 @@ impl Folder {
         let hosts = self.document_hosts(&work, &withheld, &settings, &catalog, &renaming)?;
         let mut embedded = self.embedded(&hosts, &members, &catalog, renaming.lists)?;
         self.report_unread(&hosts, &unread, &mut embedded)?;
-        // A file a document here embeds or has attached is that document's,
-        // whatever other folder holds the item, so it is never let go.
-        let (shown, files): (Vec<Item>, Vec<Item>) = files
-            .into_iter()
-            .partition(|item| embedded.at.contains_key(&item.id));
-        work.extend(shown.into_iter().map(|item| (item, true)));
-        self.let_go_outside(files, &peers, &context, report, &mut work, &mut retained)?;
+        work.extend(files.into_iter().map(|item| (item, true)));
         report.embeds = embedded.reports;
         let missing: Vec<String> = embedded
             .at
@@ -613,7 +594,6 @@ impl Folder {
             .iter()
             .filter(|(_, unmatched)| *unmatched)
             .map(|(item, _)| item.id.clone())
-            .chain(retained)
             .collect();
         let new_outside = self.new_outside_state()?;
         unmatched_ids.extend(
@@ -856,9 +836,20 @@ impl Folder {
             pick: pick.as_ref(),
         };
         let mut refused = HashSet::new();
+        // Items whose take-in moved or tried to move a source in this pass,
+        // which tried its removal already.
+        let mut taking = HashSet::new();
+        let tried = |entry: &Placing<'_>, taken: usize, write: &PlacementWrite| {
+            entry.taken.is_some() && (taken > 0 || matches!(write, PlacementWrite::Refused))
+        };
         for entry in placing {
             context.same_copy(&*self.core.conn()?)?;
-            match self.write_placed(&entry, &rendering, &withheld, Some(&leaving), report)? {
+            let taken = report.taken;
+            let write = self.write_placed(&entry, &rendering, &withheld, Some(&leaving), report)?;
+            if tried(&entry, report.taken - taken, &write) {
+                taking.insert(entry.item.id.clone());
+            }
+            match write {
                 PlacementWrite::Waiting => waiting.push(entry),
                 PlacementWrite::Refused => {
                     refused.insert(marfa_rules::names::folded(&entry.want));
@@ -868,14 +859,17 @@ impl Folder {
         }
         for entry in waiting {
             context.same_copy(&*self.core.conn()?)?;
-            if matches!(
-                self.write_placed(&entry, &rendering, &withheld, None, report)?,
-                PlacementWrite::Refused
-            ) {
+            let taken = report.taken;
+            let write = self.write_placed(&entry, &rendering, &withheld, None, report)?;
+            if tried(&entry, report.taken - taken, &write) {
+                taking.insert(entry.item.id.clone());
+            }
+            if matches!(write, PlacementWrite::Refused) {
                 refused.insert(marfa_rules::names::folded(&entry.want));
             }
         }
         context.same_copy(&*self.core.conn()?)?;
+        self.let_go_copies(&work, &taking, &peers, &context, report)?;
         self.remove_departed(&members, &settings, &lists, &refused, &rendering, report)?;
         if crate::fault::named("copy-changes-after-pull-effects").is_some() {
             static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -1219,11 +1213,13 @@ impl Folder {
         // folder here would read there as a copy; the moved file brings the
         // change to the item once that folder binds it. A move that cannot be
         // told yet is the grace sweep's to tell.
-        if !in_place
-            && let Some(bound) = bound
-            && !self.exists(self.root.join(&bound.path))
-            && journaled_for(&*self.core.conn()?, &bound.path, &item.id)?
-        {
+        let journaled = match bound {
+            Some(bound) if !in_place && !self.exists(self.root.join(&bound.path)) => {
+                journaled_for(&*self.core.conn()?, &bound.path, &item.id)?
+            }
+            _ => false,
+        };
+        if journaled && let Some(bound) = bound {
             match rendering.peers.moved_to(
                 bound,
                 rendering.members.contains(&item.id),
@@ -1908,113 +1904,117 @@ impl Folder {
         Ok(embedded.at.into_keys().collect())
     }
 
-    /// Lets go of each file of `items`, outside the query, that another
-    /// folder files; the rest stay to be kept current here, unmatched.
-    fn let_go_outside(
+    /// Lets go of each other folder's unmatched copy of an item this pull
+    /// keeps while this folder's own file of it is on disk, so the item's
+    /// file stays here. Each is recorded first, so that folder's scan reads
+    /// its file as moved, never as deleted.
+    ///
+    /// The list of items this pull kept as unmatched is written before this
+    /// runs, so two folders that each read the other's list cannot each take
+    /// the other's file.
+    fn let_go_copies(
         &self,
-        items: Vec<Item>,
+        work: &[(Item, bool)],
+        taking: &HashSet<String>,
         peers: &Peers<'_>,
         context: &crate::reach::Context,
         report: &mut PullReport,
-        work: &mut Vec<(Item, bool)>,
-        retained: &mut Vec<String>,
     ) -> Result<()> {
-        for item in items {
-            context.same_copy(&*self.core.conn()?)?;
-            match self.let_go(&item.id, peers, context, report)? {
-                LetGo::Inapplicable => work.push((item, true)),
-                LetGo::Retained => retained.push(item.id),
-                LetGo::Removed => {}
+        peers.prune_let_go()?;
+        for (item, unmatched) in work {
+            if *unmatched || item.version == 0 || taking.contains(&item.id) {
+                continue;
             }
-        }
-        Ok(())
-    }
-
-    /// Trashes nothing. Answers whether it did.
-    fn let_go(
-        &self,
-        item_id: &str,
-        peers: &Peers<'_>,
-        context: &crate::reach::Context,
-        report: &mut PullReport,
-    ) -> Result<LetGo> {
-        let Some(bound) = state::bound_to_item(&*self.core.conn()?, item_id)? else {
-            return Ok(LetGo::Inapplicable);
-        };
-        let path = self.root.join(&bound.path);
-        let own = self
-            .read(&path)
-            .is_ok_and(|found| bound.written_hash.as_deref() == Some(state::hash(&found).as_str()));
-        if !own || !plainly_inside(&self.root_dir, &bound.path) || !peers.filed_elsewhere(item_id) {
-            return Ok(LetGo::Inapplicable);
-        }
-        let Ok((directory, name)) = self.location(&path, false) else {
-            return Ok(LetGo::Inapplicable);
-        };
-        let entry = transfer::Entry {
-            directory,
-            name: name.into(),
-            label: path.clone(),
-        };
-        let Ok(source) = transfer::Source::open_at(&entry, &bound) else {
-            return Ok(LetGo::Inapplicable);
-        };
-        // Checked again as it goes, so an edit saved meanwhile stays.
-        let conn = self.core.conn()?;
-        context.same_copy(&conn)?;
-        let dir = Path::new(&bound.path)
-            .parent()
-            .map(|parent| parent.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let removed = match self
-            .guarded_at(&conn, &entry, dir)
-            .map_err(landing::RemoveError::Remove)
-            .and_then(|place| {
-                landing::remove_checked_at(&place.directory, place.guard(), &entry.name, |found| {
-                    source.check().is_ok()
-                        && bound.written_hash.as_deref() == Some(state::hash(found).as_str())
-                })
-            }) {
-            Ok(removed) => removed,
-            Err(landing::RemoveError::Remove(error)) => {
+            let Some(own) = state::bound_to_item(&*self.core.conn()?, &item.id)? else {
+                continue;
+            };
+            let here = |own: &state::Bound| {
+                plainly_inside(&self.root_dir, &own.path) && self.exists(self.root.join(&own.path))
+            };
+            if !here(&own) {
+                continue;
+            }
+            for (entry, theirs) in peers.unmatched_copies(&item.id) {
+                let Ok(source) = transfer::Source::open_at(&entry, &theirs) else {
+                    continue;
+                };
+                {
+                    let conn = self.core.conn()?;
+                    context.same_copy(&conn)?;
+                    // Read again just before, so a pull of that folder since,
+                    // or a change to this folder's file, stops it.
+                    if !peers.still_unmatched(&entry.label, &item.id)
+                        || !state::bound_to_item(&conn, &item.id)?.is_some_and(|own| here(&own))
+                    {
+                        continue;
+                    }
+                }
+                let Some(record) = peers.record_let_go(&entry.label, &theirs)? else {
+                    continue;
+                };
+                let conn = self.core.conn()?;
+                let dir = entry
+                    .label
+                    .parent()
+                    .map(|parent| parent.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let removed = self
+                    .guarded_at(&conn, &entry, dir)
+                    .map_err(landing::RemoveError::Remove)
+                    .and_then(|place| {
+                        landing::remove_checked_at(
+                            &place.directory,
+                            place.guard(),
+                            &entry.name,
+                            |found| {
+                                source.check().is_ok()
+                                    && theirs.written_hash.as_deref()
+                                        == Some(state::hash(found).as_str())
+                            },
+                        )
+                    });
+                drop(conn);
+                let error = match removed {
+                    Ok(true) => {
+                        report.let_go += 1;
+                        continue;
+                    }
+                    Ok(false) => {
+                        peers.forget_let_go(&record)?;
+                        continue;
+                    }
+                    Err(
+                        landing::RemoveError::Remove(error) | landing::RemoveError::Read(error),
+                    ) => {
+                        peers.forget_let_go(&record)?;
+                        error
+                    }
+                };
                 if landing::is_busy(&error) {
                     report.not_written(
                         NotWritten::Busy,
-                        item_id,
-                        &bound.path,
-                        "a program has it open for writing, so Marfa lets it go to another folder once that program closes it",
+                        &item.id,
+                        &own.path,
+                        format!(
+                            "a program has {} open for writing, the copy another folder keeps as unmatched, so Marfa lets it go once that program closes it",
+                            entry.label.display()
+                        ),
                     );
-                    return Ok(LetGo::Retained);
+                    continue;
                 }
                 report.unwritten += 1;
                 report.flagged.push(Flagged {
-                    path: bound.path.clone(),
+                    path: own.path.clone(),
                     flag: "retained",
-                    reason: format!("cannot let it go to another folder: {error}"),
-                    item: Some(item_id.to_string()),
+                    reason: format!(
+                        "cannot let go of {}, the copy another folder keeps as unmatched: {error}",
+                        entry.label.display()
+                    ),
+                    item: Some(item.id.clone()),
                 });
-                return Ok(LetGo::Retained);
             }
-            Err(landing::RemoveError::Read(error)) => {
-                return Err(CoreError::Store(format!(
-                    "cannot read {}: {error}",
-                    path.display()
-                )));
-            }
-        };
-        if !removed {
-            return Ok(LetGo::Inapplicable);
         }
-        drop(conn);
-        // After the removal, which may be refused, and before the binding
-        // goes, so a failure leaves the binding for the scan to settle.
-        let ended = self.end_placement(item_id, &bound.path)?;
-        let conn = self.core.conn()?;
-        state::unbind(&conn, &bound.path)?;
-        state::journal_clear(&conn, &bound.path)?;
-        report.ended += ended;
-        report.let_go += 1;
-        Ok(LetGo::Removed)
+        Ok(())
     }
 
     fn remove_departed(

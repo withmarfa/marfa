@@ -754,7 +754,7 @@ When a bound file moves or is renamed within its directory and its placement edg
 
 If ending a departing file's placement fails locally, then a device MUST retain the file's binding so a later pass can retry ending the placement.
 
-**Tests:** `device/folders-identity.test.ts › keeps the file and the placement where ending the placement fails, and ends it at the next push`, `device/folders-identity.test.ts › keeps the binding of a deleted file where ending its placement fails, and ends it at the next push`, `device/folders-one-mac.test.ts › leaves the binding of a file it let go where ending the placement fails, and the scan ends it past the grace`.
+**Tests:** `device/folders-identity.test.ts › keeps the file and the placement where ending the placement fails, and ends it at the next push`, `device/folders-identity.test.ts › keeps the binding of a deleted file where ending its placement fails, and ends it at the next push`, `device/folders-one-mac.test.ts › keeps the binding of a file another folder let go where ending the placement fails, and ends it at the next push`.
 
 ### `folder-files/placement-purge-no-delete`
 
@@ -876,7 +876,7 @@ When a pull's move of a file is cut off after the file is renamed and before the
 
 When a person changes or replaces a file after a pull last read it, a device MUST NOT overwrite, remove or let go of that change.
 
-**Tests:** `device/folders-identity.test.ts › leaves a file it would take away or rewrite where the person saved it %s its last look`, `device/folders-placement.test.ts › keeps a save made while a move writes the file, in the moved file`, `device/folders-one-mac.test.ts › leaves a file it let go where the person saved it %s its last look`.
+**Tests:** `device/folders-identity.test.ts › leaves a file it would take away or rewrite where the person saved it %s its last look`, `device/folders-placement.test.ts › keeps a save made while a move writes the file, in the moved file`, `device/folders-one-mac.test.ts › leaves another folder's copy in place where the person saved it %s the last look before it is let go`.
 
 ### `folder-files/write-displaced-put-back`
 
@@ -884,7 +884,7 @@ If a person's save takes a file's path after a device last read the file and bef
 
 **Reason:** an editor saves by renaming a new file over the old one, so the file a device moves out of the path can be the person's save rather than the file it read.
 
-**Tests:** `device/folders-identity.test.ts › leaves a file it would take away or rewrite where the person saved it %s its last look`, `device/folders-one-mac.test.ts › leaves a file it let go where the person saved it %s its last look`, `device/folders-placement.test.ts › keeps a save made to the moved file %s the last look while an old buffer is taken over it`.
+**Tests:** `device/folders-identity.test.ts › leaves a file it would take away or rewrite where the person saved it %s its last look`, `device/folders-one-mac.test.ts › leaves another folder's copy in place where the person saved it %s the last look before it is let go`, `device/folders-placement.test.ts › keeps a save made to the moved file %s the last look while an old buffer is taken over it`.
 
 ### `folder-files/write-displaced-kept-beside`
 
@@ -2576,33 +2576,57 @@ When the person edits a retained copied source before its removal becomes possib
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
+### `folder-files/let-go-leaving-kept`
+
+When an item leaves a folder's query, a device MUST NOT remove that folder's file of the item because another registered directory holds the item.
+
+**Reason:** another directory's copy can trail the server, so it cannot say that it still holds the item. The directory that holds the item lets the file go instead (`folder-files/let-go-existing-peer`), from its own copy.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps both folders' files of an item both drop in one change ($cause, $first pushes first)`, `› lets go of another folder's unmatched copy of an item it keeps, but not one edited since that folder wrote it`.
+
 ### `folder-files/let-go-existing-peer`
 
-When a registered directory that follows another `system.folder` already holds its own file for an item this folder no longer holds, a device MUST remove this directory’s unchanged owned file.
+When a pull holds an item and its directory has a file of the item, and a registered directory that follows another `system.folder` has a file of the item that its last pull kept as unmatched and that holds the bytes its folder last wrote, a device MUST remove that other directory's file.
 
-**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
+**Reason:** a directory removes another directory's file only while its own copy holds the item and its own file is on disk, so two directories cannot each remove the other's only file. A file that has an edit waiting, or that the other directory's copy holds again, stays.
+
+**Tests:** `device/folders-one-mac.test.ts › lets go of another folder's unmatched copy of an item it keeps, but not one edited since that folder wrote it`, `› takes in a file another folder let go`, `› ends a folder's placement of an item whose file another folder took in or let go`, `› preserves ownership for an identical move destination ($mode, previous binding $previous)`.
 
 ### `folder-files/let-go-existing-peer-let-go-count`
 
-When a registered directory that follows another `system.folder` already holds its own file for an item this folder no longer holds, a device MUST count this directory’s file as `let_go`.
+When a device removes another directory's file under `folder-files/let-go-existing-peer`, a device MUST count the file as `let_go` in the report of the pull that removed it.
 
-**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-one-mac.test.ts › lets go of another folder's unmatched copy of an item it keeps, but not one edited since that folder wrote it`, `› takes in a file another folder let go`.
+
+### `folder-files/let-go-edited-kept`
+
+If another directory's unmatched file of an item differs from the bytes its folder last wrote, then a device MUST NOT remove it under `folder-files/let-go-existing-peer`.
+
+**Tests:** `device/folders-one-mac.test.ts › lets go of another folder's unmatched copy of an item it keeps, but not one edited since that folder wrote it`, `› leaves another folder's copy in place where the person saved it %s the last look before it is let go`.
+
+### `folder-files/let-go-read-as-moved`
+
+When a directory's file is missing because another registered directory removed it under `folder-files/let-go-existing-peer`, a device MUST NOT send a delete of the file's item.
+
+**Reason:** the directory that removed the file records it first, and the directory that lost the file reads that record, so it treats the file as moved even where its own copy has come to hold the item again.
+
+**Tests:** `device/folders-one-mac.test.ts › trashes nothing, and writes its file again, when a folder's copy brought back an item whose unmatched copy another folder let go`, `› lets go of another folder's unmatched copy of an item it keeps, but not one edited since that folder wrote it`.
 
 ### `folder-files/let-go-attachment-kept`
 
-While a document in a folder embeds an item or has it attached, a device MUST NOT let go of that folder's file of the item because another registered directory holds its own file for the item.
+While a document in a folder embeds an item or has it attached, a device MUST NOT remove that folder's file of the item because another registered directory holds the item.
 
-**Reason:** the pull that lets the file go writes it again beside its document, so every pull would remove and write the same file.
+**Reason:** the file is that document's, not unmatched, and removed it would be written again beside the document at every pull.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again`.
 
 ### `folder-files/let-go-attachment-with-document`
 
-When this folder no longer holds an item or any document the item is attached to, and the query of a registered directory that follows another `system.folder` holds a document the item is attached to and that directory has its own file of the item, a device MUST remove this directory's unchanged owned file of the item and count it as `let_go`.
+When a pull holds a document that an item is attached to and its directory has a file of the item, and a registered directory that follows another `system.folder` has a file of the item that its last pull kept as unmatched and that holds the bytes its folder last wrote, a device MUST remove that other directory's file.
 
-**Reason:** the other directory writes the file beside the document it holds, so a file kept here would stay unmatched for good.
+**Reason:** a directory holds an attachment with the document it is attached to, so the file goes to the directory that holds the document.
 
-**Tests:** `device/folders-one-mac.test.ts › moves a note's attachment with the note to another notes folder when %s hears first`.
+**Tests:** `device/folders-one-mac.test.ts › moves a note's attachment with the note to another notes folder when %s hears first`, `› lets a file folder's unmatched image go only from the notes folder that holds the note it is attached to`.
 
 ### `folder-files/unmatched-missing-not-rewritten`
 

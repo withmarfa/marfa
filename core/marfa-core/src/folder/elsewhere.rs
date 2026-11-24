@@ -13,6 +13,34 @@ const META_STORE: &str = "folder_store";
 const META_LISTED_IN: &str = "folder_listed_in";
 /// The other folders it last found, kept for a registry that loses them.
 const META_OTHERS: &str = "folder_others";
+/// The other folders' unmatched copies it let go, until each of those
+/// folders has read its file gone.
+const META_LET_GO: &str = "folder_let_go";
+
+/// A copy one folder let go from another folder's directory: that folder's
+/// store, its path for the file and the item, and the bytes removed.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct LetGo {
+    store: String,
+    path: String,
+    item: String,
+    hash: String,
+}
+
+fn let_go_records(conn: &rusqlite::Connection) -> Vec<LetGo> {
+    store::meta_get(conn, META_LET_GO)
+        .ok()
+        .flatten()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+fn set_let_go_records(conn: &rusqlite::Connection, records: &[LetGo]) -> Result<()> {
+    if records.is_empty() {
+        return store::meta_delete(conn, META_LET_GO);
+    }
+    store::meta_set(conn, META_LET_GO, &serde_json::to_string(records)?)
+}
 
 /// This folder's store id, made the first time it is asked for.
 pub(super) fn store_id(core: &Core) -> Result<String> {
@@ -56,6 +84,7 @@ pub(super) struct Peer {
     /// Its store, read only; `None` where it cannot be opened.
     folder: Option<Folder>,
     members: OnceCell<Option<HashSet<String>>>,
+    unmatched: OnceCell<Option<HashSet<String>>>,
     walked: OnceCell<Walked>,
     /// Its bindings by path, as item and bytes.
     bound: OnceCell<HashMap<String, (String, String)>>,
@@ -146,6 +175,7 @@ impl Peer {
             root_dir,
             folder,
             members: OnceCell::new(),
+            unmatched: OnceCell::new(),
             walked: OnceCell::new(),
             bound: OnceCell::new(),
             catalog: OnceCell::new(),
@@ -162,6 +192,10 @@ impl Peer {
 
     /// Whether its query holds the item; `None` where its copy cannot say.
     fn holds(&self, item_id: &str) -> Option<bool> {
+        self.members().map(|members| members.contains(item_id))
+    }
+
+    fn members(&self) -> Option<&HashSet<String>> {
         self.members
             .get_or_init(|| {
                 let folder = self.folder.as_ref()?;
@@ -171,7 +205,30 @@ impl Peer {
                     .ok()
             })
             .as_ref()
-            .map(|members| members.contains(item_id))
+    }
+
+    /// The items whose files its last pull kept as unmatched.
+    fn read_unmatched(&self) -> Option<HashSet<String>> {
+        let folder = self.folder.as_ref()?;
+        let conn = folder.core.conn().ok()?;
+        state::unmatched(&conn)
+            .ok()
+            .map(|ids| ids.into_iter().collect())
+    }
+
+    /// Whether its last pull kept the item's file as unmatched, read once a
+    /// pass, at the first ask.
+    fn unmatched(&self, item_id: &str) -> bool {
+        self.unmatched
+            .get_or_init(|| self.read_unmatched())
+            .as_ref()
+            .is_some_and(|unmatched| unmatched.contains(item_id))
+    }
+
+    /// As [`Peer::unmatched`], read from its store now.
+    fn unmatched_now(&self, item_id: &str) -> bool {
+        self.read_unmatched()
+            .is_some_and(|unmatched| unmatched.contains(item_id))
     }
 
     /// Whether the item left this folder by its state or the bin, whose file
@@ -199,20 +256,6 @@ impl Peer {
                 edge.edge_type == super::embeds::ATTACHMENT_EDGE
                     && self.bound_to(&edge.to_id).is_some()
                     && !(taking.contains(&edge.to_id) && self.holds(&edge.to_id) == Some(false))
-            })
-        })
-    }
-
-    /// Whether its query holds a document the item is attached to, so its
-    /// file of the item is that document's attachment.
-    fn holds_document_of(&self, item_id: &str) -> bool {
-        let Some(folder) = &self.folder else {
-            return false;
-        };
-        folder.core.edges_from(item_id).is_ok_and(|edges| {
-            edges.iter().any(|edge| {
-                edge.edge_type == super::embeds::ATTACHMENT_EDGE
-                    && self.holds(&edge.to_id) == Some(true)
             })
         })
     }
@@ -479,6 +522,9 @@ pub(super) enum Look {
 /// The other folders the registry lists, opened when first asked after.
 pub(super) struct Peers<'a> {
     of: &'a Folder,
+    /// This folder's store id, read when made, since a look may come while
+    /// this folder's store is held.
+    store: Option<String>,
     doubt: Option<String>,
     loaded: OnceCell<(Vec<Peer>, Option<String>)>,
 }
@@ -488,6 +534,7 @@ impl<'a> Peers<'a> {
     pub(super) fn of(folder: &'a Folder, doubt: Option<String>) -> Peers<'a> {
         Peers {
             of: folder,
+            store: listed_store(&folder.core),
             doubt,
             loaded: OnceCell::new(),
         }
@@ -651,6 +698,13 @@ impl<'a> Peers<'a> {
         }
         let peers = self.all();
         let item = lost.item_id.as_str();
+        if lost
+            .written_hash
+            .as_deref()
+            .is_some_and(|hash| self.let_go_here(&lost.path, item, hash))
+        {
+            return Look::Moved;
+        }
         let arrival = |peer: &Peer, file: &OnDisk| {
             if peer.awaits(file, item, file_item) {
                 Look::Arriving
@@ -736,15 +790,142 @@ impl<'a> Peers<'a> {
         }
     }
 
-    /// Whether another folder holds the item, or a document it is attached
-    /// to, with a file of it already.
-    pub(super) fn filed_elsewhere(&self, item_id: &str) -> bool {
-        self.other_folders().any(|peer| {
-            (peer.holds(item_id) == Some(true) || peer.holds_document_of(item_id))
-                && peer
-                    .bound_to(item_id)
-                    .is_some_and(|bound| peer.present(&bound.path))
+    /// Whether another folder let go of this folder's file at `path`, of
+    /// the item, holding `hash`: its file is that folder's now.
+    pub(super) fn let_go_here(&self, path: &str, item_id: &str, hash: &str) -> bool {
+        let Some(own) = &self.store else {
+            return false;
+        };
+        self.all().iter().any(|peer| {
+            peer.folder.as_ref().is_some_and(|folder| {
+                folder.core.conn().is_ok_and(|conn| {
+                    let_go_records(&conn).iter().any(|record| {
+                        record.store == *own
+                            && record.path == path
+                            && record.item == item_id
+                            && record.hash == hash
+                    })
+                })
+            })
         })
+    }
+
+    /// Records, in this folder's store, the copy at `label` it is about to
+    /// let go, so that folder's scan reads the file as moved, not deleted.
+    /// `None` where the other folder's store cannot be named.
+    pub(super) fn record_let_go(
+        &self,
+        label: &Path,
+        bound: &state::Bound,
+    ) -> Result<Option<LetGo>> {
+        let Some(store) = self
+            .other_folders()
+            .find(|peer| label.starts_with(&peer.root))
+            .and_then(|peer| listed_store(&peer.folder.as_ref()?.core))
+        else {
+            return Ok(None);
+        };
+        let Some(hash) = bound.written_hash.clone() else {
+            return Ok(None);
+        };
+        let record = LetGo {
+            store,
+            path: bound.path.clone(),
+            item: bound.item_id.clone(),
+            hash,
+        };
+        let conn = self.of.core.conn()?;
+        let mut records = let_go_records(&conn);
+        if !records.contains(&record) {
+            records.push(record.clone());
+            set_let_go_records(&conn, &records)?;
+        }
+        Ok(Some(record))
+    }
+
+    /// Drops a record whose copy was not let go after all.
+    pub(super) fn forget_let_go(&self, record: &LetGo) -> Result<()> {
+        let conn = self.of.core.conn()?;
+        let mut records = let_go_records(&conn);
+        records.retain(|kept| kept != record);
+        set_let_go_records(&conn, &records)
+    }
+
+    /// Drops each record the other folder no longer needs: it no longer
+    /// binds the path to the item, or a file is at the path again.
+    pub(super) fn prune_let_go(&self) -> Result<()> {
+        let records = let_go_records(&*self.of.core.conn()?);
+        if records.is_empty() {
+            return Ok(());
+        }
+        let kept: Vec<LetGo> = records
+            .iter()
+            .filter(|record| {
+                let Some(peer) = self.all().iter().find(|peer| {
+                    peer.folder.as_ref().is_some_and(|folder| {
+                        listed_store(&folder.core).as_ref() == Some(&record.store)
+                    })
+                }) else {
+                    // A folder that cannot be read now may read its file gone later.
+                    return true;
+                };
+                peer.bound_to(&record.item)
+                    .is_some_and(|bound| bound.path == record.path)
+                    && !peer.present(&record.path)
+            })
+            .cloned()
+            .collect();
+        if kept.len() != records.len() {
+            set_let_go_records(&*self.of.core.conn()?, &kept)?;
+        }
+        Ok(())
+    }
+
+    /// Each other folder's file of the item that its last pull kept as
+    /// unmatched and that is still the bytes it wrote, with nothing of the
+    /// person's waiting on it: a copy the folder holding the item lets go.
+    pub(super) fn unmatched_copies(
+        &self,
+        item_id: &str,
+    ) -> Vec<(super::transfer::Entry, state::Bound)> {
+        self.other_folders()
+            .filter(|peer| peer.unmatched(item_id))
+            .filter_map(|peer| {
+                let folder = peer.folder.as_ref()?;
+                let bound = peer.bound_to(item_id)?;
+                let members = peer.members()?;
+                let settings = folder.settings().ok()?;
+                let lists = settings.lists().ok()?;
+                if folder
+                    .kept_because(&bound, members, &settings, &lists)
+                    .ok()?
+                    .is_some()
+                {
+                    return None;
+                }
+                let (directory, name) = peer
+                    .root_dir
+                    .as_ref()?
+                    .parent(Path::new(&bound.path), false)
+                    .ok()?;
+                Some((
+                    super::transfer::Entry {
+                        directory,
+                        name: name.into(),
+                        label: peer.root.join(&bound.path),
+                    },
+                    bound,
+                ))
+            })
+            .collect()
+    }
+
+    /// Whether the other folder whose directory holds `label` still keeps the
+    /// item unmatched, read now.
+    pub(super) fn still_unmatched(&self, label: &Path, item_id: &str) -> bool {
+        self.other_folders()
+            .find(|peer| label.starts_with(&peer.root))
+            .is_some_and(|peer| peer.unmatched_now(item_id))
     }
 
     /// A file another folder let go of, holding the bytes it wrote, to take
@@ -817,6 +998,7 @@ mod tests {
             root_dir: Some(Directory::open(&to).unwrap()),
             folder: None,
             members: OnceCell::new(),
+            unmatched: OnceCell::new(),
             walked: OnceCell::new(),
             bound: OnceCell::new(),
             catalog: OnceCell::new(),
@@ -944,6 +1126,7 @@ mod tests {
             root_dir: Some(Directory::open(&root).unwrap()),
             folder: None,
             members: OnceCell::new(),
+            unmatched: OnceCell::new(),
             walked: OnceCell::new(),
             bound: OnceCell::new(),
             catalog: OnceCell::new(),
@@ -991,6 +1174,7 @@ mod tests {
             root_dir: Some(Directory::open(&root).unwrap()),
             folder: None,
             members: OnceCell::new(),
+            unmatched: OnceCell::new(),
             walked: OnceCell::new(),
             bound: OnceCell::new(),
             catalog: OnceCell::new(),
