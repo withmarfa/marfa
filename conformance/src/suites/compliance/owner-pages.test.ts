@@ -515,44 +515,56 @@ describe("changing the password", () => {
     expect(await signsIn(TEST_OWNER.password)).toBe(true);
   });
 
-  it("refuses a current password longer than any the server sets without counting it, as JSON and from the page's form", async () => {
+  it("refuses an empty current password and one longer than any the server sets without counting either, as JSON and from the page's form", async () => {
     const here = await signIn();
-    const address = nextAddress();
-    const overlong = "x".repeat(1025);
-    // More than the ten a window holds, so a counted refusal would lock this address.
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const json = await change(
-        { current_password: overlong, new_password: NEW_PASSWORD },
-        here,
-        { address },
-      );
-      expect(json.status).toBe(400);
-      expect(await code(json)).toBe("validation_error");
-      const page = await changeFromPage(
-        {
-          current_password: overlong,
-          new_password: NEW_PASSWORD,
-          confirm_password: NEW_PASSWORD,
-        },
-        here,
-        address,
-      );
-      expect((await sentTo(page)).searchParams.get("problem")).toBe(
-        "current_missing",
-      );
+    const values = { empty: "", overlong: "x".repeat(1025) };
+    const formats = {
+      json: async (current: string, address: string) => {
+        const refused = await change(
+          { current_password: current, new_password: NEW_PASSWORD },
+          here,
+          { address },
+        );
+        expect(refused.status).toBe(400);
+        expect(await code(refused)).toBe("validation_error");
+      },
+      form: async (current: string, address: string) => {
+        const refused = await changeFromPage(
+          {
+            current_password: current,
+            new_password: NEW_PASSWORD,
+            confirm_password: NEW_PASSWORD,
+          },
+          here,
+          address,
+        );
+        expect((await sentTo(refused)).searchParams.get("problem")).toBe(
+          "current_missing",
+        );
+      },
+    };
+    for (const [format, refuse] of Object.entries(formats)) {
+      for (const [value, current] of Object.entries(values)) {
+        // Each case has an address of its own, and sends the ten a window holds, so counting on
+        // this one path would hold the change that follows.
+        const address = nextAddress();
+        for (let attempt = 0; attempt < 10; attempt++) {
+          await refuse(current, address);
+        }
+        const changed = await change(
+          { current_password: TEST_OWNER.password, new_password: NEW_PASSWORD },
+          here,
+          { address },
+        );
+        expect(changed.status, `${format} ${value}`).toBe(200);
+        const back = await change(
+          { current_password: NEW_PASSWORD, new_password: TEST_OWNER.password },
+          here,
+          { address },
+        );
+        expect(back.status, `${format} ${value}`).toBe(200);
+      }
     }
-    const changed = await change(
-      { current_password: TEST_OWNER.password, new_password: NEW_PASSWORD },
-      here,
-      { address },
-    );
-    expect(changed.status, await changed.clone().text()).toBe(200);
-    const back = await change(
-      { current_password: NEW_PASSWORD, new_password: TEST_OWNER.password },
-      here,
-      { address },
-    );
-    expect(back.status).toBe(200);
     // The witness: ten wrong passwords of a length the server judges lock an address.
     const judged = nextAddress();
     for (let attempt = 0; attempt < 10; attempt++) {
