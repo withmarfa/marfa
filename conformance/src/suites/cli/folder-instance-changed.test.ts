@@ -1,13 +1,9 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   rmSync,
-  statSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -40,14 +36,22 @@ interface Listed {
 interface Foreseen {
   path: string;
   outcome: string;
-  held?: number;
-  sent?: number;
-  shared?: number;
+  held: number | null;
+  sent: number | null;
 }
 
 interface Added {
   restore: { record: string; reason?: string; files: Foreseen[] };
 }
+
+interface Record {
+  files: Array<{ path: string; version: number; hash: string | null }>;
+}
+
+const record = (dir: string): Record =>
+  JSON.parse(
+    readFileSync(join(dir, ".marfa", "removed.json"), "utf8"),
+  ) as Record;
 
 const note = (title: string, body: string): string =>
   `---\ntitle: ${title}\n---\n${body}\n`;
@@ -100,7 +104,7 @@ async function restoredAfter(
       "--title",
       name,
       "--query",
-      JSON.stringify({ types }),
+      JSON.stringify({ types, state: ["active"] }),
     ]);
     folder = made.item.id;
     await first.json(["folders", "add", dir, "--folder", folder, "--yes"]);
@@ -142,70 +146,99 @@ async function notes(cli: Cli): Promise<Listed["data"]> {
 }
 
 describe("a directory added back in place after its server was restored into another instance", () => {
-  it("sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice", async () => {
+  it("sends no file the directory synced before to the instance a backup was restored into, keeps both where they differ, and keeps the record until every file is settled", async () => {
     const { target, cli, dir, folder } = await restoredAfter(
       "Home",
-      ["core.note"],
+      ["core.note", "core.file"],
       async (first, dir) => {
-        writeFileSync(
-          join(dir, "Packing list.md"),
-          note("Packing list", "socks"),
-        );
-        writeFileSync(
-          join(dir, "Unchanged.md"),
-          note("Unchanged", "as it was"),
-        );
-        writeFileSync(join(dir, "Dropped.md"), note("Dropped", "not wanted"));
-        writeFileSync(join(dir, "Late.md"), note("Late", "in the backup"));
+        for (const title of ["Clash", "Late", "Tagged", "Outside", "Same"]) {
+          writeFileSync(join(dir, `${title}.md`), note(title, "in the backup"));
+        }
+        writeFileSync(join(dir, "Broken.md"), note("Broken", "readable"));
         expect((await first.run(["folders", "push", dir])).code).toBe(0);
       },
       async (first, dir) => {
-        // Sent after the backup was made, so no queue holds them.
-        await edits(first, dir, "Late.md", ["second", "third", "fourth"]);
-      },
-      async (first, dir) => {
-        // Changed while no server answers, so they wait in the queue.
-        const packing = join(dir, "Packing list.md");
+        // Sent after the backup was made, so the restore lacks them.
+        await edits(first, dir, "Clash.md", ["origin 2"]);
+        await edits(first, dir, "Late.md", ["late 2", "late 3"]);
+        writeFileSync(join(dir, "Fresh.md"), note("Fresh", "after the backup"));
+        writeFileSync(join(dir, "new.bin"), Buffer.from([0, 1, 2, 3]));
+        // Not UTF-8, so the folder holds it and never sends it.
         writeFileSync(
-          packing,
-          readFileSync(packing, "utf8").replace("socks", "socks\nboots"),
+          join(dir, "Broken.md"),
+          Buffer.concat([
+            Buffer.from("---\ntitle: Broken\n---\n"),
+            Buffer.from([0xff, 0xfe, 0x0a]),
+          ]),
         );
-        writeFileSync(join(dir, "New idea.md"), note("New idea", "brand new"));
-        rmSync(join(dir, "Dropped.md"));
-        const unsent = await first.run(["folders", "push", dir]);
-        expect(unsent.code, unsent.stderr).toBe(3);
+        expect((await first.run(["folders", "push", dir])).code).toBe(0);
       },
     );
     try {
-      const stopped = await cli.refused(["folders", "push", dir]);
-      expect(JSON.stringify(stopped.envelope)).toContain("instance_changed");
+      const byTitle = async (title: string) =>
+        (await notes(cli)).find((item) => item.properties.title === title)!;
+      const got = async (id: string) => {
+        const read = await cli.json<ItemEnvelope>(["items", "get", id]);
+        return {
+          ...read.item,
+          body: (read.item.properties.body as string | undefined)?.trim(),
+          tags: read.metadata?.tags ?? [],
+        };
+      };
+      // #3542: the instance's own version 2 of Clash, beside the folder's.
+      const clash = await byTitle("Clash");
+      await cli.json([
+        "items",
+        "update",
+        clash.id,
+        "--version",
+        "1",
+        "--prop",
+        "body=edited on the instance",
+      ]);
+      const tagged = await byTitle("Tagged");
+      await cli.json(["items", "tags", "add", tagged.id, "starred"]);
+      const outside = await byTitle("Outside");
+      await cli.json([
+        "items",
+        "transition",
+        outside.id,
+        "--state",
+        "archived",
+      ]);
+      expect(readFileSync(join(dir, "Clash.md"), "utf8")).toContain(
+        "marfa_version: 2",
+      );
 
       const removed = await cli.run(["folders", "remove", dir]);
       expect(removed.code, removed.stderr).toBe(0);
-      const lines = removed.stdout.split("\n");
-      for (const line of [
-        "  deleted  Dropped.md",
-        "  new      New idea.md",
-        "  changed  Packing list.md",
-      ]) {
-        expect(lines, removed.stdout).toContain(line);
-      }
       expect(removed.stdout).toContain(
         `marfa folders add ${dir} --folder ${folder}`,
       );
       expect(removed.stdout).toContain("on this same directory");
-      expect(existsSync(join(dir, ".marfa", "core.sqlite"))).toBe(false);
-      const record = JSON.parse(
-        readFileSync(join(dir, ".marfa", "removed.json"), "utf8"),
-      ) as {
-        files: Array<{ path: string; version: number; hash: string | null }>;
-      };
-      const late = record.files.find((file) => file.path === "Late.md")!;
-      expect(late.version).toBe(4);
-      // An edit the server never acknowledged is not recorded as agreed.
-      expect(
-        record.files.find((file) => file.path === "Packing list.md")!.hash,
-      ).toBeNull();
+      // No push since the restore: the removal asked the server itself.
+      expect(removed.stdout).toContain(
+        "another Marfa instance answers at the folder's server",
+      );
+      const files = record(dir).files;
+      expect(files.find((file) => file.path === "Late.md")!.version).toBe(3);
+      // The witness: an agreed file records its hash; a held one does not.
+      expect(files.find((file) => file.path === "Same.md")!.hash).toEqual(
+        expect.any(String),
+      );
+      expect(files.find((file) => file.path === "Broken.md")!.hash).toBeNull();
+
+      // Added, then removed before its first sync: the record stays.
+      const planned = await cli.json<Added>([
+        "folders",
+        "add",
+        dir,
+        "--folder",
+        folder,
+      ]);
+      expect(planned.restore.record).toBe("other_instance");
+      expect((await cli.run(["folders", "remove", dir])).code).toBe(0);
+      expect(existsSync(join(dir, ".marfa", "removed.json"))).toBe(true);
 
       const added = await cli.json<Added>([
         "folders",
@@ -213,194 +246,98 @@ describe("a directory added back in place after its server was restored into ano
         dir,
         "--folder",
         folder,
-        "--yes",
       ]);
       expect(added.restore.record).toBe("other_instance");
-      expect(added.restore.files).toContainEqual({
-        path: "Late.md",
-        outcome: "send",
+      const outcome = (path: string) =>
+        added.restore.files.find((file) => file.path === path);
+      expect(outcome("Clash.md")).toMatchObject({
+        outcome: "both",
+        held: 2,
+        sent: 2,
+      });
+      expect(outcome("Late.md")).toMatchObject({
+        outcome: "both",
         held: 1,
-        sent: 4,
+        sent: 3,
       });
-      expect(added.restore.files).toContainEqual({
-        path: "Dropped.md",
-        outcome: "gone",
-      });
+      expect(outcome("Tagged.md")).toMatchObject({ outcome: "both" });
+      expect(outcome("Outside.md")).toMatchObject({ outcome: "absent" });
+      expect(outcome("Fresh.md")).toMatchObject({ outcome: "absent" });
+      expect(outcome("new.bin")).toMatchObject({ outcome: "absent" });
+      expect(outcome("Broken.md")).toMatchObject({ outcome: "unknown" });
+      expect(outcome("Same.md")).toMatchObject({ outcome: "in_step" });
+      expect((await cli.run(["folders", "confirm", dir])).code).toBe(0);
       const pushed = await cli.run(["folders", "push", dir]);
       expect(pushed.code, pushed.stderr).toBe(0);
       expect(pushed.stdout).toContain(
-        "Late.md is sent as an edit of version 1, which the instance holds as the restore left it",
+        "Clash.md shows the instance's version; this directory's version is kept in Clash (2).md",
       );
-      // The witness: the backup brings back the file deleted while the
-      // server was down, which is why the removal names it.
-      expect(existsSync(join(dir, "Dropped.md"))).toBe(true);
-      rmSync(join(dir, "Dropped.md"));
-      await vi.waitFor(
-        async () => {
-          const again = await cli.run(["folders", "push", dir]);
-          expect(again.code, again.stderr).toBe(0);
-          const status = await cli.run(["folders", "status", dir]);
-          expect(status.stdout).not.toContain("waiting");
-        },
-        { timeout: 30_000, interval: 1_000 },
-      );
+      expect(pushed.stdout).toContain("Fresh.md waits:");
+      expect(pushed.stdout).not.toContain("Same.md waits");
 
-      const items = await notes(cli);
-      expect(items.map((item) => item.properties.title).sort()).toEqual([
-        "Late",
-        "New idea",
-        "Packing list",
-        "Unchanged",
-      ]);
-      const body = (title: string): string | undefined =>
-        items
-          .find((item) => item.properties.title === title)
-          ?.properties.body?.trim();
-      expect(body("Late")).toBe("fourth");
-      expect(body("Packing list")).toContain("boots");
-      expect(body("New idea")).toContain("brand new");
-      expect(existsSync(join(dir, ".marfa", "removed.json"))).toBe(false);
-    } finally {
-      await target.stop();
-    }
-  });
-
-  it("keeps both where the instance changed a file's item since the restore, and sends nothing over a change made after the add", async () => {
-    const script = "#!/bin/sh\nmarfa_version: 1\necho first\n";
-    const changedScript = "#!/bin/sh\nmarfa_version: 1\necho changed\n";
-    const { target, cli, dir, folder } = await restoredAfter(
-      "Clash",
-      ["core.note", "core.file"],
-      async (first, dir) => {
-        for (const title of ["Clash", "Equal", "Raced"]) {
-          writeFileSync(join(dir, `${title}.md`), note(title, "in the backup"));
-        }
-        writeFileSync(join(dir, "tool.sh"), script);
-        chmodSync(join(dir, "tool.sh"), 0o755);
-        expect((await first.run(["folders", "push", dir])).code).toBe(0);
-      },
-      async (first, dir) => {
-        await edits(first, dir, "Clash.md", [
-          "origin 2",
-          "origin 3",
-          "origin 4",
-        ]);
-        await edits(first, dir, "Equal.md", ["origin 2"]);
-        await edits(first, dir, "Raced.md", ["origin 2"]);
-        writeFileSync(join(dir, "Fresh.md"), note("Fresh", "after the backup"));
-        writeFileSync(join(dir, "tool.sh"), changedScript);
-        expect((await first.run(["folders", "push", dir])).code).toBe(0);
-      },
-    );
-    try {
-      const id = async (title: string): Promise<string> =>
-        (await notes(cli)).find((item) => item.properties.title === title)!.id;
-      // Each is version 2 on the new instance, with a body of its own: the
-      // folder's files name version 4 and version 2.
-      for (const title of ["Clash", "Equal"]) {
-        await cli.json([
-          "items",
-          "update",
-          await id(title),
-          "--version",
-          "1",
-          "--prop",
-          "body=edited on the instance",
-        ]);
-      }
-      expect(readFileSync(join(dir, "Equal.md"), "utf8")).toContain(
-        "marfa_version: 2",
-      );
-      // No push since the restore: the removal asks the server itself.
-      const removed = await cli.json<{ instance_changed: boolean }>([
-        "folders",
-        "remove",
-        dir,
-      ]);
-      expect(removed.instance_changed).toBe(true);
-
-      const added = await cli.json<Added>([
-        "folders",
-        "add",
-        dir,
-        "--folder",
-        folder,
-      ]);
-      expect(added.restore.files).toContainEqual({
-        path: "Fresh.md",
-        outcome: "absent",
-      });
-      expect(added.restore.files).toContainEqual({
-        path: "Clash.md",
-        outcome: "both",
-        held: 2,
-        shared: 1,
-      });
-      expect(added.restore.files).toContainEqual({
-        path: "Equal.md",
-        outcome: "both",
-        held: 2,
-        shared: 1,
-      });
-      // The witness: held as the backup left it, so the folder's version
-      // would be sent.
-      expect(added.restore.files).toContainEqual({
-        path: "Raced.md",
-        outcome: "send",
-        held: 1,
-        sent: 2,
-      });
-      // Changed between the add and the push.
-      await cli.json([
+      expect((await got(clash.id)).body).toBe("edited on the instance");
+      expect((await got((await byTitle("Late")).id)).version).toBe(1);
+      expect((await got(tagged.id)).tags).toContain("starred");
+      const kept = await got(outside.id);
+      expect([kept.state, kept.version]).toEqual(["archived", 1]);
+      const titles = (await notes(cli)).map((item) => item.properties.title);
+      expect(titles.filter((title) => title === "Clash")).toEqual(["Clash"]);
+      expect(titles).not.toContain("Fresh");
+      const fileItems = await cli.json<Listed>([
         "items",
-        "update",
-        await id("Raced"),
-        "--version",
-        "1",
-        "--prop",
-        "body=edited after the add",
+        "list",
+        "--type",
+        "core.file",
+        "--limit",
+        "100",
       ]);
-      expect((await cli.run(["folders", "confirm", dir])).code).toBe(0);
-      await cli.run(["folders", "push", dir]);
-      const second = await cli.run(["folders", "push", dir]);
-      expect(second.stdout).toContain("Fresh.md waits:");
-
-      const items = await notes(cli);
-      const titled = (title: string) =>
-        items.filter((item) => item.properties.title === title);
-      expect(titled("Fresh")).toEqual([]);
-      expect(
-        titled("Raced").map((item) => item.properties.body?.trim()),
-      ).toEqual(["edited after the add"]);
-      for (const [title, mine] of [
-        ["Clash", "origin 4"],
-        ["Equal", "origin 2"],
-      ] as const) {
-        const bodies = titled(title)
-          .map((item) => item.properties.body?.trim())
-          .sort();
-        // Nothing overwritten: the instance's edit stays on the item, and
-        // the folder's is kept in a copy.
-        expect(bodies, title).toEqual(["edited on the instance", mine].sort());
-      }
-      // A file item is claimed only by its bytes, so the instance's older
-      // bytes are written beside the file, which keeps every byte and its mode.
-      const scripts = readdirSync(dir).filter((name) => name.endsWith(".sh"));
-      expect(scripts.sort()).toEqual(["tool (2).sh", "tool.sh"]);
-      const mine = scripts.find(
-        (name) => readFileSync(join(dir, name), "utf8") === changedScript,
+      expect(fileItems.data).toEqual([]);
+      // Both kept on disk: the instance's version at the item's path, and
+      // the folder's bytes as they were beside it.
+      expect(readFileSync(join(dir, "Clash.md"), "utf8")).toContain(
+        "edited on the instance",
       );
-      expect(mine).toBeDefined();
-      expect(statSync(join(dir, mine!)).mode & 0o777).toBe(0o755);
-      expect(
-        scripts.map((name) => readFileSync(join(dir, name), "utf8")).sort(),
-      ).toEqual([changedScript, script].sort());
+      expect(readFileSync(join(dir, "Clash (2).md"), "utf8")).toContain(
+        "origin 2",
+      );
+      expect(readFileSync(join(dir, "Tagged.md"), "utf8")).toContain("starred");
+      expect(existsSync(join(dir, ".marfa", "removed.json"))).toBe(true);
+
+      // Removed again while files wait: their entries stay.
+      expect((await cli.run(["folders", "remove", dir])).code).toBe(0);
+      const listed = record(dir).files.map((file) => file.path);
+      expect(listed).toEqual(
+        expect.arrayContaining(["Fresh.md", "new.bin", "Clash (2).md"]),
+      );
+      await cli.json(["folders", "add", dir, "--folder", folder, "--yes"]);
+      const readded = await cli.run(["folders", "push", dir]);
+      expect(readded.code, readded.stderr).toBe(0);
+      expect(readded.stdout).toContain("Clash (2).md waits:");
+      const after = (await notes(cli)).map((item) => item.properties.title);
+      expect(after).not.toContain("Fresh");
+      expect(after.filter((title) => title === "Clash")).toEqual(["Clash"]);
+      expect(readFileSync(join(dir, "Clash (2).md"), "utf8")).toContain(
+        "origin 2",
+      );
+
+      // The witness: with its marfa_id line taken out, the file is sent as
+      // a new item.
+      const fresh = join(dir, "Fresh.md");
+      writeFileSync(
+        fresh,
+        readFileSync(fresh, "utf8").replace(/^marfa_(id|version):.*\n/gm, ""),
+      );
+      const sent = await cli.run(["folders", "push", dir]);
+      expect(sent.code, sent.stderr).toBe(0);
+      expect((await notes(cli)).map((item) => item.properties.title)).toContain(
+        "Fresh",
+      );
     } finally {
       await target.stop();
     }
   });
 
-  it("flags nothing in a directory added back on the instance it was removed from, and says nothing is known of a record it cannot read", async () => {
+  it("sends a directory's edits by their version lines when it is added back on the instance it was removed from, and keeps both where its record cannot be read", async () => {
     const binary = requireBinary();
     const registry = join(root, "registry-same", "folders.json");
     const dir = join(root, "Same");
@@ -419,21 +356,34 @@ describe("a directory added back in place after its server was restored into ano
       ]);
       const folder = made.item.id;
       await cli.json(["folders", "add", dir, "--folder", folder, "--yes"]);
-      writeFileSync(join(dir, "Kept.md"), note("Kept", "first"));
+      const path = join(dir, "Kept.md");
+      writeFileSync(path, note("Kept", "first"));
       expect((await cli.run(["folders", "push", dir])).code).toBe(0);
+      const body = async () =>
+        (await notes(cli))
+          .find((item) => item.properties.title === "Kept")
+          ?.properties.body?.trim();
       // A record that cannot be written refuses the removal, which then
       // clears nothing.
+      const staged = join(dir, ".marfa", "removed.json.tmp");
+      mkdirSync(join(staged, "inside"), { recursive: true });
+      const unwritable = await cli.run(["folders", "remove", dir]);
+      rmSync(staged, { recursive: true });
+      expect(unwritable.code).not.toBe(0);
+      expect(unwritable.stderr).toContain("cannot write the removal record");
+      expect(existsSync(join(dir, ".marfa", "core.sqlite"))).toBe(true);
+      // Nor is one read that is no regular file.
       const blocker = join(dir, ".marfa", "removed.json");
       mkdirSync(join(blocker, "inside"), { recursive: true });
       const refused = await cli.run(["folders", "remove", dir]);
       expect(refused.code).not.toBe(0);
-      expect(refused.stderr).toContain("cannot write the removal record");
+      expect(refused.stderr).toContain("removal record");
       expect(existsSync(join(dir, ".marfa", "core.sqlite"))).toBe(true);
       rmSync(blocker, { recursive: true });
+
+      // The witness: on the same instance, an edit made while removed is
+      // sent by its version line, and the record goes once the sync is done.
       expect((await cli.run(["folders", "remove", dir])).code).toBe(0);
-      // Edited while no directory follows the folder: sent as an edit of
-      // the version its line names, as any re-add sends it.
-      const path = join(dir, "Kept.md");
       writeFileSync(
         path,
         readFileSync(path, "utf8").replace("first", "second"),
@@ -449,32 +399,16 @@ describe("a directory added back in place after its server was restored into ano
       expect(added.restore).toEqual({ record: "same_instance", files: [] });
       const pushed = await cli.run(["folders", "push", dir]);
       expect(pushed.code, pushed.stderr).toBe(0);
-      expect(pushed.stdout).not.toContain("waits");
-      expect(
-        (await notes(cli))
-          .find((item) => item.properties.title === "Kept")
-          ?.properties.body?.trim(),
-      ).toBe("second");
+      expect(await body()).toBe("second");
+      expect(existsSync(blocker)).toBe(false);
 
+      // A record that cannot be read: an edit is kept, not sent.
       expect((await cli.run(["folders", "remove", dir])).code).toBe(0);
-      const record = join(dir, ".marfa", "removed.json");
-      const real = join(root, "elsewhere.json");
-      writeFileSync(real, readFileSync(record));
-      rmSync(record);
-      symlinkSync(real, record);
-      const linked = await cli.json<Added>([
-        "folders",
-        "add",
-        dir,
-        "--folder",
-        folder,
-        "--yes",
-      ]);
-      expect(linked.restore.record).toBe("unknown");
-      expect(linked.restore.reason).toContain("cannot be read");
-
-      expect((await cli.run(["folders", "remove", dir])).code).toBe(0);
-      writeFileSync(record, "{ not a record");
+      writeFileSync(blocker, "{ not a record");
+      writeFileSync(
+        path,
+        readFileSync(path, "utf8").replace("second", "third"),
+      );
       const garbled = await cli.run([
         "folders",
         "add",
@@ -485,7 +419,12 @@ describe("a directory added back in place after its server was restored into ano
       ]);
       expect(garbled.code, garbled.stderr).toBe(0);
       expect(garbled.stdout).toContain("nothing is known of what");
-      expect(readdirSync(join(dir, ".marfa"))).toContain("core.sqlite");
+      const kept = await cli.run(["folders", "push", dir]);
+      expect(kept.code, kept.stderr).toBe(0);
+      expect(kept.stdout).toContain("Kept (2).md waits:");
+      expect(await body()).toBe("second");
+      expect(readFileSync(path, "utf8")).toContain("second");
+      expect(readFileSync(join(dir, "Kept (2).md"), "utf8")).toContain("third");
     } finally {
       await server.stop();
     }

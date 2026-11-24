@@ -860,6 +860,9 @@ describe("a watch of every folder", () => {
         expect(stopped[0].reason).toContain("add the same directory again");
         expect(stopped[0].reason).toContain("`--folder` with the folder's ID");
         expect(stopped[0].reason).toContain(
+          "sends none of the files it synced before and keeps each that differs beside the instance's version",
+        );
+        expect(stopped[0].reason).toContain(
           "delete again each file `marfa folders remove` names as deleted",
         );
         expect(stopped[0].reason).toContain(

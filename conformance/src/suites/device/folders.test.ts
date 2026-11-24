@@ -6511,6 +6511,7 @@ describe("a folder whose server answers as another instance", () => {
       `marfa folders add ${harness.dir} --folder ${harness.settings.id}`,
     );
     expect(said).toContain("on this same directory");
+    expect(said).toContain("Nothing this directory synced before is sent");
     expect(said).toContain("Delete again each file named deleted above");
     expect(said).toContain(
       `until \`marfa folders status ${harness.dir}\` shows nothing waiting`,
@@ -6545,6 +6546,45 @@ describe("a folder whose server answers as another instance", () => {
     const still = await harness.folder.remove();
     expect(still.ok, JSON.stringify(still)).toBe(false);
     expect(existsSync(join(harness.dir, ".marfa", "core.sqlite"))).toBe(true);
+  });
+
+  it("leaves a folder's copy as it was when its removal is refused after another instance answered", async () => {
+    harness = await folderHarness("folder-remove-refused-copy-kept");
+    scriptFolderWrites(harness);
+    put(harness, "Kept.md", "---\ntitle: Kept\n---\nsent\n");
+    const first = await harness.folder.push();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    let instance = other;
+    harness.server.answer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance),
+    );
+    const record = join(harness.dir, ".marfa", "removed.json");
+    mkdirSync(join(record, "inside"), { recursive: true });
+    const refused = await harness.folder.remove();
+    expect(refused.ok, "removed without its record").toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal.raw).toContain("removal record");
+    rmSync(record, { recursive: true });
+
+    instance = SCRIPTED_INSTANCE;
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    const filled = (value: typeof pushed.value) =>
+      value.hydrated ?? value.catch_up.hydrated;
+    expect(
+      filled(pushed.value),
+      "the refused removal expired the copy",
+    ).toBeFalsy();
+
+    // The witness: a copy another instance expired is filled again.
+    instance = other;
+    expect((await harness.folder.push()).ok).toBe(false);
+    instance = SCRIPTED_INSTANCE;
+    const again = await harness.folder.push();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect(filled(again.value)).toBeTruthy();
   });
 
   /** The files a removal answered, by kind, path and where one moved from. */

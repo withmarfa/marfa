@@ -136,7 +136,7 @@ If the server at a watched folder's address answers as another Marfa instance th
 
 ### `folder-sync/watch-instance-changed-said`
 
-If a folder's watch ends because its server answers as another Marfa instance, then the CLI MUST report the server's address, that it answers as another Marfa instance, and that the directory is to be removed with `folders remove`, added again in place with `folders add`, the folder's ID and a key for that instance, and pushed, with each file `folders remove` names as deleted deleted again, and the directory pushed until `folders status` shows nothing waiting.
+If a folder's watch ends because its server answers as another Marfa instance, then the CLI MUST report the server's address, that it answers as another Marfa instance, and that the directory is to be removed with `folders remove`, added again in place with `folders add`, the folder's ID and a key for that instance, and pushed, that the push sends no file the directory synced before and keeps each that differs beside the instance's version, that each file `folders remove` names as deleted is deleted again, and that the directory is pushed until `folders status` shows nothing waiting.
 
 **Reason:** a deleted file's item is deleted only once the folder's grace for a rename has passed, so one push can leave the deletion unsent.
 
