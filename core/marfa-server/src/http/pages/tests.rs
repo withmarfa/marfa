@@ -862,7 +862,7 @@ mod consent_pages {
                 held: "before".into(),
                 scopes: values(&["core.note:write", CHOOSE_TYPES]),
                 types: values(&["core.bookmark:read"]),
-                admin: Some("limited".into()),
+                admin: Some("read_only".into()),
                 powers: Vec::new(),
             },
         );
@@ -971,24 +971,40 @@ mod consent_pages {
     }
 
     #[test]
-    fn limited_is_defined_without_scripts_wherever_it_is_offered() {
-        let mut limited = offer();
-        limited.admin = Some(Admin {
-            powers: vec![Permission::InstanceRead, Permission::KeysMint],
+    fn read_only_is_defined_without_scripts_wherever_it_is_offered() {
+        let mut reading = offer();
+        reading.admin = Some(Admin {
+            powers: vec![
+                Permission::BlobsManage,
+                Permission::AuditRead,
+                Permission::KeysMint,
+                Permission::InstanceRead,
+            ],
             levels: vec![
                 AdminLevel::Full,
-                AdminLevel::Limited,
+                AdminLevel::ReadOnly,
                 AdminLevel::None,
                 AdminLevel::Custom,
             ],
         });
-        let html = without_code(&page_of(Answering::Authorization("q".into()), limited));
-        assert!(html.contains(
-            "<span class=\"without-script\">Limited lets the app only see server health.</span>"
-        ));
-        // The witness: where Limited is not offered, nothing defines it.
+        let html = without_code(&page_of(Answering::Authorization("q".into()), reading));
+        let line = "Read Only is server health and the activity log.";
+        assert!(
+            html.contains(&format!("<span class=\"without-script\">{line}</span>")),
+            "{html}"
+        );
+        assert!(
+            html.contains(&format!("data-shown-at=\"read_only\">{line}</span>")),
+            "{html}"
+        );
+        assert!(
+            html.contains("<option value=\"read_only\">Read Only</option>"),
+            "{html}"
+        );
+        // The witness: where Read Only is not offered, nothing defines it.
         let plain = without_code(&page_of(Answering::Authorization("q".into()), offer()));
-        assert!(!plain.contains("Limited lets"));
+        assert!(!plain.contains("Read Only is"));
+        assert!(!plain.contains("value=\"read_only\""));
     }
 
     #[test]

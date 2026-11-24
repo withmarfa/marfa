@@ -36,7 +36,7 @@
 </li>
 {% for power in admin.powers %}{% call rows::power(power, "admin-level", custom) %}{% endcall %}{% endfor %}<li class="sub hint without-script"><span class="t">{{ admin.counts }}</span></li>
 {% endcall %}
-<p class="after whens"><span class="when" data-shown-by="admin-level" data-shown-at="{{ full }}">Everything <bdi>{{ view.offer.app.name }}</bdi> asked for.</span>{% if let Some(line) = admin.limited %}<span class="when" data-shown-by="admin-level" data-shown-at="{{ limited }}">{{ line }}</span>{% endif %}<span class="when" data-shown-by="admin-level" data-shown-at="{{ custom }}"><bdi>{{ view.offer.app.name }}</bdi> asked for {{ admin.asked }}.</span>{% if let Some(line) = admin.limited_by_level %}<span class="without-script">{{ line }}</span>{% endif %}</p>
+<p class="after whens"><span class="when" data-shown-by="admin-level" data-shown-at="{{ full }}">Everything <bdi>{{ view.offer.app.name }}</bdi> asked for.</span>{% if let Some(line) = admin.read_only %}<span class="when" data-shown-by="admin-level" data-shown-at="{{ read_only }}">{{ line }}</span>{% endif %}<span class="when" data-shown-by="admin-level" data-shown-at="{{ custom }}"><bdi>{{ view.offer.app.name }}</bdi> asked for {{ admin.asked }}.</span>{% if let Some(line) = admin.read_only %}<span class="without-script">{{ line }}</span>{% endif %}</p>
 </section>
 {% endif %}</details>
 {% endif %}{% call parts::actions() %}<button type="submit" class="btn primary" name="decision" value="approve">Allow</button>

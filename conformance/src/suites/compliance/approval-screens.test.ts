@@ -471,32 +471,37 @@ describe("the admin level on the approval pages", () => {
   const ASKED = "core.note:read keys.mint instance.read audit.read";
   const NOTE: [string, string] = ["scopes", "core.note:read"];
 
-  it("offers Limited only where it holds some of the powers asked and not all, on both pages", async () => {
+  it("offers Read Only only where it holds some of the powers asked and not all, on both pages", async () => {
     for (const [page, html] of await bothPages(
-      "core.note:read instance.read keys.mint",
+      "core.note:read instance.read audit.read blobs.manage keys.mint",
     )) {
       expect(adminLevels(html), page).toEqual([
         "full",
-        "limited",
+        "read_only",
         "none",
         "custom",
       ]);
-      // A page without scripts shows no choice, so it defines Limited.
-      expect(visibleText(html), page).toMatch(
-        /Limited lets the app only [^.]+\./,
+      // A page without scripts shows no choice, so it defines Read Only.
+      expect(html, page).toContain(
+        '<span class="without-script">Read Only is server health and the activity log.</span>',
       );
     }
-    for (const asked of ["keys.mint items.purge", "instance.read audit.read"])
+    for (const asked of [
+      "keys.mint items.purge",
+      "instance.read audit.read",
+      // Managing files changes them, so Read Only would give none of these.
+      "blobs.manage keys.mint",
+    ])
       for (const [page, html] of await bothPages(`core.note:read ${asked}`)) {
         expect(adminLevels(html), `${page}: ${asked}`).toEqual([
           "full",
           "none",
           "custom",
         ]);
-        expect(visibleText(html), page).not.toContain("Limited lets");
+        expect(visibleText(html), page).not.toContain("Read Only is");
       }
     // Only what the app does not hold counts: holding keys.mint leaves
-    // instance.read alone new, and Limited would give all of it.
+    // instance.read alone new, and Read Only would give all of it.
     const asked = "core.note:read instance.read keys.mint";
     const app = await register(asked);
     const first = await consentScreen(app, "core.note:read keys.mint");
@@ -554,11 +559,9 @@ describe("the admin level on the approval pages", () => {
       "instance.read",
       "keys.mint",
     ]);
-    expect(await granted(ASKED, [NOTE, ["admin", "limited"]])).toEqual([
-      "audit.read",
-      "core.note:read",
-      "instance.read",
-    ]);
+    expect(
+      await granted(`${ASKED} blobs.manage`, [NOTE, ["admin", "read_only"]]),
+    ).toEqual(["audit.read", "core.note:read", "instance.read"]);
     expect(await granted(ASKED, [NOTE, ["admin", "none"]])).toEqual([
       "core.note:read",
     ]);
@@ -577,7 +580,7 @@ describe("the admin level on the approval pages", () => {
         ["user_code", screen.userCode],
         ["decision", "approve"],
         NOTE,
-        ["admin", "limited"],
+        ["admin", "read_only"],
       ]),
     });
     expect(answered.status).toBe(200);
@@ -623,7 +626,7 @@ describe("the admin level on the approval pages", () => {
     expect(
       await granted(ASKED, [
         NOTE,
-        ["admin", "limited"],
+        ["admin", "read_only"],
         ["powers", "keys.mint"],
       ]),
     ).toEqual(["audit.read", "core.note:read", "instance.read"]);
@@ -649,6 +652,8 @@ describe("the admin level on the approval pages", () => {
       [NOTE, ["admin", "custom"], ["powers", "items.purge"]],
       [NOTE, ["admin", "custom"], ["powers", "core.note:read"]],
       [NOTE, ["admin", "everything"]],
+      [NOTE, ["admin", "limited"]],
+      [NOTE, ["admin", "Read Only"]],
       // A permission comes only through the admin level, never as a scope.
       [NOTE, ["scopes", "keys.mint"], ["admin", "none"]],
       [NOTE, ["scopes", "keys.mint"], ["admin", "full"]],
@@ -1361,9 +1366,9 @@ describe("what an approval grants an app whose access changed while the screen w
     expect(polled.body.access_token).toBeUndefined();
   });
 
-  it("draws the page again and restores no power the person removed while it was open, at Full and at Limited, on both pages", async () => {
+  it("draws the page again and restores no power the person removed while it was open, at Full Access and at Read Only, on both pages", async () => {
     const asked = "core.note:read audit.read instance.read keys.mint";
-    for (const level of ["full", "limited"]) {
+    for (const level of ["full", "read_only"]) {
       const app = await holder("audit.read", asked);
       const { screen } = await askAgain(app, asked);
       const device = await deviceScreen(app, asked);
@@ -1371,8 +1376,8 @@ describe("what an approval grants an app whose access changed while the screen w
         expect(visibleText(html), level).toMatch(
           /Already allowed.*Admin access: read the activity log/,
         );
-        // Limited gives instance.read and not keys.mint, so it is offered.
-        expect(adminLevels(html), level).toContain("limited");
+        // Read Only gives instance.read and not keys.mint, so it is offered.
+        expect(adminLevels(html), level).toContain("read_only");
       }
       await narrow(app, []);
 
@@ -1402,8 +1407,11 @@ describe("what an approval grants an app whose access changed while the screen w
           level,
         ).toEqual(["audit.read", "instance.read", "keys.mint"]);
 
+      // Each page drawn again keeps the level the owner chose.
+      for (const html of [browser, onDevice])
+        expect(defaultSubmission(html, "admin"), level).toEqual([level]);
       // The witness: the page drawn again grants the level it shows.
-      const approved = await approveDeviceWith(device, fields(onDevice));
+      const approved = await approveDeviceWith(device, asDrawn(onDevice));
       expect(approved.status, level).toBe(200);
       await approved.body?.cancel();
       const issued = await poll(app, device);

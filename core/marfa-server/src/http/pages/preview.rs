@@ -13,7 +13,7 @@ use super::*;
 use crate::app::access::{Level, Permission};
 use crate::app::connector_sign_in::Failure;
 use crate::app::oauth::offer::{
-    Admin, AdminLevel, AppShown, Choice, Held, LevelRow, Offer, Post, Reach,
+    Admin, AppShown, Choice, Held, LevelRow, Offer, Post, Reach, admin_levels,
 };
 
 const FOLDER_VARIABLE: &str = "MARFA_WRITE_PAGE_PREVIEW";
@@ -55,7 +55,7 @@ const ITEMS_EACH_TYPE: &str = r#"pick("Your items", "Each Type…");"#;
 const ITEMS_READ_ONLY: &str = r#"pick("Your items", "Read Only");"#;
 const ITEMS_NO_ACCESS: &str = r#"pick("Your items", "No Access");"#;
 const PROFILE_DONT_ALLOW: &str = r#"pick("Your profile", "Don't Allow");"#;
-const ADMIN_LIMITED: &str = r#"pick("Settings, keys and more", "Limited");"#;
+const ADMIN_READ_ONLY: &str = r#"pick("Settings, keys and more", "Read Only");"#;
 const ADMIN_NONE: &str = r#"pick("Settings, keys and more", "No Access");"#;
 const ADMIN_CUSTOM: &str = r#"pick("Settings, keys and more", "Custom…");"#;
 /// Board U12: the types of the Round 4 board, a few of them at a level of their own.
@@ -90,7 +90,7 @@ const BOARD_TYPES: [&str; 28] = [
     "Web Page",
 ];
 const BOARD_TYPE_LEVELS: &str = r#"for (const [title, word] of [["Conversation", "No Access"], ["Message", "No Access"], ["Game", "No Access"], ["Song", "No Access"], ["Album", "No Access"], ["Film", "Read Only"], ["Series", "Read Only"], ["Episode", "Read Only"], ["Person", "Read Only"], ["Place", "Read Only"]]) pick(title, word);"#;
-/// Board U13: Limited's three powers and Back up and restore are allowed, every other power is not.
+/// The four powers allowed on design board U13.
 const BOARD_POWERS: &str = r#"const allowed = ["See server health", "Manage files", "Read the activity log", "Back up and restore"]; for (const title of ["Make keys", "Manage every key", "Disconnect other apps", "Change settings", "See server health", "Run housekeeping and updates", "Replace or remove types", "Manage files", "Manage webhooks", "Manage connectors", "Read the activity log", "Empty the trash", "Back up and restore", "Manage sign-ins and passkeys"]) pick(title, allowed.includes(title) ? "Allow" : "Don't Allow");"#;
 
 /// One page in one state. `board` is the Round 4 board it is compared with, such as `U1`.
@@ -369,29 +369,20 @@ fn admin_for(powers: &[&str]) -> Admin {
         .map(|word| Permission::from_word(word).expect("a permission"))
         .collect();
     Admin {
+        levels: admin_levels(&powers),
         powers,
-        levels: vec![
-            AdminLevel::Full,
-            AdminLevel::Limited,
-            AdminLevel::None,
-            AdminLevel::Custom,
-        ],
     }
 }
 
 /// All fourteen powers the page words.
 fn admin_all() -> Admin {
+    let powers: Vec<Permission> = Permission::ALL
+        .into_iter()
+        .filter(|power| words::power(power.word()).is_some())
+        .collect();
     Admin {
-        powers: Permission::ALL
-            .into_iter()
-            .filter(|power| words::power(power.word()).is_some())
-            .collect(),
-        levels: vec![
-            AdminLevel::Full,
-            AdminLevel::Limited,
-            AdminLevel::None,
-            AdminLevel::Custom,
-        ],
+        levels: admin_levels(&powers),
+        powers,
     }
 }
 
@@ -1385,11 +1376,11 @@ fn states() -> Vec<State> {
         .after(&[PICK, OPEN_CHOOSE, ITEMS_NO_ACCESS, PROFILE_DONT_ALLOW]),
         State::new(
             None,
-            "allow-admin-limited",
-            "Allow an app, admin access at Limited",
+            "allow-admin-read-only",
+            "Allow an app, admin access at Read Only",
             consent_page(offer()),
         )
-        .after(&[PICK, OPEN_CHOOSE, ADMIN_LIMITED]),
+        .after(&[PICK, OPEN_CHOOSE, ADMIN_READ_ONLY]),
         State::new(
             None,
             "allow-admin-none",

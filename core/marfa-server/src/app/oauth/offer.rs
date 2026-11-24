@@ -19,12 +19,8 @@ use crate::app::catalog::Catalog;
 
 pub const CHOOSE_TYPES: &str = "choose-types";
 
-/// None of these decides who gets in, sends data out or deletes for good.
-const LIMITED: [Permission; 3] = [
-    Permission::InstanceRead,
-    Permission::BlobsManage,
-    Permission::AuditRead,
-];
+/// The powers that only read: neither changes the instance or decides who gets in.
+const READ_ONLY: [Permission; 2] = [Permission::InstanceRead, Permission::AuditRead];
 
 #[derive(Clone, Copy, Debug)]
 pub struct Request<'a> {
@@ -74,7 +70,7 @@ pub struct LevelRow {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdminLevel {
     Full,
-    Limited,
+    ReadOnly,
     None,
     Custom,
 }
@@ -83,7 +79,7 @@ impl AdminLevel {
     pub const fn word(self) -> &'static str {
         match self {
             AdminLevel::Full => "full",
-            AdminLevel::Limited => "limited",
+            AdminLevel::ReadOnly => "read_only",
             AdminLevel::None => "none",
             AdminLevel::Custom => "custom",
         }
@@ -92,7 +88,7 @@ impl AdminLevel {
     fn from_word(word: &str) -> Option<AdminLevel> {
         [
             AdminLevel::Full,
-            AdminLevel::Limited,
+            AdminLevel::ReadOnly,
             AdminLevel::None,
             AdminLevel::Custom,
         ]
@@ -117,11 +113,11 @@ pub fn powers_at(
 ) -> Option<Vec<Permission>> {
     match level {
         AdminLevel::Full => Some(asked.to_vec()),
-        AdminLevel::Limited => Some(
+        AdminLevel::ReadOnly => Some(
             asked
                 .iter()
                 .copied()
-                .filter(|power| LIMITED.contains(power))
+                .filter(|power| READ_ONLY.contains(power))
                 .collect(),
         ),
         AdminLevel::None => Some(Vec::new()),
@@ -153,7 +149,17 @@ fn powers_named(named: &ScopeSet) -> Vec<Permission> {
         .collect()
 }
 
-/// Limited is offered only where it would hold some of the powers and not all of them.
+/// Read Only is offered only where it would hold some of the powers and not all of them.
+pub fn admin_levels(powers: &[Permission]) -> Vec<AdminLevel> {
+    let reading = powers_at(AdminLevel::ReadOnly, powers, &[]).unwrap_or_default();
+    let mut levels = vec![AdminLevel::Full];
+    if !reading.is_empty() && reading.len() < powers.len() {
+        levels.push(AdminLevel::ReadOnly);
+    }
+    levels.extend([AdminLevel::None, AdminLevel::Custom]);
+    levels
+}
+
 fn admin_offer(named: &ScopeSet, held: &ScopeSet) -> Option<Admin> {
     let powers: Vec<Permission> = powers_named(named)
         .into_iter()
@@ -162,12 +168,7 @@ fn admin_offer(named: &ScopeSet, held: &ScopeSet) -> Option<Admin> {
     if powers.is_empty() {
         return None;
     }
-    let limited = powers_at(AdminLevel::Limited, &powers, &[]).unwrap_or_default();
-    let mut levels = vec![AdminLevel::Full];
-    if !limited.is_empty() && limited.len() < powers.len() {
-        levels.push(AdminLevel::Limited);
-    }
-    levels.extend([AdminLevel::None, AdminLevel::Custom]);
+    let levels = admin_levels(&powers);
     Some(Admin { powers, levels })
 }
 
@@ -933,8 +934,8 @@ mod tests {
         let grants = |level: &str, rows: &[&str]| decide(&named, "", &admin_post(level, rows));
         assert_eq!(grants("full", &[]), approved(&named));
         assert_eq!(
-            grants("limited", &[]),
-            approved("core.note:read instance.read blobs.manage audit.read")
+            grants("read_only", &[]),
+            approved("core.note:read instance.read audit.read")
         );
         assert_eq!(grants("none", &[]), approved("core.note:read"));
         let every: Vec<&str> = EVERY_POWER.split_whitespace().collect();
@@ -946,18 +947,22 @@ mod tests {
     }
 
     #[test]
-    fn limited_is_offered_only_where_it_holds_some_powers_asked_but_not_all() {
-        assert!(levels(&offer("instance.read keys.mint", "")).contains(&AdminLevel::Limited));
-        assert!(!levels(&offer("keys.mint items.purge", "")).contains(&AdminLevel::Limited));
-        assert!(!levels(&offer("instance.read audit.read", "")).contains(&AdminLevel::Limited));
-        assert!(
-            !levels(&offer("instance.read keys.mint", "keys.mint")).contains(&AdminLevel::Limited)
-        );
+    fn read_only_is_offered_only_where_it_holds_some_powers_asked_but_not_all() {
+        let offered =
+            |named: &str, held: &str| levels(&offer(named, held)).contains(&AdminLevel::ReadOnly);
+        assert!(offered("instance.read keys.mint", ""));
+        assert!(offered("audit.read blobs.manage", ""));
+        assert!(!offered("keys.mint items.purge", ""));
+        assert!(!offered("instance.read audit.read", ""));
+        assert!(!offered("instance.read keys.mint", "keys.mint"));
+        // Managing files changes them, so Read Only would give nothing here.
+        assert!(!offered("blobs.manage keys.mint", ""));
+        assert!(!offered("blobs.manage", ""));
         assert_eq!(
             levels(&offer("instance.read keys.mint", "")),
             [
                 AdminLevel::Full,
-                AdminLevel::Limited,
+                AdminLevel::ReadOnly,
                 AdminLevel::None,
                 AdminLevel::Custom
             ]
@@ -1035,14 +1040,22 @@ mod tests {
     }
 
     #[test]
-    fn limited_grants_only_the_asked_powers_within_it() {
+    fn read_only_grants_only_the_asked_powers_that_read() {
         assert_eq!(
             decide(
-                "core.note:read keys.mint instance.read audit.read webhooks.manage",
+                "core.note:read keys.mint instance.read audit.read webhooks.manage blobs.manage",
                 "",
-                &admin_post("limited", &[])
+                &admin_post("read_only", &[])
             ),
             approved("core.note:read instance.read audit.read")
+        );
+        assert_eq!(
+            decide(
+                "core.note:read blobs.manage audit.read",
+                "",
+                &admin_post("read_only", &[])
+            ),
+            approved("core.note:read audit.read")
         );
     }
 
@@ -1101,7 +1114,7 @@ mod tests {
             approved("core.note:read")
         );
         assert_eq!(
-            decide(named, "", &admin_post("limited", &stray)),
+            decide(named, "", &admin_post("read_only", &stray)),
             approved("core.note:read audit.read")
         );
         assert_eq!(
@@ -1136,11 +1149,20 @@ mod tests {
             decide(named, "", &admin_post("custom", &["connectors.host"])),
             Decision::Beyond
         );
-        assert_eq!(
-            decide(named, "", &admin_post("everything", &[])),
-            Decision::Beyond
-        );
-        for level in ["full", "limited", "none", "custom"] {
+        for level in [
+            "everything",
+            "limited",
+            "read-only",
+            "Read Only",
+            "READ_ONLY",
+        ] {
+            assert_eq!(
+                decide(named, "", &admin_post(level, &[])),
+                Decision::Beyond,
+                "{level}"
+            );
+        }
+        for level in ["full", "read_only", "none", "custom"] {
             assert_eq!(
                 decide("core.note:read", "", &admin_post(level, &[])),
                 Decision::Beyond,
@@ -1181,10 +1203,10 @@ mod tests {
         };
         let shown = offer(named, drawn_on);
         let levels = &shown.admin.as_ref().unwrap().levels;
-        assert!(levels.contains(&AdminLevel::Limited), "{levels:?}");
+        assert!(levels.contains(&AdminLevel::ReadOnly), "{levels:?}");
         for (level, gives) in [
             ("full", named),
-            ("limited", "core.note:read audit.read instance.read"),
+            ("read_only", "core.note:read audit.read instance.read"),
         ] {
             let mut taken = as_drawn(&shown);
             taken.admin = Some(level.to_string());

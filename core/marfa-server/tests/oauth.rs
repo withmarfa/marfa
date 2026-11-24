@@ -4084,6 +4084,70 @@ async fn the_consent_form_refuses_anything_but_an_approval_or_a_denial() {
 }
 
 #[tokio::test]
+async fn read_only_grants_only_the_powers_that_read_and_no_other_word_is_a_level() {
+    let instance = Instance::signed_in().await;
+    let asked = "core.note:read instance.read audit.read blobs.manage keys.mint";
+    let client = instance.register(asked).await;
+    let link = instance.consent_link(&client, asked).await;
+    let page = instance
+        .send(get(
+            &format!("/auth/consent?{link}"),
+            Some(&instance.cookie),
+        ))
+        .await
+        .text;
+    assert!(
+        page.contains("<option value=\"read_only\">Read Only</option>"),
+        "{page}"
+    );
+    let approval = |level: &'static str| {
+        [
+            ("decision", "approve"),
+            ("authorization_request", link.as_str()),
+            ("held", held_on(&page)),
+            ("scopes", NOTES),
+            ("admin", level),
+        ]
+    };
+    for level in ["limited", "read-only", "Read Only"] {
+        let refused = instance
+            .send(post_form(
+                "/auth/consent",
+                Some(&instance.cookie),
+                &approval(level),
+            ))
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{level}");
+        assert!(code_in(&refused).is_none(), "{level}");
+        assert_eq!(
+            instance.count("SELECT count(*) FROM oauth_consents").await,
+            0,
+            "{level}"
+        );
+        assert_eq!(
+            instance.count("SELECT count(*) FROM oauth_codes").await,
+            0,
+            "{level}"
+        );
+    }
+
+    let approved = instance
+        .send(post_form(
+            "/auth/consent",
+            Some(&instance.cookie),
+            &approval("read_only"),
+        ))
+        .await;
+    let code = code_in(&approved).unwrap_or_else(|| panic!("{}", approved.text));
+    let issued = instance.exchange(&client, &code).await;
+    assert_eq!(issued.status, StatusCode::OK, "{}", issued.text);
+    let answer = issued.json();
+    let mut scope: Vec<&str> = text_at(&answer, "scope").split(' ').collect();
+    scope.sort_unstable();
+    assert_eq!(scope, ["audit.read", "core.note:read", "instance.read"]);
+}
+
+#[tokio::test]
 async fn the_error_page_explains_each_code_and_shows_nothing_of_the_request() {
     let instance = Instance::signed_in().await;
     let planted = "planted-by-the-request";
