@@ -9,7 +9,6 @@ use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use marfa_rules::catalog::Catalog;
 use marfa_rules::filter::Expression;
 use marfa_rules::filter::sql::{self, Adding, Bind, Sink};
-use marfa_rules::query::column_sort_expression;
 use rusqlite::types::Value as Bound;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::Serialize;
@@ -1480,24 +1479,11 @@ impl Key {
         }
     }
 
-    fn expression(&self, values: &mut Vec<Value>) -> String {
+    fn expression(&self) -> String {
         match self {
             Key::Id => "NULL".into(),
             Key::Updated => "r.updated_at".into(),
-            Key::Column { name, kind }
-                if marfa_rules::schema::KEYED_KINDS.contains(&kind.as_str())
-                    && marfa_rules::schema::order_column_inlinable(name) =>
-            {
-                marfa_rules::schema::order_value_key_sql(kind, name, "r.body")
-            }
-            Key::Column { name, .. } => {
-                let text = column_sort_expression("r.body", "?");
-                values.extend(std::iter::repeat_n(
-                    Value::String(format!("$.{name}")),
-                    text.matches('?').count(),
-                ));
-                text
-            }
+            Key::Column { name, kind } => marfa_rules::schema::column_key_sql(kind, name, "r.body"),
             Key::Order { column, kind } => {
                 marfa_rules::schema::order_value_key_sql(kind, column, "r.body")
             }
@@ -1648,7 +1634,7 @@ fn page_from_copy(
         .map(|cursor| opened(&scope, cursor))
         .transpose()?;
     let mut values: Vec<Value> = Vec::new();
-    let key_sql = key.expression(&mut values);
+    let key_sql = key.expression();
     let mut sql = format!(
         "SELECT * FROM (SELECT r.id, r.body, r.withheld, r.updated_at, {key_sql} AS k
            FROM table_rows r WHERE r.item_id = ? AND r.name = ?"

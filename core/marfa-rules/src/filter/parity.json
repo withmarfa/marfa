@@ -110,13 +110,16 @@
       "due": { "type": "date", "adds_up": "max" },
       "seen": { "type": "datetime", "adds_up": "max" },
       "first": { "type": "datetime", "adds_up": "min" },
-      "label": { "type": "string", "adds_up": "count" }
+      "label": { "type": "string", "adds_up": "count" },
+      "who": { "type": "item" },
+      "tier": { "type": "enum", "enum_values": ["a", "b"] },
+      "ok": { "type": "boolean" }
     },
     "rows": [
-      { "id": "r1", "body": { "qty": 2, "cap": 10, "price": 1.5, "born": "2026-01-02", "due": "2026-03-01", "seen": "2026-01-01T10:00:00+05:00", "first": "2026-01-01T10:00:00+05:00", "label": "a_b" } },
-      { "id": "r2", "body": { "qty": 3, "cap": 7, "price": 2.5, "born": "2025-12-31", "seen": "2026-01-01T06:00:00Z", "first": "2026-01-01T06:00:00Z", "label": "Axb" } },
-      { "id": "r3", "body": { "qty": "x", "born": "2026-02-01", "due": "soon" } },
-      { "id": "r4", "body": { "price": 4.0, "seen": "2026-01-01T03:00:00-04:00", "first": "2026-01-01" } },
+      { "id": "r1", "body": { "qty": 2, "cap": 10, "price": 1.5, "born": "2026-01-02", "due": "2026-03-01", "seen": "2026-01-01T10:00:00+05:00", "first": "2026-01-01T10:00:00+05:00", "label": "a_b", "who": "019a0000-0000-7000-8000-000000000002", "tier": "b" } },
+      { "id": "r2", "body": { "qty": 3, "cap": 7, "price": 2.5, "born": "2025-12-31", "seen": "2026-01-01T06:00:00Z", "first": "2026-01-01T06:00:00Z", "label": "Axb", "who": "019a0000-0000-7000-8000-000000000001", "ok": true } },
+      { "id": "r3", "body": { "qty": "x", "born": "2026-02-01", "due": "soon", "tier": "a" } },
+      { "id": "r4", "body": { "price": 4.0, "seen": "2026-01-01T03:00:00-04:00", "first": "2026-01-01", "ok": false } },
       { "id": "r5", "body": { "born": 5, "due": 20260401, "seen": 2500000, "first": 5 } },
       { "id": "r6", "body": { "born": "tomorrow", "due": "2026-02-30", "seen": "later", "first": "2026-01-01 05:00Z" } }
     ],
@@ -141,7 +144,11 @@
       { "by": "due", "ascending": ["r1", "r2", "r3", "r4", "r5", "r6"], "descending": ["r1", "r2", "r3", "r4", "r5", "r6"] },
       { "by": "seen", "ascending": ["r1", "r2", "r4", "r3", "r5", "r6"], "descending": ["r4", "r2", "r1", "r3", "r5", "r6"] },
       { "by": "first", "ascending": ["r4", "r1", "r2", "r3", "r5", "r6"], "descending": ["r2", "r1", "r4", "r3", "r5", "r6"] },
-      { "by": "qty", "ascending": ["r1", "r2", "r3", "r4", "r5", "r6"], "descending": ["r2", "r1", "r3", "r4", "r5", "r6"] }
+      { "by": "qty", "ascending": ["r1", "r2", "r3", "r4", "r5", "r6"], "descending": ["r2", "r1", "r3", "r4", "r5", "r6"] },
+      { "by": "label", "ascending": ["r2", "r1", "r3", "r4", "r5", "r6"], "descending": ["r1", "r2", "r3", "r4", "r5", "r6"] },
+      { "by": "who", "ascending": ["r1", "r2", "r3", "r4", "r5", "r6"], "descending": ["r1", "r2", "r3", "r4", "r5", "r6"] },
+      { "by": "tier", "ascending": ["r3", "r1", "r2", "r4", "r5", "r6"], "descending": ["r1", "r3", "r2", "r4", "r5", "r6"] },
+      { "by": "ok", "ascending": ["r4", "r2", "r1", "r3", "r5", "r6"], "descending": ["r2", "r4", "r1", "r3", "r5", "r6"] }
     ],
     "totals": [
       { "filter": null, "answer": { "row_count": 6, "totals": {
