@@ -109,8 +109,7 @@ pub struct Admin {
     pub levels: Vec<AdminLevel>,
 }
 
-/// What `level` grants of the powers `asked`, with Custom's `rows` as posted. `None` where a row
-/// names a power not asked.
+/// Custom rejects a non-empty row unless the request names that permission.
 fn powers_at(level: AdminLevel, asked: &[Permission], rows: &[String]) -> Option<Vec<Permission>> {
     match level {
         AdminLevel::Full => Some(asked.to_vec()),
@@ -168,8 +167,7 @@ fn admin_offer(named: &ScopeSet, held: &ScopeSet) -> Option<Admin> {
     Some(Admin { powers, levels })
 }
 
-/// What a page posts as `held`, so an approval is read only against the access it showed.
-/// Empty where the app holds nothing, as a post without the field reads.
+/// A missing held field represents an empty scope set.
 pub fn fingerprint(held: &ScopeSet) -> String {
     let mut literals: Vec<&str> = held.literals().iter().map(String::as_str).collect();
     if literals.is_empty() {
@@ -578,8 +576,7 @@ fn admin_chosen(post: &Post, named: &ScopeSet) -> Option<Vec<Permission>> {
     powers_at(level, &asked, &post.powers)
 }
 
-/// A held scope comes from `held`, never the post. Scopes are compared by what they reach, never
-/// merged as text.
+/// Standing consent supplies the scopes the app already holds.
 pub fn read_decision(request: &Request<'_>, post: &Post) -> Decision {
     let (named, held) = (request.named, request.held);
     if post.held != fingerprint(held) {
@@ -1166,31 +1163,36 @@ mod tests {
 
     #[test]
     fn a_page_built_on_other_held_access_grants_nothing() {
-        let named = "core.note:read keys.mint items.purge";
-        let shown = build(
-            &native(),
-            &Request {
-                named: &set(named),
-                held: &set("keys.mint"),
-                choosable: &CHOOSABLE,
-            },
-        );
-        for level in ["full", "limited"] {
+        let named = "core.note:read audit.read instance.read keys.mint";
+        let drawn_on = "audit.read";
+        let on = |held: &str, post: &Post| {
+            read_decision(
+                &Request {
+                    named: &set(named),
+                    held: &set(held),
+                    choosable: &CHOOSABLE,
+                },
+                post,
+            )
+        };
+        let shown = offer(named, drawn_on);
+        let levels = &shown.admin.as_ref().unwrap().levels;
+        assert!(levels.contains(&AdminLevel::Limited), "{levels:?}");
+        for (level, gives) in [
+            ("full", named),
+            ("limited", "core.note:read audit.read instance.read"),
+        ] {
             let mut taken = as_drawn(&shown);
             taken.admin = Some(level.to_string());
-            let on = |held: &str| {
-                read_decision(
-                    &Request {
-                        named: &set(named),
-                        held: &set(held),
-                        choosable: &CHOOSABLE,
-                    },
-                    &taken,
-                )
+            assert_eq!(on(drawn_on, &taken), Decision::Approved(set(gives)));
+            // The witness: the same choices on a page drawn once audit.read is gone give it back.
+            let current = Post {
+                held: fingerprint(&set("")),
+                ..taken.clone()
             };
-            assert_eq!(on(""), Decision::Changed, "{level}");
-            assert_eq!(on("keys.mint items.purge"), Decision::Changed, "{level}");
-            assert!(matches!(on("keys.mint"), Decision::Approved(_)), "{level}");
+            assert_eq!(on("", &current), Decision::Approved(set(gives)), "{level}");
+            assert_eq!(on("", &taken), Decision::Changed, "{level}");
+            assert_eq!(on("audit.read keys.mint", &taken), Decision::Changed);
         }
         assert_eq!(
             decide_on(named, "", "keys.mint", &admin_post("none", &[])),
