@@ -19,6 +19,9 @@ use url::{Host, Url};
 use super::client::{self, Registration, RegistrationError, Source};
 use super::redirect;
 
+#[cfg(feature = "test-hooks")]
+mod trust;
+
 /// The draft's recommended limit.
 const MAX_DOCUMENT_BYTES: u64 = 5 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
@@ -145,7 +148,20 @@ impl Fetcher {
             .tls_config(self.tls.clone())
             .user_agent("marfa-server")
             .build();
+        #[cfg(feature = "test-hooks")]
+        if let Some(certificate) = url
+            .host_str()
+            .and_then(|host| self.faults.trusted_certificate(host))
+        {
+            let connector = trust::connector(certificate).map_err(failed_transport)?;
+            let agent = Agent::with_parts(config, connector, Pinned(addresses));
+            return Self::read(&agent, &url);
+        }
         let agent = Agent::with_parts(config, DefaultConnector::default(), Pinned(addresses));
+        Self::read(&agent, &url)
+    }
+
+    fn read(agent: &Agent, url: &Url) -> Result<Vec<u8>, Failure> {
         let mut response = agent
             .get(url.as_str())
             .header(header::ACCEPT, "application/json")
@@ -343,20 +359,36 @@ mod tests {
         address: SocketAddr,
         accepted: Arc<AtomicUsize>,
         certificate: Vec<u8>,
+        pem: String,
     }
 
     fn listen(cert_name: &str, response: Vec<u8>) -> Listener {
         let certified =
             rcgen::generate_simple_self_signed(vec![cert_name.to_string()]).expect("a certificate");
-        let certificate = certified.cert.der().to_vec();
         let key = PrivateKeyDer::try_from(certified.signing_key.serialize_der()).expect("a key");
+        serve(
+            vec![certified.cert.der().clone()],
+            certified.cert.pem(),
+            key,
+            response,
+        )
+    }
+
+    /// Presents `chain`, whose first certificate, `pem`, is the server's own.
+    fn serve(
+        chain: Vec<CertificateDer<'static>>,
+        pem: String,
+        key: PrivateKeyDer<'static>,
+        response: Vec<u8>,
+    ) -> Listener {
+        let certificate = chain[0].to_vec();
         let config = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
         .expect("protocol versions")
         .with_no_client_auth()
-        .with_single_cert(vec![CertificateDer::from(certificate.clone())], key)
+        .with_single_cert(chain, key)
         .expect("a server config");
         let config = Arc::new(config);
         let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
@@ -375,6 +407,7 @@ mod tests {
             address,
             accepted,
             certificate,
+            pem,
         }
     }
 
@@ -533,6 +566,133 @@ mod tests {
             }
         }
         assert_eq!(live.accepted.load(Ordering::SeqCst), 0);
+    }
+
+    /// A fetcher whose default roots trust nothing here, with a trust fault for `host`.
+    fn trusting(host: &str, pem: &str) -> Fetcher {
+        let faults = scripted("8.8.8.8>127.0.0.1");
+        faults
+            .set(&format!("trust:{host}"), Some(pem))
+            .expect("a trust fault");
+        Fetcher {
+            tls: TlsConfig::default(),
+            ..fetcher(faults, &[])
+        }
+    }
+
+    #[test]
+    fn a_trust_fault_trusts_one_certificate_for_its_own_host_alone() {
+        let listener = listen(NAME, reply("200 OK", "application/json", b"{}"));
+        assert_eq!(
+            trusting(NAME, &listener.pem)
+                .fetch(&id_at(&listener))
+                .expect("a document"),
+            b"{}"
+        );
+        assert!(matches!(
+            trusting("other.example.com", &listener.pem).fetch(&id_at(&listener)),
+            Err(Failure::Unavailable(_))
+        ));
+        let stranger = listen(NAME, reply("200 OK", "application/json", b"{}"));
+        assert!(matches!(
+            trusting(NAME, &listener.pem).fetch(&id_at(&stranger)),
+            Err(Failure::Unavailable(_))
+        ));
+        assert!(
+            Faults::default()
+                .set(&format!("trust:{NAME}"), Some("nope"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_trust_fault_refuses_its_certificate_for_another_host_name() {
+        let listener = listen(
+            "other.example.com",
+            reply("200 OK", "application/json", b"{}"),
+        );
+        assert!(matches!(
+            trusting(NAME, &listener.pem).fetch(&id_at(&listener)),
+            Err(Failure::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn a_trust_fault_refuses_its_certificate_once_expired() {
+        let key = rcgen::KeyPair::generate().expect("a key");
+        let mut params = rcgen::CertificateParams::new(vec![NAME.to_string()]).expect("params");
+        params.not_before = rcgen::date_time_ymd(2000, 1, 1);
+        params.not_after = rcgen::date_time_ymd(2001, 1, 1);
+        let expired = params.self_signed(&key).expect("a certificate");
+        let listener = serve(
+            vec![expired.der().clone()],
+            expired.pem(),
+            PrivateKeyDer::try_from(key.serialize_der()).expect("a key"),
+            reply("200 OK", "application/json", b"{}"),
+        );
+        assert!(matches!(
+            trusting(NAME, &listener.pem).fetch(&id_at(&listener)),
+            Err(Failure::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn a_trust_fault_refuses_a_certificate_that_is_not_for_serving() {
+        let mut authority = rcgen::CertificateParams::new(vec![NAME.to_string()]).expect("params");
+        authority.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let mut client = rcgen::CertificateParams::new(vec![NAME.to_string()]).expect("params");
+        client.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+        let mut server = client.clone();
+        server.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+        for (params, serves) in [(authority, false), (client, false), (server, true)] {
+            let key = rcgen::KeyPair::generate().expect("a key");
+            let certificate = params.self_signed(&key).expect("a certificate");
+            let listener = serve(
+                vec![certificate.der().clone()],
+                certificate.pem(),
+                PrivateKeyDer::try_from(key.serialize_der()).expect("a key"),
+                reply("200 OK", "application/json", b"{}"),
+            );
+            let fetched = trusting(NAME, &listener.pem).fetch(&id_at(&listener));
+            assert_eq!(fetched.is_ok(), serves, "{fetched:?}");
+        }
+    }
+
+    #[test]
+    fn a_trust_fault_refuses_a_certificate_its_trusted_one_signed() {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).expect("params");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let authority =
+            rcgen::CertifiedIssuer::self_signed(params, rcgen::KeyPair::generate().expect("a key"))
+                .expect("an authority");
+        let key = rcgen::KeyPair::generate().expect("a key");
+        let leaf = rcgen::CertificateParams::new(vec![NAME.to_string()])
+            .expect("params")
+            .signed_by(&key, &*authority)
+            .expect("a leaf");
+        let listener = serve(
+            vec![leaf.der().clone(), authority.der().clone()],
+            leaf.pem(),
+            PrivateKeyDer::try_from(key.serialize_der()).expect("a key"),
+            reply("200 OK", "application/json", b"{}"),
+        );
+        // The witness: trusted as a root, the authority vouches for its leaf.
+        assert_eq!(
+            fetcher(scripted("8.8.8.8>127.0.0.1"), authority.der())
+                .fetch(&id_at(&listener))
+                .expect("a document under root trust"),
+            b"{}"
+        );
+        assert!(matches!(
+            trusting(NAME, &authority.pem()).fetch(&id_at(&listener)),
+            Err(Failure::Unavailable(_))
+        ));
+        assert_eq!(
+            trusting(NAME, &listener.pem)
+                .fetch(&id_at(&listener))
+                .expect("the leaf itself"),
+            b"{}"
+        );
     }
 
     #[test]

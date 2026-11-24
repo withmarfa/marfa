@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [features]
 # Test hooks: the fault registry, the clock offset and the control socket's test routes.
-test-hooks = []
+test-hooks = ["dep:x509-parser"]
 # Reads PDFs and the text in pictures, with the libraries a release build links in (see `core/marfa-enrichment/README.md`).
 native = ["marfa-enrichment/native"]
 
@@ -80,6 +80,7 @@ ureq.workspace = true
 url = "2"
 uuid.workspace = true
 webauthn-rs = { version = "0.6.2", default-features = false, features = ["conditional-ui", "danger-allow-state-serialisation"] }
+x509-parser = { version = "0.18", optional = true }
 
 [dev-dependencies]
 marfa-server = { path = ".", features = ["test-hooks"] }

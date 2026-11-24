@@ -1,3 +1,8 @@
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { createServer, type Server } from "node:https";
+import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -6,10 +11,12 @@ import {
 } from "../../utils/fresh-server.js";
 import {
   authorizeQuery,
+  CALLBACK,
   issuerOrigin,
   pkce,
   signIn as ownerCookie,
 } from "../../utils/signed-in.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * The limits on fetching a client ID metadata document, and the owner's own
@@ -29,6 +36,12 @@ const STALLED = "stalled.client-documents.example";
 const MINUTE = 60_000;
 let clients = 0;
 
+const DOCUMENT_HOST = "published.client-documents.example";
+const PUBLIC_ADDRESS = "93.184.216.34";
+let published: Server;
+let publishedPort: number;
+const documents = new Map<string, string>();
+
 beforeAll(async () => {
   server = await bootFreshServer("client-document-limits", {
     MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
@@ -38,9 +51,55 @@ beforeAll(async () => {
   origin = await issuerOrigin(server);
   cookie = await ownerCookie(server, origin);
   await server.setFault(`resolve:${HOST}=10.0.0.1`);
+  const folder = tempFolder("marfa-client-documents-");
+  const files = {
+    key: join(folder, "key.pem"),
+    cert: join(folder, "cert.pem"),
+  };
+  execFileSync(
+    "openssl",
+    [
+      ...[
+        "req",
+        "-x509",
+        "-newkey",
+        "ec",
+        "-pkeyopt",
+        "ec_paramgen_curve:prime256v1",
+      ],
+      ...["-nodes", "-days", "1", "-subj", `/CN=${DOCUMENT_HOST}`],
+      ...["-addext", `subjectAltName=DNS:${DOCUMENT_HOST}`],
+      ...["-addext", "basicConstraints=critical,CA:FALSE"],
+      ...["-keyout", files.key, "-out", files.cert],
+    ],
+    { stdio: "ignore" },
+  );
+  const certificate = readFileSync(files.cert, "utf8");
+  published = createServer(
+    { key: readFileSync(files.key), cert: certificate },
+    (request, response) => {
+      const body = documents.get(request.url ?? "");
+      response.writeHead(body === undefined ? 404 : 200, {
+        "content-type": "application/json",
+      });
+      response.end(body ?? "{}");
+    },
+  );
+  await new Promise<void>((resolve) => {
+    published.listen(0, "127.0.0.1", resolve);
+  });
+  publishedPort = (published.address() as { port: number }).port;
+  await server.setFault(`resolve:${DOCUMENT_HOST}=${PUBLIC_ADDRESS}>127.0.0.1`);
+  await server.setFault(`trust:${DOCUMENT_HOST}=${certificate}`);
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
+  await new Promise<void>((resolve) => {
+    published.close(() => {
+      resolve();
+    });
+    published.closeAllConnections();
+  });
   await server.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
@@ -231,5 +290,120 @@ describe("client ID metadata documents", () => {
     } finally {
       await server.clearFault(`resolve:${STALLED}`);
     }
+  });
+});
+
+const BASE = { client_name: "A long-valued app", redirect_uris: [CALLBACK] };
+const URI_AT_BOUND = `https://app.example/${"a".repeat(492)}`;
+const URI_PAST_BOUND = `${URI_AT_BOUND}a`;
+
+/** A scope of exactly `length` characters that names `content:read` and no other offered scope. */
+function scopeOf(length: number): string {
+  let scope = "content:read";
+  for (let i = 0; scope.length + 8 <= length; i++) {
+    scope += ` s${String(i).padStart(4, "0")}`;
+  }
+  return `${scope} ${"z".repeat(length - scope.length - 1)}`;
+}
+
+/** Each case: its name in the test title, the member, a value at its bound and one past it. */
+const OPTIONAL_MEMBERS: [string, string, unknown, unknown][] = [
+  ["client_uri", "client_uri", URI_AT_BOUND, URI_PAST_BOUND],
+  ["logo_uri", "logo_uri", URI_AT_BOUND, URI_PAST_BOUND],
+  ["tos_uri", "tos_uri", URI_AT_BOUND, URI_PAST_BOUND],
+  ["policy_uri", "policy_uri", URI_AT_BOUND, URI_PAST_BOUND],
+  ["software_id", "software_id", "i".repeat(100), "i".repeat(101)],
+  ["software_version", "software_version", "v".repeat(100), "v".repeat(101)],
+  ["scope", "scope", scopeOf(1024), scopeOf(1025)],
+  [
+    "the number of contacts",
+    "contacts",
+    Array.from(
+      { length: 5 },
+      (_, i) => `${String(i)}${"c".repeat(241)}@app.example`,
+    ),
+    Array.from({ length: 6 }, (_, i) => `${String(i)}@app.example`),
+  ],
+  [
+    "a contact's length",
+    "contacts",
+    [`${"c".repeat(242)}@app.example`],
+    [`${"c".repeat(243)}@app.example`],
+  ],
+];
+
+function publish(members: Record<string, unknown>): string {
+  const path = `/clients/${randomUUID()}.json`;
+  const id = `https://${DOCUMENT_HOST}:${String(publishedPort)}${path}`;
+  documents.set(path, JSON.stringify({ client_id: id, ...BASE, ...members }));
+  return id;
+}
+
+async function auditedFor(action: string, id: string): Promise<unknown[]> {
+  const response = await fetch(
+    `${server.apiUrl}/audit?${new URLSearchParams({ action, limit: "200" })}`,
+    { headers: { authorization: `Bearer ${server.managementKey}` } },
+  );
+  expect(response.status).toBe(200);
+  const { data } = (await response.json()) as {
+    data: { resource_id?: string }[];
+  };
+  return data.filter((row) => row.resource_id === id);
+}
+
+function authorizingFor(id: string): Promise<Response> {
+  return fetch(
+    `${server.apiUrl}/oauth/authorize?${authorizeQuery(id, "content:read content:write", pkce()).toString()}`,
+    { redirect: "manual", headers: { cookie } },
+  );
+}
+
+describe("a client ID metadata document that sets an optional member past its bound", () => {
+  it.each(OPTIONAL_MEMBERS)(
+    "accepts the client when %s is at or past its registration bound",
+    async (_case, member, atBound, pastBound) => {
+      const kept = publish({ [member]: atBound });
+      const keptAnswer = await authorizingFor(kept);
+      expect(keptAnswer.status, `${member} at its bound`).toBe(302);
+      expect(
+        new URL(keptAnswer.headers.get("location") ?? "", server.apiUrl)
+          .pathname,
+      ).toBe("/auth/consent");
+      expect(await auditedFor("auth.client.created", kept)).toHaveLength(1);
+
+      const dropped = publish({ [member]: pastBound });
+      const droppedAnswer = await authorizingFor(dropped);
+      expect(droppedAnswer.status, `${member} past its bound`).toBe(302);
+      expect(
+        new URL(droppedAnswer.headers.get("location") ?? "", server.apiUrl)
+          .pathname,
+      ).toBe("/auth/consent");
+      expect(await auditedFor("auth.client.created", dropped)).toHaveLength(1);
+
+      // Only the explicit scope excludes the requested write permission.
+      const widened = async (id: string) =>
+        (await auditedFor("auth.client.scopes_widened", id)).length;
+      expect(await widened(kept), `${member} at its bound`).toBe(
+        member === "scope" ? 1 : 0,
+      );
+      expect(await widened(dropped), `${member} past its bound`).toBe(0);
+    },
+  );
+
+  it("refuses a client_name past its bound while one at its bound names the app on the consent screen", async () => {
+    const named = publish({ client_name: "n".repeat(100) });
+    const accepted = await authorizingFor(named);
+    expect(accepted.status).toBe(302);
+    const consent = new URL(
+      accepted.headers.get("location") ?? "",
+      server.apiUrl,
+    );
+    const screen = await fetch(consent, { headers: { cookie } });
+    expect(await screen.text()).toContain("n".repeat(100));
+
+    const overlong = publish({ client_name: "n".repeat(101) });
+    expect(await refused(await authorizingFor(overlong))).toBe(
+      "invalid_client",
+    );
   });
 });
