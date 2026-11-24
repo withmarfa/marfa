@@ -8,6 +8,7 @@ use std::sync::Arc;
 use rusqlite::{OptionalExtension, Transaction, params};
 use subtle::ConstantTimeEq;
 
+use super::carries_sessions;
 use super::limits::{self, spent};
 use super::owner::{self, Details, Owner};
 use super::{Note, Visit, note, password};
@@ -213,6 +214,28 @@ pub fn handoff_link(app: &App, ticket: &str) -> String {
     )
 }
 
+/// The line that offers the setup code of an instance with no owner, and the link
+/// beside it only where the setup page in a browser can take it.
+pub async fn claim_notice(app: &App) -> Result<Option<String>> {
+    if status(app).await?.claimed {
+        return Ok(None);
+    }
+    let (code, _) = issue_code(app, &Caller::Server).await?;
+    let page = setup_page(app);
+    let sign_in = app.addresses().sign_in();
+    if sign_in.port() == 0 || !carries_sessions(&sign_in) {
+        return Ok(Some(format!(
+            "Claim this Marfa at {page} with setup code: {code}"
+        )));
+    }
+    let (ticket, _) = issue_ticket(app, &Caller::Server).await?;
+    Ok(Some(format!(
+        "Claim this Marfa at {page} with setup code: {code}. Or open this link, which works \
+         once, for {TICKET_MINUTES} minutes: {}",
+        handoff_link(app, &ticket)
+    )))
+}
+
 pub async fn announce_at_start(app: &Arc<App>) -> Result<()> {
     if let Some(address) = &app.settings.start.claim_address
         && config::adopt_sign_in_address(app, address).await? == Adopted::Owned
@@ -223,15 +246,8 @@ pub async fn announce_at_start(app: &Arc<App>) -> Result<()> {
              changes only through PATCH /config on the private socket"
         );
     }
-    if !status(app).await?.claimed {
-        let (code, _) = issue_code(app, &Caller::Server).await?;
-        let (ticket, _) = issue_ticket(app, &Caller::Server).await?;
-        log::local_only(&format!(
-            "Claim this Marfa at {} with setup code: {code}. Or open this link, which works \
-             once, for {TICKET_MINUTES} minutes: {}",
-            setup_page(app),
-            handoff_link(app, &ticket)
-        ));
+    if let Some(notice) = claim_notice(app).await? {
+        log::local_only(&notice);
     }
     if let Some(code) = offer_recovery(app).await? {
         log::local_only(&format!(
@@ -353,6 +369,7 @@ pub async fn recover(
     app: &App,
     proof: Presented,
     new_password: String,
+    confirmation: Option<&str>,
     visit: Visit,
 ) -> Result<()> {
     if !is_claimed(app).await? {
@@ -367,6 +384,7 @@ pub async fn recover(
     app.db
         .read(move |tx| proof_stands(tx, Purpose::Recovery, judged.as_ref(), clock.instant()))
         .await?;
+    require_repeated(&new_password, confirmation)?;
     password::check_new(&new_password, "password")?;
     let hash = app.passwords.hash(new_password).await?;
     let clock = app.clock.clone();
@@ -558,6 +576,18 @@ fn proof_stands(
     }
 }
 
+/// A page asks for the new password twice, after the proof is judged and before anything is
+/// written. A script's body has no second field, so it passes `None`.
+fn require_repeated(password: &str, confirmation: Option<&str>) -> Result<()> {
+    match confirmation {
+        Some(typed) if typed != password => Err(Refusal::invalid_at(
+            "password",
+            "The passwords don't match.",
+        )),
+        _ => Ok(()),
+    }
+}
+
 pub async fn session_stands(app: &App, token: &str) -> Result<bool> {
     let digest = digest_of(&app.settings.start.key_salt, token)?;
     let clock = app.clock.clone();
@@ -572,7 +602,13 @@ pub async fn is_claimed(app: &App) -> Result<bool> {
 
 /// The proof is judged before the password's hash is paid for and again in the transaction,
 /// so only one of two claims at once gets through.
-pub async fn claim(app: &App, details: Details, proof: Proof, visit: Visit) -> Result<Owner> {
+pub async fn claim(
+    app: &App,
+    details: Details,
+    proof: Proof,
+    confirmation: Option<&str>,
+    visit: Visit,
+) -> Result<Owner> {
     if is_claimed(app).await? {
         return Err(already_claimed());
     }
@@ -588,6 +624,7 @@ pub async fn claim(app: &App, details: Details, proof: Proof, visit: Visit) -> R
     app.db
         .read(move |tx| proof_stands(tx, Purpose::Claim, judged.as_ref(), clock.instant()))
         .await?;
+    require_repeated(&details.password, confirmation)?;
     password::check_new(&details.password, "password")?;
     let hash = app.passwords.hash(details.password.clone()).await?;
     let clock = app.clock.clone();

@@ -4,7 +4,7 @@
 {% include "partials/app_caution.html" %}
 {% endif %}
 {% if let Some(message) = problem_message %}
-<p class="notice error" id="sign-in-problem" role="alert">{{ message }}</p>
+<p class="notice error" id="sign-in-problem" role="alert">{{ message }}{% if passkey_advice %}<span data-passkey-advice hidden>, or use a passkey</span>{% endif %}.</p>
 {% endif %}
 <form method="post" action="/auth/sign-in" class="stack">
 <input type="hidden" name="return_to" value="{{ view.return_to }}">

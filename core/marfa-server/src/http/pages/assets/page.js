@@ -412,6 +412,9 @@
         void webauthn[button.dataset.passkey](button);
       });
     }
+    for (const advice of document.querySelectorAll("[data-passkey-advice]")) {
+      advice.hidden = false;
+    }
   }
 
   async function removePasskey(button) {

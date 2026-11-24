@@ -826,34 +826,100 @@ async fn a_claim_sent_as_json_needs_no_confirmation_and_a_blank_name_is_the_user
 }
 
 #[tokio::test]
-async fn a_recovery_form_whose_passwords_differ_is_refused_before_any_proof_is_judged() {
+async fn a_recovery_form_is_judged_for_its_owner_and_its_proof_before_its_passwords() {
+    let form = |password: &'static str, confirm: Option<&'static str>| {
+        let mut fields = vec![("password", password)];
+        fields.extend(confirm.map(|confirm| ("confirm_password", confirm)));
+        post_form("/setup/recover", &fields, "")
+    };
+
+    // No owner: whatever the passwords are, there is nothing to recover.
+    let dir = TempDir::new().unwrap();
+    let app = boot_with(
+        &dir,
+        &[
+            ("MARFA_TEST_HOOKS", "true"),
+            ("MARFA_SIGN_IN_ADDRESS", ORIGIN),
+            ("MARFA_OWNER_RECOVERY", "true"),
+        ],
+    )
+    .await;
+    let unowned = public(app);
+    for confirm in [Some("second-passwrod"), Some("second-password"), None] {
+        let (status, _) = page_of(unowned.clone(), form("second-password", confirm)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{confirm:?}");
+    }
+
+    // An owner and no proof standing: the ended proof is said before a mismatch.
     let instance = Instance::claimed_with(&[
         ("MARFA_TEST_HOOKS", "true"),
         ("MARFA_SIGN_IN_ADDRESS", ORIGIN),
         ("MARFA_OWNER_RECOVERY", "true"),
     ])
     .await;
-    let form = |confirm: &'static str| {
-        post_form(
-            "/setup/recover",
-            &[
-                ("password", "second-password"),
-                ("confirm_password", confirm),
-            ],
-            "",
-        )
+    for confirm in [Some("second-passwrod"), Some("second-password")] {
+        let (status, page) =
+            page_of(instance.public.clone(), form("second-password", confirm)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{confirm:?}");
+        assert!(page.contains("recovery session ended"), "{page}");
+    }
+    assert!(instance.sign_in(PASSWORD).await.status.is_success());
+}
+
+#[tokio::test]
+async fn a_form_that_sets_a_password_must_repeat_it() {
+    let dir = TempDir::new().unwrap();
+    let app = boot(&dir).await;
+    let (router, private) = (public(app.clone()), control(app.clone()));
+    let setup = setup_session(&router, &private).await;
+    let claim_form = |extra: &[(&str, &str)]| {
+        let mut fields = vec![
+            ("username", USERNAME),
+            ("name", ""),
+            ("password", "first-password"),
+        ];
+        fields.extend_from_slice(extra);
+        post_form("/setup/claim", &fields, &setup)
     };
-    let (status, page) = page_of(instance.public.clone(), form("second-passwrod")).await;
+
+    // The page leaves the confirmation out: nothing is claimed.
+    let (status, page) = page_of(router.clone(), claim_form(&[])).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(page.contains(MISMATCH), "{page}");
-    assert!(page.contains("id=\"recover-form\""));
-    assert!(!page.contains("second-pass"), "a password came back");
+    assert!(!claim::is_claimed(&app).await.unwrap());
 
-    // The witness: with the passwords alike the form is judged, and a recovery with no proof is refused for that.
-    let (status, page) = page_of(instance.public.clone(), form("second-password")).await;
+    // A claim that also holds a field it does not declare is refused for that field first.
+    let mut undeclared = claim_form(&[("confirm_password", "first-passwrod"), ("bogus", "1")]);
+    undeclared
+        .headers_mut()
+        .insert(header::ACCEPT, "application/json".parse().unwrap());
+    let (status, body) = page_of(router.clone(), undeclared).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("unknown_body_fields"), "{body}");
+    assert!(body.contains("bogus"), "{body}");
+
+    // A session that has ended is said before a mismatch.
+    let ended = post_form(
+        "/setup/claim",
+        &[
+            ("username", USERNAME),
+            ("password", "first-password"),
+            ("confirm_password", "first-passwrod"),
+        ],
+        "marfa_setup=gone",
+    );
+    let (status, _) = page_of(router.clone(), ended).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert!(page.contains("recovery session ended"), "{page}");
-    assert!(instance.sign_in(PASSWORD).await.status.is_success());
+    assert!(!claim::is_claimed(&app).await.unwrap());
+
+    // The witness: the same form with the confirmation alike claims.
+    let (status, _) = page_of(
+        router,
+        claim_form(&[("confirm_password", "first-password")]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(claim::is_claimed(&app).await.unwrap());
 }
 
 #[tokio::test]
@@ -892,5 +958,56 @@ async fn a_start_without_an_owner_issues_a_setup_link_beside_its_code() {
         })
         .await
         .unwrap();
+    assert_eq!(tickets, 0);
+}
+
+#[tokio::test]
+async fn a_start_offers_its_link_only_where_the_setup_page_can_take_it() {
+    let notice = |extra: &'static [(&'static str, &'static str)]| async move {
+        let dir = TempDir::new().unwrap();
+        let mut pairs = vec![("MARFA_TEST_HOOKS", "true")];
+        pairs.extend_from_slice(extra);
+        let app = boot_with(&dir, &pairs).await;
+        let line = claim::claim_notice(&app).await.unwrap().unwrap();
+        let tickets: i64 = app
+            .db
+            .read(|tx| {
+                Ok(tx.query_row(
+                    "SELECT count(*) FROM setup_proof WHERE kind = 'ticket'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        (line, tickets)
+    };
+
+    // The witness: an address the page serves on carries the link, and its ticket is held.
+    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", ORIGIN)]).await;
+    assert!(line.contains("setup code: "), "{line}");
+    assert!(line.contains(&format!("{ORIGIN}/setup#handoff=")), "{line}");
+    assert_eq!(tickets, 1);
+    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", "https://marfa.example")]).await;
+    assert!(
+        line.contains("https://marfa.example/setup#handoff="),
+        "{line}"
+    );
+    assert_eq!(tickets, 1);
+
+    let (line, tickets) = notice(&[("MARFA_CONTROL_ONLY", "true"), ("MARFA_PORT", "0")]).await;
+    assert!(line.contains("setup code: "), "{line}");
+    assert!(
+        !line.contains("handoff") && !line.contains("link"),
+        "{line}"
+    );
+    assert_eq!(tickets, 0);
+
+    let (line, tickets) = notice(&[("MARFA_SIGN_IN_ADDRESS", "http://marfa.example")]).await;
+    assert!(line.contains("setup code: "), "{line}");
+    assert!(
+        !line.contains("handoff") && !line.contains("link"),
+        "{line}"
+    );
     assert_eq!(tickets, 0);
 }

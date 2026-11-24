@@ -317,6 +317,7 @@ async function claimThrough(
   return browser.post("/setup/claim", [
     ["username", OWNER.username],
     ["password", OWNER.password],
+    ["confirm_password", OWNER.password],
     ["name", ""],
     ["email", ""],
     ["return_to", back],
@@ -475,6 +476,7 @@ describe("claiming in the sign-in page an app opens", () => {
         const claimed = await browser.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", back],
         ]);
         expect(location(claimed)).toBe(back);
@@ -681,6 +683,7 @@ describe("return_to through setup", () => {
         const claim = await browser.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", AUTHORIZE],
         ]);
         expect(claim.status).toBe(401);
@@ -721,6 +724,7 @@ describe("return_to through setup", () => {
         const claimed = await browser.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", foreign],
         ]);
         expect(location(claimed)).toBe("/auth/sign-in");
@@ -851,6 +855,7 @@ describe("a claim another tab or a refused sign-in finished", () => {
         const claimed = await first.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", AUTHORIZE],
         ]);
         expect(location(claimed)).toBe(AUTHORIZE);
@@ -859,6 +864,7 @@ describe("a claim another tab or a refused sign-in finished", () => {
           await second.post("/setup/claim", [
             ["username", "another"],
             ["password", "another owner password"],
+            ["confirm_password", "another owner password"],
             ["return_to", AUTHORIZE],
           ]),
           await second.post("/setup/exchange", [
@@ -1000,6 +1006,7 @@ describe("a claim another tab or a refused sign-in finished", () => {
         const claimed = await browser.post("/setup/claim", [
           ["username", OWNER.username],
           ["password", OWNER.password],
+          ["confirm_password", OWNER.password],
           ["return_to", AUTHORIZE],
         ]);
         expect(location(claimed)).toBe(throughSignIn(AUTHORIZE));

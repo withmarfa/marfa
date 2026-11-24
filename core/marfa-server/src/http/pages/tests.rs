@@ -274,9 +274,17 @@ fn a_passkey_is_offered_and_named_in_a_lockout_only_to_an_owner_who_has_one() {
     };
     let with = page(true, Some("too_many_attempts"));
     assert!(with.html().contains("data-passkey=\"sign-in\""));
+    // The advice is hidden until the script that shows the button shows it.
+    assert!(without_code(&with).contains(
+        "Try again in 2 minutes<span data-passkey-advice hidden>, or use a passkey</span>."
+    ));
     assert!(
-        with.html()
-            .contains("Try again in 2 minutes, or use a passkey.")
+        !without_code(&page(true, Some("invalid_credentials"))).contains("data-passkey-advice")
+    );
+    assert!(!without_code(&page(true, None)).contains("data-passkey-advice"));
+    assert!(
+        SCRIPT.contains("querySelectorAll(\"[data-passkey-advice]\")"),
+        "the script that shows the button shows the advice"
     );
     let without = page(false, Some("too_many_attempts"));
     assert!(!without_code(&without).contains("passkey"));

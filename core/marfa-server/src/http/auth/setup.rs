@@ -31,19 +31,11 @@ const RETURN_TO: &str = "return_to";
 const PURPOSE: &str = "purpose";
 const RECOVERY: &str = "recovery";
 
-/// Takes the confirmation out of a form's fields and refuses a password it does not repeat.
-fn take_confirmation(fields: &mut Map<String, Value>) -> Result<(), Refusal> {
-    let Some(confirm) = fields.remove(CONFIRM) else {
-        return Ok(());
-    };
-    let repeated = fields.get("password").and_then(Value::as_str) == confirm.as_str();
-    if repeated {
-        Ok(())
-    } else {
-        Err(Refusal::invalid_at(
-            "password",
-            "The passwords don't match.",
-        ))
+/// What a form's second password field held, which is nothing when the page left it out.
+fn take_confirmation(fields: &mut Map<String, Value>) -> String {
+    match fields.remove(CONFIRM) {
+        Some(Value::String(typed)) => typed,
+        _ => String::new(),
     }
 }
 
@@ -143,6 +135,7 @@ pub(super) async fn make_claim(
     headers: &HeaderMap,
     visit: Visit,
     fields: Map<String, Value>,
+    confirmation: Option<&str>,
 ) -> Result<(Owner, Vec<axum::http::HeaderValue>), Stopped> {
     let fields = only_declared(fields, &CLAIM_FIELDS)?;
     let text = |name: &str| fields.get(name).and_then(Value::as_str);
@@ -154,7 +147,7 @@ pub(super) async fn make_claim(
         password.clone(),
     )?;
     let proof = Proof::Presented(presented(headers, text("code")));
-    let owner = claim::claim(app, details, proof, visit.clone()).await?;
+    let owner = claim::claim(app, details, proof, confirmation, visit.clone()).await?;
     if origin::said(headers, &own_origins(app)) != Source::Own {
         return Ok((owner, Vec::new()));
     }
@@ -222,15 +215,8 @@ pub async fn claim(
     {
         fields.remove("email");
     }
-    let confirmed = if form {
-        take_confirmation(&mut fields)
-    } else {
-        Ok(())
-    };
-    let claimed = match confirmed {
-        Ok(()) => make_claim(&app, &headers, visit, fields).await,
-        Err(refusal) => Err(refusal.into()),
-    };
+    let confirmation = form.then(|| take_confirmation(&mut fields));
+    let claimed = make_claim(&app, &headers, visit, fields, confirmation.as_deref()).await;
     let (owner, signed_in) = match claimed {
         Err(Stopped::Refused(refusal)) if browser && pages::wants_page(&headers) => {
             return Ok(pages::claim_refused(&app, &refusal, typed, return_to).await?);
@@ -280,19 +266,11 @@ pub async fn recover(
         body.object(&RECOVER_FIELDS).await?
     };
     let browser = form && said == Source::Own;
-    let confirmed = if form {
-        take_confirmation(&mut fields)
-    } else {
-        Ok(())
-    };
+    let confirmation = form.then(|| take_confirmation(&mut fields));
     let text = |name: &str| fields.get(name).and_then(Value::as_str);
     let proof = presented(&headers, text("code"));
     let password = text("password").unwrap_or("").to_string();
-    let recovered = match confirmed {
-        Ok(()) => claim::recover(&app, proof, password, visit).await,
-        Err(refusal) => Err(refusal),
-    };
-    match recovered {
+    match claim::recover(&app, proof, password, confirmation.as_deref(), visit).await {
         Err(refusal) if browser && pages::wants_page(&headers) => {
             return Ok(pages::recover_refused(&app, &refusal).await?);
         }
