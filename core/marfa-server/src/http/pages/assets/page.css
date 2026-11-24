@@ -62,7 +62,7 @@
 @media (max-width: 600px) {
   :root {
     --control: 2.75rem;
-    --small: 2.25rem;
+    --small: 2.75rem;
     --field: 3.5rem;
     --field-text: 1.0625rem;
     --field-x: 0.9375rem;
@@ -737,9 +737,13 @@ details p + p {
    and the sentences that depend on a choice give way to the ones that hold for all. */
 .js [data-shown-by]:not(.open),
 .js .without-script,
-html:not(.js) .when,
-html:not(.js) .after.whens,
-.js .after.whens:not(:has(.when.open)) {
+html:not(.js) .when {
+  display: none;
+}
+
+/* A line of sentences shows only while one of them does. */
+.js .after.whens:not(:has(.always, .when.open)),
+html:not(.js) .after.whens:not(:has(.always, .without-script)) {
   display: none;
 }
 
@@ -751,11 +755,6 @@ html:not(.js) .after.whens,
 
 .consent .err[data-form-error] {
   margin-top: 1rem;
-}
-
-.user-code {
-  font: 600 1.75rem/1.3 ui-monospace, "SF Mono", Menlo, monospace;
-  letter-spacing: 0.08em;
 }
 
 /* Allow comes first in the markup, so Return sends it; it is drawn last. */
@@ -801,14 +800,8 @@ html:not(.js) .after.whens,
   color: var(--t1);
 }
 
-.consent:has(.choose[open]) :is(.glance, .already) {
+.consent:has(.choose[open]) .glance {
   display: none;
-}
-
-@media (max-width: 600px) {
-  .user-code {
-    font-size: 1.5rem;
-  }
 }
 
 @media (forced-colors: active) {

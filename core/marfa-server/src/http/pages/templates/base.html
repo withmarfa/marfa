@@ -12,7 +12,7 @@
 <main class="col">
 {{ body|safe }}
 </main>
-{% if confirm_dialog %}{% include "partials/confirm_dialog.html" %}{% endif %}
+{% if let Some(line) = confirm_dialog %}{% include "partials/confirm_dialog.html" %}{% endif %}
 <script nonce="{{ nonce }}">{{ script|safe }}</script>
 </body>
 </html>

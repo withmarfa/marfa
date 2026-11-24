@@ -40,6 +40,40 @@ const PROFILE_DONT_ALLOW: &str = r#"pick("Your profile", "Don't Allow");"#;
 const ADMIN_LIMITED: &str = r#"pick("Settings, keys and more", "Limited");"#;
 const ADMIN_NONE: &str = r#"pick("Settings, keys and more", "No Access");"#;
 const ADMIN_CUSTOM: &str = r#"pick("Settings, keys and more", "Custom…");"#;
+/// Board U12: the types of the Round 4 board, a few of them at a level of their own.
+const BOARD_TYPES: [&str; 28] = [
+    "Album",
+    "Article",
+    "Audio",
+    "Book",
+    "Bookmark",
+    "Collection",
+    "Conversation",
+    "Entity",
+    "Episode",
+    "Event",
+    "File",
+    "Film",
+    "Game",
+    "Highlight",
+    "Image",
+    "Job",
+    "Media",
+    "Message",
+    "Note",
+    "Person",
+    "Place",
+    "Project",
+    "Series",
+    "Song",
+    "Table",
+    "Task",
+    "Video",
+    "Web Page",
+];
+const BOARD_TYPE_LEVELS: &str = r#"for (const [title, word] of [["Conversation", "No Access"], ["Message", "No Access"], ["Game", "No Access"], ["Song", "No Access"], ["Album", "No Access"], ["Film", "Read Only"], ["Series", "Read Only"], ["Episode", "Read Only"], ["Person", "Read Only"], ["Place", "Read Only"]]) pick(title, word);"#;
+/// Board U13: Limited's three powers and Back up and restore are allowed, every other power is not.
+const BOARD_POWERS: &str = r#"const allowed = ["See server health", "Manage files", "Read the activity log", "Back up and restore"]; for (const title of ["Make keys", "Manage every key", "Disconnect other apps", "Change settings", "See server health", "Run housekeeping and updates", "Replace or remove types", "Manage files", "Manage webhooks", "Manage connectors", "Read the activity log", "Empty the trash", "Back up and restore", "Manage sign-ins and passkeys"]) pick(title, allowed.includes(title) ? "Allow" : "Don't Allow");"#;
 
 /// One page in one state. `board` is the Round 4 board it is compared with, such as `U1`.
 struct State {
@@ -202,6 +236,20 @@ fn all_data_with(types: &[(&str, &str)]) -> LevelRow {
         .map(|(id, label)| type_row(id, label))
         .collect();
     row
+}
+
+/// The all-items row with a type for each of the board's names.
+fn all_data_of_the_board() -> LevelRow {
+    let ids: Vec<String> = BOARD_TYPES
+        .iter()
+        .map(|label| format!("core.{}", label.to_lowercase().replace(' ', "-")))
+        .collect();
+    let types: Vec<(&str, &str)> = ids
+        .iter()
+        .zip(BOARD_TYPES)
+        .map(|(id, label)| (id.as_str(), label))
+        .collect();
+    all_data_with(&types)
 }
 
 fn all_data() -> LevelRow {
@@ -857,16 +905,19 @@ fn states() -> Vec<State> {
             Some("U12"),
             "allow-each-type",
             "Allow an app, choosing a level for each type",
-            consent_page(offer()),
+            consent_page(Offer {
+                data: vec![all_data_of_the_board()],
+                ..offer()
+            }),
         )
-        .after(&[PICK, OPEN_CHOOSE, ITEMS_EACH_TYPE]),
+        .after(&[PICK, OPEN_CHOOSE, ITEMS_EACH_TYPE, BOARD_TYPE_LEVELS]),
         State::new(
             Some("U13"),
             "allow-admin-custom",
             "Allow an app, choosing: every power",
             consent_page(offer()),
         )
-        .after(&[PICK, OPEN_CHOOSE, ADMIN_CUSTOM]),
+        .after(&[PICK, OPEN_CHOOSE, ADMIN_CUSTOM, BOARD_POWERS]),
         State::new(
             Some("U14"),
             "allow-less",
@@ -948,13 +999,16 @@ fn states() -> Vec<State> {
             "Allow an app, drawn again after its access changed",
             consent(&Consent {
                 again: Some(Post {
-                    held: String::new(),
-                    scopes: vec!["*:read".into(), "offline_access".into()],
+                    held: "held".into(),
+                    scopes: vec!["core.task:write".into()],
                     types: Vec::new(),
-                    admin: Some("limited".into()),
+                    admin: Some("full".into()),
                     powers: Vec::new(),
                 }),
-                ..answer(offer())
+                ..answer(Offer {
+                    confirm: true,
+                    ..asking_for_more_items()
+                })
             }),
         ),
         State::new(

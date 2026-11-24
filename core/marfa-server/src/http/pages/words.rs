@@ -15,7 +15,6 @@ pub const CHOOSE_TYPES_WORD: &str = "Each Type…";
 pub const EDIT_LINE: &str = "Edit includes adding and deleting.";
 pub const LATER_INCLUDED: &str = "Types added later are included.";
 pub const LATER_NOT_INCLUDED: &str = "Types added later aren't included.";
-pub const LATER_UNLESS_EACH: &str = "Types added later are included unless Each Type is chosen.";
 pub const PROFILE_FIELDS: &str = "Name, username, email and picture.";
 pub const PROFILE_EDIT_FIELDS: &str =
     "Name, username, email and picture. Editing covers all but the username.";
@@ -33,6 +32,20 @@ pub fn admin_level(level: AdminLevel) -> &'static str {
         AdminLevel::None => "No Access",
         AdminLevel::Custom => "Custom…",
     }
+}
+
+/// Without scripts, which levels of the all-items row reach types added later, and that Each Type does not.
+pub fn later_by_level(levels: &[&str]) -> String {
+    let verb = if levels.len() == 1 {
+        "includes"
+    } else {
+        "include"
+    };
+    format!(
+        "{} {verb} types added later. {} does not.",
+        and_list(levels),
+        CHOOSE_TYPES_WORD.trim_end_matches('…')
+    )
 }
 
 /// Under a group of rows that counts only at one choice of the control above it.
@@ -319,8 +332,14 @@ pub fn description(row: &LevelRow) -> Option<String> {
     Some(text.to_string())
 }
 
-/// What approving a row gives, at the level it starts at, for the summary box.
-pub fn gives(reach: Reach, pattern: &str, label: Option<&str>, level: Level) -> String {
+/// What approving a row gives, at the level it starts at, for the summary box: the verb, and the
+/// object, which may carry a type's own name and so is drawn in its own direction.
+pub fn gives(
+    reach: Reach,
+    pattern: &str,
+    label: Option<&str>,
+    level: Level,
+) -> (&'static str, String) {
     let own = title(reach, pattern, label);
     let (verb, object) = match reach {
         Reach::Profile => (
@@ -357,7 +376,7 @@ pub fn gives(reach: Reach, pattern: &str, label: Option<&str>, level: Level) -> 
             },
         ),
     };
-    format!("{verb} {object}")
+    (verb, object)
 }
 
 /// The name of the symbol a summary row starts with.
@@ -380,10 +399,20 @@ pub fn admin_gives(powers: &[String]) -> String {
 
 /// The line under the admin box at Limited, from the powers that level holds.
 pub fn limited_line(powers: &[String]) -> String {
+    format!("Only {}.", powers_list(powers))
+}
+
+/// Without scripts, what Limited holds, since no choice shows the line above.
+pub fn limited_by_level(powers: &[String]) -> String {
     format!(
-        "Only {}.",
-        and_list(&powers.iter().map(String::as_str).collect::<Vec<_>>())
+        "{} lets the app only {}.",
+        admin_level(AdminLevel::Limited),
+        powers_list(powers)
     )
+}
+
+fn powers_list(powers: &[String]) -> String {
+    and_list(&powers.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
 #[cfg(test)]

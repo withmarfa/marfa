@@ -71,7 +71,7 @@ pub fn sign_in(view: &SignIn) -> Result<Page> {
         &body,
         Needs {
             connect: true,
-            confirm_dialog: false,
+            confirm_dialog: None,
         },
     )
 }
@@ -108,7 +108,7 @@ pub fn signed_in(view: &SignedIn) -> Result<Page> {
         &body,
         Needs {
             connect: true,
-            confirm_dialog: false,
+            confirm_dialog: None,
         },
     )
 }
@@ -132,7 +132,7 @@ pub fn running(view: &Running) -> Result<Page> {
         &body,
         Needs {
             connect: true,
-            confirm_dialog: false,
+            confirm_dialog: None,
         },
     )
 }

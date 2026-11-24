@@ -96,7 +96,7 @@ fn only_a_page_that_asks_the_server_for_something_may_connect() {
         "",
         Needs {
             connect: false,
-            confirm_dialog: true,
+            confirm_dialog: Some("Enter your password to continue."),
         },
     )
     .unwrap();
@@ -649,7 +649,45 @@ mod consent_pages {
     }
 
     #[test]
-    fn rows_under_a_level_say_without_scripts_which_level_counts_them() {
+    fn rows_under_a_level_say_without_scripts_which_level_counts_them_after_the_rows() {
+        let mut wide = offer();
+        wide.data[1].types = vec![
+            row(
+                Reach::Type,
+                "core.bookmark",
+                None,
+                &[(Level::Read, "core.bookmark:read")],
+            ),
+            row(
+                Reach::Type,
+                "core.link",
+                None,
+                &[(Level::Read, "core.link:read")],
+            ),
+        ];
+        let html = without_code(&page_of(Answering::Authorization("q".into()), wide));
+        let line = |words: &str| {
+            format!("<li class=\"sub hint without-script\"><span class=\"t\">{words}</span></li>")
+        };
+        let types = html
+            .find(&line(
+                "These count when Your custom types is set to Each Type.",
+            ))
+            .unwrap();
+        let last_type = html.rfind("name=\"types\" aria-label=").unwrap();
+        assert!(last_type < types, "{html}");
+        let powers = html
+            .find(&line(
+                "These count when Settings, keys and more is set to Custom.",
+            ))
+            .unwrap();
+        let last_power = html.rfind("name=\"powers\" aria-label=").unwrap();
+        assert!(last_power < powers, "{html}");
+        assert!(include_str!("assets/page.css").contains(".js .without-script"));
+    }
+
+    #[test]
+    fn the_line_under_the_items_names_the_levels_that_reach_types_added_later() {
         let mut wide = offer();
         wide.data[1].types = vec![row(
             Reach::Type,
@@ -657,16 +695,68 @@ mod consent_pages {
             None,
             &[(Level::Read, "core.bookmark:read")],
         )];
-        let html = without_code(&page_of(Answering::Authorization("q".into()), wide));
+        let html = without_code(&page_of(Answering::Authorization("q".into()), wide.clone()));
+        // The sentence for scripts shows only at the levels that grant, never at No Access.
+        assert!(
+            html.contains("data-shown-at=\"user.*:read\">Types added later are included.</span>")
+        );
+        assert!(html.contains(&format!(
+            "data-shown-at=\"{CHOOSE_TYPES}\">Types added later aren&#39;t included."
+        )));
         assert!(html.contains(
-            "<li class=\"sub hint without-script\"><span class=\"t\">These count when Settings, keys \
-             and more is set to Custom.</span></li>"
+            "<span class=\"without-script\">Read Only includes types added later. Each Type does not.</span>"
         ));
+        assert!(!html.contains("unless Each Type"));
+        // Two levels are offered, and both are named.
+        wide.data[1].choices.push(Choice {
+            level: Level::Write,
+            value: "user.*:write".into(),
+        });
+        let both = without_code(&page_of(Answering::Authorization("q".into()), wide.clone()));
+        assert!(both.contains(
+            "Read Only and Read and Edit include types added later. Each Type does not."
+        ));
+        assert!(both.contains("data-shown-at=\"user.*:read|user.*:write\""));
+        // An app that holds the read already is at it when it keeps the held choice.
+        wide.data[1].held = Level::Read;
+        wide.data[1].choices[0].level = Level::Read;
+        let held = without_code(&page_of(Answering::Authorization("q".into()), wide));
+        assert!(
+            held.contains("data-shown-at=\"|user.*:read|user.*:write\">Types added later are"),
+            "{held}"
+        );
+    }
+
+    #[test]
+    fn limited_is_defined_without_scripts_wherever_it_is_offered() {
+        let mut limited = offer();
+        limited.admin = Some(Admin {
+            powers: vec![Permission::InstanceRead, Permission::KeysMint],
+            levels: vec![
+                AdminLevel::Full,
+                AdminLevel::Limited,
+                AdminLevel::None,
+                AdminLevel::Custom,
+            ],
+        });
+        let html = without_code(&page_of(Answering::Authorization("q".into()), limited));
         assert!(html.contains(
-            "<li class=\"sub hint without-script\"><span class=\"t\">These count when Your custom \
-             types is set to Each Type.</span></li>"
+            "<span class=\"without-script\">Limited lets the app only see server health.</span>"
         ));
-        assert!(include_str!("assets/page.css").contains(".js .without-script"));
+        // The witness: where Limited is not offered, nothing defines it.
+        let plain = without_code(&page_of(Answering::Authorization("q".into()), offer()));
+        assert!(!plain.contains("Limited lets"));
+    }
+
+    #[test]
+    fn a_page_drawn_again_keeps_what_the_app_already_holds_beside_the_open_choices() {
+        let html = drawn_again(offer(), Post::default());
+        let held = html.find("<h2>Already allowed</h2>").unwrap();
+        let choose = html.find("<details class=\"choose\" open>").unwrap();
+        assert!(held < choose, "{html}");
+        let css = include_str!("assets/page.css");
+        assert!(css.contains(".consent:has(.choose[open]) .glance {"));
+        assert!(!css.contains(".already"));
     }
 
     #[test]
@@ -706,14 +796,7 @@ mod consent_pages {
             let to = html.find("<form").unwrap();
             let after = html.find("</form>").unwrap();
             let words = html[from..to].replace('\n', " ");
-            let mut form = html[to..after].to_owned();
-            if let Some(start) =
-                form.find("<section class=\"sec\" aria-labelledby=\"device-check-title\"")
-                && let Some(end) = form[start..].find("</section>")
-            {
-                form.replace_range(start..start + end + "</section>\n".len(), "");
-            }
-            let rest = form
+            let rest = html[to..after]
                 .lines()
                 .filter(|line| !line.starts_with("<form") && !line.contains("type=\"hidden\""))
                 .filter(|line| !line.starts_with("<button"))
@@ -729,19 +812,12 @@ mod consent_pages {
     }
 
     #[test]
-    fn the_device_page_shows_its_code_and_warns_beside_approve() {
+    fn the_device_page_carries_its_code_and_shows_no_second_check_of_it() {
         let device = without_code(&page_of(Answering::Device("ABCD2345".into()), offer()));
-        let check = device
-            .find("aria-labelledby=\"device-check-title\"")
-            .unwrap();
-        let approve = device.find("class=\"actions\"").unwrap();
-        assert!(check < approve);
-        let block = &device[check..approve];
-        assert!(block.contains("ABCD-2345"), "{block}");
-        assert!(block.contains("the app you're using shows this same code"));
-        assert!(block.contains("Don't allow a link or code that someone sent you."));
-        let browser = without_code(&page_of(Answering::Authorization("q".into()), offer()));
-        assert!(!browser.contains("device-check-title"));
+        // The witness: the page has the code to post, and does not draw it.
+        assert!(device.contains("<input type=\"hidden\" name=\"user_code\" value=\"ABCD2345\">"));
+        assert!(!device.contains("Check the code"), "{device}");
+        assert!(!device.contains("ABCD-2345"), "{device}");
     }
 
     fn options_of<'a>(html: &'a str, name: &str) -> Vec<&'a str> {

@@ -1,5 +1,5 @@
 {% import "partials/rows.html" as rows %}{% import "partials/parts.html" as parts %}<div class="head">
-{% if device_code.is_some() %}<h1>Allow this device?</h1>{% else %}<h1>Allow <bdi>{{ view.offer.app.name }}</bdi>{% if more_access %} more access{% endif %}?</h1>{% endif %}
+{% if device %}<h1>Allow this device?</h1>{% else %}<h1>Allow <bdi>{{ view.offer.app.name }}</bdi>{% if more_access %} more access{% endif %}?</h1>{% endif %}
 <p class="lede"><bdi>{{ view.offer.app.name }}</bdi> {{ app_bracket }} {% if view.offer.returning %}is already connected.{% else %}wants to connect to your Marfa.{% endif %}</p>
 </div>
 {% if view.again.is_some() %}<p class="err sec" role="status">This app's access changed after this page opened. Check what to allow, then try again.</p>
@@ -8,26 +8,21 @@
 <input type="hidden" name="held" value="{{ view.offer.fingerprint }}">
 {% for literal in view.offer.mechanisms %}<input type="hidden" name="scopes" value="{{ literal }}">
 {% endfor %}{% if !glance.is_empty() %}<section class="sec glance">{% if also_wants %}<h2>{{ also_wants_heading }}</h2>
-{% endif %}{% call parts::box_of_rows(true) %}{% for line in glance %}<li>{% call parts::icon(line.symbol) %}{% endcall %}<span class="t">{{ line.text }}</span></li>
+{% endif %}{% call parts::box_of_rows(true) %}{% for line in glance %}<li>{% call parts::icon(line.symbol) %}{% endcall %}<span class="t">{% if line.verb.is_empty() %}{{ line.object }}{% else %}{{ line.verb }} <bdi>{{ line.object }}</bdi>{% endif %}</span></li>
 {% endfor %}{% endcall %}</section>
 {% endif %}{% if !held.is_empty() %}<section class="sec already">
 <h2>{{ allowed_heading }}</h2>
-{% call parts::box_of_rows(true) %}{% for line in held %}<li class="quiet">{% call parts::icon(line.symbol) %}{% endcall %}<span class="t">{{ line.text }}</span></li>
+{% call parts::box_of_rows(true) %}{% for line in held %}<li class="quiet">{% call parts::icon(line.symbol) %}{% endcall %}<span class="t">{% if line.verb.is_empty() %}{{ line.object }}{% else %}{{ line.verb }} <bdi>{{ line.object }}</bdi>{% endif %}</span></li>
 {% endfor %}{% endcall %}</section>
 {% endif %}{% if let Some(line) = app_line %}<p class="note">{{ line }}</p>
-{% endif %}{% if let Some(code) = device_code %}<section class="sec" aria-labelledby="device-check-title">
-<h2 id="device-check-title">Check the code</h2>
-{% call parts::box_of_rows(false) %}<li><span class="t user-code">{{ code }}</span></li>{% endcall %}
-<p class="after">Allow only if the app you're using shows this same code. Don't allow a link or code that someone sent you.</p>
-</section>
 {% endif %}<p class="err" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
 {% if choices %}<details class="choose"{% if view.again.is_some() %} open{% endif %}>
 <summary class="btn">Choose…</summary>
 {% if !data.is_empty() %}<section class="sec">
 <h2>Items</h2>
-{% call parts::box_of_rows(false) %}{% for item in data %}{% call rows::level(item.row) %}{% endcall %}{% if !item.types.is_empty() %}<li class="sub hint without-script"><span class="t">{{ item.counts }}</span></li>
-{% for one in item.types %}{% call rows::level(one, true, item.row.id, choose_types) %}{% endcall %}{% endfor %}{% endif %}{% endfor %}{% endcall %}
-{% if items_after.edit.is_some() || items_after.later_by.is_some() %}<p class="after">{% if let Some(line) = items_after.edit %}{{ line }}{% endif %}{% if let Some(by) = items_after.later_by %} <span class="when" data-shown-by="{{ by }}" data-hidden-at="{{ choose_types }}">{{ later_included }}</span><span class="when" data-shown-by="{{ by }}" data-shown-at="{{ choose_types }}">{{ later_excluded }}</span><span class="without-script">{{ later_unless }}</span>{% endif %}</p>
+{% call parts::box_of_rows(false) %}{% for item in data %}{% call rows::level(item.row) %}{% endcall %}{% for one in item.types %}{% call rows::level(one, true, item.row.id, choose_types) %}{% endcall %}{% endfor %}{% if !item.types.is_empty() %}<li class="sub hint without-script"><span class="t">{{ item.counts }}</span></li>
+{% endif %}{% endfor %}{% endcall %}
+{% if items_after.edit.is_some() || items_after.later_by.is_some() %}<p class="after whens">{% if let Some(line) = items_after.edit %}<span class="always">{{ line }}</span>{% endif %}{% if let Some(by) = items_after.later_by %} <span class="when" data-shown-by="{{ by }}" data-shown-at="{{ items_after.later_at }}">{{ later_included }}</span><span class="when" data-shown-by="{{ by }}" data-shown-at="{{ choose_types }}">{{ later_excluded }}</span><span class="without-script">{{ items_after.later_by_level }}</span>{% endif %}</p>
 {% endif %}</section>
 {% endif %}{% if !profile.is_empty() %}<section class="sec">
 <h2>Profile</h2>
@@ -39,9 +34,9 @@
 {% call parts::box_of_rows(false) %}<li><span class="t"><label for="admin-level">{{ admin.title }}</label></span>
 {% call parts::pop("admin-level", "admin", admin.title) %}{% for option in admin.options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.word }}</option>{% endfor %}{% endcall %}
 </li>
-<li class="sub hint without-script"><span class="t">{{ admin.counts }}</span></li>
-{% for power in admin.powers %}{% call rows::power(power, "admin-level", custom) %}{% endcall %}{% endfor %}{% endcall %}
-<p class="after whens"><span class="when" data-shown-by="admin-level" data-shown-at="{{ full }}">Everything <bdi>{{ view.offer.app.name }}</bdi> asked for.</span>{% if let Some(line) = admin.limited %}<span class="when" data-shown-by="admin-level" data-shown-at="{{ limited }}">{{ line }}</span>{% endif %}<span class="when" data-shown-by="admin-level" data-shown-at="{{ custom }}"><bdi>{{ view.offer.app.name }}</bdi> asked for {{ admin.asked }}.</span></p>
+{% for power in admin.powers %}{% call rows::power(power, "admin-level", custom) %}{% endcall %}{% endfor %}<li class="sub hint without-script"><span class="t">{{ admin.counts }}</span></li>
+{% endcall %}
+<p class="after whens"><span class="when" data-shown-by="admin-level" data-shown-at="{{ full }}">Everything <bdi>{{ view.offer.app.name }}</bdi> asked for.</span>{% if let Some(line) = admin.limited %}<span class="when" data-shown-by="admin-level" data-shown-at="{{ limited }}">{{ line }}</span>{% endif %}<span class="when" data-shown-by="admin-level" data-shown-at="{{ custom }}"><bdi>{{ view.offer.app.name }}</bdi> asked for {{ admin.asked }}.</span>{% if let Some(line) = admin.limited_by_level %}<span class="without-script">{{ line }}</span>{% endif %}</p>
 </section>
 {% endif %}</details>
 {% endif %}{% call parts::actions() %}<button type="submit" class="btn primary" name="decision" value="approve">Allow</button>

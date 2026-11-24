@@ -85,8 +85,13 @@
       element.hidden = element.dataset.confirmError !== kind;
     }
     const field = dialog.querySelector("#confirm-password");
-    if (kind === "password") field?.setAttribute("aria-invalid", "true");
-    else field?.removeAttribute("aria-invalid");
+    if (kind === "password") {
+      field?.setAttribute("aria-invalid", "true");
+      field?.setAttribute("aria-describedby", "confirm-note");
+    } else {
+      field?.removeAttribute("aria-invalid");
+      field?.removeAttribute("aria-describedby");
+    }
     const wait = dialog.querySelector("[data-wait]");
     if (kind === "locked" && wait) {
       const minutes = Math.max(1, Math.ceil(waitSeconds / 60));
@@ -600,13 +605,11 @@
   }
 
   // Without scripts every part shows, and the server reads only what the control's value counts.
-  // A part shows while its control is at `data-shown-at`, or anywhere but `data-hidden-at`.
+  // A part shows while its control is at `data-shown-at`, one value or several divided by `|`.
   function syncChoices() {
     for (const part of document.querySelectorAll("[data-shown-by]")) {
       const control = document.getElementById(part.dataset.shownBy);
-      const { shownAt, hiddenAt } = part.dataset;
-      const shown = shownAt === undefined ? control?.value !== hiddenAt : control?.value === shownAt;
-      part.classList.toggle("open", shown);
+      part.classList.toggle("open", part.dataset.shownAt.split("|").includes(control?.value));
     }
   }
 

@@ -83,19 +83,28 @@ struct AdminRow {
     /// Without scripts every power row shows, and counts only under Custom.
     counts: String,
     limited: Option<String>,
+    /// Without scripts nothing shows the line above, so a sentence says what Limited holds.
+    limited_by_level: Option<String>,
     asked: String,
 }
 
-/// A row of the summary box, or of what the app already holds.
+/// A row of the summary box, or of what the app already holds. The object may carry a type's own
+/// name, so it is drawn in its own direction; a row with no verb is all one phrase.
 struct Glance {
     symbol: &'static str,
-    text: String,
+    verb: &'static str,
+    object: String,
 }
 
-/// The line under the Items box. The later-types sentence follows the first row that offers types.
+/// The line under the Items box. The later-types sentences follow the first row that offers types.
 struct ItemsAfter {
     edit: Option<&'static str>,
     later_by: Option<String>,
+    /// The values of the row that grant a level reaching types added later, which the page's
+    /// script reads as a list divided by `|`.
+    later_at: String,
+    /// Without scripts, which levels reach types added later.
+    later_by_level: String,
 }
 
 /// The page's own rows have no identifier, and one type is never at odds with itself.
@@ -242,11 +251,10 @@ fn admin_row(admin: &Admin, again: Option<&Post>) -> AdminRow {
             .map(|power| words::lower_first(&power_title(*power)))
             .collect()
     };
-    let limited = admin
+    let limited_powers = admin
         .levels
         .contains(&AdminLevel::Limited)
-        .then(|| powers_at(AdminLevel::Limited, &ordered, &[]).unwrap_or_default())
-        .map(|powers| words::limited_line(&titles(&powers)));
+        .then(|| titles(&powers_at(AdminLevel::Limited, &ordered, &[]).unwrap_or_default()));
     let asked = if ordered.len() >= words::POWER_COUNT {
         format!("all {}", words::POWER_COUNT)
     } else {
@@ -264,7 +272,8 @@ fn admin_row(admin: &Admin, again: Option<&Post>) -> AdminRow {
             })
             .collect(),
         counts: words::counts_when(words::ADMIN_TITLE, words::admin_level(AdminLevel::Custom)),
-        limited,
+        limited: limited_powers.as_deref().map(words::limited_line),
+        limited_by_level: limited_powers.as_deref().map(words::limited_by_level),
         asked,
         powers: ordered
             .into_iter()
@@ -287,25 +296,32 @@ fn sorted_titles(powers: &[Permission]) -> Vec<String> {
         .collect()
 }
 
+fn admin_glance(powers: &[Permission]) -> Glance {
+    Glance {
+        symbol: "sliders",
+        verb: "",
+        object: words::admin_gives(&sorted_titles(powers)),
+    }
+}
+
 /// A row's line in the summary: each row at the level it starts at.
 fn gets(row: &LevelRow) -> Glance {
     let level = row
         .choices
         .last()
         .map_or(Level::None, |choice| choice.level);
+    let (verb, object) = words::gives(row.reach, &row.pattern, row.label.as_deref(), level);
     Glance {
         symbol: words::symbol(row.reach),
-        text: words::gives(row.reach, &row.pattern, row.label.as_deref(), level),
+        verb,
+        object,
     }
 }
 
 fn glance(offer: &Offer) -> Vec<Glance> {
     let mut lines: Vec<Glance> = offer.data.iter().chain(&offer.profile).map(gets).collect();
     if let Some(admin) = &offer.admin {
-        lines.push(Glance {
-            symbol: "sliders",
-            text: words::admin_gives(&sorted_titles(&admin.powers)),
-        });
+        lines.push(admin_glance(&admin.powers));
     }
     lines
 }
@@ -314,16 +330,18 @@ fn held_glance(offer: &Offer) -> Vec<Glance> {
     let mut lines: Vec<Glance> = offer
         .held
         .iter()
-        .map(|held| Glance {
-            symbol: words::symbol(held.reach),
-            text: words::gives(held.reach, &held.pattern, held.label.as_deref(), held.level),
+        .map(|held| {
+            let (verb, object) =
+                words::gives(held.reach, &held.pattern, held.label.as_deref(), held.level);
+            Glance {
+                symbol: words::symbol(held.reach),
+                verb,
+                object,
+            }
         })
         .collect();
     if !offer.held_powers.is_empty() {
-        lines.push(Glance {
-            symbol: "sliders",
-            text: words::admin_gives(&sorted_titles(&offer.held_powers)),
-        });
+        lines.push(admin_glance(&offer.held_powers));
     }
     lines
 }
@@ -335,7 +353,7 @@ struct ConsentBody<'a> {
     action: &'static str,
     link_field: &'static str,
     link_value: &'a str,
-    device_code: Option<String>,
+    device: bool,
     more_access: bool,
     app_bracket: String,
     app_line: Option<String>,
@@ -348,7 +366,6 @@ struct ConsentBody<'a> {
     items_after: ItemsAfter,
     later_included: &'static str,
     later_excluded: &'static str,
-    later_unless: &'static str,
     choices: bool,
     profile: Vec<Row>,
     profile_after: Option<&'static str>,
@@ -359,31 +376,12 @@ struct ConsentBody<'a> {
     choose_types: &'static str,
 }
 
-fn shown_code(code: &str) -> String {
-    let compact: String = code.chars().filter(|c| c.is_alphanumeric()).collect();
-    if compact.chars().count() == 8 {
-        let first: String = compact.chars().take(4).collect();
-        let second: String = compact.chars().skip(4).collect();
-        format!("{first}-{second}")
-    } else {
-        code.to_string()
-    }
-}
-
 pub fn consent(view: &Consent) -> Result<Page> {
-    let (action, link_field, link_value, device_code) = match &view.answering {
-        Answering::Authorization(query) => (
-            "/auth/consent",
-            "authorization_request",
-            query.as_str(),
-            None,
-        ),
-        Answering::Device(code) => (
-            "/auth/device/consent",
-            "user_code",
-            code.as_str(),
-            Some(shown_code(code)),
-        ),
+    let (action, link_field, link_value) = match &view.answering {
+        Answering::Authorization(query) => {
+            ("/auth/consent", "authorization_request", query.as_str())
+        }
+        Answering::Device(code) => ("/auth/device/consent", "user_code", code.as_str()),
     };
     let offer = &view.offer;
     let shared: Vec<Titled> = offer
@@ -419,12 +417,33 @@ pub fn consent(view: &Consent) -> Result<Page> {
         .map(|row| numbering.row(row, "scopes", scopes))
         .collect();
     let admin = offer.admin.as_ref().map(|admin| admin_row(admin, again));
+    let later_row = offer
+        .data
+        .iter()
+        .zip(&data)
+        .find(|(_, drawn)| !drawn.types.is_empty());
+    let granting: Vec<&Choice> = later_row
+        .map(|(row, _)| {
+            row.choices
+                .iter()
+                .filter(|choice| choice.level != Level::None)
+                .collect()
+        })
+        .unwrap_or_default();
     let items_after = ItemsAfter {
         edit: offer.offers_edit.then_some(words::EDIT_LINE),
-        later_by: data
+        later_by: later_row.map(|(_, drawn)| drawn.row.id.clone()),
+        later_at: granting
             .iter()
-            .find(|one| !one.types.is_empty())
-            .map(|one| one.row.id.clone()),
+            .map(|choice| choice.value.as_str())
+            .collect::<Vec<_>>()
+            .join("|"),
+        later_by_level: words::later_by_level(
+            &granting
+                .iter()
+                .map(|choice| words::level(choice.level))
+                .collect::<Vec<_>>(),
+        ),
     };
     let profile_after = offer
         .profile
@@ -459,7 +478,7 @@ pub fn consent(view: &Consent) -> Result<Page> {
         action,
         link_field,
         link_value,
-        device_code,
+        device: matches!(view.answering, Answering::Device(_)),
         more_access: offer.returning && offer.asks_new,
         app_bracket: words::app_bracket(&offer.app),
         app_line: words::app_line(&offer.app),
@@ -476,7 +495,6 @@ pub fn consent(view: &Consent) -> Result<Page> {
         items_after,
         later_included: words::LATER_INCLUDED,
         later_excluded: words::LATER_NOT_INCLUDED,
-        later_unless: words::LATER_UNLESS_EACH,
         choices,
         profile,
         profile_after,
@@ -491,7 +509,9 @@ pub fn consent(view: &Consent) -> Result<Page> {
         &body,
         Needs {
             connect: true,
-            confirm_dialog: offer.confirm,
+            confirm_dialog: offer
+                .confirm
+                .then_some("Enter your password to allow this."),
         },
     )
 }
