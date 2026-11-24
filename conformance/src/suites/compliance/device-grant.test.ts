@@ -303,7 +303,11 @@ describe("the device check step", () => {
     );
   }
 
-  function decide(flow: DeviceFlow, cookie: string): Promise<Response> {
+  function decide(
+    flow: DeviceFlow,
+    cookie: string,
+    decision: "approve" | "deny" = "approve",
+  ): Promise<Response> {
     return fetch(`${flow.origin}/auth/device/consent`, {
       method: "POST",
       redirect: "manual",
@@ -314,7 +318,7 @@ describe("the device check step", () => {
       },
       body: new URLSearchParams({
         user_code: flow.userCode,
-        decision: "approve",
+        decision,
         scopes: "core.note:read",
       }),
     });
@@ -516,5 +520,44 @@ describe("the device check step", () => {
       flow,
       "expired_code",
     );
+  });
+
+  it("ends a browser's confirmation when another browser session confirms the same code", async () => {
+    // The tests before this one spent most of the owner's ten lookups in
+    // fifteen minutes (`keys-and-oauth/device-lookup-owner-limit`).
+    await server!.advanceClock(15 * 60_000);
+    const flow = await startDeviceFlow(server!, ["core.note:read"]);
+    const first = await signIn(flow);
+    const second = await signIn(flow);
+    const confirm = async (cookie: string): Promise<void> => {
+      const to = await sentTo(
+        await postDeviceCheck(flow.origin, flow.origin, cookie, flow.userCode),
+        flow,
+      );
+      expect(to.pathname, String(to)).toBe("/auth/device/consent");
+    };
+
+    await confirm(first);
+    // The witness: the first browser's confirmation opens its approval page.
+    const opened = await open(flow, "/auth/device/consent", first);
+    await opened.body?.cancel();
+    expect(opened.status).toBe(200);
+
+    await confirm(second);
+    await expectSentToCheck(
+      await open(flow, "/auth/device/consent", first),
+      flow,
+    );
+    await expectSentToCheck(await decide(flow, first, "approve"), flow);
+    await expectSentToCheck(await decide(flow, first, "deny"), flow);
+    expect((await flow.poll()).body.error).toBe("authorization_pending");
+
+    const approved = await decide(flow, second);
+    await approved.body?.cancel();
+    expect(approved.status).toBe(200);
+    await waitOut(flow.interval);
+    const issued = await flow.poll();
+    expect(issued.status).toBe(200);
+    expect(issued.body.access_token).toBeTruthy();
   });
 });

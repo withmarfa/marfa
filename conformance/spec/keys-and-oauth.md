@@ -3328,19 +3328,19 @@ When `GET /auth/device` carries a `user_code` and no `error`, the server MUST re
 
 ### `keys-and-oauth/device-check-page`
 
-When a signed-in owner opens `/auth/device/check` with the `user_code` of a pending device code, the server MUST answer `200` with a page that shows the code and asks the owner to confirm it matches the code on the device.
+While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), when a signed-in owner whose browser session meets the code's `max_age` (`keys-and-oauth/device-max-age-sign-in`) opens `/auth/device/check` with the `user_code` of a pending device code, the server MUST answer `200` with a page that shows the code and asks the owner to confirm it matches the code on the device.
 
 **Tests:** `compliance/device-grant.test.ts › sends a link carrying the code to the check step, which shows the code to compare`.
 
 ### `keys-and-oauth/device-check-confirm`
 
-When a signed-in owner posts `POST /auth/device/check` with the `user_code` of a pending device code, the server MUST redirect the browser to `/auth/device/consent` with the same `user_code`.
+While the owner's device code lookups are within their limits (`keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), when a signed-in owner whose browser session meets the code's `max_age` (`keys-and-oauth/device-max-age-sign-in`) posts `POST /auth/device/check` with the `user_code` of a pending device code, the server MUST redirect the browser to `/auth/device/consent` with the same `user_code`.
 
 **Tests:** `compliance/device-grant.test.ts › opens the approval page only for the code the owner confirmed, in the browser that confirmed it`.
 
 ### `keys-and-oauth/device-entry-to-check`
 
-When `POST /auth/device` receives the `user_code` of a pending device code, the server MUST redirect the browser to `/auth/device/check` with the same `user_code`.
+While the caller's device code lookups are within their limits (`keys-and-oauth/device-lookup-address-limit`, `keys-and-oauth/device-lookup-instance-limit`, `keys-and-oauth/device-lookup-owner-limit`, `keys-and-oauth/device-lookup-owner-instance-limit`), when `POST /auth/device` receives the `user_code` of a pending device code, the server MUST redirect the browser to `/auth/device/check` with the same `user_code`.
 
 **Tests:** `compliance/device-grant.test.ts › sends a typed code to the check step`.
 
@@ -3352,13 +3352,13 @@ When a browser with no owner session opens `/auth/device/check`, the server MUST
 
 ### `keys-and-oauth/device-check-unknown`
 
-If `/auth/device/check` is opened or posted with a `user_code` the server never issued or has removed, then the server MUST redirect the browser to `/auth/device` with `error=invalid_code`.
+If a signed-in owner opens or posts `/auth/device/check` with a `user_code` the server never issued or has removed, then the server MUST redirect the browser to `/auth/device` with `error=invalid_code`.
 
 **Tests:** `compliance/device-grant.test.ts › sends a code it does not know back to the entry page as wrong, and a code it holds as expired as expired`.
 
 ### `keys-and-oauth/device-check-expired`
 
-If `/auth/device/check` is opened or posted with the `user_code` of a device code the server holds as expired, then the server MUST redirect the browser to `/auth/device` with `error=expired_code`.
+If a signed-in owner opens or posts `/auth/device/check` with the `user_code` of a device code the server holds as expired, then the server MUST redirect the browser to `/auth/device` with `error=expired_code`.
 
 **Tests:** `compliance/device-grant.test.ts › sends a code it does not know back to the entry page as wrong, and a code it holds as expired as expired`.
 
@@ -3372,11 +3372,25 @@ If a signed-in owner opens `/auth/device/consent` for a code their browser sessi
 
 ### `keys-and-oauth/device-decision-unchecked`
 
-If a signed-in owner posts a decision to `POST /auth/device/consent` on a code their browser session has not confirmed on the check page, then the server MUST redirect the browser to `/auth/device/check` with the same `user_code` and leave the code pending.
+If a signed-in owner posts a decision to `POST /auth/device/consent` on a code their browser session has not confirmed on the check page, then the server MUST redirect the browser to `/auth/device/check` with the same `user_code`.
 
 **Reason:** A form someone else wrote, or a decision posted without the approval page, cannot approve a code the owner did not compare. A confirmation holds only for its own code and its own browser session (`keys-and-oauth/device-consent-unchecked`).
 
 **Tests:** `compliance/device-grant.test.ts › opens the approval page only for the code the owner confirmed, in the browser that confirmed it`.
+
+### `keys-and-oauth/device-decision-unchecked-pending`
+
+If a signed-in owner posts a decision to `POST /auth/device/consent` on a pending device code their browser session has not confirmed on the check page, then the server MUST leave the code pending.
+
+**Tests:** `compliance/device-grant.test.ts › opens the approval page only for the code the owner confirmed, in the browser that confirmed it`, `› ends a browser's confirmation when another browser session confirms the same code`.
+
+### `keys-and-oauth/device-check-replaced`
+
+When a signed-in owner confirms a device code on the check page, the server MUST end every confirmation of that code by another browser session.
+
+**Reason:** One browser session at a time holds a code's confirmation, so the approval page opens only in the browser that compared the code last.
+
+**Tests:** `compliance/device-grant.test.ts › ends a browser's confirmation when another browser session confirms the same code`.
 
 ### `keys-and-oauth/device-check-confirm-again`
 

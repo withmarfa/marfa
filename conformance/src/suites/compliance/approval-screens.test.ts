@@ -976,6 +976,7 @@ describe("what an approval grants an app whose access ended while the screen was
     expect(answered.status).toBe(302);
     const back = new URL(answered.headers.get("location") ?? "", server.apiUrl);
     expect(back.pathname).toBe("/auth/device/check");
+    expect(back.searchParams.get("user_code")).toBe(device.userCode);
     const checking = await fetch(back, {
       redirect: "manual",
       headers: { cookie },
