@@ -916,11 +916,19 @@ When a document write is refused, a device MUST flag the held file `refused` wit
 
 ### `folder-documents/refused-edge-clears`
 
-When the working copy is current and holds, as the server last gave it, the edge that a file's refused edge line asked for, a device MUST clear that refusal from the file, whether or not the file changed.
+When a device's catch-up reaches the server's head and the working copy holds, as the server gave it, the edge that a file's refused edge line asked for, a device MUST clear that refusal from the file, whether or not the file changed.
 
 **Reason:** once the edge exists, the corresponding line is in step with the server.
 
 **Tests:** `device/folders-cleared-answers.test.ts › clears a file's refused mark once the copy holds the edge its line names, and keeps it while it does not`.
+
+### `folder-documents/refused-edge-kept-short-of-head`
+
+A device MUST NOT clear a file's refused edge line on the strength of an edge in the working copy unless a catch-up has reached the server's head since that edge arrived.
+
+**Reason:** a catch-up that ends short of the head can leave an edge the server has since removed, which would hide a refusal that still stands.
+
+**Tests:** `device/folders-cleared-answers.test.ts › keeps a file's refused mark while each catch-up ends short of the server's head, though the copy holds the edge`.
 
 ### `folder-documents/refused-edit-follow`
 

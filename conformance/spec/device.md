@@ -7626,7 +7626,7 @@ If the server refuses a body's edge write, then a device MUST answer the link `r
 
 ### `device/body-name-refused-clears`
 
-When the working copy holds the `references` edge that a refused body link asked for, a device MUST answer the link with the item it names.
+When the working copy holds the `references` edge to the item that a body link named when its edge write was refused, a device MUST answer the link with that item.
 
 **Reason:** the edge now lets the caller follow the link.
 

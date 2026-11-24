@@ -2903,7 +2903,11 @@ mod tests {
             }]
         );
 
-        edit(&core, &host, serde_json::json!({ "body": "[[Plan]] again" }));
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": "[[Plan]] again" }),
+        );
         let rows = rows_of(&core.conn().unwrap(), &host).unwrap();
         assert_eq!(
             rows.iter()
