@@ -35,6 +35,7 @@ import {
   type ArchiveFile,
   type LineFile,
   blobEntry,
+  WRITTEN_ARCHIVE_VERSION,
 } from "../../utils/archive.js";
 import type { TestContext } from "../../client/types.js";
 import {
@@ -648,8 +649,8 @@ describe("restore", () => {
       ],
       [
         "a later version",
-        (m) => ({ ...m, version: 6 }),
-        "The archive is at version 6, written by marfa-server 0.0.1; this build reads archives up to version 5.",
+        (m) => ({ ...m, version: WRITTEN_ARCHIVE_VERSION + 1 }),
+        `The archive is at version ${String(WRITTEN_ARCHIVE_VERSION + 1)}, written by marfa-server 0.0.1; this build reads archives up to version ${String(WRITTEN_ARCHIVE_VERSION)}.`,
       ],
       [
         "another format",

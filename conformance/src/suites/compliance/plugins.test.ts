@@ -8,6 +8,7 @@ import {
   lineFile,
   ndjson,
   tar,
+  WRITTEN_ARCHIVE_VERSION,
 } from "../../utils/archive.js";
 import {
   bootFreshServer,
@@ -880,7 +881,7 @@ describe("plugins in an archive", () => {
   it("keeps plugin provenance and the install record through an export and a restore", async () => {
     const archive = await owner.exportArchive({ state: "any" });
     expect(archive.status).toBe(200);
-    expect(archiveManifest(archive.data).version).toBe(4);
+    expect(archiveManifest(archive.data).version).toBe(WRITTEN_ARCHIVE_VERSION);
     const plugins = archiveLines(archive.data, "instance").filter(
       (line) => "plugin" in line,
     );
