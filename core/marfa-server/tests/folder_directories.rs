@@ -1,5 +1,7 @@
 //! `GET /folders/{id}/directories` counts a folder's placed files by directory, from its `in-folder` edges.
 
+use std::sync::Arc;
+
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
@@ -11,7 +13,8 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 
 struct Instance {
-    _dir: TempDir,
+    dir: TempDir,
+    app: Arc<App>,
     public: Router,
     control: Router,
     owner: String,
@@ -91,7 +94,14 @@ async fn send(
 
 impl Instance {
     async fn start() -> Instance {
-        let dir = TempDir::new().unwrap();
+        let mut instance = Instance::open(TempDir::new().unwrap()).await;
+        instance.owner = instance
+            .mint("owner", "owner", json!({ "*": "write" }), None)
+            .await;
+        instance
+    }
+
+    async fn open(dir: TempDir) -> Instance {
         let database = dir.path().join("marfa.db");
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
@@ -103,16 +113,25 @@ impl Instance {
         ];
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
         let app = App::start(settings).await.unwrap();
-        let mut instance = Instance {
+        Instance {
             public: public(app.clone()),
             control: control(app.clone()),
-            _dir: dir,
+            app,
+            dir,
             owner: String::new(),
-        };
-        instance.owner = instance
-            .mint("owner", "owner", json!({ "*": "write" }), None)
-            .await;
-        instance
+        }
+    }
+
+    /// Run SQL against the stored rows, with the server closed, and open it again.
+    async fn rewrite(self, sql: &str) -> Instance {
+        self.app.close().await;
+        let Instance { dir, owner, .. } = self;
+        let connection = rusqlite::Connection::open(dir.path().join("marfa.db")).unwrap();
+        connection.execute_batch(sql).unwrap();
+        drop(connection);
+        let mut reopened = Instance::open(dir).await;
+        reopened.owner = owner;
+        reopened
     }
 
     async fn mint(&self, label: &str, source: &str, types: Value, filter: Option<Value>) -> String {
@@ -388,8 +407,6 @@ async fn under_that_leaves_the_folder_or_is_not_a_path_is_refused() {
         "%2Fnotes".to_string(),
         "/".to_string(),
         "//".to_string(),
-        "C:/notes".to_string(),
-        "c:".to_string(),
         "notes%5Cone".to_string(),
         "notes%00".to_string(),
         long,
@@ -413,10 +430,9 @@ async fn under_that_leaves_the_folder_or_is_not_a_path_is_refused() {
 async fn under_named_twice_or_another_parameter_is_refused() {
     let instance = Instance::start().await;
     let folder = instance.folder().await;
-    instance
-        .tree(&folder, "?under=a&under=b")
-        .await
-        .refused(StatusCode::BAD_REQUEST, "validation_error");
+    let twice = instance.tree(&folder, "?under=a&under=b").await;
+    twice.refused(StatusCode::BAD_REQUEST, "validation_error");
+    assert_eq!(twice.body["error"]["details"]["field"], "under");
     instance
         .tree(&folder, "?path=a")
         .await
@@ -857,4 +873,143 @@ async fn the_private_local_command_reads_the_whole_folder() {
     .await;
     assert_eq!(local.directories(), vec![row("notes/2026", 1, 3, true)]);
     assert_eq!(local.numbers(), (2, 8));
+}
+
+fn encoded(path: &str) -> String {
+    path.bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'/' | b':' => {
+                char::from(byte).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn every_returned_path_expands_as_given() {
+    let instance = Instance::start().await;
+    let folder = instance.folder().await;
+    instance
+        .places(
+            &folder,
+            &[
+                "./A:notes/child/page.md",
+                "./A:notes/top.md",
+                "./C:/drive.md",
+                ".//c:x/y/z.md",
+                "plain/a/b.md",
+            ],
+        )
+        .await;
+
+    let mut waiting = vec![String::new()];
+    let mut expanded = Vec::new();
+    while let Some(under) = waiting.pop() {
+        let read = instance
+            .tree(&folder, &format!("?under={}", encoded(&under)))
+            .await;
+        for (path, ..) in read.directories() {
+            waiting.push(path);
+        }
+        expanded.push(under);
+    }
+    expanded.sort();
+    assert_eq!(
+        expanded,
+        [
+            "",
+            "A:notes",
+            "A:notes/child",
+            "C:",
+            "c:x",
+            "c:x/y",
+            "plain",
+            "plain/a"
+        ]
+    );
+
+    let notes = instance.tree(&folder, "?under=A:notes").await;
+    assert_eq!(notes.directories(), vec![row("A:notes/child", 1, 1, false)]);
+    assert_eq!(notes.numbers(), (1, 5));
+    let dotted = instance.tree(&folder, "?under=./A:notes").await;
+    assert_eq!(dotted.ok(), notes.ok());
+}
+
+#[tokio::test]
+async fn a_stored_path_that_is_not_text_or_names_no_file_is_left_out_of_every_count() {
+    let instance = Instance::start().await;
+    let folder = instance.folder().await;
+    instance
+        .places(
+            &folder,
+            &[
+                "a/one.md",
+                "a/number.md",
+                "a/real.md",
+                "a/gone.md",
+                "b/nul.md",
+                "a/dot.md",
+                "a/empty.md",
+            ],
+        )
+        .await;
+    let instance = instance
+        .rewrite(
+            "UPDATE edges SET properties = jsonb_set(properties, '$.path', 7) \
+             WHERE json_extract(properties, '$.path') = 'a/number.md'; \
+             UPDATE edges SET properties = jsonb_set(properties, '$.path', 1.5) \
+             WHERE json_extract(properties, '$.path') = 'a/real.md'; \
+             UPDATE edges SET properties = jsonb_remove(properties, '$.path') \
+             WHERE json_extract(properties, '$.path') = 'a/gone.md'; \
+             UPDATE edges SET properties = jsonb_set(properties, '$.path', jsonb('null')) \
+             WHERE json_extract(properties, '$.path') = 'b/nul.md'; \
+             UPDATE edges SET properties = jsonb_set(properties, '$.path', '.') \
+             WHERE json_extract(properties, '$.path') = 'a/dot.md'; \
+             UPDATE edges SET properties = jsonb_set(properties, '$.path', '') \
+             WHERE json_extract(properties, '$.path') = 'a/empty.md';",
+        )
+        .await;
+
+    let top = instance.tree(&folder, "").await;
+    assert_eq!(top.directories(), vec![row("a", 1, 1, false)]);
+    assert_eq!(top.numbers(), (0, 1));
+    let under = instance.tree(&folder, "?under=a").await;
+    assert_eq!(under.directories(), vec![]);
+    assert_eq!(under.numbers(), (1, 1));
+}
+
+#[tokio::test]
+async fn the_local_command_applies_the_instance_source_filter() {
+    let instance = Instance::start().await;
+    let folder = instance.folder().await;
+    let shown = instance
+        .mint("shown", "shown", json!({ "*": "write" }), None)
+        .await;
+    let hidden = instance
+        .mint("hidden", "hidden", json!({ "*": "write" }), None)
+        .await;
+    for (writer, path) in [(&shown, "a/shown.md"), (&hidden, "a/hidden.md")] {
+        let item = instance.item(writer, "core.note").await;
+        instance.place_item(&item, &folder, path).await;
+    }
+    let path = format!("/folders/{folder}/directories");
+    let before = send(&instance.control, None, Method::GET, &path, Value::Null).await;
+    assert_eq!(before.directories(), vec![row("a", 2, 2, false)]);
+    assert_eq!(before.numbers(), (0, 2));
+
+    let set = send(
+        &instance.control,
+        None,
+        Method::PATCH,
+        "/config",
+        json!({ "enforcement": {
+            "source_filter": { "types": ["core.note"], "sources": ["shown"] },
+        } }),
+    )
+    .await;
+    assert_eq!(set.status, StatusCode::OK, "{}", set.text);
+    let after = send(&instance.control, None, Method::GET, &path, Value::Null).await;
+    assert_eq!(after.directories(), vec![row("a", 1, 1, false)]);
+    assert_eq!(after.numbers(), (0, 1));
 }

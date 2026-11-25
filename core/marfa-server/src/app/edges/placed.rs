@@ -8,7 +8,7 @@ use super::read::from_reach;
 use super::rows::{self, Placed};
 use crate::app::access::Caller;
 use crate::app::catalog::Catalog;
-use crate::app::refusal::{Refusal, Result};
+use crate::app::refusal::Result;
 
 const MOST_CHARACTERS: usize = 1024;
 
@@ -32,7 +32,7 @@ fn names(path: &str) -> impl Iterator<Item = &str> {
 
 pub fn under_names(text: &str) -> Option<Vec<String>> {
     if text.chars().count() > MOST_CHARACTERS
-        || marfa_rules::edges::depth_inside_folder(text).is_none()
+        || marfa_rules::edges::depth_below_root(text).is_none()
     {
         return None;
     }
@@ -50,25 +50,21 @@ impl Children {
     }
 }
 
-fn count_by_name(
-    path: &str,
-    under: &[String],
-    here: &mut i64,
-    children: &mut Children,
-) -> Result<()> {
+/// False where the path names no file, which places none.
+fn count_by_name(path: &str, under: &[String], here: &mut i64, children: &mut Children) -> bool {
     let mut path: Vec<&str> = names(path).collect();
     if path.pop().is_none() {
-        return Err(Refusal::internal("a stored placement names no file"));
+        return false;
     }
     if path.len() < under.len() || path.iter().zip(under).any(|(name, held)| name != held) {
-        return Ok(());
+        return true;
     }
     match path.get(under.len()) {
         None => *here += 1,
         Some(name) if path.len() == under.len() + 1 => children.add(name, 1, 0),
         Some(name) => children.add(name, 0, 1),
     }
-    Ok(())
+    true
 }
 
 pub fn directories(
@@ -96,9 +92,7 @@ pub fn directories(
         }
     }
     for path in untidy {
-        let path = path.ok_or_else(|| Refusal::internal("a stored placement has no path"))?;
-        count_by_name(&path, under, &mut here, &mut children)?;
-        total += 1;
+        total += i64::from(count_by_name(&path, under, &mut here, &mut children));
     }
     let directories = children
         .0

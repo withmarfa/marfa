@@ -350,7 +350,16 @@ pub fn cascade_reach<G: Graph>(graph: &G, start: &str) -> Result<Vec<String>, G:
 pub fn depth_inside_folder(path: &str) -> Option<usize> {
     let bytes = path.as_bytes();
     let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
-    if drive || path.starts_with('/') || path.contains(['\\', '\0']) {
+    if drive {
+        return None;
+    }
+    depth_below_root(path)
+}
+
+/// As `depth_inside_folder`, but a first name that reads as a drive is only a name: a stored
+/// `./A:notes/a.md` places a directory called `A:notes`.
+pub fn depth_below_root(path: &str) -> Option<usize> {
+    if path.starts_with('/') || path.contains(['\\', '\0']) {
         return None;
     }
     let mut depth = 0;
@@ -817,8 +826,23 @@ mod tests {
             ("../a", None),
             ("a/../b", None),
             ("a..b/c", Some(2)),
+            ("./C:/x", Some(2)),
         ] {
             assert_eq!(depth_inside_folder(path), depth, "{path:?}");
+        }
+    }
+
+    #[test]
+    fn a_directory_named_like_a_drive_lies_below_the_root() {
+        for (path, depth) in [
+            ("A:notes", Some(1)),
+            ("C:", Some(1)),
+            ("c:x/y", Some(2)),
+            ("/C:", None),
+            ("C:\\x", None),
+            ("A:/..", None),
+        ] {
+            assert_eq!(depth_below_root(path), depth, "{path:?}");
         }
     }
 }

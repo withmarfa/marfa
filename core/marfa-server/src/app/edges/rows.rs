@@ -176,8 +176,7 @@ pub(super) fn kinds_at(
 }
 
 /// Untidy paths need component-wise counting to match the device.
-const UNTIDY: &str =
-    "p IS NULL OR instr('/' || p || '/', '//') > 0 OR instr('/' || p || '/', '/./') > 0";
+const UNTIDY: &str = "instr('/' || p || '/', '//') > 0 OR instr('/' || p || '/', '/./') > 0";
 
 pub(super) struct Tally {
     /// The directory's name, or `None` for the files that sit directly under the prefix.
@@ -190,11 +189,12 @@ pub(super) struct Placed {
     pub tallies: Vec<Tally>,
     /// Every placed file whose path holds no empty or `.` name, under the prefix or not.
     pub tidy: i64,
-    /// The path of each placed file left to read by name, `None` where an edge holds none.
-    pub untidy: Vec<Option<String>>,
+    /// The path of each placed file left to read by name.
+    pub untidy: Vec<String>,
 }
 
-/// A nonempty prefix ends in `/` so it matches a complete directory name.
+/// A nonempty prefix ends in `/` so it matches a complete directory name. An edge whose `path` is
+/// not text places no file and is left out.
 pub(super) fn placed(
     tx: &Transaction<'_>,
     folder: &str,
@@ -207,7 +207,10 @@ pub(super) fn placed(
          FROM edges e JOIN items f ON f.id = e.from_id WHERE e.to_id = "
     ));
     sql.bind(folder.to_string());
-    sql.push(" AND e.edge_type = 'in-folder' AND f.state <> 'trashed'");
+    sql.push(
+        " AND e.edge_type = 'in-folder' AND f.state <> 'trashed' \
+         AND json_type(e.properties, '$.path') = 'text'",
+    );
     if let Some(reach) = from {
         sql.push(" AND ");
         reach.clause(&mut sql, "f", false);
