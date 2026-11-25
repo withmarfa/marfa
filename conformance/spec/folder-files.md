@@ -1196,9 +1196,17 @@ When the owner confirms `folders kept --discard`, or an app discards a folder's 
 
 If a program writes to a file a folder keeps under a name of the form `.marfa-kept-<id>.tmp` after the owner's discard begins and before the device's last look at the file, then a device MUST NOT delete the file.
 
-**Reason:** the owner agreed to lose the file as it was, not a save made as the discard ran. The device moves the file to a name of its own before that last look, so a save by name after it reaches no file the device deletes. A file it does not delete is settled as `folder-files/write-retained-discard` and `folder-files/write-retained-unread-written-kept` say.
+**Reason:** the owner agreed to lose the file as it was, not a save made as the discard ran. The device moves the file to a name of its own before that last look, so a save by name after it reaches no file the device deletes. A file it does not delete is listed where it is (`folder-files/write-retained-discard-left-listed`) and settled as `folder-files/write-retained-discard` and `folder-files/write-retained-unread-written-kept` say.
 
 **Tests:** `device/folders-open-writer.test.ts › never deletes a kept file a program writes to as the owner discards it, where its record %s`.
+
+### `folder-files/write-retained-discard-left-listed`
+
+If a discard leaves a kept file under a name other than the one it was listed at, as when the device stops or cannot delete the file, then a device MUST list the file in `folders kept` at the name that holds it until the file is put back or deleted.
+
+**Reason:** a file listed at a name that holds nothing is lost to the owner, who cannot find it to keep or delete it. Where the old name is free, the next pass moves the file back to it.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a kept file under the name it is left at where a discard %s, until it is deleted`.
 
 ## Deletion, purges and missing directories
 

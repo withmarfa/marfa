@@ -660,6 +660,70 @@ pub(crate) fn any_retained(conn: &Connection) -> Result<bool, CoreError> {
         .is_some())
 }
 
+const DISCARDING: &str = "folder_discarding:";
+
+/// A kept file a discard moves to a private name, recorded before the move
+/// and cleared only once that name holds nothing, so the file is listed
+/// under whichever name it has.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Discarding {
+    /// The id of the kept file's record.
+    pub(crate) id: String,
+    /// The directory both names are in, as in [`Retained`].
+    pub(crate) aside: String,
+    /// Its reserved name, which it goes back to where that is free.
+    pub(crate) kept: String,
+    pub(crate) private: String,
+    /// The path it came from, where its record names one.
+    pub(crate) from: String,
+    /// Why the discard left it under the private name, once it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) left: Option<String>,
+}
+
+impl Discarding {
+    fn key(&self) -> String {
+        format!("{DISCARDING}{}", super::joined(&self.aside, &self.private))
+    }
+}
+
+/// Records `discarding` as `mark` says: moving or left under its private
+/// name, or cleared once that name holds nothing.
+pub(crate) fn mark_discarding(
+    conn: &Connection,
+    discarding: Discarding,
+    mark: super::landing::Mark<'_>,
+) -> Result<(), CoreError> {
+    let left = match mark {
+        super::landing::Mark::Free => return crate::store::meta_delete(conn, &discarding.key()),
+        super::landing::Mark::Moving => None,
+        super::landing::Mark::Left(reason) => Some(reason.to_string()),
+    };
+    set_discarding(conn, &Discarding { left, ..discarding })
+}
+
+pub(crate) fn set_discarding(conn: &Connection, discarding: &Discarding) -> Result<(), CoreError> {
+    let value =
+        serde_json::to_string(discarding).map_err(|error| CoreError::Store(error.to_string()))?;
+    crate::store::meta_set(conn, &discarding.key(), &value)
+}
+
+/// Every kept file a discard moved or was moving to a private name, each
+/// by its path there; `None` where the row does not read.
+pub(crate) fn discarding(
+    conn: &Connection,
+) -> Result<Vec<(String, Option<Discarding>)>, CoreError> {
+    Ok(under(conn, DISCARDING)?
+        .into_iter()
+        .map(|(path, value)| (path, serde_json::from_str(&value).ok()))
+        .collect())
+}
+
+/// Clears a record by its path.
+pub(crate) fn clear_discarding_at(conn: &Connection, path: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{DISCARDING}{path}"))
+}
+
 const KEPT: &str = "folder_kept:";
 
 /// A person's file a write or a removal kept beside its path, or could not

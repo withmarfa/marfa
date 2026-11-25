@@ -390,6 +390,20 @@ pub(crate) trait Ledger {
     /// Records the file read, out of its path and kept under its reserved
     /// name in the aside directory, for each pass to settle.
     fn retain(&self, retained: &Retained) -> io::Result<()>;
+    /// Records where a discard of `retained` has its file, as
+    /// [`discard_checked`] marks it.
+    fn discarding(&self, retained: &Retained, private: &Path, mark: Mark<'_>) -> io::Result<()>;
+}
+
+/// What [`discard_checked`] records of the private name it moves a kept file
+/// to, so the file is listed under whichever name holds it.
+pub(crate) enum Mark<'a> {
+    /// Before the move: the file may be under either name.
+    Moving,
+    /// The file stays under the private name, for this reason.
+    Left(&'a str),
+    /// The private name holds nothing.
+    Free,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -797,6 +811,8 @@ pub(crate) enum Settled {
     Beside(PathBuf),
     /// Unchanged, and kept, with what this look found.
     Kept(Retained),
+    /// Under the private name a discard moved it to, recorded there.
+    Left,
 }
 
 /// Settles `retained`, whose reserved name `file` was opened from, with
@@ -850,20 +866,12 @@ pub(crate) fn settle_retained(
         // A write that keeps the length on a volume with coarse times shows
         // only in the bytes.
         if !stated || proved.unchanged()? {
-            match discard_checked(guard.aside, name, Some(at), |_| proved.unchanged())? {
+            let mark =
+                |private: &Path, mark: Mark<'_>| guard.ledger.discarding(retained, private, mark);
+            match discard_checked(guard.aside, name, Some(at), |_| proved.unchanged(), mark)? {
                 Discard::Removed => return Ok(Settled::Discarded),
                 Discard::Absent => return Ok(Settled::Gone),
-                Discard::Stranded(left) => {
-                    guard.ledger.kept(
-                        &left,
-                        true,
-                        format!(
-                            "it is {} as Marfa set it aside, and it changed as Marfa discarded it; check it, and delete it when it is not needed",
-                            retained.target
-                        ),
-                    );
-                    return Ok(Settled::Gone);
-                }
+                Discard::Left => return Ok(Settled::Left),
                 // Back under its reserved name, and put back as any change is.
                 Discard::Changed => {}
             }
@@ -918,36 +926,84 @@ pub(crate) enum Discard {
     Absent,
     /// It was no longer the file proved, and is back at its name.
     Changed,
-    /// It was no longer the file proved, and another file took its name, so
-    /// it stays under this private name.
-    Stranded(PathBuf),
+    /// It stays under the private name, marked there.
+    Left,
 }
 
-/// A private name keeps a save at the old name out of the final check and unlink.
+/// A private name keeps a save at the old name out of the final check and
+/// unlink. `mark` records the private name before the move, so a file under
+/// it is listed until it goes back or is deleted; once moved, every outcome
+/// is answered, never an error.
 pub(crate) fn discard_checked(
     dir: &Directory,
     name: &Path,
     at: Option<(u64, u64)>,
     still: impl FnOnce(&Path) -> io::Result<bool>,
+    mark: impl Fn(&Path, Mark<'_>) -> io::Result<()>,
 ) -> io::Result<Discard> {
     write_before_discard(dir, name);
     let private = reserved(&uuid::Uuid::now_v7().simple().to_string());
+    mark(&private, Mark::Moving)?;
+    // A mark left behind names an empty name, which the next pass clears.
+    let free = || {
+        let _ = mark(&private, Mark::Free);
+    };
     match rename_new_at(dir, name, dir, &private) {
         Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Discard::Absent),
-        Err(error) => return Err(error),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            free();
+            return Ok(Discard::Absent);
+        }
+        Err(error) => {
+            free();
+            return Err(error);
+        }
     }
+    stop_if_asked(name, "crash-after-private-rename");
+    let left = |reason: String| {
+        // Marked as moving already, so listed under this name either way.
+        let _ = mark(&private, Mark::Left(&reason));
+        Ok(Discard::Left)
+    };
     let same = at.is_none_or(|at| dir.entry_identity(&private).ok() == Some(at));
-    if same && still(&private)? {
-        discard(dir, &private)?;
-        return Ok(Discard::Removed);
+    let unchanged = match still(&private) {
+        Ok(unchanged) => same && unchanged,
+        Err(error) => {
+            return left(format!(
+                "Marfa could not read it as it discarded it: {error}"
+            ));
+        }
+    };
+    if unchanged {
+        let removed = if failing_here("discard-unlink-refused")
+            || named_for(name, "discard-unlink-refused")
+        {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        } else {
+            discard(dir, &private)
+        };
+        return match removed {
+            Ok(()) => {
+                free();
+                Ok(Discard::Removed)
+            }
+            Err(error) => left(format!(
+                "Marfa could not delete it as it discarded it: {error}"
+            )),
+        };
     }
     match rename_new_at(dir, &private, dir, name) {
-        Ok(()) => Ok(Discard::Changed),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            Ok(Discard::Stranded(private))
+        Ok(()) => {
+            free();
+            Ok(Discard::Changed)
         }
-        Err(error) => Err(error),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => left(
+            "it changed as Marfa discarded it, and another file took the name it was kept under"
+                .into(),
+        ),
+        Err(error) => left(format!(
+            "it changed as Marfa discarded it, and Marfa could not move it back: {error}"
+        )),
     }
 }
 
@@ -1779,6 +1835,10 @@ impl Ledger for Memory {
         let mut kept = self.retained.borrow_mut();
         kept.retain(|row| row.id != retained.id);
         kept.push(retained.clone());
+        Ok(())
+    }
+
+    fn discarding(&self, _: &Retained, _: &Path, _: Mark<'_>) -> io::Result<()> {
         Ok(())
     }
 }

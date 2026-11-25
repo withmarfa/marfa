@@ -539,6 +539,66 @@ describe("a file a program holds open for writing", () => {
     },
   );
 
+  it.each(["could not delete it", "stopped"] as const)(
+    "lists a kept file under the name it is left at where a discard %s, until it is deleted",
+    async (how) => {
+      const harness = await noteFolder(
+        `folder-open-writer-discard-${how === "stopped" ? "stopped" : "refused"}`,
+      );
+      holdOpen(harness);
+      write("first half\n");
+      close();
+      await setAsideUnknown(harness);
+      const [name] = keptNames(harness);
+      expect(name).toBeDefined();
+      const before = read(harness, name!);
+
+      if (how === "stopped") {
+        await expect(
+          withFault(`crash-after-private-rename=${name!}`, () =>
+            harness.folder.discardKept(),
+          ),
+          "the discard did not stop where the fault asks",
+        ).rejects.toThrow(/crashing at/);
+      } else {
+        const discarded = await withFault(
+          `discard-unlink-refused=${name!}`,
+          () => harness.folder.discardKept(),
+        );
+        expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+        if (!discarded.ok) return;
+        expect(discarded.value.discarded).toEqual([]);
+        expect(
+          discarded.value.kept.map((file) =>
+            keptNames(harness).includes(file.path),
+          ),
+          "the discard reported a kept file at a name that holds nothing",
+        ).toEqual([true]);
+      }
+      const [left] = keptNames(harness);
+      expect(keptNames(harness), "the file is not under one name").toHaveLength(
+        1,
+      );
+      expect(left, "the witness: the discard moved the file").not.toBe(name);
+      expect(read(harness, left!)).toBe(before);
+      const kept = await harness.folder.kept();
+      expect(kept.ok, JSON.stringify(kept)).toBe(true);
+      if (!kept.ok) return;
+      expect(
+        kept.value.kept,
+        "a kept file under the name a discard left it at was not listed there",
+      ).toEqual([expect.objectContaining({ path: left, from: "Note.md" })]);
+
+      const discarded = await harness.folder.discardKept();
+      expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+      if (!discarded.ok) return;
+      expect(discarded.value.discarded).toEqual([name]);
+      expect(keptNames(harness)).toEqual([]);
+      const after = await harness.folder.kept();
+      expect(after.ok && after.value.kept).toEqual([]);
+    },
+  );
+
   it.each(["unchanged", "written to"] as const)(
     "lists through a binding a file a folder keeps, and discards it %s as folders kept does",
     async (state) => {

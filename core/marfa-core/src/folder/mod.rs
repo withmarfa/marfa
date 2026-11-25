@@ -1423,6 +1423,24 @@ impl landing::Ledger for Rows<'_> {
         .map_err(|error| std::io::Error::other(error.to_string()))
     }
 
+    fn discarding(
+        &self,
+        retained: &landing::Retained,
+        private: &Path,
+        mark: landing::Mark<'_>,
+    ) -> std::io::Result<()> {
+        let discarding = state::Discarding {
+            id: retained.id.clone(),
+            aside: self.aside.clone(),
+            kept: retained.kept.clone(),
+            private: private.to_string_lossy().into_owned(),
+            from: joined(&self.dir, &retained.target),
+            left: None,
+        };
+        state::mark_discarding(self.conn, discarding, mark)
+            .map_err(|error| std::io::Error::other(error.to_string()))
+    }
+
     fn kept(&self, name: &Path, aside: bool, reason: String) {
         // The file is kept whether or not the report can name it.
         let _ = state::put_kept(
