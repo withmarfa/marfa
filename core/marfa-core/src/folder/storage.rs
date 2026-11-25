@@ -5,6 +5,7 @@
 //! caller's.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// Why a folder's directory is not a plain local one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,15 +27,25 @@ pub enum StorageCause {
     NetworkFileSystem(String),
 }
 
+/// How long `git_tracked` waits for git's answer. A git on a stuck mount or
+/// over a huge index can stall, and the answer only informs.
+const GIT_WAIT: Duration = Duration::from_secs(1);
+
 /// Whether git tracks `dir`: it is in a git work tree and the index holds a
 /// file in it. A directory that is untracked or ignored, one outside any work
-/// tree, a machine with no `git`, and any error from git all answer `false`,
-/// since the answer only informs. A `.git` file, as in a linked work tree or
-/// a submodule, is read by git like a `.git` directory.
+/// tree, a machine with no `git`, any error from git, and a git that does not
+/// answer within `GIT_WAIT` all answer `false`, since the answer only informs.
+/// A `.git` file, as in a linked work tree or a submodule, is read by git like
+/// a `.git` directory.
 pub fn git_tracked(dir: &Path) -> bool {
+    git_tracked_within(dir, GIT_WAIT)
+}
+
+fn git_tracked_within(dir: &Path, wait: Duration) -> bool {
     use std::io::Read;
     use std::process::{Command, Stdio};
-    let Ok(mut git) = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(dir)
         .args(["ls-files", "--cached", "-z"])
@@ -45,20 +56,48 @@ pub fn git_tracked(dir: &Path) -> bool {
         .env_remove("GIT_INDEX_FILE")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
+        .stderr(Stdio::null());
+    // A group of its own, so what git starts ends with it.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    let Ok(mut git) = command.spawn() else {
         return false;
     };
-    // One byte is enough to know; a large index need not be read.
-    let mut first = [0u8; 1];
-    let tracked = git
-        .stdout
-        .take()
-        .is_some_and(|mut out| matches!(out.read(&mut first), Ok(1)));
-    let _ = git.kill();
-    let _ = git.wait();
+    let Some(mut out) = git.stdout.take() else {
+        stop(git);
+        return false;
+    };
+    // One byte is enough to know; a large index need not be read. The read
+    // is on a thread, which ends when git does, so a git that never answers
+    // holds nothing here.
+    let (told, heard) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut first = [0u8; 1];
+        let _ = told.send(matches!(out.read(&mut first), Ok(1)));
+    });
+    let tracked = heard.recv_timeout(wait).unwrap_or(false);
+    stop(git);
     tracked
+}
+
+/// Ends `git` and what it started, and waits for it, so none is left running.
+/// A process stuck in the kernel on a mount ends when the mount answers, so
+/// past a moment a thread of its own waits for it.
+fn stop(mut git: std::process::Child) {
+    #[cfg(unix)]
+    if let Some(group) = rustix::process::Pid::from_raw(git.id() as i32) {
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+    }
+    let _ = git.kill();
+    for _ in 0..50 {
+        if matches!(git.try_wait(), Ok(Some(_)) | Err(_)) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::spawn(move || {
+        let _ = git.wait();
+    });
 }
 
 /// The cause for `dir`, or `None` for a directory anywhere else, and for one
@@ -530,5 +569,63 @@ mod tests {
         git(&main, &["worktree", "add", "-q", linked.to_str().unwrap()]);
         assert!(linked.join(".git").is_file());
         assert!(git_tracked(&linked.join("notes")));
+    }
+
+    /// A `git` on a `PATH` of its own, made of `script`, and the directory
+    /// the script writes the process IDs it names into.
+    fn fake_git(script: &str) -> (tempfile::TempDir, tempfile::TempDir) {
+        use std::os::unix::fs::PermissionsExt;
+        let (bin, pids) = (tempdir(), tempdir());
+        let program = bin.path().join("git");
+        let body = format!("#!/bin/sh\nPIDS={}\n{script}\n", pids.path().display());
+        std::fs::write(&program, body).unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // SAFETY: nextest runs each test in a process of its own, and nothing
+        // else in this one reads the environment while it is set.
+        unsafe { std::env::set_var("PATH", bin.path()) };
+        (bin, pids)
+    }
+
+    fn running(pid_file: &Path) -> bool {
+        let pid: i32 = std::fs::read_to_string(pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let pid = rustix::process::Pid::from_raw(pid).unwrap();
+        for _ in 0..200 {
+            if rustix::process::test_kill_process(pid).is_err() {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        true
+    }
+
+    #[test]
+    fn a_git_that_does_not_answer_reads_as_untracked_and_is_ended() {
+        let (_bin, pids) =
+            fake_git("echo $$ > $PIDS/git\n/bin/sleep 30 &\necho $! > $PIDS/sleep\nwait");
+        let dir = tempdir();
+        let started = std::time::Instant::now();
+        assert!(!git_tracked(dir.path()));
+        assert!(started.elapsed() < Duration::from_secs(10));
+        // Neither git nor what it started is left running.
+        assert!(!running(&pids.path().join("git")));
+        assert!(!running(&pids.path().join("sleep")));
+    }
+
+    #[test]
+    fn the_wait_for_git_does_not_turn_away_one_that_answers() {
+        let (_bin, _pids) = fake_git("printf 'a\\0'");
+        assert!(git_tracked(tempdir().path()));
+    }
+
+    #[test]
+    fn a_git_that_answers_nothing_and_exits_reads_as_untracked_at_once() {
+        let (_bin, _pids) = fake_git("exit 0");
+        let started = std::time::Instant::now();
+        assert!(!git_tracked(tempdir().path()));
+        assert!(started.elapsed() < GIT_WAIT);
     }
 }
