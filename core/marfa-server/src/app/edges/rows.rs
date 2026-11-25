@@ -176,8 +176,8 @@ pub(super) fn kinds_at(
 }
 
 /// A placement path the tally reads in SQL only when it holds no empty or `.` name.
-const UNTIDY: &str = "p IS NULL OR instr(p, '//') > 0 OR instr(p, '/./') > 0 \
-     OR p GLOB './*' OR p GLOB '*/.' OR p GLOB '*/' OR p = '.'";
+const UNTIDY: &str =
+    "p IS NULL OR instr('/' || p || '/', '//') > 0 OR instr('/' || p || '/', '/./') > 0";
 
 /// The files directly in one directory under a prefix, and in the directories beneath it.
 pub(super) struct Tally {
@@ -203,10 +203,11 @@ pub(super) fn placed(
     prefix: &str,
     from: Option<&Reach>,
 ) -> Result<Placed> {
-    let mut sql = Sql::new(
-        "WITH placed(p) AS MATERIALIZED (SELECT json_extract(e.properties, '$.path') \
-         FROM edges e JOIN items f ON f.id = e.from_id WHERE e.to_id = ",
-    );
+    let mut sql = Sql::new(&format!(
+        "WITH placed(p, u) AS MATERIALIZED (SELECT p, ({UNTIDY}) FROM (SELECT \
+         json_extract(e.properties, '$.path') AS p \
+         FROM edges e JOIN items f ON f.id = e.from_id WHERE e.to_id = "
+    ));
     sql.bind(folder.to_string());
     sql.push(" AND e.edge_type = 'in-folder' AND f.state <> 'trashed'");
     if let Some(reach) = from {
@@ -215,23 +216,21 @@ pub(super) fn placed(
     }
     let kept = prefix.chars().count();
     sql.push(&format!(
-        "), tidy AS (SELECT p FROM placed WHERE NOT ({UNTIDY})), \
-         cut AS (SELECT r, instr(r, '/') AS s FROM (SELECT substr(p, {}) AS r FROM tidy",
+        ")), cut AS (SELECT r, instr(r, '/') AS s, length(r) - length(replace(r, '/', '')) AS k \
+         FROM (SELECT substr(p, {}) AS r FROM placed WHERE NOT u",
         kept + 1
     ));
     if !prefix.is_empty() {
-        sql.push(&format!(" WHERE substr(p, 1, {kept}) = "));
+        sql.push(&format!(" AND substr(p, 1, {kept}) = "));
         sql.bind(prefix.to_string());
     }
     sql.push(
         ")) SELECT 0, CASE WHEN s > 0 THEN substr(r, 1, s - 1) END, \
-         SUM(s > 0 AND instr(substr(r, s + 1), '/') = 0), \
-         SUM(s > 0 AND instr(substr(r, s + 1), '/') > 0), SUM(s = 0) FROM cut \
+         SUM(k = 1), SUM(k > 1), SUM(k = 0) FROM cut \
          GROUP BY 2 \
-         UNION ALL SELECT 1, NULL, COUNT(*), 0, 0 FROM tidy \
-         UNION ALL SELECT 2, p, 0, 0, 0 FROM placed WHERE ",
+         UNION ALL SELECT 1, NULL, COUNT(*), 0, 0 FROM placed WHERE NOT u \
+         UNION ALL SELECT 2, p, 0, 0, 0 FROM placed WHERE u",
     );
-    sql.push(UNTIDY);
     let mut statement = tx.prepare_cached(&sql.text)?;
     let mut found = statement.query(params_from_iter(&sql.values))?;
     let mut placed = Placed {
