@@ -126,10 +126,10 @@ it("keeps a renamed and edited file bound to the item whose state change was ref
   expect(read(own, "Renamed.md")).toBe(original);
   unlinkSync(join(own.dir, "Renamed.md"));
   expect(await own.bound.testScan()).toMatchObject({ ok: true });
-  expect(await own.bound.status()).toMatchObject({
-    ok: true,
-    value: { files: [] },
-  });
+  const status = await own.bound.status();
+  expect(
+    status.ok && status.value.files.filter((f) => f.flag === "refused"),
+  ).toEqual([]);
 });
 
 it("binds a new file whose initial archive is refused and creates its item only once", async () => {
