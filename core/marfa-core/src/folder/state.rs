@@ -401,6 +401,12 @@ pub(crate) struct Taken {
     pub(crate) item_id: String,
     /// The file's device and inode as the removal found it.
     pub(crate) at: (u64, u64),
+    /// Where the file system keeps one, since an inode can be given to the
+    /// next file made.
+    pub(crate) born: Option<u128>,
+    /// The bytes the removal would take away, so a reused inode holding
+    /// others is never taken for the file.
+    pub(crate) hash: Option<String>,
 }
 
 pub(crate) fn set_taken(conn: &Connection, path: &str, taken: &Taken) -> Result<(), CoreError> {

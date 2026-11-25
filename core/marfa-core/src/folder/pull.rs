@@ -1968,6 +1968,8 @@ impl Folder {
                 let taken = state::Taken {
                     item_id: row.item_id.clone(),
                     at,
+                    born: self.born_at(&row.path),
+                    hash: row.written_hash.clone(),
                 };
                 state::set_taken(&conn, &row.path, &taken)?;
                 landing::stop_if_asked(&path, "crash-before-take-away");
@@ -2038,7 +2040,7 @@ impl Folder {
         };
         match self.file_identity(&self.root.join(path)) {
             Ok(Some(at)) if super::same_directory(at, taken.at, super::device(&self.root_dir)) => {
-                TakenNow::Present
+                self.still_the_file(path, taken)
             }
             Ok(Some(_)) => TakenNow::Unsure("another file is at its path".into()),
             Ok(None) => TakenNow::Unsure("something other than a file is at its path".into()),
@@ -2048,6 +2050,33 @@ impl Folder {
             ),
             Err(error) => TakenNow::Unsure(format!("Marfa cannot look at it: {error}")),
         }
+    }
+
+    /// A matching device and inode alone may be the next file given the
+    /// inode, so the birth time, where kept, and the bytes decide.
+    fn still_the_file(&self, path: &str, taken: &state::Taken) -> TakenNow {
+        let another = || TakenNow::Unsure("another file is at its path".into());
+        if let (Some(recorded), Some(found)) = (taken.born, self.born_at(path))
+            && recorded != found
+        {
+            return another();
+        }
+        let Some(hash) = taken.hash.as_deref() else {
+            return TakenNow::Unsure("Marfa cannot tell whether the file at its path is the one it was removing".into());
+        };
+        match self.root_dir.read(Path::new(path)) {
+            Ok(bytes) if state::hash(&bytes) == hash => TakenNow::Present,
+            Ok(_) => another(),
+            Err(error) => TakenNow::Unsure(format!("Marfa cannot look at it: {error}")),
+        }
+    }
+
+    fn born_at(&self, path: &str) -> Option<u128> {
+        self.root_dir
+            .observed_identity(Path::new(path))
+            .ok()
+            .flatten()
+            .map(|(_, _, born)| born)
     }
 
     /// Returns `None` for a nonregular entry.
