@@ -7384,13 +7384,19 @@ When the read of an item after the server answers or refuses a write to it finds
 
 ## An archived item
 
-### `device/write-archived`
+### `device/write-archived-queued`
 
-When a caller edits, tags, writes an extension of or links an item that the working copy holds archived, a device MUST queue the write as it queues it for an active item, and send it as it sends that one.
+When a caller edits, tags, writes an extension of or links an item that the working copy holds archived, a device MUST queue the write as it queues it for an active item.
 
 **Reason:** a device that refuses a write because the item is archived would hold back a write the server takes (`items/write-archived` and `edges/write-archived`).
 
-**Tests:** `device/archived-live.test.ts › queues and sends an edit, tags, an extension and edges for an archived item as for an active one, and leaves its state`.
+**Tests:** `device/archived-live.test.ts › queues and sends an edit, tags and an extension for an archived item as for an active one, and leaves its state`, `› queues and sends the creation, change, move and removal of an edge with an archived item at either end, as for an active one`.
+
+### `device/write-archived-sent`
+
+When a device sends a queued write to an item the working copy holds archived, a device MUST send it as it sends a write to an active item.
+
+**Tests:** `device/archived-live.test.ts › queues and sends an edit, tags and an extension for an archived item as for an active one, and leaves its state`, `› queues and sends the creation, change, move and removal of an edge with an archived item at either end, as for an active one`.
 
 ### `device/archive-no-cascade`
 
