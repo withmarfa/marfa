@@ -32,7 +32,6 @@ mod selective;
 mod unmatched;
 mod unsent;
 pub use beneath::BeneathReport;
-pub use elsewhere::{Forgotten, Holder, Remembering};
 pub(crate) use first::waiting;
 pub use first::{FirstSync, Synced};
 pub(crate) use paused::paused;

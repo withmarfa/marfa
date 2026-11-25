@@ -1840,19 +1840,9 @@ export class CliFolder {
     return this.run(["folders", "restore", this.dir, ...this.server()]);
   }
 
-  /**
-   * Takes the folder off its machine, leaving its files. With `yes`, confirms
-   * forgetting a directory other folders remember (`folder-setup/remove-remembered-forgets`).
-   */
-  async remove(
-    options: { yes?: boolean } = {},
-  ): Promise<Outcome<FolderRemovalJson>> {
-    return this.run([
-      "folders",
-      "remove",
-      this.dir,
-      ...(options.yes === true ? ["--yes"] : []),
-    ]);
+  /** Takes the folder off its machine, leaving its files. */
+  async remove(): Promise<Outcome<FolderRemovalJson>> {
+    return this.run(["folders", "remove", this.dir]);
   }
 
   /**
@@ -2039,9 +2029,6 @@ export class CliFolder {
 export interface FolderRemovalJson {
   dir: string;
   removed: boolean;
-  /** The listed folders that forgot a directory they remembered. */
-  forgotten_by?: string[];
-  declined?: boolean;
   reason?: string | null;
   folder?: string | null;
   unsent?: number;
