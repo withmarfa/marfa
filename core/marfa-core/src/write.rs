@@ -917,12 +917,8 @@ impl Core {
         Ok(queued)
     }
 
-    /// Only the server can move an item to `revoked`.
-    pub fn transition_item(&self, id: &str, state: ItemState) -> Result<QueuedWrite> {
-        self.transition_item_from(id, state, None)
-    }
-
-    /// With `from`, queued only while the copy shows the item in that state
+    /// Only the server can move an item to `revoked`. With `from`, queued only
+    /// while the copy shows the item in that state
     /// (`queue-and-verdicts/transition-from-held`), so a caller deciding on a
     /// state it read earlier never moves a row that has moved on since.
     pub fn transition_item_from(

@@ -1015,7 +1015,7 @@ fn queue_tags(
 }
 
 /// Moves the row the server holds as `server` to `state`, as `delete_item`,
-/// `restore_item` and `transition_item` do.
+/// `restore_item` and `transition_item_from` do.
 fn queue_state(tx: &Connection, server: &Item, state: ItemState) -> Result<String> {
     let (kind, payload, base_version) = match (server.state, state) {
         (_, ItemState::Trashed) => (

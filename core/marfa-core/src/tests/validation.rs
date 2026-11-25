@@ -709,7 +709,7 @@ fn an_item_write_to_a_system_row_is_refused_before_anything_is_saved_or_queued()
     );
     refused(core.delete_item("folder"), "a delete");
     refused(
-        core.transition_item("folder", ItemState::Archived),
+        core.transition_item_from("folder", ItemState::Archived, None),
         "a transition",
     );
     refused(core.restore_item("folder"), "a restore");
@@ -732,7 +732,8 @@ fn an_item_write_to_a_system_row_is_refused_before_anything_is_saved_or_queued()
         },
     )
     .unwrap();
-    core.transition_item("row", ItemState::Archived).unwrap();
+    core.transition_item_from("row", ItemState::Archived, None)
+        .unwrap();
     core.create_item(&Draft {
         r#type: "core.note".into(),
         properties: properties(serde_json::json!({ "title": "New" })),
@@ -754,7 +755,7 @@ fn a_move_to_the_revoked_state_is_refused_as_the_server_refuses_it() {
         .unwrap();
     let id = held.item_id.unwrap();
     let queued = core.queue().unwrap().len();
-    match core.transition_item(&id, ItemState::Revoked) {
+    match core.transition_item_from(&id, ItemState::Revoked, None) {
         Err(CoreError::Validation {
             code,
             details: None,
@@ -764,7 +765,8 @@ fn a_move_to_the_revoked_state_is_refused_as_the_server_refuses_it() {
         other => panic!("a move to revoked was answered {other:?}"),
     }
     // The witness: a state a device may name is queued.
-    core.transition_item(&id, ItemState::Archived).unwrap();
+    core.transition_item_from(&id, ItemState::Archived, None)
+        .unwrap();
     assert_eq!(core.queue().unwrap().len(), queued + 1);
 }
 

@@ -84,7 +84,8 @@ fn a_restore_clears_it_and_a_second_delete_takes_a_new_time() {
 fn a_move_between_other_states_keeps_no_time() {
     let server = Scripted::start();
     let core = held_copy(&server, &["a"]);
-    core.transition_item("a", ItemState::Archived).unwrap();
+    core.transition_item_from("a", ItemState::Archived, None)
+        .unwrap();
     assert_eq!(held(&core, "a").trashed_at, None);
 }
 
