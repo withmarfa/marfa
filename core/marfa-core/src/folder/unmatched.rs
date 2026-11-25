@@ -259,9 +259,10 @@ fn held_entry(path: String) -> Unmatched {
 mod tests {
     use std::path::Path;
 
+    #[cfg(debug_assertions)]
+    use super::super::tests::{deletes_queued, past_the_grace};
     use super::super::tests::{
-        deletes_queued, folder_with, landed, past_the_grace, scanned_folder_with, set_item_state,
-        write_note,
+        folder_with, landed, scanned_folder_with, set_item_state, write_note,
     };
     use super::super::{Folder, registry, state};
 
