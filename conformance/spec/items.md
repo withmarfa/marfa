@@ -254,11 +254,11 @@ When `PATCH /items/{id}` names a `source`, the server MUST answer `400 validatio
 
 ### `items/natural-key-upsert`
 
-When `POST /items` without `mode: create_only`, or a `POST /items/bulk` entry under `mode: upsert`, names a `source_id` that, under the source it resolves to, a live item of the declared type holds, the server MUST apply it as an update to that item, answered `200` at the item's next version, whichever credential sends it.
+When `POST /items` without `mode: create_only`, or a `POST /items/bulk` entry under `mode: upsert`, names a `source_id` that, under the source it resolves to, an item of the declared type holds that is active or archived, the server MUST apply it as an update to that item, answered `200` at the item's next version, whichever credential sends it.
 
 **Reason:** two keys that claim one source share its natural keys, so a connector's item is one item whichever of its keys writes it.
 
-**Tests:** `correctness/dedup.test.ts › duplicate (source, source_id) upserts onto the existing item (natural-key upsert)`, `compliance/claimed-sources.test.ts › upserts onto one item from two keys claiming one source`, `› lands a bulk entry naming a claim on the claim's item, not on its own source's`, `compliance/create-only.test.ts › updates the item as before under mode upsert and under no mode`.
+**Tests:** `correctness/dedup.test.ts › duplicate (source, source_id) upserts onto the existing item (natural-key upsert)`, `compliance/claimed-sources.test.ts › upserts onto one item from two keys claiming one source`, `› lands a bulk entry naming a claim on the claim's item, not on its own source's`, `compliance/create-only.test.ts › updates the item as before under mode upsert and under no mode`, `correctness/upsert-state-tags.test.ts › updates an archived item in place on POST /items and on POST /items/bulk, as it updates an active one`.
 
 ### `items/natural-key-merge`
 
@@ -271,6 +271,22 @@ When a create is applied as a natural-key upsert, the server MUST lay its `prope
 When a create applied as a natural-key upsert names no `tags`, the server MUST leave the item's tags as they stand.
 
 **Tests:** `correctness/dedup.test.ts › merges a natural-key upsert's properties over the item's, and keeps its tags unless it names them`.
+
+### `items/natural-key-tags-named`
+
+When a create applied as a natural-key upsert names `tags`, on `POST /items` or in an entry of `POST /items/bulk`, the server MUST replace the item's tags with the tags it names.
+
+**Reason:** a tag a person added to an item whose connector names tags is removed at the connector's next run, so an app cannot count on a person's tag surviving a re-sync of such an item (`items/natural-key-tags` for the upsert that names none).
+
+**Tests:** `correctness/upsert-state-tags.test.ts › replaces the tags of an item with the tags it names, removing a tag a person added, on POST /items and on POST /items/bulk`, `› replaces the tags of an archived item with the tags it names, as it does for an active one`.
+
+### `items/natural-key-state`
+
+When a create applied as a natural-key upsert names a `state`, on `POST /items` or in an entry of `POST /items/bulk`, the server MUST leave the item's state as it stands.
+
+**Reason:** a person who archived an item a connector holds keeps it archived through the connector's next run, and a connector cannot bring an archived item back (`items/initial-state-bulk-update` for the entry's state, which the bulk door ignores).
+
+**Tests:** `correctness/upsert-state-tags.test.ts › leaves the state of an item as it stands on POST /items and on POST /items/bulk, an archived item included`.
 
 ### `items/natural-key-concurrent`
 
@@ -1398,6 +1414,22 @@ If `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/tags`, `POST /ite
 
 **Tests:** `correctness/trash.test.ts › deleted item is hidden from default queries`, `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`.
 
+### `items/write-archived`
+
+When `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/tags`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an archived item, the server MUST apply the write as it applies it to an active item, leaving the item archived except where the write moves it into the bin.
+
+**Reason:** only the bin refuses a write (`items/write-in-bin`), so an app may keep editing, tagging and extending an item a person archived.
+
+**Tests:** `correctness/archived-writes.test.ts › takes PATCH /items/{id} as it takes it on an active item, and leaves the state`, `› takes a move to the bin from DELETE /items/{id}, as an active item does`, `› take POST, PUT and DELETE on /items/{id}/tags as they do on an active item, and leave the state`, `› take PUT and DELETE on /items/{id}/extensions/{namespace} as they do on an active item, and leave the state`.
+
+### `items/archive-no-cascade`
+
+When a transition moves an item to `archived`, on `POST /items/{id}/transition` or in a bulk action, the server MUST NOT change the state of any other item, whatever edges the item holds.
+
+**Reason:** a move into the bin takes the items a cascading edge reaches (`items/trash-cascade`), and a move to the archive takes none, so the children of an archived host stay active (`edges/parts-archive` for its parts).
+
+**Tests:** `correctness/archived-writes.test.ts › changes the state of no other item, whatever edges the item holds`, `› changes the state of no other item on a bulk transition to archived`.
+
 ### `items/delete-version`
 
 When `DELETE /items/{id}` names a `version` the item no longer holds, the server MUST answer `409 version_conflict` with the item under `current` and no `ancestor`.
@@ -1788,9 +1820,9 @@ If a `POST /items/bulk` entry carries a key the operation does not declare, then
 
 ### `items/bulk-upsert`
 
-When a `POST /items/bulk` entry under `mode: upsert`, the default, names a natural key that resolves a live item, the server MUST update that item and report the entry `updated` with its `id`.
+When a `POST /items/bulk` entry under `mode: upsert`, the default, names a natural key that resolves an item that is active or archived, the server MUST update that item and report the entry `updated` with its `id`.
 
-**Tests:** `compliance/bulk.test.ts › upsert mode updates an existing (source, source_id) item in place`.
+**Tests:** `compliance/bulk.test.ts › upsert mode updates an existing (source, source_id) item in place`, `correctness/upsert-state-tags.test.ts › updates an archived item in place on POST /items and on POST /items/bulk, as it updates an active one`.
 
 ### `items/bulk-skipped`
 

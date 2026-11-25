@@ -1394,6 +1394,14 @@ When a transition archives a host, the server MUST NOT change the state of the h
 
 **Tests:** `correctness/edges/edges-parts.test.ts › changes nothing when a host is archived`.
 
+### `edges/write-archived`
+
+When `POST /edges`, an entry of `POST /edges/bulk`, `PATCH /edges/{id}`, `DELETE /edges/{id}` or the `edges` of `POST /items` or `PATCH /items/{id}` names an archived item at either end of the edge, the server MUST apply the write as it applies it with an active item there.
+
+**Reason:** only an item in the bin refuses an edge write (`edges/create-end-in-bin`), so an app may link and unlink an item a person archived.
+
+**Tests:** `correctness/archived-writes.test.ts › take POST /edges, PATCH /edges/{id} and DELETE /edges/{id} with the archived item at either end, as they do with an active item`, `› take an entry of POST /edges/bulk with the archived item at either end, as they do with an active item`, `› take the edges of POST /items and of PATCH /items/{id}, with the archived item the one the edge names or the one that is written, as they do with an active item`.
+
 ### `edges/parts-late-accepted`
 
 When `POST /edges`, an entry of `POST /edges/bulk`, `PATCH /edges/{id}` or the `edges` of `POST /items` or `PATCH /items/{id}` names an edge of a `with-hosts` type whose from item is out of the bin and whose to item is in the bin, the server MUST write the edge.

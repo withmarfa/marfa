@@ -7382,6 +7382,24 @@ When the read of an item after the server answers or refuses a write to it finds
 
 **Tests:** `device/bin-live.test.ts › keeps an item it trashed itself, held only by its pin, at the server's version once the delete is answered`.
 
+## An archived item
+
+### `device/write-archived`
+
+When a caller edits, tags, writes an extension of or links an item that the working copy holds archived, a device MUST queue the write as it queues it for an active item, and send it as it sends that one.
+
+**Reason:** the server refuses a write only for an item in the bin (`items/write-archived` and `edges/write-archived`), so a device that refused one for an archived item would hold back a write the server takes.
+
+**Tests:** `device/archived-live.test.ts › queues and sends an edit, tags, an extension and edges for an archived item as for an active one, and leaves its state`.
+
+### `device/archive-no-cascade`
+
+When a caller moves an item to `archived`, a device MUST NOT change the state of any other item the working copy holds, whatever edges the item holds.
+
+**Reason:** the server changes no other item for a move to the archive (`items/archive-no-cascade`), and a copy that did would show a state the server does not hold.
+
+**Tests:** `device/archived-live.test.ts › moves no other item the copy holds when it archives an item holding parent-of children`.
+
 ## A slice of both tiers
 
 ### `device/tier-all-hydrate`
