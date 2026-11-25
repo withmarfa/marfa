@@ -64,13 +64,13 @@ If `folders unmatched --remove` is refused for lack of a terminal and `--yes`, t
 
 When removal of an unmatched file is confirmed and the file may be removed, a device MUST delete the file from the directory.
 
-**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › asks at a terminal before removing, and obeys %s`.
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › asks at a terminal before removing, and obeys %s`, `device/folders-unmatched.test.ts › removes through a binding the unmatched files it may, and keeps the rest and says why`.
 
 ### `folder-guards/unmatched-remove-placement`
 
 When removal of an unmatched file is confirmed and the file is removed, a device MUST queue the deletion of the folder's `in-folder` edge for the file's item.
 
-**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`.
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › removes through a binding the unmatched files it may, and keeps the rest and says why`.
 
 ### `folder-guards/unmatched-remove-item-unchanged`
 
@@ -86,7 +86,7 @@ When an unmatched file holds bytes other than those the device last wrote, a dev
 
 **Reason:** the bytes are the person's.
 
-**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › goes on with the rest where a file was deleted or changed by hand while it asked`, `device/folders-unmatched.test.ts › keeps a file saved just as its removal reached it, and the next push places it again`.
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › goes on with the rest where a file was deleted or changed by hand while it asked`, `device/folders-unmatched.test.ts › keeps a file saved just as its removal reached it, and the next push places it again`, `device/folders-unmatched.test.ts › removes through a binding the unmatched files it may, and keeps the rest and says why`.
 
 ### `folder-guards/unmatched-remove-waiting-kept`
 
@@ -100,7 +100,15 @@ While the item of an unmatched file has a write waiting to be sent, a device MUS
 
 When an unmatched file named for removal is kept, a device MUST report the file with its reason in `kept`.
 
-**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › goes on with the rest where a file was deleted or changed by hand while it asked`, `device/folders-unmatched.test.ts › keeps a file saved just as its removal reached it, and the next push places it again`.
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › goes on with the rest where a file was deleted or changed by hand while it asked`, `device/folders-unmatched.test.ts › keeps a file saved just as its removal reached it, and the next push places it again`, `device/folders-unmatched.test.ts › removes through a binding the unmatched files it may, and keeps the rest and says why`.
+
+### `folder-guards/unmatched-remove-stopped`
+
+If removal of an unmatched file stops before it ends, as when the process is killed, then a device MUST NOT queue the deletion of the file's item.
+
+**Reason:** a removal stopped after the file left the directory leaves the store binding a file that is gone, which a scan would otherwise read as the person deleting it. A device that finds such a file gone at its next scan ends the binding instead.
+
+**Tests:** `device/folders-unmatched.test.ts › never deletes the item of a file whose removal stopped at %s, as it does one deleted by hand`.
 
 ### `folder-guards/unmatched-remove-gone-kept`
 

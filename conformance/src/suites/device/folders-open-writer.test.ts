@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { copyLiveReplay } from "../../device/marfa-answers.js";
 import type { PushReport } from "../../device/cli-adapter.js";
 import type { FolderDoor } from "../../device/folder-door.js";
+import { openBindingFolder } from "./binding-folders.shared.js";
 import { folderHarness, type FolderHarness } from "./harness.js";
 import {
   EdgeDoor,
@@ -119,6 +120,18 @@ async function push(harness: FolderHarness): Promise<PushReport> {
  *  where the device cannot tell whether a program writes the file. */
 async function setAsideUnknown(harness: FolderHarness): Promise<PushReport> {
   return withFault("writers-unknown", () => push(harness));
+}
+
+/** Makes the folder's kept-file records ones it cannot read. */
+function unreadRecord(harness: FolderHarness): void {
+  const db = new DatabaseSync(harness.folder.store);
+  try {
+    db.prepare(
+      "UPDATE meta SET value = json_set(value, '$.retained.since', 'soon') WHERE key LIKE 'folder_retained:%'",
+    ).run();
+  } finally {
+    db.close();
+  }
 }
 
 const keptNames = (harness: FolderHarness) =>
@@ -488,4 +501,140 @@ describe("a file a program holds open for writing", () => {
     expect(keptNames(harness)).toEqual([]);
     expect(read(harness, "Note.md")).toContain("first half\nsecond half\n");
   });
+
+  it.each(["reads", "does not read"] as const)(
+    "never deletes a kept file a program writes to as the owner discards it, where its record %s",
+    async (record) => {
+      const harness = await noteFolder(
+        `folder-open-writer-discard-meanwhile-${record === "reads" ? "read" : "unread"}`,
+      );
+      holdOpen(harness);
+      write("first half\n");
+      close();
+      await setAsideUnknown(harness);
+      const [name] = keptNames(harness);
+      expect(name).toBeDefined();
+      if (record === "does not read") unreadRecord(harness);
+      const before = read(harness, name!);
+
+      const discarded = await withFault(`write-before-discard=${name!}`, () =>
+        harness.folder.discardKept(),
+      );
+      expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+      if (!discarded.ok) return;
+      expect(
+        discarded.value.discarded,
+        "the discard deleted what a program wrote once the discard had looked",
+      ).toEqual([]);
+      const written = `${before}written before the discard\n`;
+      if (record === "reads") {
+        expect(discarded.value.put_back).toEqual(["Note.md"]);
+        expect(keptNames(harness)).toEqual([]);
+        expect(read(harness, "Note.md")).toBe(written);
+      } else {
+        expect(keptNames(harness)).toEqual([name]);
+        expect(read(harness, name!)).toBe(written);
+        expect(discarded.value.kept.map((file) => file.path)).toEqual([name]);
+      }
+    },
+  );
+
+  it.each(["unchanged", "written to"] as const)(
+    "lists through a binding a file a folder keeps, and discards it %s as folders kept does",
+    async (state) => {
+      const harness = await noteFolder(
+        `binding-kept-${state === "unchanged" ? "unchanged" : "written"}`,
+      );
+      holdOpen(harness);
+      write("first half\n");
+      await setAsideUnknown(harness);
+      const [name] = keptNames(harness);
+      expect(name).toBeDefined();
+      if (state === "written to") write("second half\n");
+      const bound = await openBindingFolder(harness);
+      try {
+        const kept = await bound.bound.kept();
+        expect(kept.ok, JSON.stringify(kept)).toBe(true);
+        if (!kept.ok) return;
+        expect(kept.value).toEqual([
+          expect.objectContaining({
+            path: name,
+            from: "Note.md",
+            writers: "unknown",
+            until: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+          }),
+        ]);
+
+        const discarded = await bound.bound.discardKept();
+        expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+        if (!discarded.ok) return;
+        expect(discarded.value.kept).toEqual([]);
+        expect(keptNames(harness)).toEqual([]);
+        if (state === "unchanged") {
+          expect(discarded.value.discarded).toEqual([name]);
+          expect(discarded.value.putBack).toEqual([]);
+          expect(read(harness, "Note.md")).toContain("marfa_version: 2\n");
+        } else {
+          expect(
+            discarded.value.discarded,
+            "a discard through a binding deleted a kept file a program wrote to",
+          ).toEqual([]);
+          expect(discarded.value.putBack).toEqual(["Note.md"]);
+          expect(read(harness, "Note.md")).toContain(
+            "first half\nsecond half\n",
+          );
+        }
+      } finally {
+        await bound.device.close();
+      }
+    },
+  );
+
+  it.each(["unchanged", "written to"] as const)(
+    "lists through a binding a file kept under a record it cannot read, and discards it only %s as set aside",
+    async (state) => {
+      const harness = await noteFolder(
+        `binding-kept-unread-${state === "unchanged" ? "unchanged" : "written"}`,
+      );
+      holdOpen(harness);
+      write("first half\n");
+      await setAsideUnknown(harness);
+      const [name] = keptNames(harness);
+      expect(name).toBeDefined();
+      if (state === "written to") write("second half\n");
+      close();
+      unreadRecord(harness);
+      const bound = await openBindingFolder(harness);
+      try {
+        const kept = await bound.bound.kept();
+        expect(kept.ok, JSON.stringify(kept)).toBe(true);
+        if (!kept.ok) return;
+        expect(kept.value).toEqual([
+          expect.objectContaining({
+            path: name,
+            from: "Note.md",
+            reason: "Marfa could not read its record",
+          }),
+        ]);
+
+        const discarded = await bound.bound.discardKept();
+        expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+        if (!discarded.ok) return;
+        if (state === "unchanged") {
+          expect(discarded.value.discarded).toEqual([name]);
+          expect(discarded.value.kept).toEqual([]);
+          expect(keptNames(harness)).toEqual([]);
+        } else {
+          expect(
+            discarded.value.discarded,
+            "a discard through a binding deleted a kept file a program wrote to, whose record does not read",
+          ).toEqual([]);
+          expect(discarded.value.kept.map((file) => file.path)).toEqual([name]);
+          expect(keptNames(harness)).toEqual([name]);
+        }
+      } finally {
+        await bound.device.close();
+      }
+    },
+  );
 });
