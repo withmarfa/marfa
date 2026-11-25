@@ -20,6 +20,7 @@ import {
   copyItemEvent,
   wireEdge,
   wireItem,
+  writeAnswers,
 } from "../../device/marfa-answers.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 import {
@@ -51,6 +52,7 @@ import {
   sentCreates,
   sentTitles,
   sentUpdates,
+  withFault,
 } from "./folders.shared.js";
 import { ON_MACOS } from "../../utils/platform.js";
 
@@ -1285,6 +1287,110 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       "a copy of another folder's file was taken as that item's file here",
     ).toBe(1);
   });
+
+  it.each([
+    { mode: "already-present", previous: false },
+    { mode: "already-present", previous: true },
+    { mode: "appearing", previous: false },
+    { mode: "appearing", previous: true },
+  ])(
+    "adopts the item's own bytes at its path, and keeps a previous file's delete, while another folder keeps its file ($mode, previous file $previous)",
+    async ({ mode, previous }) => {
+      // The bytes the fault `create-before-rename` writes.
+      const bytes = Buffer.from("appeared meanwhile\n");
+      const photo = {
+        id: "01a00000-0000-7000-8000-0000000023e1",
+        type: "core.file.image",
+        properties: {
+          title: "photo.png",
+          blob_ref: hashOf(bytes),
+          mime_type: "image/png",
+        },
+      };
+      const gone = { ...photo, id: "01a00000-0000-7000-8000-0000000023e2" };
+      const { a, b, edges } = await onOneMac(
+        "identical-destination",
+        { query: { types: ["core.file.image"], filter: 'tags contains "a"' } },
+        {
+          query: {
+            types: ["core.file.image"],
+            filter: 'tags contains "b"',
+            state: ["active"],
+          },
+        },
+        {
+          "core.file.image": [
+            { item: photo, tags: ["a"] },
+            ...(previous ? [{ item: gone, tags: ["b"] }] : []),
+          ],
+        },
+        (server) => {
+          scriptBlob(server, bytes);
+          acceptUploads(server);
+        },
+      );
+      expect((await a.folder.pull()).ok).toBe(true);
+      expect((await b.folder.pull()).ok).toBe(true);
+      if (previous) {
+        expect(readFileSync(join(b.dir, "photo.png"))).toEqual(bytes);
+        rmSync(join(b.dir, "photo.png"));
+        const journaled = await b.folder.scan();
+        expect(journaled.ok && journaled.value.missing).toBe(1);
+        edges.events.push(
+          copyItemEvent(
+            String(edges.events.length + 2),
+            "item.state_changed",
+            wireItem({ ...gone, state: "archived" }),
+            { tags: ["b"] },
+          ),
+        );
+      }
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "metadata.changed",
+          wireItem(photo),
+          { tags: ["b"] },
+        ),
+      );
+      expect((await a.folder.push()).ok).toBe(true);
+      expect((await b.folder.device().catchUp()).ok).toBe(true);
+      if (mode === "already-present")
+        writeFileSync(join(b.dir, "photo.png"), bytes);
+      if (mode === "appearing") {
+        // The bytes appear between the write and its rename, which leaves
+        // them; the next pull finds them at the path.
+        const raced = await withFault("create-before-rename=photo.png", () =>
+          b.folder.pull(),
+        );
+        expect(raced.ok, JSON.stringify(raced)).toBe(true);
+        expect(
+          raced.ok && [raced.value.unwritten, raced.value.unchanged],
+        ).toEqual([1, 0]);
+      }
+      const pulled = await b.folder.pull();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      expect(
+        pulled.ok && [pulled.value.unwritten, pulled.value.unchanged],
+      ).toEqual([0, 1]);
+      expect(readFileSync(join(a.dir, "photo.png"))).toEqual(bytes);
+      expect(readFileSync(join(b.dir, "photo.png"))).toEqual(bytes);
+      const status = await b.folder.status();
+      expect(
+        status.ok &&
+          status.value.files.find((file) => file.path === "photo.png")?.item_id,
+      ).toBe(photo.id);
+      await pastTheGrace();
+      expect((await b.folder.scan()).ok).toBe(true);
+      const queued = await b.folder.device().queue();
+      expect(
+        queued.ok &&
+          queued.value
+            .filter((row) => row.kind === "delete_item")
+            .map((row) => row.item_id),
+      ).toEqual(previous ? [gone.id] : []);
+    },
+  );
 
   it.each(["attached to", "embedded in"])(
     "keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again",
@@ -2900,6 +3006,120 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       expect(door.rows.get(plan.id)?.properties.body).toBe("the plan\n");
     },
   );
+
+  it("writes the server's bytes, and leaves an edit the folder an item left has not read in its file, when another folder comes to hold the item", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-0000000041d1",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const brief = {
+      id: "01a00000-0000-7000-8000-0000000041d3",
+      properties: { title: "Brief", body: "the brief\n" },
+    };
+    const picture = Buffer.from("a picture fetched in the brief's pull\n");
+    // Made later than the brief, so the pull that writes the brief fetches
+    // it in the same pass.
+    const image = {
+      id: "01a00000-0000-7000-8000-0000000041d4",
+      type: "core.file.image",
+      created_at: "2026-09-19T00:00:00.000Z",
+      properties: {
+        title: "picture.png",
+        blob_ref: hashOf(picture),
+        mime_type: "image/png",
+      },
+    };
+    const { a, b, edges } = await onOneMac(
+      "unsent-edit-elsewhere",
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      {
+        query: {
+          types: ["core.note", "core.file"],
+          filter: 'tags contains "b"',
+        },
+      },
+      {
+        "core.note": [
+          { item: plan, tags: ["a"] },
+          { item: brief, tags: ["a"] },
+        ],
+        "core.file": [{ item: image }],
+      },
+      (server) => {
+        // The brief is edited in the first folder while the second fetches
+        // this picture.
+        const hex = hashOf(picture).slice("sha256:".length);
+        server.copyAnswer(
+          "GET",
+          `/blobs/${hashOf(picture)}/url`,
+          writeAnswers.link(`${server.url}/links/${hex}`),
+        );
+        server.copyAnswer("GET", `/links/${hex}`, () => {
+          const path = join(harness!.dir, "Brief.md");
+          writeFileSync(
+            path,
+            readFileSync(path, "utf8").replace(
+              "the brief\n",
+              "edited mid-pull\n",
+            ),
+          );
+          return { kind: "bytes", status: 200, body: picture };
+        });
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "metadata.changed",
+        wireItem(plan),
+        { tags: ["b"] },
+      ),
+    );
+    expect((await a.folder.push()).ok).toBe(true);
+    writeFileSync(
+      join(a.dir, "Plan.md"),
+      read(a, "Plan.md").replace("the plan\n", "edited, not yet read\n"),
+    );
+    const wrote = await b.folder.push();
+    expect(wrote.ok, JSON.stringify(wrote)).toBe(true);
+    if (!wrote.ok) return;
+    expect(wrote.value.pull?.written).toBe(1);
+    expect(idIn(b, "Plan.md")).toBe(plan.id);
+    expect(
+      read(b, "Plan.md"),
+      "the receiving folder copied an edit the other folder had not read",
+    ).not.toContain("edited, not yet read\n");
+    expect(read(b, "Plan.md")).toContain("the plan\n");
+    expect(read(a, "Plan.md")).toContain("edited, not yet read\n");
+
+    for (const item of [brief, image]) {
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "metadata.changed",
+          wireItem(item),
+          { tags: ["b"] },
+        ),
+      );
+    }
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(read(a, "Brief.md")).toContain("the brief\n");
+    const racing = await b.folder.push();
+    expect(racing.ok, JSON.stringify(racing)).toBe(true);
+    if (!racing.ok) return;
+    expect(
+      existsSync(join(b.dir, "picture.png")),
+      "the picture was not fetched, so nothing edited the brief mid-pull",
+    ).toBe(true);
+    expect(racing.value.pull?.written).toBe(2);
+    expect(read(a, "Brief.md")).toContain("edited mid-pull\n");
+    expect(
+      read(b, "Brief.md"),
+      "the receiving folder copied an edit made in the other folder during its pull",
+    ).not.toContain("edited mid-pull\n");
+    expect(read(b, "Brief.md")).toContain("the brief\n");
+  });
 
   it("sends an edit queued in the folder an item left, and keeps it on disk, when the folder holding the item writes its own file", async () => {
     const plan = {

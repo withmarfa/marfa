@@ -1546,13 +1546,27 @@ When a folder pull encounters a file at an item’s placement whose bytes it can
 
 When an unbound folder item’s placement already holds exactly its rendered bytes, a device MUST bind the existing file to that item.
 
-**Tests:** `device/folders.test.ts › takes back a file of its own the mapping had lost`, `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`.
+**Tests:** `device/folders.test.ts › takes back a file of its own the mapping had lost`, `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`, `device/folders-one-mac.test.ts › adopts the item's own bytes at its path, and keeps a previous file's delete, while another folder keeps its file ($mode, previous file $previous)`.
 
 ### `folder-files/rendered-file-adopted-bytes-unchanged`
 
 When an unbound folder item’s placement already holds exactly its rendered bytes, a device MUST NOT rewrite the existing file.
 
 **Tests:** `device/folders.test.ts › takes back a file of its own the mapping had lost`, `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`.
+
+### `folder-files/adopted-file-journal-cleared`
+
+When a device binds an existing file to an unbound item under `folder-files/rendered-file-adopted`, a device MUST clear that item's deletion journal entry at the file's path.
+
+**Tests:** `device/folders-one-mac.test.ts › adopts the item's own bytes at its path, and keeps a previous file's delete, while another folder keeps its file ($mode, previous file $previous)`.
+
+### `folder-files/adopted-file-previous-journal-kept`
+
+When a device binds an existing file to an unbound item under `folder-files/rendered-file-adopted` at a path where another item's file was journaled as deleted, a device MUST keep the other item's deletion journal entry.
+
+**Reason:** the bytes at the path are the arriving item's, so the other item's file is still gone.
+
+**Tests:** `device/folders-one-mac.test.ts › adopts the item's own bytes at its path, and keeps a previous file's delete, while another folder keeps its file ($mode, previous file $previous)`.
 
 ### `folder-files/unowned-file-admitted`
 
@@ -1686,7 +1700,7 @@ When removal of unmatched files names a file retained under `folder-files/new-fi
 
 ### `folder-files/unmatched-file-kept-unmatched-count`
 
-When an item leaves a folder’s query for a reason other than its state or purge and no other directory takes its file, a device MUST count the file as `unmatched`.
+When an item leaves a folder’s query for a reason other than its state or purge, a device MUST count the file as `unmatched`.
 
 **Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed query leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its query elsewhere, flagged, and sends its edits to it`.
 
@@ -2394,7 +2408,7 @@ When a folder's query holds an item without a file and another registered direct
 
 **Reason:** that file is the other directory's, and only that directory can tell whether it holds an edit not yet sent, whether its sync is paused, or whether the file is its last local copy of the item. The folder writes a file of its own instead, and the person removes a duplicate with `marfa folders unmatched --remove`.
 
-**Tests:** `device/folders-one-mac.test.ts › writes its own file of an item another folder keeps unmatched, and leaves that folder's file where it is, %s hearing first`, `› keeps a file in the folder an item left by a tag when the folder that wrote its own file drops the item by %s, and sends no delete`, `› sends an edit queued in the folder an item left, and keeps it on disk, when the folder holding the item writes its own file`, `› moves no file out of a paused directory when another folder comes to hold its item`, `› writes its own file, and leaves the other directory of the folder its file, when a widened query brings an item back`, `› writes a note and its attachment of its own when the note moves to another notes folder, and the folder it left keeps both, %s hearing first`, `› keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again`.
+**Tests:** `device/folders-one-mac.test.ts › writes its own file of an item another folder keeps unmatched, and leaves that folder's file where it is, %s hearing first`, `› keeps a file in the folder an item left by a tag when the folder that wrote its own file drops the item by %s, and sends no delete`, `› writes the server's bytes, and leaves an edit the folder an item left has not read in its file, when another folder comes to hold the item`, `› sends an edit queued in the folder an item left, and keeps it on disk, when the folder holding the item writes its own file`, `› moves no file out of a paused directory when another folder comes to hold its item`, `› writes its own file, and leaves the other directory of the folder its file, when a widened query brings an item back`, `› writes a note and its attachment of its own when the note moves to another notes folder, and the folder it left keeps both, %s hearing first`, `› keeps a file %s a note while another folder on the Mac holds the file, and writes nothing again`.
 
 ### `folder-files/moved-out-of-query-kept`
 
@@ -2409,14 +2423,6 @@ When a person moves a folder's file into another registered directory whose quer
 When a person moves a folder's file into another registered directory whose query does not hold the item, that directory has bound the file, and the rename grace has passed, a device MUST write the item's file again in the directory the file left while that folder's query holds the item.
 
 **Reason:** the item still belongs in the folder the file left, and with no file there it would show in no directory whose query holds it.
-
-**Tests:** `device/folders-one-mac.test.ts › keeps a file moved to a folder that does not hold its item there, unmatched, and the folder it left writes its file again and keeps its placement`, `cli/folder.test.ts › keeps a note's file in the folder it was moved into when that folder's query leaves the note out by %s, and the folder it left writes its file again`.
-
-### `folder-files/moved-out-of-query-no-delete`
-
-When a person moves a folder's file into another registered directory whose query does not hold the item, a device MUST NOT send a delete of the item.
-
-**Reason:** the file still exists on the machine (`folder-files/move-keeps-item`), so the item has not been deleted.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file moved to a folder that does not hold its item there, unmatched, and the folder it left writes its file again and keeps its placement`, `cli/folder.test.ts › keeps a note's file in the folder it was moved into when that folder's query leaves the note out by %s, and the folder it left writes its file again`.
 
