@@ -37,7 +37,7 @@ export interface paths {
         };
         /**
          * Get an item
-         * @description Returns an item with its metadata and outbound edges. Use `include` to add its inbound edges, the items at the other end of its edges, or its version history in the same call. Use `state` to read an item in the trash.
+         * @description Returns an item with its metadata, outbound edges and any extras you ask for. Use `state` to read an item in the trash.
          */
         get: operations["getItem"];
         put?: never;
@@ -11287,7 +11287,7 @@ export interface operations {
     getItem: {
         parameters: {
             query?: {
-                /** @description Comma-separated extras: `backrefs` adds inbound edges, `neighbors` adds the items at the other end of the edges returned, `versions` adds your readable snapshots, oldest first, and `writer` adds who wrote the current version. */
+                /** @description Comma-separated extras. `backrefs` adds inbound edges. `neighbors` adds the items at the other end of the returned edges. `versions` adds the first page of readable snapshots, oldest first. `writer` adds the current version's writer. */
                 include?: string;
                 /** @description Read the item only if it is in one of these lifecycle states: one state or a comma-separated list, such as `active,trashed`. Send `any` on its own for every state, the trash included. Without it, you get an item in any state but `trashed`. */
                 state?: string;
@@ -11353,7 +11353,7 @@ export interface operations {
             };
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
-             *     - `validation_error`: the query has a parameter this endpoint doesn't take, or `state` is empty, names a state that doesn't exist, or puts `any` beside another state.
+             *     - `validation_error`: the query has an unknown parameter, `include` names an unknown extra, or `state` is empty, names a state that doesn't exist, or puts `any` beside another state.
              */
             400: {
                 headers: {
@@ -13821,7 +13821,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `ids` is missing.
-             *     - `validation_error`: `ids` is not a list or has more than 100 IDs, or the body has a field this endpoint doesn't take.
+             *     - `validation_error`: `ids` isn't a list or has more than 100 IDs, `include` names an unknown extra, or the body has a field this endpoint doesn't take.
              *     - `invalid_id`: an ID in `ids` is not a valid item ID.
              */
             400: {

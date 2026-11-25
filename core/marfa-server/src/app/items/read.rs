@@ -183,8 +183,7 @@ impl<'a, 'c> Reader<'a, 'c> {
         self.faults
     }
 
-    /// The item's text with `writer` added: the sign-in that wrote its current version, read under
-    /// the reach that decides a snapshot of the same type.
+    // Use the same reach as a version snapshot.
     fn with_writer(&self, mut text: String, row: &Item) -> Result<String> {
         if !self.caller.may_read_item(&row.type_id, &row.source) {
             return Ok(text);

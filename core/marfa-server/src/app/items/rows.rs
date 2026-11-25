@@ -746,7 +746,6 @@ pub(super) fn snapshots_below(
     Ok(())
 }
 
-/// Who wrote the item's current version, which no snapshot holds until the item moves past it.
 pub(super) fn current_writer(tx: &Transaction<'_>, seq: i64) -> Result<Option<Writer>> {
     Ok(writer_and_restored(tx, seq)?.0)
 }
