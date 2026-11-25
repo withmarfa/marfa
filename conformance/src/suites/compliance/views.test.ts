@@ -517,11 +517,6 @@ describe("the view door", () => {
       "group.bucket",
     ],
     [
-      { sort: [{ by: "source", direction: "asc" }] },
-      "validation_error",
-      "sort.0.by",
-    ],
-    [
       { sort: [{ by: "status_group", direction: "asc" }] },
       "validation_error",
       "sort.0.by",
@@ -621,6 +616,8 @@ describe("the view door", () => {
       { sort: [{ by: "properties.amount", direction: "desc" }] },
       { sort: [{ by: "tags", direction: "asc" }] },
       { sort: [{ by: "last_activity_at", direction: "desc" }] },
+      { sort: [{ by: "source", direction: "asc" }] },
+      { sort: [{ by: "source", direction: "desc" }] },
       { group: { by: "created_at", bucket: "week" } },
       { group: { by: "edge[about]" } },
       { group: { by: "backref[about]" } },
@@ -650,6 +647,14 @@ describe("the view door", () => {
       expect(r.status, JSON.stringify([settings, r.error])).toBe(201);
       trackView(ctx, r.data.item.id);
     }
+    const base = await client.createView({ title: "changed" });
+    expect(base.status).toBe(201);
+    trackView(ctx, base.data.item.id);
+    const changed = await client.updateView(base.data.item.id, {
+      version: 1,
+      sort: [{ by: "source", direction: "desc" }],
+    });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
   });
 
   it("takes the longest title, types list and group lists, and refuses one more, on a create and on a change", async () => {

@@ -8,9 +8,12 @@ import type { Item, Outcome } from "../../device/protocol.js";
 import {
   cleanup,
   createTestContext,
+  getOwnerClient,
   trackItem,
   trackView,
 } from "../../utils/setup.js";
+import { itemsArchive } from "../../utils/archive.js";
+import { generateId } from "../../generators/items.js";
 import { requireBinary } from "./harness.js";
 
 let client: MarfaClient;
@@ -70,6 +73,38 @@ beforeAll(async () => {
       trackItem(ctx, created.data.item.id);
     }
   }
+  const batch = `${ctx.source}-by-source`;
+  // An archive stores any source code, so these differ under case folding; "unknown" is what an
+  // item no source was named for holds.
+  const stem = `${ctx.source}-code`;
+  const codes = [
+    stem,
+    ...["Z", "+", "/", "%", "?", "é", "a"].map((end) => `${stem}${end}`),
+    "unknown",
+  ];
+  const sourced = codes.flatMap((source) =>
+    [0, 1, 2].map(() => ({
+      id: generateId(),
+      type: "core.note",
+      source,
+      properties: { title: "Source parity", body: "", batch },
+    })),
+  );
+  const restored = await getOwnerClient().restoreArchive(
+    itemsArchive(sourced),
+  );
+  expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+  for (const row of sourced) trackItem(ctx, row.id);
+  for (const direction of directions) {
+    const saved = await client.createView({
+      title: `Sort parity source ${direction}`,
+      query: { types: ["core.note"], filter: `properties.batch eq "${batch}"` },
+      sort: [{ by: "source", direction }],
+    });
+    expect(saved.ok, JSON.stringify(saved.error)).toBe(true);
+    views.set(`source ${direction}`, saved.data.item.id);
+    trackView(ctx, saved.data.item.id);
+  }
   for (const by of fields) {
     for (const direction of directions) {
       const saved = await client.createView({
@@ -102,6 +137,38 @@ beforeAll(async () => {
 afterAll(async () => {
   if (device) rmSync(dirname(device.store), { recursive: true, force: true });
   if (ctx) await cleanup(ctx);
+});
+
+it("returns the items of a view sorted by source in the order the server does, across its pages and both directions", async () => {
+  for (const direction of directions) {
+    const id = views.get(`source ${direction}`)!;
+    const remote: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await client.listViewItems(id, { limit: 2, cursor });
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      remote.push(...page.data.data.map((item) => item.id));
+      cursor = page.data.next_cursor ?? undefined;
+    } while (cursor !== undefined);
+    expect(remote).toHaveLength(27);
+    const local: string[] = [];
+    for (let offset = 0; offset < remote.length; offset += 4) {
+      const page = value(
+        await device.attempt([
+          "items",
+          "list",
+          "--view",
+          id,
+          "--limit",
+          "4",
+          "--offset",
+          String(offset),
+        ]),
+      ) as { data: Item[] };
+      local.push(...page.data.map((item) => item.id));
+    }
+    expect(local, `source ${direction}`).toEqual(remote);
+  }
 });
 
 it("returns the same items in the same order as the server for each shared sort", async () => {

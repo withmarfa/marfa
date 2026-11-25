@@ -15,6 +15,7 @@ import {
   trackView,
   cleanup,
   getOwnerClient,
+  newRunId,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { generateId } from "../../generators/items.js";
@@ -408,6 +409,61 @@ describe("the view's items door", () => {
       upper.id,
       none.id,
     ]);
+  });
+
+  it("sorts by each item's source code in binary order in either direction, the owner's own items among them, with ascending ids breaking ties across pages", async () => {
+    const tag = `by-source-${newRunId()}`;
+    const live = await freshSource();
+    const made: { id: string; source: string }[] = [];
+    const created = await writers.get(live)!.createItem({
+      type: "core.note",
+      source: live,
+      properties: { title: "By source", batch: tag },
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackItem(ctx, created.data.item.id);
+    made.push({ id: created.data.item.id, source: live });
+    // An archive stores any source code, so these differ under case folding and from their byte order
+    // by their suffix alone; "unknown" is what an item no source was named for holds.
+    const stem = `${ctx.source}-code`;
+    const codes = [
+      stem,
+      ...["Z", "+", "/", "%", "?", "é", "a"].map((end) => `${stem}${end}`),
+      "unknown",
+    ];
+    const rows = codes.flatMap((source) =>
+      [0, 1, 2].map(() => ({
+        id: generateId(),
+        type: "core.note",
+        source,
+        properties: { title: "By source", batch: tag },
+      })),
+    );
+    const restored = await getOwnerClient().restoreArchive(itemsArchive(rows));
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    for (const row of rows) {
+      trackItem(ctx, row.id);
+      made.push({ id: row.id, source: row.source });
+    }
+
+    const bytes = (text: string) => Buffer.from(text, "utf8");
+    const expected = (direction: "asc" | "desc") =>
+      [...made]
+        .sort(
+          (a, b) =>
+            (direction === "asc" ? 1 : -1) *
+              Buffer.compare(bytes(a.source), bytes(b.source)) ||
+            Buffer.compare(bytes(a.id), bytes(b.id)),
+        )
+        .map((item) => item.id);
+    for (const direction of ["asc", "desc"] as const) {
+      const id = await viewOf(live, {
+        query: { filter: `properties.batch eq "${tag}"` },
+        sort: [{ by: "source", direction }],
+      });
+      expect(await listed(id, 2)).toEqual(expected(direction));
+      expect(await listed(id, 100)).toEqual(expected(direction));
+    }
   });
 
   it("sorts by a property across numbers, booleans and text, with null, objects and arrays last", async () => {
