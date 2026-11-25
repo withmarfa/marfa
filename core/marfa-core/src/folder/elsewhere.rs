@@ -616,7 +616,9 @@ impl<'a> Peers<'a> {
                 .filter(|entry| &entry.dir != own)
                 .collect();
             let listed = others.len();
-            let own_store = listed_store(&self.of.core);
+            let own_store = conn
+                .as_deref()
+                .and_then(|conn| store::meta_get(conn, META_STORE).ok().flatten());
             // Only its store listed at another directory shows where a
             // remembered folder went; whatever stands at its old path does not.
             for entry in known {
