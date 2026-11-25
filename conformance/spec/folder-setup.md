@@ -1172,7 +1172,7 @@ When `folders remove` is confirmed for a directory that the machine’s folder r
 
 If `folders remove` is not given `--yes` for a directory that the machine’s folder registry does not list, that holds no folder state and that a listed folder found in an earlier pass, and no person at a terminal confirms it, then the CLI MUST change nothing.
 
-**Reason:** once the directory is forgotten, the next pass of each folder that found it sends the deletes it held.
+**Reason:** forgetting the directory can let a later sync send a deletion that was on hold.
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone, until folders remove forgets it`.
 

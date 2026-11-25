@@ -105,16 +105,12 @@ fn remembering(dir: &Path) -> Result<(Vec<PathBuf>, [PathBuf; 2])> {
 }
 
 impl Folder {
-    /// The listed folders that remember `dir` as another folder on this
-    /// machine, and so hold a missing file's delete while it cannot be read.
-    /// Empty where the registry lists `dir` or a folder's state is there.
+    /// Lists readable folders that remember the unlisted directory.
     pub fn remembered_by(dir: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
         Ok(remembering(dir.as_ref())?.0)
     }
 
-    /// Forgets `dir` in each listed folder that remembers it, asking a
-    /// process that holds one to let it go, as `open_asking` does. Changes no
-    /// file and nothing on a server. Answers the folders that forgot it.
+    /// Ask the person first. Forgetting this directory can release held deletions.
     pub fn forget_remembered(dir: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
         let (by, spellings) = remembering(dir.as_ref())?;
         for root in &by {

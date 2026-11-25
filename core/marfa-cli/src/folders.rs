@@ -90,19 +90,15 @@ pub enum FoldersCommand {
     /// or holds state the registry does not show to be the directory's own, the
     /// directory is only taken off the list and nothing is deleted.
     ///
-    /// A directory the registry does not list, and that holds no folder
-    /// state, but that listed folders still remember as another folder on
-    /// this machine, is forgotten in each of them, after a confirmation. While
-    /// they remember it and it cannot be read, as when its volume is not
-    /// mounted, they hold every file deleted by hand. Once it is forgotten,
-    /// their next pass sends those deletes. This changes no file, nothing on
-    /// the server and no listed folder, and says which folders forgot it.
+    /// If the directory is unlisted and has no folder state, other folders
+    /// may still remember it. The command asks before forgetting it and
+    /// reports which folders forgot it. Their next sync can send a deletion
+    /// held because a missing file might have moved to that directory.
     Remove {
         /// The directory.
         dir: PathBuf,
-        /// Confirm forgetting a directory that folders remember without
-        /// asking, for scripts. Without it, forgetting asks at a terminal, and
-        /// is refused with `--json` or anywhere else.
+        /// Forget a remembered directory without prompting. Required with
+        /// `--json` or without a terminal when forgetting a directory.
         #[arg(long)]
         yes: bool,
     },
@@ -896,7 +892,7 @@ fn asks_to_forget(dir: &Path, remembering: &[PathBuf]) -> Result<bool, CliError>
     }
     write!(
         question,
-        "Forget it? Their next pass then sends the deletes they held. [y/N] "
+        "Forget this directory? The next sync can send held deletions to the server. [y/N] "
     )?;
     question.flush()?;
     let mut answer = String::new();
