@@ -90,9 +90,7 @@ beforeAll(async () => {
       properties: { title: "Source parity", body: "", batch },
     })),
   );
-  const restored = await getOwnerClient().restoreArchive(
-    itemsArchive(sourced),
-  );
+  const restored = await getOwnerClient().restoreArchive(itemsArchive(sourced));
   expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
   for (const row of sourced) trackItem(ctx, row.id);
   for (const direction of directions) {
