@@ -254,9 +254,9 @@ When `PATCH /items/{id}` names a `source`, the server MUST answer `400 validatio
 
 ### `items/natural-key-upsert`
 
-When `POST /items` without `mode: create_only`, or a `POST /items/bulk` entry under `mode: upsert`, names a `source_id` that, under the source it resolves to, an item of the declared type holds that is active or archived, and the write changes the item as it stands, the server MUST apply it as an update to that item, answered `200` at the item's next version, whichever credential sends it.
+When `POST /items` without `mode: create_only`, or a `POST /items/bulk` entry under `mode: upsert`, names a `source_id` that, under the source it resolves to, an item of the declared type holds that is active or archived, and the write changes a field of the item, the server MUST apply it as an update to that item, answered `200` at the item's next version, whichever credential sends it.
 
-**Reason:** two keys that claim one source share its natural keys, so a connector's item is one item whichever of its keys writes it. A write that changes nothing returns the held version on `POST /items` (`versions/unchanged-upsert`) and is reported `skipped` in bulk (`items/bulk-unchanged`).
+**Reason:** two keys that claim one source share its natural keys, so a connector's item is one item whichever of its keys writes it. A write that changes nothing returns the held version on `POST /items` (`versions/unchanged-upsert`) and is reported `skipped` in bulk (`items/bulk-unchanged`). A write that changes only the item's edges leaves its version (`versions/upsert-edges-applied`).
 
 **Tests:** `correctness/dedup.test.ts › duplicate (source, source_id) upserts onto the existing item (natural-key upsert)`, `compliance/claimed-sources.test.ts › upserts onto one item from two keys claiming one source`, `› lands a bulk entry naming a claim on the claim's item, not on its own source's`, `compliance/create-only.test.ts › updates the item as before under mode upsert and under no mode`, `correctness/upsert-state-tags.test.ts › updates an archived item in place on POST /items and on POST /items/bulk, as it updates an active one`.
 
@@ -1424,7 +1424,9 @@ When `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/tags`, `POST /i
 
 ### `items/write-archived-state`
 
-When `PATCH /items/{id}`, `PUT /items/{id}/tags`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an archived item and the server applies the write, the server MUST leave the item archived.
+When `PATCH /items/{id}`, `PUT /items/{id}/tags`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an archived item, names no edge of a `with-hosts` type whose to item is in the bin, and the server applies the write, the server MUST leave the item archived.
+
+**Reason:** an inline `with-hosts` edge to a host in the bin moves the item into the bin (`edges/parts-late-binned`).
 
 **Tests:** `correctness/archived-writes.test.ts › takes PATCH /items/{id} as it takes it on an active item, and leaves the state`, `› take POST, PUT and DELETE on /items/{id}/tags as they do on an active item, and leave the state`, `› take PUT and DELETE on /items/{id}/extensions/{namespace} as they do on an active item, and leave the state`.
 

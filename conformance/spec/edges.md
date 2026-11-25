@@ -1400,7 +1400,7 @@ When `POST /edges`, an entry of `POST /edges/bulk`, `PATCH /edges/{id}`, `DELETE
 
 **Reason:** an app can keep linking and unlinking an item a person archived.
 
-**Tests:** `correctness/archived-writes.test.ts › take POST /edges, PATCH /edges/{id} and DELETE /edges/{id} with the archived item at either end, as they do with an active item`, `› take an entry of POST /edges/bulk that creates or changes an edge with the archived item at either end, as they do with an active item`, `› take the edges of POST /items and of PATCH /items/{id}, with the archived item the one that is written or the one the edge names, as they do with an active item`.
+**Tests:** `correctness/archived-writes.test.ts › take POST /edges, PATCH /edges/{id} and DELETE /edges/{id} with the archived item at either end, as they do with an active item`, `› take an entry of POST /edges/bulk that creates, changes or replays an edge under create_only with the archived item at either end, as they do with an active item`, `› take the edges of POST /items and of PATCH /items/{id}, with the archived item the one that is written or the one the edge names, as they do with an active item`.
 
 ### `edges/parts-late-accepted`
 

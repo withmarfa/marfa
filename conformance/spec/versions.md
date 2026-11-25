@@ -66,6 +66,14 @@ When `POST /items`, without `mode: create_only`, names a natural key that resolv
 
 **Tests:** `correctness/item-versioning.test.ts › answers an upsert of a natural key whose item would not change as unchanged at the version held, and writes no version`.
 
+### `versions/upsert-edges-applied`
+
+When `POST /items`, without `mode: create_only`, names a natural key that resolves an item and names `edges` that the item does not hold, and the write would otherwise leave the item as it stands, the server MUST write those edges, leave the item's `version` as it was and answer `200` without `acknowledged`.
+
+**Reason:** the write changed the edges, which an item's version does not count (`versions/update-edges-only`).
+
+**Tests:** `correctness/upsert-state-tags.test.ts › writes the edges an upsert names that the item does not hold, at the version held, on POST /items`.
+
 ### `versions/unchanged-as-stored`
 
 When the server decides whether a write to an item leaves it as it stands, the server MUST compare the item as the write would store it, after defaults and normalization, with the item as it stands, and not the body the write was sent with.

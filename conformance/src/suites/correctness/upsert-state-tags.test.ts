@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { randomUUID } from "node:crypto";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import {
+  createTestContext,
+  trackItem,
+  cleanup,
+  newRunId,
+} from "../../utils/setup.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -37,7 +41,12 @@ async function seed(sourceId: string, tags?: string[]) {
 async function upsert(
   door: Door,
   sourceId: string,
-  fields: { body: string; state?: string; tags?: string[] },
+  fields: {
+    body: string;
+    state?: string;
+    tags?: string[];
+    edges?: Record<string, string[]>;
+  },
 ): Promise<{ id: string; updated: boolean }> {
   const entry = {
     type: "core.note",
@@ -46,6 +55,7 @@ async function upsert(
     properties: { body: fields.body },
     ...(fields.state === undefined ? {} : { state: fields.state }),
     ...(fields.tags === undefined ? {} : { tags: fields.tags }),
+    ...(fields.edges === undefined ? {} : { edges: fields.edges }),
   };
   if (door === "POST /items") {
     const sent = await client.createItem(entry);
@@ -69,7 +79,7 @@ async function stored(id: string) {
 describe("a natural-key upsert", () => {
   it("ignores the state it names on POST /items and on POST /items/bulk, an archived item included", async () => {
     for (const door of DOORS) {
-      const run = randomUUID();
+      const run = newRunId();
 
       const active = await seed(`state-active-${run}`);
       const onActive = await upsert(door, `state-active-${run}`, {
@@ -91,19 +101,22 @@ describe("a natural-key upsert", () => {
       });
       expect(onArchived.id).toBe(archived.id);
       const archivedBack = await stored(archived.id);
+      expect(archivedBack.item.properties.body, door).toBe("upserted");
       expect(archivedBack.item.state, door).toBe("archived");
 
       const withoutState = await upsert(door, `state-archived-${run}`, {
         body: "again",
       });
       expect(withoutState.id).toBe(archived.id);
-      expect((await stored(archived.id)).item.state, door).toBe("archived");
+      const againBack = await stored(archived.id);
+      expect(againBack.item.properties.body, door).toBe("again");
+      expect(againBack.item.state, door).toBe("archived");
     }
   });
 
   it("updates an archived item in place on POST /items and on POST /items/bulk, as it updates an active one", async () => {
     for (const door of DOORS) {
-      const sourceId = `update-archived-${randomUUID()}`;
+      const sourceId = `update-archived-${newRunId()}`;
       const item = await seed(sourceId);
       expect((await client.transitionItem(item.id, "archived")).status).toBe(
         200,
@@ -119,9 +132,45 @@ describe("a natural-key upsert", () => {
     }
   });
 
+  it("writes the edges an upsert names that the item does not hold, at the version held, on POST /items", async () => {
+    for (const held of ["active", "archived"] as const) {
+      const sourceId = `edges-${held}-${newRunId()}`;
+      const item = await seed(sourceId);
+      const target = await seed(`edges-target-${newRunId()}`);
+      if (held === "archived") {
+        expect((await client.transitionItem(item.id, "archived")).status).toBe(
+          200,
+        );
+      }
+      const before = (await stored(item.id)).item.version;
+
+      const sent = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        source_id: sourceId,
+        properties: { body: "seeded" },
+        edges: { references: [target.id] },
+      });
+      expect(sent.status, `${held}: ${JSON.stringify(sent.error)}`).toBe(200);
+      expect(sent.data.item.id, held).toBe(item.id);
+      expect(sent.data.acknowledged, held).toBeUndefined();
+      expect(sent.data.item.version, held).toBe(before);
+      const after = await stored(item.id);
+      expect(after.item.version, held).toBe(before);
+      expect(after.item.state, held).toBe(held);
+      const edges = await client.listItemEdges(item.id, {
+        edge_type: "references",
+      });
+      expect(
+        edges.data.data.map((edge) => edge.to_id),
+        held,
+      ).toEqual([target.id]);
+    }
+  });
+
   it("replaces the tags of an item with the tags it names, removing a tag a person added, on POST /items and on POST /items/bulk", async () => {
     for (const door of DOORS) {
-      const run = randomUUID();
+      const run = newRunId();
       const sourceId = `tags-${run}`;
       const item = await seed(sourceId, ["from-connector"]);
       const added = await client.addTags(item.id, ["from-person"]);
@@ -150,7 +199,7 @@ describe("a natural-key upsert", () => {
 
   it("replaces the tags of an archived item with the tags it names, as it does for an active one", async () => {
     for (const door of DOORS) {
-      const run = randomUUID();
+      const run = newRunId();
       const sourceId = `tags-archived-${run}`;
       const item = await seed(sourceId, ["from-connector"]);
       expect((await client.addTags(item.id, ["from-person"])).status).toBe(200);
