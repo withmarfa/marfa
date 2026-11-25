@@ -323,8 +323,7 @@ fn type_rows_of(types: &[WireType]) -> Vec<TypeRow> {
             if let Some(label) = &entry.label {
                 json.insert("label".into(), Value::String(label.clone()));
             }
-            // Only what a copy answers of where the type came from: who made
-            // it names a sign-in, and a change of that alone is no change here.
+            // The creator identifies a sign-in and is outside the device catalog.
             if let Some(Value::Object(provenance)) = json.get_mut("provenance") {
                 provenance.remove("created_by");
             }

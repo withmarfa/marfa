@@ -171,8 +171,7 @@ export function wireType(
     mergePolicy?: { fields: Record<string, string>; default: string };
     /** The retention policy the type declares; absent where it declares none. */
     retentionPolicy?: Record<string, unknown>;
-    /** Where the listing says the type came from; the shipped or registered
-     *  default where absent. */
+    /** Overrides the fixture's platform or registered provenance. */
     provenance?: Record<string, unknown>;
   } = {},
 ): Record<string, unknown> {

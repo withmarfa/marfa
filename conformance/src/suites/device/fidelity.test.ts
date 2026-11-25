@@ -2802,10 +2802,8 @@ describe("the scripted answers match the server's", () => {
       expect(status.ok, JSON.stringify(status)).toBe(true);
       return status.ok ? status.value.catalog_version : undefined;
     };
-    // A plugin's install changes what the credential reaches, so the server
-    // expires the copy and the device rebuilds it from the server, catalog
-    // included.
-    const catchUp = async () => {
+    // Installing or updating the plugin expires the working copy.
+    const rebuildCatalog = async () => {
       const rebuilt = await device.hydrate(["core.note"], "library");
       expect(rebuilt.ok, JSON.stringify(rebuilt)).toBe(true);
     };
@@ -2837,7 +2835,7 @@ describe("the scripted answers match the server's", () => {
     expect(installed.status, JSON.stringify(installed.error)).toBe(201);
     try {
       const before = await versionOf();
-      await catchUp();
+      await rebuildCatalog();
       const afterInstall = await versionOf();
       expect(
         afterInstall,
@@ -2849,7 +2847,7 @@ describe("the scripted answers match the server's", () => {
 
       const updated = await client.installPlugin(bundle("1.1.0"));
       expect(updated.status, JSON.stringify(updated.error)).toBe(200);
-      await catchUp();
+      await rebuildCatalog();
       const afterUpdate = await versionOf();
       expect(
         afterUpdate,
@@ -2860,10 +2858,9 @@ describe("the scripted answers match the server's", () => {
       const removed = await client.removePlugin(name);
       expect(removed.ok, JSON.stringify(removed.error)).toBe(true);
     }
-    // The server keeps a removed plugin's types with their provenance
-    // (`plugins/remove-keeps-types`), so the copy has nothing to change.
+    // A plugin's types keep their provenance after its removal.
     const afterRemoval = await versionOf();
-    await catchUp();
+    await rebuildCatalog();
     expect(
       await versionOf(),
       "a plugin's removal, which changes no type, moved the catalog version",

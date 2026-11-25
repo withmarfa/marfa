@@ -533,7 +533,7 @@ pub struct ItemType {
     pub feed_days: Option<i64>,
     /// Where the type came from.
     pub origin: TypeOrigin,
-    /// The plugin that installed the type; null for any other origin.
+    /// The plugin that installed the type, absent for any other origin.
     pub plugin: Option<TypePlugin>,
 }
 

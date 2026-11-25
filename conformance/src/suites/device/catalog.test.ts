@@ -522,7 +522,7 @@ describe("The type catalog a working copy holds", () => {
     ).toBeNull();
   });
 
-  it("answers each type's origin and plugin from the copy alone, and moves the catalog version when a plugin installs, updates and leaves", async () => {
+  it("answers each type's origin and plugin from the copy alone, and moves the catalog version when a refresh changes provenance", async () => {
     harness = await startHarness("catalog-provenance");
     const { server, device } = harness;
     let provenance: Record<string, unknown> | undefined = undefined;

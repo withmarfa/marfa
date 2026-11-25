@@ -137,7 +137,6 @@ pub struct TypePlugin {
     pub version: String,
 }
 
-/// The origin and plugin a stored type names. A missing or unrecognised origin, or a plugin origin without a named plugin, reads as unknown; a plugin on any other origin is dropped.
 fn provenance_of(own: &Map<String, Value>) -> (TypeOrigin, Option<TypePlugin>) {
     let Some(held) = own.get("provenance").and_then(Value::as_object) else {
         return (TypeOrigin::Unknown, None);

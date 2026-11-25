@@ -5038,7 +5038,7 @@ A device MUST answer an item type's `origin` and `plugin` as `GET /types/{id}` a
 
 **Reason:** an app tells a plugin's type from the owner's own, before it tries to change one, from the copy alone (`device/catalog-offline`); `provenance.created_by` names a sign-in, so the device does not answer it.
 
-**Tests:** `device/fidelity.test.ts › reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates`, `device/catalog.test.ts › answers each type's origin and plugin from the copy alone, and moves the catalog version when a plugin installs, updates and leaves`.
+**Tests:** `device/fidelity.test.ts › reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates`, `device/catalog.test.ts › answers each type's origin and plugin from the copy alone, and moves the catalog version when a refresh changes provenance`.
 
 ### `device/catalog-type-provenance-version`
 
@@ -5046,7 +5046,7 @@ A device MUST move the catalog version when a refresh changes a type's origin or
 
 **Reason:** a plugin's update that changes only its version is a change a caller finds by the catalog version (`device/catalog-version-moves`), and a creator the device does not answer is no change to what it answers.
 
-**Tests:** `device/fidelity.test.ts › reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates`, `device/catalog.test.ts › answers each type's origin and plugin from the copy alone, and moves the catalog version when a plugin installs, updates and leaves`.
+**Tests:** `device/fidelity.test.ts › reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates`, `device/catalog.test.ts › answers each type's origin and plugin from the copy alone, and moves the catalog version when a refresh changes provenance`.
 
 ### `device/catalog-type-tables`
 
@@ -8457,6 +8457,7 @@ If no server answered the request a call is refused for, then a device MUST carr
 The device fixtures drive a scripted server where the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every scripted answer the real server can also give matches the real one's shape; these are the answers it cannot check.
 
 - **Invalid copy proof.** The real server does not omit or forge its certificate, listing classification or completion marker, so scripted answers exercise fail-closed decoding.
+- **A type with a missing or unrecognized origin.** The real server always includes an origin from its contract, so `device/catalog.test.ts` scripts the missing and unrecognized values to exercise `device/catalog-type-provenance`.
 - **A transport failure.** A dropped connection, a refused connection and a read that times out are properties of the network between the device and the server. Nothing the API offers provokes one.
 - **A server at rest.** Offline and reconnect need the server to stop answering and start again under a device that is still running. Stopping the suite's own server ends the run.
 - **A revoked credential mid-queue.** Revoking the running key would take the rest of the file's fixtures with it, and the refusal is asserted for its effect on the queue rather than for the server's answer, which `keys-and-oauth/revoke-immediate` already covers.
