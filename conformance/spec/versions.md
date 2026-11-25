@@ -374,12 +374,6 @@ When a key sends `POST /items/bulk-get` with `writer` in `include`, the server M
 
 **Tests:** `compliance/version-writers.test.ts › answers the key that wrote the current version, from version 1 on, on both doors`, `› answers the app, the owner's browser and the local command that wrote an app's record`, `› answers null for a current version the enrichment sweep wrote`.
 
-### `versions/writer-current-first`
-
-While an item is at version 1, the server MUST name as the writer of its current version the sign-in that created it, though the item has no snapshot.
-
-**Tests:** `compliance/version-writers.test.ts › answers the key that wrote the current version, from version 1 on, on both doors`.
-
 ### `versions/writer-current-opt-in`
 
 When `GET /items/{id}` or `POST /items/bulk-get` does not name `writer` in `include`, the server MUST NOT carry a `writer` in the item.
@@ -396,7 +390,7 @@ When the sign-in that wrote an item's current version has ended, the server MUST
 
 ### `versions/writer-current-state`
 
-When `GET /items/{id}` with `include=writer` reads an item in the state `archived`, or in the bin with a `state` that names `trashed`, the server MUST name the writer of the item's current version, which the move between states leaves as it was.
+When `GET /items/{id}` with `include=writer` reads an item in the state `archived`, or in the bin with a `state` that names `trashed`, the server MUST answer as `writer` the value the item's current version held before the move, `null` included.
 
 **Reason:** a move between states writes no version (`versions/state-keeps-history`).
 
