@@ -1050,6 +1050,160 @@ fn state_of(status: &str) -> Result<FileState, MarfaError> {
     })
 }
 
+/// An unmatched file `remove_unmatched` took away. Its item is unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct UnmatchedFile {
+    pub path: String,
+    pub item_id: Option<String>,
+}
+
+/// A path `remove_unmatched` was given and left in place.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct KeptUnmatched {
+    pub path: String,
+    /// The file's item, where the path is a file of the folder.
+    pub item_id: Option<String>,
+    /// Why it was kept, as a clause that follows "is kept:".
+    pub reason: String,
+}
+
+/// What `remove_unmatched` did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct UnmatchedRemoved {
+    pub removed: Vec<UnmatchedFile>,
+    pub kept: Vec<KeptUnmatched>,
+    /// The folder's placements of the removed files' items, ended and queued
+    /// to be sent at the next sync.
+    pub ended: u64,
+}
+
+/// What Marfa last found of the programs writing to a kept file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum KeptWriters {
+    /// A program holds it open for writing.
+    Open,
+    /// Marfa cannot tell, so it deletes the file on `until` if unchanged.
+    Unknown,
+    /// Marfa has not looked since it set the file aside.
+    NotLooked,
+}
+
+/// A file a pull set aside under a `.marfa-kept-` name because a program
+/// might still write to it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct KeptFile {
+    /// Its path in the directory, under the reserved name.
+    pub path: String,
+    /// The path Marfa replaced or removed it at.
+    pub from: String,
+    pub writers: KeptWriters,
+    /// The day, in UTC and written `YYYY-MM-DD`, Marfa deletes it if still
+    /// unchanged, where `writers` is `Unknown`.
+    pub until: Option<String>,
+    pub reason: String,
+}
+
+/// What `discard_kept` did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct KeptDiscarded {
+    /// The kept files deleted, each unchanged since Marfa set it aside.
+    pub discarded: Vec<String>,
+    /// The paths a kept file a program wrote to went back to, or was kept
+    /// beside, in place of being deleted. The next sync sends it.
+    pub put_back: Vec<String>,
+    /// The files still kept, where Marfa could not reach them.
+    pub kept: Vec<KeptFile>,
+}
+
+guarded! {
+    #[uniffi::export]
+    impl Folders {
+        /// Takes away the named unmatched files, as `folders unmatched
+        /// --remove` does once the person agrees, and never the items: the
+        /// folder's placement of each ends, sent at the next sync. A file is
+        /// kept, with why, where its bytes differ from what the folder wrote,
+        /// an edit of it waits or was held, it is not unmatched, or the path
+        /// is not plainly a file inside the folder; a path named twice is
+        /// taken once. Needs no server. Refused while the first sync waits
+        /// and while the directory is paused. Asks a watch that holds the
+        /// folder to let it go, as `add` does.
+        pub fn remove_unmatched(
+            &self,
+            dir: String,
+            paths: Vec<String>,
+        ) -> Result<UnmatchedRemoved, MarfaError> {
+            let done = working(&dir, None, None)?.remove_unmatched(&paths)?;
+            Ok(UnmatchedRemoved {
+                removed: done
+                    .removed
+                    .into_iter()
+                    .map(|file| UnmatchedFile {
+                        path: file.path,
+                        item_id: file.item_id,
+                    })
+                    .collect(),
+                kept: done
+                    .kept
+                    .into_iter()
+                    .map(|file| KeptUnmatched {
+                        reason: file.kept.or(file.held).unwrap_or_default(),
+                        path: file.path,
+                        item_id: file.item_id,
+                    })
+                    .collect(),
+                ended: done.ended as u64,
+            })
+        }
+
+        /// The directory's kept files, in path order, as `folders kept`
+        /// lists them, read from the folder's store beside a watch that
+        /// holds the folder. `status` does not list them.
+        pub fn kept(&self, dir: String) -> Result<Vec<KeptFile>, MarfaError> {
+            marfa_core::Folder::kept_of(&dir)?
+                .into_iter()
+                .map(kept_file)
+                .collect()
+        }
+
+        /// Deletes each kept file that is unchanged since Marfa set it
+        /// aside, whatever programs hold it, as `folders kept --discard`
+        /// does once the person agrees. One a program wrote to goes back to
+        /// its path instead. Needs no server. Asks a watch that holds the
+        /// folder to let it go, as `add` does.
+        pub fn discard_kept(&self, dir: String) -> Result<KeptDiscarded, MarfaError> {
+            let done = working(&dir, None, None)?.discard_kept()?;
+            Ok(KeptDiscarded {
+                discarded: done.discarded,
+                put_back: done.put_back,
+                kept: done
+                    .kept
+                    .into_iter()
+                    .map(kept_file)
+                    .collect::<Result<_, _>>()?,
+            })
+        }
+    }
+}
+
+fn kept_file(file: marfa_core::KeptFile) -> Result<KeptFile, MarfaError> {
+    Ok(KeptFile {
+        writers: match file.writers {
+            "open" => KeptWriters::Open,
+            "unknown" => KeptWriters::Unknown,
+            "none" => KeptWriters::NotLooked,
+            other => {
+                return Err(MarfaError::Decoding {
+                    message: format!("a kept file names writers this build does not know: {other}"),
+                });
+            }
+        },
+        path: file.path,
+        from: file.from,
+        until: file.until,
+        reason: file.reason,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1539,6 +1693,307 @@ mod tests {
             "{error:?}"
         );
         folders.sync(path).expect("the watch let the folder go");
+    }
+
+    #[test]
+    fn a_kept_file_crosses_with_every_field() {
+        let crossed = |writers, until: Option<&str>| {
+            kept_file(marfa_core::KeptFile {
+                path: "Notes/.marfa-kept-1.tmp".into(),
+                from: "Notes/Plan.md".into(),
+                writers,
+                until: until.map(str::to_string),
+                reason: "set aside".into(),
+            })
+        };
+        assert_eq!(
+            crossed("unknown", Some("2026-12-02")).unwrap(),
+            KeptFile {
+                path: "Notes/.marfa-kept-1.tmp".into(),
+                from: "Notes/Plan.md".into(),
+                writers: KeptWriters::Unknown,
+                until: Some("2026-12-02".into()),
+                reason: "set aside".into(),
+            }
+        );
+        assert_eq!(crossed("open", None).unwrap().writers, KeptWriters::Open);
+        assert_eq!(
+            crossed("none", None).unwrap().writers,
+            KeptWriters::NotLooked
+        );
+        assert!(matches!(
+            crossed("several", None),
+            Err(MarfaError::Decoding { .. })
+        ));
+    }
+
+    #[test]
+    fn a_directory_that_is_no_folder_is_refused_and_left_as_it_is() {
+        registry();
+        let folders = Folders::new(None, None, None).unwrap();
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        std::fs::write(dir.path().join("note.md"), "mine\n").unwrap();
+        let path = dir.path().display().to_string();
+        assert!(
+            folders
+                .remove_unmatched(path.clone(), vec!["note.md".into()])
+                .is_err()
+        );
+        assert!(folders.kept(path.clone()).is_err());
+        assert!(folders.discard_kept(path).is_err());
+        let left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["note.md"]);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("note.md")).unwrap(),
+            "mine\n"
+        );
+    }
+
+    fn seeded_note(title: &str, tag: &str) -> String {
+        let seed = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/seed.sh");
+        let made = std::process::Command::new(seed)
+            .args(["note", title, "as the server wrote it", tag])
+            .output()
+            .unwrap();
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+        String::from_utf8(made.stdout).unwrap().trim().to_string()
+    }
+
+    fn file_of(folders: &Folders, dir: &str, id: &str) -> FileStatus {
+        folders
+            .status(dir.into())
+            .unwrap()
+            .files
+            .into_iter()
+            .find(|file| file.item_id.as_deref() == Some(id))
+            .unwrap_or_else(|| panic!("no file holds {id}"))
+    }
+
+    /// Asserts `call` waits out the handover and is refused naming `dir`.
+    fn refused_while_held(dir: &str, call: impl FnOnce() -> Result<(), MarfaError>) {
+        let started = Instant::now();
+        let refused = call();
+        let waited = started.elapsed();
+        assert!(
+            matches!(&refused, Err(MarfaError::ReadingHandle { message })
+                if message.contains(dir) && message.contains("did not let it go within 10 seconds")),
+            "{refused:?}"
+        );
+        assert!(
+            waited >= Duration::from_secs(10) && waited < Duration::from_secs(20),
+            "waited {waited:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn an_app_removes_an_unmatched_file_offline_keeps_the_rest_and_no_item_goes() {
+        let tag = "binding unmatched";
+        let (folders, path, _) = fixture(tag, false);
+        let removable = seeded_note("Removable", tag);
+        let edited = seeded_note("Edited", tag);
+        let matched = seeded_note("Matched", tag);
+        folders.sync(path.clone()).unwrap();
+        {
+            let (url, key) = booted();
+            let folder =
+                marfa_core::Folder::open(&path, Some(marfa_core::Server { url, key })).unwrap();
+            for id in [&removable, &edited] {
+                folder.core().remove_tag(id, tag).unwrap();
+            }
+        }
+        for _ in 0..3 {
+            folders.sync(path.clone()).unwrap();
+            if [&removable, &edited]
+                .iter()
+                .all(|id| file_of(&folders, &path, id).state == FileState::Unmatched)
+            {
+                break;
+            }
+        }
+        let removable_at = file_of(&folders, &path, &removable);
+        assert_eq!(removable_at.state, FileState::Unmatched, "{removable_at:?}");
+        let edited_at = file_of(&folders, &path, &edited).path;
+        let matched_at = file_of(&folders, &path, &matched).path;
+        let root = std::path::Path::new(&path);
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(root.join(&edited_at))
+            .and_then(|mut file| std::io::Write::write_all(&mut file, b"by hand\n"))
+            .unwrap();
+        let named = vec![
+            removable_at.path.clone(),
+            removable_at.path.clone(),
+            edited_at.clone(),
+            matched_at.clone(),
+            "../elsewhere.md".into(),
+        ];
+
+        let holder = marfa_core::Folder::open(&path, None).unwrap();
+        refused_while_held(&path, || {
+            folders
+                .remove_unmatched(path.clone(), named.clone())
+                .map(drop)
+        });
+        drop(holder);
+        assert!(
+            root.join(&removable_at.path).is_file(),
+            "refused, yet removed"
+        );
+
+        let (_, key) = booted();
+        let offline = Folders::new(Some("http://127.0.0.1:9".into()), Some(key), None).unwrap();
+        let done = offline.remove_unmatched(path.clone(), named).unwrap();
+
+        assert_eq!(
+            done.removed,
+            [UnmatchedFile {
+                path: removable_at.path.clone(),
+                item_id: Some(removable.clone()),
+            }]
+        );
+        assert_eq!(done.ended, 1);
+        let kept: Vec<(&str, &str)> = done
+            .kept
+            .iter()
+            .map(|file| (file.path.as_str(), file.reason.as_str()))
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                (
+                    edited_at.as_str(),
+                    "its bytes differ from what the folder wrote"
+                ),
+                (matched_at.as_str(), "it is not unmatched any more"),
+                ("../elsewhere.md", "it is not inside the folder"),
+            ]
+        );
+        assert!(!root.join(&removable_at.path).exists());
+        assert!(root.join(&edited_at).is_file());
+        assert!(root.join(&matched_at).is_file());
+
+        // The placement's end goes at the next sync, and the item stays.
+        folders.sync(path.clone()).unwrap();
+        let (url, key) = booted();
+        let core = crate::Core::open(
+            tempfile::tempdir()
+                .unwrap()
+                .keep()
+                .join("copy.db")
+                .display()
+                .to_string(),
+            Some(url),
+            Some(key),
+            None,
+        )
+        .unwrap();
+        core.hydrate(vec!["core.note".into()], crate::SliceTier::All, None)
+            .unwrap();
+        let item = core.get(removable.clone()).unwrap();
+        assert!(
+            item.is_some_and(|item| item.state == crate::ItemState::Active),
+            "the removed file's item went"
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn an_app_lists_kept_files_then_discards_them_and_puts_back_one_a_program_wrote() {
+        let tag = "binding kept";
+        let (folders, path, _) = fixture(tag, false);
+        let ids = [seeded_note("Plan", tag), seeded_note("Draft", tag)];
+        folders.sync(path.clone()).unwrap();
+        let froms: Vec<String> = ids
+            .iter()
+            .map(|id| file_of(&folders, &path, id).path)
+            .collect();
+        {
+            let folder = marfa_core::Folder::open(&path, None).unwrap();
+            for id in &ids {
+                let mut properties = serde_json::Map::new();
+                properties.insert("body".into(), "changed elsewhere".into());
+                folder
+                    .core()
+                    .update_item(
+                        id,
+                        &marfa_core::Edit {
+                            properties,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+            }
+        }
+        {
+            let _unknown = marfa_core::fault::fail_on_this_thread("writers-unknown");
+            folders.sync(path.clone()).unwrap();
+            folders.sync(path.clone()).unwrap();
+        }
+
+        let mut kept = folders.kept(path.clone()).unwrap();
+        kept.sort_by(|a, b| a.from.cmp(&b.from));
+        let mut expected = froms.clone();
+        expected.sort();
+        assert_eq!(
+            kept.iter()
+                .map(|file| file.from.clone())
+                .collect::<Vec<_>>(),
+            expected,
+            "{kept:?}"
+        );
+        for file in &kept {
+            assert!(file.path.contains(".marfa-kept-"), "{file:?}");
+            assert_eq!(file.writers, KeptWriters::Unknown, "{file:?}");
+            assert!(file.until.is_some() && !file.reason.is_empty(), "{file:?}");
+        }
+        let root = std::path::Path::new(&path);
+        let (written, unchanged) = (&kept[0], &kept[1]);
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(root.join(&written.path))
+            .and_then(|mut file| std::io::Write::write_all(&mut file, b"what the program wrote\n"))
+            .unwrap();
+
+        let holder = marfa_core::Folder::open(&path, None).unwrap();
+        refused_while_held(&path, || folders.discard_kept(path.clone()).map(drop));
+        drop(holder);
+        assert_eq!(
+            folders.kept(path.clone()).unwrap().len(),
+            2,
+            "refused, yet discarded"
+        );
+
+        let (_, key) = booted();
+        let offline = Folders::new(Some("http://127.0.0.1:9".into()), Some(key), None).unwrap();
+        let done = offline.discard_kept(path.clone()).unwrap();
+
+        assert_eq!(
+            done.discarded,
+            std::slice::from_ref(&unchanged.path),
+            "{done:?}"
+        );
+        assert_eq!(
+            done.put_back,
+            std::slice::from_ref(&written.from),
+            "{done:?}"
+        );
+        assert!(done.kept.is_empty(), "{done:?}");
+        assert!(folders.kept(path.clone()).unwrap().is_empty());
+        assert!(!root.join(&unchanged.path).exists());
+        assert!(
+            std::fs::read_to_string(root.join(&written.from))
+                .unwrap()
+                .contains("what the program wrote")
+        );
     }
 
     /// Answers every renewal with the booted server's key, and records the
