@@ -3,6 +3,7 @@ import {
   appendFileSync,
   existsSync,
   readdirSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -16,6 +17,7 @@ import {
 } from "../../device/marfa-answers.js";
 import type { FolderDoor } from "../../device/folder-door.js";
 import { keychainEnv } from "../../utils/keychain.js";
+import { openBindingFolder } from "./binding-folders.shared.js";
 import { folderHarness, requireBinary, type FolderHarness } from "./harness.js";
 import {
   EdgeDoor,
@@ -439,6 +441,179 @@ describe("a folder's unmatched files", () => {
       placedPaths(edges),
       "a file kept with the person's save in it lost its item's placement",
     ).toEqual(["Note 1.md", "Note 2.md"]);
+  });
+
+  it.each([
+    "crash-before-take-away",
+    "crash-after-withdraw",
+    "crash-after-take-away",
+  ])(
+    "never deletes the item of a file whose removal stopped at %s, as it does one deleted by hand",
+    async (point) => {
+      const { harness: made, door } = await unmatchedFolder(
+        `unmatched-stopped-${point}`,
+        2,
+      );
+      await expect(
+        withFault(`${point}=Note 1.md`, () =>
+          made.folder.removeUnmatched({ yes: true }),
+        ),
+        "the removal did not stop where the fault asks, so nothing below is about a stopped one",
+      ).rejects.toThrow(/crashing at .*Note 1\.md/);
+      // The witness: the same folder sends a delete for a file a person deleted.
+      rmSync(join(made.dir, "Note 2.md"));
+      const graceStarted = Date.now();
+      await vi.waitFor(
+        async () => {
+          expect((await made.folder.scan()).ok).toBe(true);
+          const queue = await made.folder.device().queue();
+          expect(queue.ok).toBe(true);
+          if (!queue.ok) return;
+          const deleted = queue.value
+            .filter((row) => row.kind === "delete_item")
+            .map((row) => row.item_id);
+          expect(
+            (Date.now() - graceStarted) / 1000,
+            "the rename grace has not run out, so a missing file would not be a delete yet",
+          ).toBeGreaterThan(6);
+          expect(deleted).toEqual([note(2).id]);
+        },
+        { timeout: 25_000, interval: 1_000 },
+      );
+      const pushed = await made.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(door.get(note(1).id)?.version, "the item was changed").toBe(2);
+      expect(sentUpdates(made).map((sent) => sent.id)).not.toContain(
+        note(1).id,
+      );
+    },
+  );
+
+  it("never deletes the item of a file whose removal failed after the file left its path, as it does one deleted by hand", async () => {
+    const { harness: made, door } = await unmatchedFolder(
+      "unmatched-failed-aside",
+      2,
+    );
+    // Kept by the removal, so it stays bound for the witness below.
+    appendFileSync(join(made.dir, "Note 2.md"), "changed by hand\n");
+    const removed = await withFault("withdraw-look-refused=Note 1.md", () =>
+      made.folder.removeUnmatched({ yes: true }),
+    );
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) return;
+    expect(
+      removed.value.kept.map((file) => file.path).sort(),
+      "the removal did not fail where the fault asks, so nothing below is about a failed one",
+    ).toEqual(["Note 1.md", "Note 2.md"]);
+    expect(existsSync(join(made.dir, "Note 1.md"))).toBe(false);
+    // The witness: the same folder sends a delete for a file a person deleted.
+    rmSync(join(made.dir, "Note 2.md"));
+    const graceStarted = Date.now();
+    await vi.waitFor(
+      async () => {
+        expect((await made.folder.scan()).ok).toBe(true);
+        const queue = await made.folder.device().queue();
+        expect(queue.ok).toBe(true);
+        if (!queue.ok) return;
+        const deleted = queue.value
+          .filter((row) => row.kind === "delete_item")
+          .map((row) => row.item_id);
+        expect(
+          (Date.now() - graceStarted) / 1000,
+          "the rename grace has not run out, so a missing file would not be a delete yet",
+        ).toBeGreaterThan(6);
+        expect(deleted).toEqual([note(2).id]);
+      },
+      { timeout: 25_000, interval: 1_000 },
+    );
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(door.get(note(1).id)?.version, "the item was changed").toBe(2);
+  });
+
+  it("holds the binding of a file whose removal stopped where another file took its path, and never deletes its item", async () => {
+    const { harness: made, door } = await unmatchedFolder(
+      "unmatched-stopped-replaced",
+      2,
+    );
+    await expect(
+      withFault("crash-before-take-away=Note 1.md", () =>
+        made.folder.removeUnmatched({ yes: true }),
+      ),
+      "the removal did not stop where the fault asks, so nothing below is about a stopped one",
+    ).rejects.toThrow(/crashing at .*Note 1\.md/);
+    rmSync(join(made.dir, "Note 1.md"));
+    writeFileSync(join(made.dir, "Note 1.md"), "another file\n");
+    // The witness: the same folder sends a delete for a file a person deleted.
+    rmSync(join(made.dir, "Note 2.md"));
+    const graceStarted = Date.now();
+    await vi.waitFor(
+      async () => {
+        expect((await made.folder.scan()).ok).toBe(true);
+        const queue = await made.folder.device().queue();
+        expect(queue.ok).toBe(true);
+        if (!queue.ok) return;
+        expect(
+          (Date.now() - graceStarted) / 1000,
+          "the rename grace has not run out, so a missing file would not be a delete yet",
+        ).toBeGreaterThan(6);
+        expect(
+          queue.value
+            .filter((row) => row.kind === "delete_item")
+            .map((row) => row.item_id),
+        ).toEqual([note(2).id]);
+      },
+      { timeout: 25_000, interval: 1_000 },
+    );
+    const status = await made.folder.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    if (!status.ok) return;
+    expect(
+      status.value.files.filter((file) => file.path === "Note 1.md"),
+    ).toEqual([
+      expect.objectContaining({
+        item_id: note(1).id,
+        status: "held",
+        flag: "removing",
+        reason: expect.stringMatching(/another file is at its path/),
+      }),
+    ]);
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(door.get(note(1).id)?.version, "the item was changed").toBe(2);
+  });
+
+  it("removes through a binding the unmatched files it may, and keeps the rest and says why", async () => {
+    const { harness: made, edges } = await unmatchedFolder("unmatched-binding");
+    appendFileSync(join(made.dir, "Note 2.md"), "changed by hand\n");
+    const changed = read(made, "Note 2.md");
+    const bound = await openBindingFolder(made);
+    try {
+      const removed = await bound.bound.removeUnmatched([
+        "Note 1.md",
+        "Note 2.md",
+      ]);
+      expect(removed.ok, JSON.stringify(removed)).toBe(true);
+      if (!removed.ok) return;
+      expect(removed.value.removed).toEqual([
+        { path: "Note 1.md", itemId: note(1).id },
+      ]);
+      expect(removed.value.ended).toBe(1);
+      expect(removed.value.kept).toEqual([
+        {
+          path: "Note 2.md",
+          itemId: note(2).id,
+          reason: expect.stringMatching(/differ from what the folder wrote/),
+        },
+      ]);
+    } finally {
+      await bound.device.close();
+    }
+    expect(files(made)).toEqual(["Note 2.md", "Note 3.md"]);
+    expect(read(made, "Note 2.md")).toBe(changed);
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(placedPaths(edges)).toEqual(["Note 2.md", "Note 3.md"]);
   });
 
   it("takes away a new file whose item the query's states do not hold, as it takes any, and ends its record", async () => {

@@ -1160,37 +1160,53 @@ While a device keeps a file under a name of the form `.marfa-kept-<id>.tmp` beca
 
 ### `folder-files/write-retained-listed`
 
-The CLI MUST list in `folders kept` each file a folder keeps because a program may still write to it, with the path it came from where its record names it, and whether the last look found a program holding it open, could not tell, or has not looked yet.
+A device MUST list, in `folders kept` and through a binding, each file a folder keeps because a program may still write to it, with the path it came from where its record names it, and whether the last look found a program holding it open, could not tell, or has not looked yet.
 
-**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`, `› keeps a file it set aside while a program holds it open, and deletes it once the program closes it unchanged`.
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`, `› keeps a file it set aside while a program holds it open, and deletes it once the program closes it unchanged`, `› lists through a binding a file a folder keeps, and discards it %s as folders kept does`.
 
 ### `folder-files/write-retained-discard`
 
-When the owner confirms `folders kept --discard`, the CLI MUST settle each file the folder keeps under a record it can read as `folder-files/write-retained-put-back`, `folder-files/write-retained-beside` and `folder-files/write-retained-discarded` settle it, taking it that no program holds the file open for writing.
+When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST settle each file the folder keeps under a record it can read as `folder-files/write-retained-put-back`, `folder-files/write-retained-beside` and `folder-files/write-retained-discarded` settle it, taking it that no program holds the file open for writing.
 
-**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`, `› puts back a file it kept that a program wrote to, when the owner discards the files it keeps`.
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`, `› puts back a file it kept that a program wrote to, when the owner discards the files it keeps`, `› lists through a binding a file a folder keeps, and discards it %s as folders kept does`.
 
 ### `folder-files/write-retained-unread-listed`
 
-The CLI MUST list in `folders kept` each file a folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, with the reason `Marfa could not read its record`.
+A device MUST list, in `folders kept` and through a binding, each file a folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, with the reason `Marfa could not read its record`.
 
 **Reason:** a device cannot tell whether a program wrote to such a file, so it keeps the file until the owner decides.
 
-**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps under a record it cannot read, and deletes it when the owner discards it`.
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps under a record it cannot read, and deletes it when the owner discards it`, `› lists through a binding a file kept under a record it cannot read, and discards it only %s as set aside`.
 
 ### `folder-files/write-retained-unread-discard`
 
-When the owner confirms `folders kept --discard`, the CLI MUST delete each file the folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, where the file holds the bytes the record says were set aside.
+When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST delete each file the folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, where the file holds the bytes the record says were set aside.
 
-**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps under a record it cannot read, and deletes it when the owner discards it`.
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps under a record it cannot read, and deletes it when the owner discards it`, `› lists through a binding a file kept under a record it cannot read, and discards it only %s as set aside`.
 
 ### `folder-files/write-retained-unread-written-kept`
 
-When the owner confirms `folders kept --discard`, the CLI MUST NOT delete a file the folder keeps under a record it cannot read where the file's bytes differ from the bytes the record says were set aside, or the record holds no hash of them.
+When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST NOT delete a file the folder keeps under a record it cannot read where the file's bytes differ from the bytes the record says were set aside, or the record holds no hash of them.
 
 **Reason:** a program may have written to the file after it was set aside, and with its record unread the device cannot put the file back, so it keeps the file listed for the owner to look at.
 
-**Tests:** `device/folders-open-writer.test.ts › keeps a file it keeps under a record it cannot read when a program wrote to it, though the owner discards`.
+**Tests:** `device/folders-open-writer.test.ts › keeps a file it keeps under a record it cannot read when a program wrote to it, though the owner discards`, `› lists through a binding a file kept under a record it cannot read, and discards it only %s as set aside`.
+
+### `folder-files/write-retained-discard-written-meanwhile`
+
+If a program writes to a file a folder keeps under a name of the form `.marfa-kept-<id>.tmp` after the owner's discard begins and before the device's last look at the file, then a device MUST NOT delete the file.
+
+**Reason:** the owner agreed to lose the file as it was, not a save made as the discard ran. The device moves the file to a name of its own before that last look, so a save by name after it reaches no file the device deletes. A file it does not delete is listed where it is (`folder-files/write-retained-discard-left-listed`) and settled as `folder-files/write-retained-discard` and `folder-files/write-retained-unread-written-kept` say.
+
+**Tests:** `device/folders-open-writer.test.ts › never deletes a kept file a program writes to as the owner discards it, where its record %s`.
+
+### `folder-files/write-retained-discard-left-listed`
+
+If a discard leaves a kept file under a name other than the one it was listed at, as when the device stops or cannot delete the file, then a device MUST list the file in `folders kept` at the name that holds it until the file is put back or deleted.
+
+**Reason:** the owner needs the file's current name to recover or delete it.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a kept file under the name it is left at where a discard %s, until it is deleted`.
 
 ## Deletion, purges and missing directories
 

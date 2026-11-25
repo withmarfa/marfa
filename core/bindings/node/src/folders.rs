@@ -252,6 +252,55 @@ pub struct RestoredRemoval {
     pub restored: i64,
     pub pull: FolderPull,
 }
+/// An unmatched file `removeUnmatched` took away. Its item is unchanged.
+#[napi(object)]
+pub struct UnmatchedFile {
+    pub path: String,
+    pub item_id: Option<String>,
+}
+/// A path `removeUnmatched` was given and left in place, with why, as a
+/// clause that follows "is kept:".
+#[napi(object)]
+pub struct KeptUnmatched {
+    pub path: String,
+    pub item_id: Option<String>,
+    pub reason: String,
+}
+/// What `removeUnmatched` did. `ended` counts the folder's placements of the
+/// removed files' items, ended and queued to be sent at the next sync.
+#[napi(object)]
+pub struct UnmatchedRemoved {
+    pub removed: Vec<UnmatchedFile>,
+    pub kept: Vec<KeptUnmatched>,
+    pub ended: i64,
+}
+/// What Marfa last found of the programs writing to a kept file: `not_looked`
+/// where it has not looked since it set the file aside.
+#[napi(string_enum = "snake_case")]
+pub enum KeptWriters {
+    Open,
+    Unknown,
+    NotLooked,
+}
+/// A file a pull set aside under a `.marfa-kept-` name because a program
+/// might still write to it. `until` is the UTC discard date of an unchanged
+/// file, as `YYYY-MM-DD`, where Marfa cannot tell whether a program writes.
+#[napi(object)]
+pub struct KeptFile {
+    pub path: String,
+    pub from: String,
+    pub writers: KeptWriters,
+    pub until: Option<String>,
+    pub reason: String,
+}
+/// What `discardKept` did: the kept files deleted, the paths a written kept
+/// file went back to or was kept beside, and the records that remain.
+#[napi(object)]
+pub struct KeptDiscarded {
+    pub discarded: Vec<String>,
+    pub put_back: Vec<String>,
+    pub kept: Vec<KeptFile>,
+}
 #[allow(clippy::large_enum_variant)]
 #[napi(discriminant = "kind", discriminant_case = "camelCase")]
 pub enum FolderEvent {
@@ -383,6 +432,31 @@ impl Folders {
     #[napi(ts_return_type = "Promise<FolderRemoval>")]
     pub fn remove(&self, dir: String) -> AsyncTask<RemoveFolder> {
         AsyncTask::new(RemoveFolder { dir, failed: None })
+    }
+
+    /// Takes away the named unmatched files and never their items. Needs no
+    /// server, and asks a watch that holds the folder to let it go.
+    #[napi(ts_return_type = "Promise<UnmatchedRemoved>")]
+    pub fn remove_unmatched(&self, dir: String, paths: Vec<String>) -> AsyncTask<RemoveUnmatched> {
+        AsyncTask::new(RemoveUnmatched {
+            dir,
+            paths,
+            failed: None,
+        })
+    }
+
+    /// Lists kept-file records in path order, even while a watch holds the folder.
+    #[napi(ts_return_type = "Promise<Array<KeptFile>>")]
+    pub fn kept(&self, dir: String) -> AsyncTask<ReadKept> {
+        AsyncTask::new(ReadKept { dir, failed: None })
+    }
+
+    /// Deletes each kept file unchanged since Marfa set it aside; one a
+    /// program wrote to goes back instead. Needs no server, and asks a watch
+    /// that holds the folder to let it go.
+    #[napi(ts_return_type = "Promise<KeptDiscarded>")]
+    pub fn discard_kept(&self, dir: String) -> AsyncTask<DiscardKept> {
+        AsyncTask::new(DiscardKept { dir, failed: None })
     }
 
     /// The callbacks share one event-loop queue, so the end follows every event.
@@ -725,6 +799,120 @@ impl Task for RestoreRemoval {
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
         Ok(report)
     }
+}
+
+pub struct RemoveUnmatched {
+    dir: String,
+    paths: Vec<String>,
+    failed: Option<CoreError>,
+}
+#[napi]
+impl Task for RemoveUnmatched {
+    type Output = UnmatchedRemoved;
+    type JsValue = UnmatchedRemoved;
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rejected(env, self.failed.take(), error, &self.dir))
+    }
+    fn compute(&mut self) -> Result<Self::Output> {
+        (|| -> marfa_core::Result<Self::Output> {
+            let done = working(&self.dir, None)?.remove_unmatched(&self.paths)?;
+            Ok(UnmatchedRemoved {
+                removed: done
+                    .removed
+                    .into_iter()
+                    .map(|file| UnmatchedFile {
+                        path: file.path,
+                        item_id: file.item_id,
+                    })
+                    .collect(),
+                kept: done
+                    .kept
+                    .into_iter()
+                    .map(|file| KeptUnmatched {
+                        reason: file.kept.or(file.held).unwrap_or_default(),
+                        path: file.path,
+                        item_id: file.item_id,
+                    })
+                    .collect(),
+                ended: count(done.ended as u64),
+            })
+        })()
+        .map_err(|error| record(&mut self.failed, error))
+    }
+    fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
+        Ok(report)
+    }
+}
+
+pub struct ReadKept {
+    dir: String,
+    failed: Option<CoreError>,
+}
+#[napi]
+impl Task for ReadKept {
+    type Output = Vec<KeptFile>;
+    type JsValue = Vec<KeptFile>;
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rejected(env, self.failed.take(), error, &self.dir))
+    }
+    fn compute(&mut self) -> Result<Self::Output> {
+        marfa_core::Folder::kept_of(&self.dir)
+            .and_then(|files| files.into_iter().map(kept_file).collect())
+            .map_err(|error| record(&mut self.failed, error))
+    }
+    fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
+        Ok(report)
+    }
+}
+
+pub struct DiscardKept {
+    dir: String,
+    failed: Option<CoreError>,
+}
+#[napi]
+impl Task for DiscardKept {
+    type Output = KeptDiscarded;
+    type JsValue = KeptDiscarded;
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rejected(env, self.failed.take(), error, &self.dir))
+    }
+    fn compute(&mut self) -> Result<Self::Output> {
+        (|| -> marfa_core::Result<Self::Output> {
+            let done = working(&self.dir, None)?.discard_kept()?;
+            Ok(KeptDiscarded {
+                discarded: done.discarded,
+                put_back: done.put_back,
+                kept: done
+                    .kept
+                    .into_iter()
+                    .map(kept_file)
+                    .collect::<marfa_core::Result<_>>()?,
+            })
+        })()
+        .map_err(|error| record(&mut self.failed, error))
+    }
+    fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
+        Ok(report)
+    }
+}
+
+fn kept_file(file: marfa_core::KeptFile) -> marfa_core::Result<KeptFile> {
+    Ok(KeptFile {
+        writers: match file.writers {
+            "open" => KeptWriters::Open,
+            "unknown" => KeptWriters::Unknown,
+            "none" => KeptWriters::NotLooked,
+            other => {
+                return Err(CoreError::Decoding(format!(
+                    "a kept file names writers this build does not know: {other}"
+                )));
+            }
+        },
+        path: file.path,
+        from: file.from,
+        until: file.until,
+        reason: file.reason,
+    })
 }
 
 pub struct RemoveFolder {

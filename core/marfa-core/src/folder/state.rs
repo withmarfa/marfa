@@ -392,6 +392,35 @@ fn under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreE
     Ok(found)
 }
 
+/// A removal records its intent before the file leaves its path.
+const TAKEN: &str = "folder_taken:";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Taken {
+    /// Keeps recovery from unbinding another item at the same path.
+    pub(crate) item_id: String,
+    /// The file's device and inode as the removal found it.
+    pub(crate) at: (u64, u64),
+}
+
+pub(crate) fn set_taken(conn: &Connection, path: &str, taken: &Taken) -> Result<(), CoreError> {
+    let value =
+        serde_json::to_string(taken).map_err(|error| CoreError::Store(error.to_string()))?;
+    crate::store::meta_set(conn, &format!("{TAKEN}{path}"), &value)
+}
+
+pub(crate) fn clear_taken(conn: &Connection, path: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{TAKEN}{path}"))
+}
+
+/// An unreadable record still identifies its path by its key.
+pub(crate) fn taken(conn: &Connection) -> Result<Vec<(String, Option<Taken>)>, CoreError> {
+    Ok(under(conn, TAKEN)?
+        .into_iter()
+        .map(|(path, value)| (path, serde_json::from_str(&value).ok()))
+        .collect())
+}
+
 /// One `meta` row per item a pull last moved, naming the path its file left,
 /// where an editor that did not follow the move may save it again, and the
 /// item's version when it moved. Cleared once the moved file is edited or
@@ -626,6 +655,64 @@ pub(crate) fn any_retained(conn: &Connection) -> Result<bool, CoreError> {
         )
         .optional()?
         .is_some())
+}
+
+const DISCARDING: &str = "folder_discarding:";
+
+/// The private name must be recoverable before the rename.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Discarding {
+    /// The id of the kept file's record.
+    pub(crate) id: String,
+    /// The directory both names are in, as in [`Retained`].
+    pub(crate) aside: String,
+    /// Its reserved name, which it goes back to where that is free.
+    pub(crate) kept: String,
+    pub(crate) private: String,
+    /// The path it came from, where its record names one.
+    pub(crate) from: String,
+    /// Why the discard left it under the private name, once it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) left: Option<String>,
+}
+
+impl Discarding {
+    fn key(&self) -> String {
+        format!("{DISCARDING}{}", super::joined(&self.aside, &self.private))
+    }
+}
+
+pub(crate) fn mark_discarding(
+    conn: &Connection,
+    discarding: Discarding,
+    mark: super::landing::Mark<'_>,
+) -> Result<(), CoreError> {
+    let left = match mark {
+        super::landing::Mark::Free => return crate::store::meta_delete(conn, &discarding.key()),
+        super::landing::Mark::Moving => None,
+        super::landing::Mark::Left(reason) => Some(reason.to_string()),
+    };
+    set_discarding(conn, &Discarding { left, ..discarding })
+}
+
+pub(crate) fn set_discarding(conn: &Connection, discarding: &Discarding) -> Result<(), CoreError> {
+    let value =
+        serde_json::to_string(discarding).map_err(|error| CoreError::Store(error.to_string()))?;
+    crate::store::meta_set(conn, &discarding.key(), &value)
+}
+
+/// The key retains the private path even if the value cannot be read.
+pub(crate) fn discarding(
+    conn: &Connection,
+) -> Result<Vec<(String, Option<Discarding>)>, CoreError> {
+    Ok(under(conn, DISCARDING)?
+        .into_iter()
+        .map(|(path, value)| (path, serde_json::from_str(&value).ok()))
+        .collect())
+}
+
+pub(crate) fn clear_discarding_at(conn: &Connection, path: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{DISCARDING}{path}"))
 }
 
 const KEPT: &str = "folder_kept:";

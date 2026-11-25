@@ -1011,6 +1011,14 @@ export type BindingFolderEvent =
         | "unlisted";
     };
 
+export interface BindingKeptFile {
+  path: string;
+  from: string;
+  writers: "open" | "unknown" | "not_looked";
+  until?: string;
+  reason: string;
+}
+
 /** One folder worked through the host's Folders binding. */
 export class BindingFolder {
   constructor(
@@ -1049,6 +1057,23 @@ export class BindingFolder {
   }
   remove(): Call<FolderRemovalJson> {
     return this.device.folderCall("remove", this.dir);
+  }
+  removeUnmatched(paths: string[]): Call<{
+    removed: Array<{ path: string; itemId?: string }>;
+    kept: Array<{ path: string; itemId?: string; reason: string }>;
+    ended: number;
+  }> {
+    return this.device.folderCall("removeUnmatched", this.dir, paths);
+  }
+  kept(): Call<BindingKeptFile[]> {
+    return this.device.folderCall("kept", this.dir);
+  }
+  discardKept(): Call<{
+    discarded: string[];
+    putBack: string[];
+    kept: BindingKeptFile[];
+  }> {
+    return this.device.folderCall("discardKept", this.dir);
   }
   /** Pauses the directory's sync; false where it was paused already (`folder-sync/pause-running-watch-stays`). */
   pause(): Call<boolean> {

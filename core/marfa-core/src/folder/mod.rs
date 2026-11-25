@@ -1423,6 +1423,24 @@ impl landing::Ledger for Rows<'_> {
         .map_err(|error| std::io::Error::other(error.to_string()))
     }
 
+    fn discarding(
+        &self,
+        retained: &landing::Retained,
+        private: &Path,
+        mark: landing::Mark<'_>,
+    ) -> std::io::Result<()> {
+        let discarding = state::Discarding {
+            id: retained.id.clone(),
+            aside: self.aside.clone(),
+            kept: retained.kept.clone(),
+            private: private.to_string_lossy().into_owned(),
+            from: joined(&self.dir, &retained.target),
+            left: None,
+        };
+        state::mark_discarding(self.conn, discarding, mark)
+            .map_err(|error| std::io::Error::other(error.to_string()))
+    }
+
     fn kept(&self, name: &Path, aside: bool, reason: String) {
         // The file is kept whether or not the report can name it.
         let _ = state::put_kept(
@@ -7426,7 +7444,7 @@ mod tests {
 
     /// A new file `new.md` made in a folder of active notes, whose line says
     /// `state`, created and answered, with the pulls that follow.
-    fn new_file_in_active_folder(state_line: &str) -> (ScannedDir, Folder, String) {
+    pub(super) fn new_file_in_active_folder(state_line: &str) -> (ScannedDir, Folder, String) {
         let (dir, folder) = scanned_folder_with(
             serde_json::json!({ "query": { "state": ["active"] } }),
             None,
@@ -7448,7 +7466,7 @@ mod tests {
         (dir, folder, id)
     }
 
-    fn set_item_state(folder: &Folder, id: &str, state: &str) {
+    pub(super) fn set_item_state(folder: &Folder, id: &str, state: &str) {
         folder
             .core
             .conn()
@@ -8115,7 +8133,7 @@ mod tests {
         assert_eq!(folder.scan().unwrap().paused_additions, 0);
     }
 
-    fn write_note(dir: &Path, name: &str, lines: &str) {
+    pub(super) fn write_note(dir: &Path, name: &str, lines: &str) {
         std::fs::write(
             dir.join(name),
             format!("---\ntitle: {name}\n{lines}---\nbody\n"),

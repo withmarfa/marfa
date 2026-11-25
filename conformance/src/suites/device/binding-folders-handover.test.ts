@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   BindingDevice,
   BindingFolderEvent,
+  Call,
   Subscription,
 } from "../../device/binding-adapter.js";
 import { copyLiveReplay } from "../../device/marfa-answers.js";
@@ -46,6 +47,28 @@ async function watched(label: string): Promise<
   return { ...harness, watch, served };
 }
 
+type Asked =
+  | "add"
+  | "sync"
+  | "confirm"
+  | "restore"
+  | "remove"
+  | "removeUnmatched"
+  | "discardKept";
+
+/** Starts the binding call `method` names on the harness's folder. */
+function asked(harness: BindingFolderHarness, method: Asked): Call<unknown> {
+  const { bound } = harness;
+  switch (method) {
+    case "add":
+      return bound.add(harness.settings.id);
+    case "removeUnmatched":
+      return bound.removeUnmatched(["none.md"]);
+    default:
+      return bound[method]();
+  }
+}
+
 /**
  * Moves the engine's clock until `done`, one step for each step of real time.
  * A command asking for a folder gives up after ten seconds of that clock, and
@@ -70,14 +93,21 @@ async function advanceUntil(
 }
 
 describe("folder binding handover", () => {
-  it.each(["add", "sync", "confirm", "restore", "remove"] as const)(
+  it.each([
+    "add",
+    "sync",
+    "confirm",
+    "restore",
+    "remove",
+    "removeUnmatched",
+    "discardKept",
+  ] as const)(
     "lets a watch go to %s and tells each handover once",
     async (method) => {
       const harness = await watched(`binding-handover-${method}`);
-      const { device, bound, watch } = harness;
+      const { device, watch } = harness;
       await device.hooks.hold("folder-handed-over");
-      const call =
-        method === "add" ? bound.add(harness.settings.id) : bound[method]();
+      const call = asked(harness, method);
       await advanceUntil(
         harness,
         async () =>
@@ -164,39 +194,42 @@ describe("folder binding handover", () => {
     expect(started.value.kinds).not.toContain("watching");
   });
 
-  it("refuses an asking call at ten seconds without changing the held folder", async () => {
-    const harness = await watched("binding-handover-deadline");
-    const { device, bound, watch } = harness;
-    await device.hooks.hold("folder-pass-start");
-    await advanceUntil(
-      harness,
-      async () => (await device.hooks.waiting("folder-pass-start")) > 0,
-    );
-    const before = JSON.stringify(await bound.status());
-    const writes = harness.server.requests.filter(
-      (request) => request.method !== "GET",
-    ).length;
-    const call = bound.remove();
-    await untilReached(device, "folder-handover-wait");
-    await waitingFor(device, 50);
-    await device.clock.advance(9_950);
-    await untilReached(device, "folder-handover-wait", 2);
-    await waitingFor(device, 50);
-    expect(call.settled).toBe(false);
-    await device.clock.advance(50);
-    const result = await call;
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.refusal.code).toBe("reading_handle");
-      expect(result.refusal.raw).toContain(harness.dir);
-    }
-    expect(JSON.stringify(await bound.status())).toBe(before);
-    expect(
-      harness.server.requests.filter((request) => request.method !== "GET"),
-    ).toHaveLength(writes);
-    expect(watch.kinds).not.toContain("handedOver");
-    await device.hooks.release("folder-pass-start");
-  });
+  it.each(["remove", "removeUnmatched", "discardKept"] as const)(
+    "refuses an asking call to %s at ten seconds without changing the held folder",
+    async (method) => {
+      const harness = await watched(`binding-handover-deadline-${method}`);
+      const { device, bound, watch } = harness;
+      await device.hooks.hold("folder-pass-start");
+      await advanceUntil(
+        harness,
+        async () => (await device.hooks.waiting("folder-pass-start")) > 0,
+      );
+      const before = JSON.stringify(await bound.status());
+      const writes = harness.server.requests.filter(
+        (request) => request.method !== "GET",
+      ).length;
+      const call = asked(harness, method);
+      await untilReached(device, "folder-handover-wait");
+      await waitingFor(device, 50);
+      await device.clock.advance(9_950);
+      await untilReached(device, "folder-handover-wait", 2);
+      await waitingFor(device, 50);
+      expect(call.settled).toBe(false);
+      await device.clock.advance(50);
+      const result = await call;
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.refusal.code).toBe("reading_handle");
+        expect(result.refusal.raw).toContain(harness.dir);
+      }
+      expect(JSON.stringify(await bound.status())).toBe(before);
+      expect(
+        harness.server.requests.filter((request) => request.method !== "GET"),
+      ).toHaveLength(writes);
+      expect(watch.kinds).not.toContain("handedOver");
+      await device.hooks.release("folder-pass-start");
+    },
+  );
 
   it("finishes the scan step before letting the caller work the folder", async () => {
     const harness = await watched("binding-handover-step");

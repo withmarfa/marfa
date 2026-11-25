@@ -1498,7 +1498,7 @@ While a running `folders watch` has let a folder go to a command, a device MUST 
 
 ### `folder-setup/handover-binding-asked`
 
-Where an app works a folder through a binding, when a call that adds, syncs, confirms, restores or removes the folder finds it held by a running watch, a device MUST work the folder once the watch lets it go.
+Where an app works a folder through a binding, when a call that adds, syncs, confirms, restores or removes the folder, removes its unmatched files or discards its kept files finds it held by a running watch, a device MUST work the folder once the watch lets it go.
 
 **Reason:** A watch that syncs every folder from login holds each of them, so a call that did not ask would be refused for as long as the watch runs.
 
@@ -1510,7 +1510,7 @@ If the process that holds a folder does not let it go within 10 seconds of a bin
 
 **Reason:** A watch that is suspended or stuck never lets go, and a call must not wait on it without end. The refusal names the folder, so an app can say which one.
 
-**Tests:** `device/binding-folders-handover.test.ts › refuses an asking call at ten seconds without changing the held folder`.
+**Tests:** `device/binding-folders-handover.test.ts › refuses an asking call to %s at ten seconds without changing the held folder`.
 
 ### `folder-setup/handover-binding-lets-go`
 

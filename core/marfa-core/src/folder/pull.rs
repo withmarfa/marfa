@@ -215,6 +215,31 @@ impl PullReport {
     }
 }
 
+pub(super) const NOT_INSIDE: &str = "it is not inside the folder: a directory on its path is a symbolic link or no longer a directory";
+
+fn beyond_a_link(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotADirectory || super::is_loop(error)
+}
+
+/// What recovery finds at the path of a removal a stop left.
+pub(super) enum TakenNow {
+    /// The recorded file is at its path again.
+    Present,
+    /// Nothing, with no link on the path.
+    Absent,
+    /// Why it cannot tell.
+    Unsure(String),
+}
+
+/// The status flag for an unresolved removal.
+pub(super) const REMOVING: &str = "removing";
+
+fn held_removal(why: &str) -> String {
+    format!(
+        "Marfa stopped while it took this file away, and cannot tell whether the file is still there: {why}. Its item is not deleted while it cannot tell; once the path holds the file as it was, or a removal reaches the file again, it settles"
+    )
+}
+
 /// What became of a file a pull or a confirmation took away.
 pub(super) enum TakenAway {
     /// The file is gone and its binding ended, with this many placements.
@@ -1920,32 +1945,46 @@ impl Folder {
 
     /// A journal row here is a file put back since its scan, so it asks for
     /// nothing now. Keeps the file bound where it changed since it was found
-    /// to be the folder's own, since the person's edit is theirs, or where
-    /// the volume cannot remove it safely.
+    /// to be the folder's own, since the person's edit is theirs, where the
+    /// volume cannot remove it safely, or where its path is no longer plainly
+    /// inside the folder.
     pub(super) fn take_away(
         &self,
         row: &state::Bound,
         context: &mut crate::reach::Context,
     ) -> Result<TakenAway> {
-        // First: a failure leaves the file and its binding, and the next pass
-        // finds no placement left to end and takes the file away.
+        if !plainly_inside(&self.root_dir, &row.path) {
+            return Ok(TakenAway::Refused(NOT_INSIDE.into()));
+        }
+        // Keep the binding until its placement can be ended.
         let ended = self.end_placement(&row.item_id, &row.path)?;
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-take-away-ended");
         let conn = self.core.conn()?;
         context.check(&conn)?;
         let path = self.root.join(&row.path);
-        if plainly_inside(&self.root_dir, &row.path) {
-            let still =
-                |found: &[u8]| row.written_hash.as_deref() == Some(state::hash(found).as_str());
-            if self.exists(&path) {
-                match self.remove_file(&conn, &path, still) {
-                    Ok(true) => {}
-                    Ok(false) if self.exists(&path) => return Ok(TakenAway::Kept),
-                    Ok(false) => {}
+        match self.file_identity(&path) {
+            Ok(Some(at)) => {
+                let taken = state::Taken {
+                    item_id: row.item_id.clone(),
+                    at,
+                };
+                state::set_taken(&conn, &row.path, &taken)?;
+                landing::stop_if_asked(&path, "crash-before-take-away");
+                let still =
+                    |found: &[u8]| row.written_hash.as_deref() == Some(state::hash(found).as_str());
+                let removed = self.remove_file(&conn, &path, still);
+                let kept = match &removed {
+                    Ok(true) => None,
+                    Ok(false) => Some(TakenAway::Kept),
                     Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
-                        return Ok(TakenAway::Refused(error.to_string()));
+                        Some(TakenAway::Refused(error.to_string()))
                     }
-                    Err(error) if landing::is_busy(&error) => {
-                        return Ok(TakenAway::Busy(error.to_string()));
+                    Err(error) if landing::is_busy(error) => {
+                        Some(TakenAway::Busy(error.to_string()))
+                    }
+                    Err(error) if beyond_a_link(error) => {
+                        Some(TakenAway::Refused(NOT_INSIDE.into()))
                     }
                     Err(error) => {
                         return Err(CoreError::Store(format!(
@@ -1953,12 +1992,125 @@ impl Folder {
                             path.display()
                         )));
                     }
+                };
+                if let Some(kept) = kept {
+                    match self.file_identity(&path) {
+                        Ok(Some(_)) => {
+                            state::clear_taken(&conn, &row.path)?;
+                            return Ok(kept);
+                        }
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::NotFound
+                                && matches!(removed, Ok(false)) => {}
+                        _ => return Ok(kept),
+                    }
+                }
+                landing::stop_if_asked(&path, "crash-after-take-away");
+            }
+            Ok(None) => {
+                return Ok(TakenAway::Refused(
+                    "it is no longer a file: something else is at its path".into(),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if beyond_a_link(&error) => {
+                return Ok(TakenAway::Refused(NOT_INSIDE.into()));
+            }
+            Err(error) => {
+                return Err(CoreError::Store(format!(
+                    "cannot look at {}: {error}",
+                    path.display()
+                )));
+            }
+        }
+        let tx = conn.unchecked_transaction()?;
+        context.change_pins(&tx, || state::unbind(&tx, &row.path))?;
+        state::journal_clear(&tx, &row.path)?;
+        state::clear_taken(&tx, &row.path)?;
+        tx.commit()?;
+        Ok(TakenAway::Ended(ended))
+    }
+
+    /// Checks the path without following directory links.
+    pub(super) fn taken_now(&self, path: &str, taken: Option<&state::Taken>) -> TakenNow {
+        let Some(taken) = taken else {
+            return TakenNow::Unsure("Marfa cannot read its record of the removal".into());
+        };
+        match self.file_identity(&self.root.join(path)) {
+            Ok(Some(at)) if super::same_directory(at, taken.at, super::device(&self.root_dir)) => {
+                TakenNow::Present
+            }
+            Ok(Some(_)) => TakenNow::Unsure("another file is at its path".into()),
+            Ok(None) => TakenNow::Unsure("something other than a file is at its path".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => TakenNow::Absent,
+            Err(error) if beyond_a_link(&error) => TakenNow::Unsure(
+                "a directory on its path is a symbolic link or no longer a directory".into(),
+            ),
+            Err(error) => TakenNow::Unsure(format!("Marfa cannot look at it: {error}")),
+        }
+    }
+
+    /// Returns `None` for a nonregular entry.
+    fn file_identity(&self, path: &Path) -> std::io::Result<Option<(u64, u64)>> {
+        let (directory, name) = self.location(path, false)?;
+        let name = Path::new(&name);
+        match directory.entry_kind(name)? {
+            crate::directory::FileType::RegularFile => directory.entry_identity(name).map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    /// An owner's delete after a stop is indistinguishable from a completed removal.
+    pub(super) fn settle_taken(&self) -> Result<HashMap<String, String>> {
+        let taken = state::taken(&*self.core.conn()?)?;
+        let mut unsettled = HashMap::new();
+        if let Some(gone) = self.root_gone() {
+            for (path, _) in taken {
+                unsettled.insert(path, held_removal(&gone));
+            }
+            return Ok(unsettled);
+        }
+        for (path, record) in taken {
+            match self.taken_now(&path, record.as_ref()) {
+                TakenNow::Present => state::clear_taken(&*self.core.conn()?, &path)?,
+                TakenNow::Absent => {
+                    let conn = self.core.conn()?;
+                    let tx = conn.unchecked_transaction()?;
+                    if let Some(record) = &record
+                        && state::bound_at(&tx, &path)?
+                            .is_some_and(|bound| bound.item_id == record.item_id)
+                    {
+                        state::unbind(&tx, &path)?;
+                        state::journal_clear(&tx, &path)?;
+                    }
+                    state::clear_taken(&tx, &path)?;
+                    tx.commit()?;
+                }
+                TakenNow::Unsure(why) => {
+                    unsettled.insert(path, held_removal(&why));
                 }
             }
         }
-        context.change_pins(&conn, || state::unbind(&conn, &row.path))?;
-        state::journal_clear(&conn, &row.path)?;
-        Ok(TakenAway::Ended(ended))
+        Ok(unsettled)
+    }
+
+    /// Status previews recovery without changing the binding.
+    pub(super) fn taken_unsettled(&self) -> Result<HashMap<String, Option<String>>> {
+        let taken = state::taken(&*self.core.conn()?)?;
+        let gone = self.root_gone();
+        Ok(taken
+            .into_iter()
+            .filter_map(|(path, record)| {
+                if let Some(gone) = &gone {
+                    return Some((path, Some(held_removal(gone))));
+                }
+                match self.taken_now(&path, record.as_ref()) {
+                    TakenNow::Present => None,
+                    TakenNow::Absent => Some((path, None)),
+                    TakenNow::Unsure(why) => Some((path, Some(held_removal(&why)))),
+                }
+            })
+            .collect())
     }
 
     /// Whether another device changed a missing file's item in what the file

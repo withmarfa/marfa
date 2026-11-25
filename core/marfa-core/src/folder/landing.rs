@@ -390,6 +390,18 @@ pub(crate) trait Ledger {
     /// Records the file read, out of its path and kept under its reserved
     /// name in the aside directory, for each pass to settle.
     fn retain(&self, retained: &Retained) -> io::Result<()>;
+    /// Records the private name before a discard can strand the file.
+    fn discarding(&self, retained: &Retained, private: &Path, mark: Mark<'_>) -> io::Result<()>;
+}
+
+/// The state of a discard's private name.
+pub(crate) enum Mark<'a> {
+    /// Before the move: the file may be under either name.
+    Moving,
+    /// The file stays under the private name, for this reason.
+    Left(&'a str),
+    /// The private name holds nothing.
+    Free,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -792,11 +804,13 @@ pub(crate) enum Settled {
     },
     /// Changed after its removal, and back at its empty path.
     Restored,
-    /// Changed, and kept beside its path, or under its reserved name where it
-    /// cannot go there, and reported.
-    Beside,
+    /// Changed, and kept beside its path under the name answered, or under
+    /// its reserved name where it cannot go there, and reported.
+    Beside(PathBuf),
     /// Unchanged, and kept, with what this look found.
     Kept(Retained),
+    /// Under the private name a discard moved it to, recorded there.
+    Left,
 }
 
 /// Settles `retained`, whose reserved name `file` was opened from, with
@@ -850,8 +864,15 @@ pub(crate) fn settle_retained(
         // A write that keeps the length on a volume with coarse times shows
         // only in the bytes.
         if !stated || proved.unchanged()? {
-            discard(guard.aside, name)?;
-            return Ok(Settled::Discarded);
+            let mark =
+                |private: &Path, mark: Mark<'_>| guard.ledger.discarding(retained, private, mark);
+            match discard_checked(guard.aside, name, Some(at), |_| proved.unchanged(), mark)? {
+                Discard::Removed => return Ok(Settled::Discarded),
+                Discard::Absent => return Ok(Settled::Gone),
+                Discard::Left => return Ok(Settled::Left),
+                // Back under its reserved name, and put back as any change is.
+                Discard::Changed => {}
+            }
         }
     }
     let target = Path::new(&retained.target);
@@ -893,7 +914,90 @@ pub(crate) fn settle_retained(
             Err(error) => return Err(error),
         }
     }
-    keep_beside(dir, guard, target, name).map(|_| Settled::Beside)
+    keep_beside(dir, guard, target, name).map(Settled::Beside)
+}
+
+/// What [`discard_checked`] did with a kept file.
+pub(crate) enum Discard {
+    Removed,
+    /// Nothing was at its name.
+    Absent,
+    /// It was no longer the file proved, and is back at its name.
+    Changed,
+    /// It stays under the private name, marked there.
+    Left,
+}
+
+/// The private name protects saves to the old name during the final check.
+pub(crate) fn discard_checked(
+    dir: &Directory,
+    name: &Path,
+    at: Option<(u64, u64)>,
+    still: impl FnOnce(&Path) -> io::Result<bool>,
+    mark: impl Fn(&Path, Mark<'_>) -> io::Result<()>,
+) -> io::Result<Discard> {
+    write_before_discard(dir, name);
+    let private = reserved(&uuid::Uuid::now_v7().simple().to_string());
+    mark(&private, Mark::Moving)?;
+    let free = || {
+        let _ = mark(&private, Mark::Free);
+    };
+    match rename_new_at(dir, name, dir, &private) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            free();
+            return Ok(Discard::Absent);
+        }
+        Err(error) => {
+            free();
+            return Err(error);
+        }
+    }
+    stop_if_asked(name, "crash-after-private-rename");
+    let left = |reason: String| {
+        let _ = mark(&private, Mark::Left(&reason));
+        Ok(Discard::Left)
+    };
+    let same = at.is_none_or(|at| dir.entry_identity(&private).ok() == Some(at));
+    let unchanged = match still(&private) {
+        Ok(unchanged) => same && unchanged,
+        Err(error) => {
+            return left(format!(
+                "Marfa could not read it as it discarded it: {error}"
+            ));
+        }
+    };
+    if unchanged {
+        let removed = if failing_here("discard-unlink-refused")
+            || named_for(name, "discard-unlink-refused")
+        {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        } else {
+            discard(dir, &private)
+        };
+        return match removed {
+            Ok(()) => {
+                free();
+                Ok(Discard::Removed)
+            }
+            Err(error) => left(format!(
+                "Marfa could not delete it as it discarded it: {error}"
+            )),
+        };
+    }
+    match rename_new_at(dir, &private, dir, name) {
+        Ok(()) => {
+            free();
+            Ok(Discard::Changed)
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => left(
+            "it changed as Marfa discarded it, and another file took the name it was kept under"
+                .into(),
+        ),
+        Err(error) => left(format!(
+            "it changed as Marfa discarded it, and Marfa could not move it back: {error}"
+        )),
+    }
 }
 
 fn exchange_at(from_dir: &Directory, from: &Path, to_dir: &Directory, to: &Path) -> io::Result<()> {
@@ -915,7 +1019,7 @@ fn exchange_at(from_dir: &Directory, from: &Path, to_dir: &Directory, to: &Path)
 
 /// A run stopping at `point`: the process, where a device fixture names the
 /// target, or the thread, where a unit test asks.
-fn stop_if_asked(target: &Path, point: &str) {
+pub(crate) fn stop_if_asked(target: &Path, point: &str) {
     crash_if_named(target, point);
     if failing_here(point) {
         panic!("stopped at {point} as the test asks");
@@ -1442,6 +1546,11 @@ pub(crate) fn withdraw_at(
         };
     }
     stop_if_asked(target, "crash-after-withdraw");
+    if failing_here("withdraw-look-refused") || named_for(target, "withdraw-look-refused") {
+        return Err(RemoveError::Remove(io::Error::from(
+            io::ErrorKind::PermissionDenied,
+        )));
+    }
     let known = Known::Held {
         ours: None,
         read: Some(&read),
@@ -1590,6 +1699,16 @@ fn save_during_put_back(dir: &Directory, target: &Path) {
     save_over(dir, target, "save-during-put-back", b"saved again\n");
 }
 
+/// A program's write into a kept file, after the look that found it
+/// unchanged and before it is discarded.
+pub(crate) fn write_before_discard(dir: &Directory, name: &Path) {
+    if asked_for(dir, name, "write-before-discard") {
+        let _ = dir
+            .open_file(name, OFlags::WRONLY | OFlags::APPEND, Mode::empty())
+            .and_then(|mut file| file.write_all(b"written before the discard\n"));
+    }
+}
+
 /// A person's write into the file in place, after the folder's last look.
 fn write_after_last_look(dir: &Directory, target: &Path) {
     if asked_for(dir, target, "write-after-last-look") {
@@ -1709,6 +1828,10 @@ impl Ledger for Memory {
         let mut kept = self.retained.borrow_mut();
         kept.retain(|row| row.id != retained.id);
         kept.push(retained.clone());
+        Ok(())
+    }
+
+    fn discarding(&self, _: &Retained, _: &Path, _: Mark<'_>) -> io::Result<()> {
         Ok(())
     }
 }
@@ -2785,7 +2908,7 @@ mod tests {
         std::fs::write(place.root.join("note.md"), b"saved by the person").unwrap();
         let settled = place.ledger.settle(&place.dir, place.guard(), now());
         assert!(
-            matches!(settled.as_slice(), [Settled::Beside]),
+            matches!(settled.as_slice(), [Settled::Beside(_)]),
             "{settled:?}"
         );
         let beside = place.ledger.kept.borrow()[0].0.clone();
