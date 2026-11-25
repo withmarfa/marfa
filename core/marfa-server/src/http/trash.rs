@@ -52,10 +52,7 @@ pub async fn transition(
             ));
         }
         let from = text_of(&sent, "from")?;
-        if from
-            .as_deref()
-            .is_some_and(|from| !STATES.contains(&from))
-        {
+        if from.as_deref().is_some_and(|from| !STATES.contains(&from)) {
             return Err(invalid_field(
                 "from",
                 "from is active, archived or trashed.",

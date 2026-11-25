@@ -984,11 +984,7 @@ impl Core {
             return Err(CoreError::Validation {
                 server: None,
                 code: "state_conflict".into(),
-                message: format!(
-                    "{id} is {}, not {}",
-                    held.state.as_str(),
-                    from.as_str()
-                ),
+                message: format!("{id} is {}, not {}", held.state.as_str(), from.as_str()),
                 details: Some(Box::new(serde_json::json!({
                     "expected": from.as_str(),
                     "actual": held.state.as_str(),
