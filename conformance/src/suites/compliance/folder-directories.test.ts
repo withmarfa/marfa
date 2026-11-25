@@ -223,7 +223,11 @@ describe("GET /folders/{id}/directories", () => {
     ]);
     const waiting = [""];
     const expanded: string[] = [];
-    for (let under = waiting.pop(); under !== undefined; under = waiting.pop()) {
+    for (
+      let under = waiting.pop();
+      under !== undefined;
+      under = waiting.pop()
+    ) {
       const read = await tree(dir, `?under=${encodeURIComponent(under)}`);
       for (const directory of read.directories) waiting.push(directory.path);
       expanded.push(under);
