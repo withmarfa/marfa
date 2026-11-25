@@ -7,6 +7,8 @@ import {
   trackFolder,
   trackItem,
   trackKey,
+  trackType,
+  newRunId,
   cleanup,
 } from "../../utils/setup.js";
 import {
@@ -2762,14 +2764,17 @@ describe("the scripted answers match the server's", () => {
   });
 
   it("reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates", async () => {
-    const registered = `user.origin-registered-${ctx.runId}`;
-    const plugged = `common.origin-${ctx.runId.replaceAll("-", "").slice(0, 8)}`;
-    const name = `origin${ctx.runId.replaceAll("-", "").slice(0, 8)}`;
+    // Fresh for each attempt: a retry meets nothing the last left behind.
+    const run = newRunId().replaceAll("-", "");
+    const registered = `user.origin-registered-${run}`;
+    const plugged = `common.origin-${run}`;
+    const name = `origin${run}`;
     const made = await client.registerType({
       id: registered,
       fields: { title: { type: "string" } },
     } as unknown as Parameters<typeof client.registerType>[0]);
     expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    trackType(ctx, registered, client);
     const bundle = (version: string) => ({
       format: 1,
       name,
@@ -2833,6 +2838,8 @@ describe("the scripted answers match the server's", () => {
 
     const installed = await client.installPlugin(bundle("1.0.0"));
     expect(installed.status, JSON.stringify(installed.error)).toBe(201);
+    // A plugin's type outlives its removal, so the file's cleanup deletes it.
+    trackType(ctx, plugged, client);
     try {
       const before = await versionOf();
       await rebuildCatalog();
