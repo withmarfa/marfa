@@ -67,7 +67,7 @@ async function stored(id: string) {
 }
 
 describe("a natural-key upsert", () => {
-  it("leaves the state of an item as it stands on POST /items and on POST /items/bulk, an archived item included", async () => {
+  it("ignores the state it names on POST /items and on POST /items/bulk, an archived item included", async () => {
     for (const door of DOORS) {
       const run = randomUUID();
 
