@@ -3242,7 +3242,7 @@ export interface components {
             /** @description The edge's version. It goes up by one on every update, including one that changes nothing. */
             version: number;
         };
-        /** @description A sign-in recorded as the one that wrote a version of an item or first installed a plugin, or that last moved an item between active, archived and the bin, named as it was then. */
+        /** @description The sign-in that wrote an item version, first installed a plugin, or last changed an item's lifecycle state, named as it was then. */
         Writer: {
             /**
              * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
@@ -3345,7 +3345,7 @@ export interface components {
             };
             /** @description The sign-in that wrote the item's current version, named as it was then, even after it ends. `null` if no sign-in wrote it, such as when Marfa reads a file's text. Present only where `include` names `writer`. */
             writer?: components["schemas"]["Writer"] | null;
-            /** @description The sign-in that last moved the item between active, archived and the bin, named as it was then. `null` if the item has not moved, a server job moved it, or it moved before Marfa recorded this. Present only where `include` names `writer`. */
+            /** @description The sign-in that last changed the item's lifecycle state, named as it was then. `null` if the item has never moved, a server job moved it, or its last move predates this field. Present only where `include` names `writer`. */
             state_writer?: components["schemas"]["Writer"] | null;
         };
         /** @description A page of edges. */
@@ -11289,7 +11289,7 @@ export interface operations {
     getItem: {
         parameters: {
             query?: {
-                /** @description Comma-separated extras. `backrefs`: inbound edges. `neighbors`: the items those edges reach. `versions`: the first page of readable snapshots, oldest first. `writer`: who wrote the current version and, as `state_writer`, who last moved its state. */
+                /** @description Comma-separated extras. `backrefs` adds inbound edges. `neighbors` adds items at the other end of returned edges. `versions` adds the first page of readable snapshots, oldest first. `writer` adds the current version's `writer` and `state_writer`. */
                 include?: string;
                 /** @description Read the item only if it is in one of these lifecycle states: one state or a comma-separated list, such as `active,trashed`. Send `any` on its own for every state, the trash included. Without it, you get an item in any state but `trashed`. */
                 state?: string;
@@ -13732,7 +13732,7 @@ export interface operations {
                 "application/json": {
                     /** @description The IDs of the items to read, at most 100. */
                     ids: string[];
-                    /** @description `edges`, `metadata` and `extensions` add that data to each item. `writer` adds the sign-in that wrote each item's current version and, as `state_writer`, the one that last moved it between active, archived and the bin. `hidden` also returns `system.*` and `app.*` items, which are left out by default. */
+                    /** @description `edges`, `metadata` and `extensions` add that data to each item. `writer` adds each item's current version `writer` and `state_writer`. `hidden` also returns `system.*` and `app.*` items, which are left out by default. */
                     include?: ("edges" | "metadata" | "extensions" | "writer" | "hidden")[];
                 };
             };

@@ -17,13 +17,6 @@ import {
 } from "../../utils/moved-clock.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
-/**
- * Who made an item's last state move: the sign-in whose request moved it
- * between active, archived and the bin, kept with the item. Each door that
- * moves state is run as it is used, and a write that leaves the state alone is
- * run beside them. How an archive carries it is in
- * `state-writers-archive.test.ts`.
- */
 let server: FreshServer;
 let clock: ReturnType<typeof movedClock>;
 
@@ -154,7 +147,6 @@ describe("who made an item's last state move", () => {
     const restorer = await mintKey("state restorer");
     const id = await createNote(author.key);
 
-    // The witness: before any move there is none to name.
     expect((await read(reader.key, id)).state_writer).toBeNull();
     expect(
       (await clientOf(archiver).transitionItem(id, "archived")).status,
@@ -208,7 +200,6 @@ describe("who made an item's last state move", () => {
 
     const trashed = await call(app.token, "DELETE", `/items/${id}`);
     expect(trashed.status, JSON.stringify(trashed.body)).toBe(200);
-    // The witness: the bin refuses a read that names no state.
     expect((await call(author.key, "GET", `/items/${id}`)).status).toBe(404);
     expect((await read(author.key, id)).state_writer).toEqual({
       kind: "app",
@@ -299,7 +290,6 @@ describe("who made an item's last state move", () => {
     const moved = await read(trasher.key, b);
     expect(moved.state).toBe("archived");
     expect(moved.state_writer).toEqual(as(archiver));
-    // The one in the bin is not an archive's to move.
     expect((await read(trasher.key, a)).state_writer).toEqual(as(trasher));
   });
 
@@ -335,7 +325,6 @@ describe("who made an item's last state move", () => {
     // The witness: the job moved it.
     expect(expired.state).toBe("trashed");
     expect(expired).toHaveProperty("state_writer", null);
-    // The version's writer is the creator's, so the null is the job's.
     expect(expired.writer).not.toBeNull();
 
     expect((await operator.restoreItem(id)).status).toBe(200);

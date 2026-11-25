@@ -8,11 +8,6 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 
-/**
- * Who made an item's last state move, through an archive: an export carries it
- * on the item's line, and a second server takes the archive back with it. The
- * moves are made as `state-writers.test.ts` makes them.
- */
 let server: FreshServer;
 let target: FreshServer;
 
@@ -96,7 +91,6 @@ async function restore(archive: Uint8Array) {
   }).restoreArchive(archive);
 }
 
-/** The state writer a restored item answers, or `undefined` for a refusal. */
 async function stateWriterOf(id: string): Promise<Writer | null | undefined> {
   const answer = await fetch(
     `${target.apiUrl}/items/${id}?include=writer&state=any`,
