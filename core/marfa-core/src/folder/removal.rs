@@ -146,23 +146,25 @@ impl Folder {
             if !bound {
                 continue;
             }
-            let unsure = |reason: String| Unsure {
-                path: path.clone(),
-                reason,
-            };
-            match self.file_at(&self.root.join(path)) {
-                Err(error) => confirmed
-                    .unsure
-                    .push(unsure(format!("its path cannot be checked ({error})"))),
-                Ok(true) => {}
-                Ok(false) if !scanned.swept => confirmed.unsure.push(unsure(unread.clone())),
+            let reason = match self.file_at(&self.root.join(path)) {
+                Err(error) => format!("its path cannot be checked ({error})"),
+                Ok(true) => continue,
+                Ok(false) if !scanned.swept => unread.clone(),
                 Ok(false) if journaled.contains(&(path.clone(), item_id.clone())) => {
                     missing.push((path.clone(), item_id.clone()));
+                    continue;
                 }
                 // Bound and missing, yet not journaled: a file the lists no
                 // longer reach, which no scan deletes.
-                Ok(false) => {}
-            }
+                Ok(false) => continue,
+            };
+            // Saved before the pause is cleared, so status still holds it.
+            let kept = state::Kept::Unsure(reason.clone());
+            state::journal_keep(&*self.core.conn()?, path, item_id, Some(&kept))?;
+            confirmed.unsure.push(Unsure {
+                path: path.clone(),
+                reason,
+            });
         }
         let peers = self.peers();
         let sweep = Sweep::default();
@@ -513,6 +515,85 @@ mod tests {
             bound_item(folder, "sub/original.md").as_ref(),
             Some(&items[0])
         );
+    }
+
+    fn held_as(folder: &Folder, path: &str) -> Option<(&'static str, Option<&'static str>)> {
+        folder
+            .status()
+            .unwrap()
+            .files
+            .into_iter()
+            .find(|file| file.path == path)
+            .map(|file| (file.status, file.flag))
+    }
+
+    fn held_files(folder: &Folder) -> Option<u64> {
+        folder.health_observe(true, false, None, None, false);
+        folder
+            .observed_health()
+            .unwrap()
+            .problems
+            .iter()
+            .find(|problem| problem.code == super::super::health::Code::HeldFile)
+            .map(|problem| problem.count)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_confirmed_removal_held_while_another_folder_cannot_be_read_stays_a_held_file() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (other, peer) = folder_with(
+            "01a00000-0000-7000-8000-00000000c6b2",
+            serde_json::json!({ "query": {} }),
+            None,
+        );
+        peer.scan().unwrap();
+        let paused = paused_over("01a00000-0000-7000-8000-00000000c6b1", &["gone.md"]);
+        let folder = &paused.folder;
+        assert_eq!(
+            held_as(folder, "gone.md").map(|(_, flag)| flag),
+            Some(Some("removal"))
+        );
+        {
+            let _sealed = crate::test_folders::locked(other.path(), 0o000);
+            let confirmed = folder.confirm().unwrap();
+            assert_eq!(confirmed.deleted, 0, "{confirmed:?}");
+            let unsure: Vec<&str> = confirmed
+                .unsure
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect();
+            assert_eq!(unsure, ["gone.md"], "{confirmed:?}");
+            assert!(deletes_queued(folder).is_empty(), "a delete was queued");
+            assert_eq!(
+                held_as(folder, "gone.md"),
+                Some(("held", Some("unsure"))),
+                "a removal confirmed while another folder cannot be read reads as a delete waiting to be sent"
+            );
+            assert_eq!(held_files(folder), Some(1));
+        }
+        assert_eq!(folder.scan().unwrap().paused, 1);
+        assert_eq!(folder.confirm().unwrap().deleted, 1);
+        assert_eq!(deletes_queued(folder).len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_confirmed_removal_held_while_its_own_directory_cannot_be_read_stays_a_held_file() {
+        let (_, _registry) = registry::tests::own_registry();
+        let paused = paused_over(
+            "01a00000-0000-7000-8000-00000000c6b3",
+            &["sub/original.md", "gone.md"],
+        );
+        paused.back("sub/original.md", "sub/original.md");
+        let folder = &paused.folder;
+        let _sealed = crate::test_folders::locked(paused.dir.path().join("sub"), 0o000);
+        let confirmed = folder.confirm().unwrap();
+        assert!(
+            confirmed.unsure.iter().any(|file| file.path == "gone.md"),
+            "{confirmed:?}"
+        );
+        assert_eq!(held_as(folder, "gone.md"), Some(("held", Some("unsure"))));
     }
 
     fn keeps_case_apart(dir: &std::path::Path) -> bool {
