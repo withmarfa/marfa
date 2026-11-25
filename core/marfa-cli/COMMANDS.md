@@ -107,7 +107,7 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | See connectors, their runs and their problems | `marfa connectors list`, `marfa connectors get`, `marfa connectors runs` |
 | Remove a connector, or only its state | `marfa connectors delete`, `marfa connectors state delete` |
 | Manage a connector's inbound endpoints and deliveries | `marfa connectors endpoints list`, `marfa connectors endpoints create`, `marfa connectors endpoints retire`, `marfa connectors deliveries list`, `marfa connectors deliveries body`, `marfa connectors deliveries handle` |
-| List, make, update and revoke folders, and read their sync reports | `marfa folders inventory`, `marfa folders create`, `marfa folders update`, `marfa folders revoke`, `marfa folders health` |
+| List, make, update and revoke folders, read their sync reports, and list their directories | `marfa folders inventory`, `marfa folders create`, `marfa folders update`, `marfa folders revoke`, `marfa folders health`, `marfa folders directories` |
 | Manage webhooks and their deliveries | `marfa webhooks create`, `marfa webhooks list`, `marfa webhooks get`, `marfa webhooks update`, `marfa webhooks delete`, `marfa webhooks deliveries`, `marfa webhooks redeliver` |
 | Read the audit log | `marfa audit` |
 | List and run the housekeeping jobs, and confirm the server's clock | `marfa housekeeping list`, `marfa housekeeping run`, `marfa housekeeping confirm-clock` |
@@ -5017,6 +5017,22 @@ marfa folders inventory [OPTIONS]
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
 | `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
+
+### marfa folders directories
+
+List one level of a folder's directories, each with the placed files it holds, and the files placed at the level itself. Without `--under`, the level is the folder's top. A directory exists only while a placed file lies in or beneath it. Counts only the files whose type and source the credential reads, and needs read on `system.folder` and on the `in-folder` edge type. With --json, the answer has `folder_id`, `under`, `direct_files`, `total_files` and `directories`, each with `path`, `direct_files`, `all_files` and `has_directories`; a `path` is accepted as `--under` to open that directory.
+
+```text
+marfa folders directories [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The folder's `system.folder` id. |
+
+| Option | Description |
+| --- | --- |
+| `--under <PATH>` | A path below the folder's root, such as `notes/2026`. No leading slash, no `..` name and at most 1024 characters. |
 
 ### marfa folders remove
 
