@@ -102,6 +102,10 @@ pub enum ItemsCommand {
         /// The state to move it to.
         #[arg(long)]
         state: TransitionState,
+        /// The state you read the item in. If it is in another state now,
+        /// nothing moves and the server answers `state_conflict`.
+        #[arg(long)]
+        from: Option<TransitionState>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -346,6 +350,16 @@ impl TransitionState {
             TransitionState::Active => "active",
             TransitionState::Archived => "archived",
             TransitionState::Trashed => "trashed",
+        }
+    }
+}
+
+impl From<TransitionState> for marfa_core::ItemState {
+    fn from(state: TransitionState) -> Self {
+        match state {
+            TransitionState::Active => marfa_core::ItemState::Active,
+            TransitionState::Archived => marfa_core::ItemState::Archived,
+            TransitionState::Trashed => marfa_core::ItemState::Trashed,
         }
     }
 }
@@ -827,8 +841,16 @@ pub fn restore_request(id: &str, version: Option<i64>) -> Request {
     Request::post(&["items", id, "restore"]).query_opt("version", version.map(|v| v.to_string()))
 }
 
-pub fn transition_request(id: &str, state: TransitionState) -> Request {
-    Request::post(&["items", id, "transition"]).json(json!({ "state": state.as_str() }))
+pub fn transition_request(
+    id: &str,
+    state: TransitionState,
+    from: Option<TransitionState>,
+) -> Request {
+    let body = match from {
+        Some(from) => json!({ "state": state.as_str(), "from": from.as_str() }),
+        None => json!({ "state": state.as_str() }),
+    };
+    Request::post(&["items", id, "transition"]).json(body)
 }
 
 pub fn purge_request(id: &str, version: Option<i64>) -> Request {
@@ -1233,8 +1255,9 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         ItemsCommand::Transition {
             id,
             state,
+            from,
             idempotency,
-        } => idempotency.apply(transition_request(id, *state)),
+        } => idempotency.apply(transition_request(id, *state, *from)),
         ItemsCommand::Purge {
             id,
             version,

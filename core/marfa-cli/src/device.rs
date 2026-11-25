@@ -8,6 +8,7 @@ use marfa_core::{
 };
 
 use crate::commands::StateFilter;
+use crate::commands::items::TransitionState;
 use crate::error::{CliError, Exit};
 use crate::interrupt::{stop_after, stop_on_interrupt};
 use crate::output::{self, printable};
@@ -602,6 +603,10 @@ pub enum ItemsCommand {
         /// The state to move it to. `revoked` is the server's alone.
         #[arg(long)]
         state: ItemState,
+        /// The state you read the item in. If the copy shows it in another
+        /// state, nothing is queued and the answer is `state_conflict`.
+        #[arg(long)]
+        from: Option<TransitionState>,
     },
     /// Add a file as an item of its own: its upload and a file item naming
     /// the bytes, two queued writes, and one for each tag.
@@ -1719,9 +1724,10 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 }
                 ItemsCommand::LinkParts { .. } => unreachable!("answered above, with no copy"),
                 ItemsCommand::Restore { id } => output::queued_one(&core.restore_item(&id)?, json),
-                ItemsCommand::Transition { id, state } => {
-                    output::queued_one(&core.transition_item(&id, state.into())?, json)
-                }
+                ItemsCommand::Transition { id, state, from } => output::queued_one(
+                    &core.transition_item_from(&id, state.into(), from.map(Into::into))?,
+                    json,
+                ),
                 ItemsCommand::Add(args) => {
                     let attachment = Attachment {
                         mime_type: args.mime_type,
