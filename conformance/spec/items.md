@@ -1376,7 +1376,7 @@ If `POST /items/{id}/transition` names a `from` of `active`, `archived` or `tras
 
 ### `items/transition-version-before-from`
 
-If `POST /items/{id}/transition` names a `version` query parameter other than the item's current version and a `from` other than the state the item is in, then the server MUST answer `409 version_conflict`, not `409 state_conflict`.
+If `POST /items/{id}/transition` names a `version` query parameter other than the item's current version and a `from` that names a lifecycle state other than the one the item is in, then the server MUST answer `409 version_conflict`, not `409 state_conflict`.
 
 **Reason:** the server checks the version before `from`, so a writer whose read is stale is told to read the item again, which also gives it the state.
 
