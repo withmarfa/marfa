@@ -776,7 +776,9 @@ pub fn resolve_item_type(
         feed_days: chain
             .iter()
             .find_map(|(_, row)| row.get("retention_policy")?.as_object()?.get("feed_days"))
-            .and_then(Value::as_i64),
+            .and_then(Value::as_f64)
+            .filter(|days| crate::schema::whole(*days))
+            .map(|days| days as i64),
     }))
 }
 

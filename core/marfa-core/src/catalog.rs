@@ -1116,7 +1116,9 @@ mod tests {
                 { "id": "acme.shorter", "parent": "acme.keeps", "fields": {},
                   "retention_policy": { "feed_days": 7 } },
                 { "id": "acme.none", "fields": {} },
-                { "id": "acme.orphan", "parent": "acme.unheld", "fields": {} }
+                { "id": "acme.orphan", "parent": "acme.unheld", "fields": {} },
+                { "id": "acme.decimal", "fields": {}, "retention_policy": { "feed_days": 30.0 } },
+                { "id": "acme.decimal-below", "parent": "acme.decimal", "fields": {} }
             ]),
             serde_json::json!([]),
         );
@@ -1149,6 +1151,12 @@ mod tests {
             None,
             "a parent the copy lacks was an error"
         );
+        assert_eq!(
+            window("acme.decimal"),
+            Some(30),
+            "a whole number written as 30.0 read as no window"
+        );
+        assert_eq!(window("acme.decimal-below"), Some(30));
     }
 
     #[test]
