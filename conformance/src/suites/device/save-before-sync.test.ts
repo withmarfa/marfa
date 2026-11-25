@@ -203,6 +203,26 @@ describe("a copy no server has been named for", () => {
     ]);
   });
 
+  it("reads a declared type as registered whatever provenance its declaration submits", async () => {
+    const device = await offline("save-declared-provenance");
+    value(
+      await device.declareTypes([
+        {
+          ...RECIPE,
+          provenance: {
+            origin: "plugin",
+            plugin: { name: "tickets", version: "1.0.0" },
+            created_by: { kind: "key", id: "someone" },
+          },
+        } as typeof RECIPE,
+      ]),
+    );
+    expect(
+      value(await device.itemType("app.recipe.entry")),
+      "a declaration's own word about where it came from was believed",
+    ).toMatchObject({ origin: "registered", plugin: null });
+  });
+
   it("holds the app's latest declarations alone", async () => {
     const device = await offline("save-declared-set");
     value(await device.declareTypes([RECIPE]));

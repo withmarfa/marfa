@@ -5034,19 +5034,27 @@ A device MUST answer an item type's `feed_days` as `GET /types/{id}` answers `re
 
 ### `device/catalog-type-provenance`
 
-A device MUST answer an item type's `origin` and `plugin` as `GET /types/{id}` answers `provenance.origin` and `provenance.plugin` (`types/provenance-read`), with `unknown` and no plugin for a type whose listing names no origin or one the device does not know.
+A device MUST answer an item type's `origin` and `plugin` as `GET /types/{id}` answers `provenance.origin` and `provenance.plugin` (`types/provenance-read`), with `unknown` and no plugin for a type whose listing names no origin, one the device does not know, or `plugin` with no plugin's name and version.
 
 **Reason:** an app tells a plugin's type from the owner's own, before it tries to change one, from the copy alone (`device/catalog-offline`); `provenance.created_by` names a sign-in, so the device does not answer it.
 
 **Tests:** `device/fidelity.test.ts › reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates`, `device/catalog.test.ts › answers each type's origin and plugin from the copy alone, and moves the catalog version when a refresh changes provenance`.
 
+### `device/catalog-type-provenance-declared`
+
+A device MUST answer a type its app declared as `registered` with no plugin, whatever provenance the declaration submits.
+
+**Reason:** the server ignores a provenance a registration submits and records the type as registered (`types/provenance-read`), so a device that believed a declaration would tell an app that a plugin installed a type no plugin installed.
+
+**Tests:** `device/save-before-sync.test.ts › reads a declared type as registered whatever provenance its declaration submits`.
+
 ### `device/catalog-type-provenance-version`
 
-A device MUST move the catalog version when a refresh changes a type's origin or plugin, and leave it where it was when a refresh changes only `provenance.created_by`.
+A device MUST move the catalog version when a refresh changes a type's origin or plugin, and leave it where it was when the catalog it held and the one the refresh brings differ in nothing but `provenance.created_by`.
 
-**Reason:** a plugin's update that changes only its version is a change a caller finds by the catalog version (`device/catalog-version-moves`), and a creator the device does not answer is no change to what it answers.
+**Reason:** a plugin's update that changes only its version is a change a caller finds by the catalog version (`device/catalog-version-moves`), and a creator the device does not answer is no change to what it answers. The server never changes a type's creator by a replacement (`types/creator-snapshot`), so the case is a copy that held a creator before the device left it out: its first catch-up against the same catalog is no change.
 
-**Tests:** `device/fidelity.test.ts › reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates`, `device/catalog.test.ts › answers each type's origin and plugin from the copy alone, and moves the catalog version when a refresh changes provenance`.
+**Tests:** `device/fidelity.test.ts › reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates`, `device/catalog.test.ts › answers each type's origin and plugin from the copy alone, and moves the catalog version when a refresh changes provenance`, `device/catalog.test.ts › keeps the catalog version where it was when a copy that held a type's creator catches up against the same catalog`.
 
 ### `device/catalog-type-tables`
 
