@@ -371,6 +371,11 @@ impl Folder {
             files.push(if !lists.takes(&bound.path) {
                 FileStatus::new(&bound.path, at, "unreached")
                     .because("lists", "the folder's lists no longer take it, so it is held rather than deleted")
+            } else if let Some(reason) = unsure
+                .get(bound.path.as_str())
+                .filter(|_| !disk.contains(&bound.path))
+            {
+                FileStatus::new(&bound.path, at, "held").because("unsure", *reason)
             } else if let Some(dir) = walked.directories.iter().find(|dir| {
                 dir.path.is_empty()
                     || bound
@@ -402,8 +407,6 @@ impl Folder {
                     "gone",
                     "is gone, and its item is already in the bin or no longer held, so no delete is sent: a scan past the grace lets the file go",
                 )
-            } else if let Some(reason) = unsure.get(bound.path.as_str()) {
-                FileStatus::new(&bound.path, at, "held").because("unsure", *reason)
             } else {
                 FileStatus {
                     waits: vec!["delete"],

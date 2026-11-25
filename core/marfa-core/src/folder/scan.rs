@@ -1789,8 +1789,13 @@ impl Folder {
             }
             // Not reached is not gone: the item of a file the lists stopped
             // taking, or one the walk could not read or passed over, is not trashed.
-            if !self.reaches(lists, &path) || walked.passed_over(&path) {
-                if held {
+            let reached = self.reaches(lists, &path);
+            if !reached || walked.passed_over(&path) {
+                // A pass that could not read the folder whole decides nothing
+                // about a delete already held as unsure.
+                let unsure =
+                    reached && incomplete && matches!(row, Some(Some(state::Kept::Unsure(_))));
+                if held && !unsure {
                     let conn = self.core.conn()?;
                     state::journal_clear(&conn, &path)?;
                 }
