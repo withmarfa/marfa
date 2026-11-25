@@ -1042,9 +1042,9 @@ When `folders status` flags a file `encoding` or `unreadable` and the file does 
 
 When `folders status` flags a file with a flag other than `removal`, `query`, `gone`, `refused`, `default_edge_refused`, `credential_refused`, `encoding` or `unreadable`, a device MUST count that file in its report under `held_file`.
 
-**Reason:** a file held for any cause the other statements do not name is one the person still has to act on. The fixtures below witness `empty`, `addition`, `outside_query`, `edges` and `dead`; `name`, `lost` and `lists` have none.
+**Reason:** a file held for any cause the other statements do not name is one the person still has to act on. The fixtures below witness `empty`, `addition`, `outside_query`, `edges`, `dead` and `unsure`; `name`, `lost` and `lists` have none.
 
-**Tests:** `device/folder-health.test.ts › counts an empty file as a held file, and a file the query leaves alone as no problem`, `› keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `device/folders-additions.test.ts › is held, named apart from a removal in status, and its files stay on the disk`, `device/folders-outside-query.test.ts › is held unsent and unwritten, shown in status and listed as unmatched`, `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`.
+**Tests:** `device/folder-health.test.ts › counts an empty file as a held file, and a file the query leaves alone as no problem`, `› keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `device/folders-additions.test.ts › is held, named apart from a removal in status, and its files stay on the disk`, `device/folders-outside-query.test.ts › is held unsent and unwritten, shown in status and listed as unmatched`, `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read, and sends it once that folder's directory is gone`.
 
 ### `folder-sync/report-unproblematic-files`
 

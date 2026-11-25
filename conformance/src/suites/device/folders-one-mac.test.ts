@@ -45,6 +45,7 @@ import type {
 import {
   EdgeDoor,
   idIn,
+  lastReport,
   put,
   read,
   saveAtomically,
@@ -3630,6 +3631,68 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const swept = await a.folder.push();
     expect(swept.ok && swept.value.scan.trashed).toEqual(["Gone.md"]);
     expect(deletesOf(a.server, gone)).toBe(1);
+  });
+
+  it("holds a delete as a held file while a folder no longer listed cannot be read, and sends it once that folder's directory is gone", async () => {
+    const first = "01a00000-0000-7000-8000-0000000035b1";
+    const held = "01a00000-0000-7000-8000-0000000035b2";
+    const { a, b } = await onOneMac(
+      "remembered-gone",
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          { item: { id: first, properties: { title: "First", body: "f\n" } } },
+          { item: { id: held, properties: { title: "Held", body: "h\n" } } },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    // Deciding this delete finds the other folder, so this one remembers it.
+    rmSync(join(a.dir, "First.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(deletesOf(a.server, first)).toBe(1);
+    expect((await b.folder.remove()).ok).toBe(true);
+
+    chmodSync(b.dir, 0o000);
+    try {
+      rmSync(join(a.dir, "Held.md"));
+      expect((await a.folder.push()).ok).toBe(true);
+      await pastTheGrace();
+      const kept = await a.folder.push();
+      expect(kept.ok, JSON.stringify(kept)).toBe(true);
+      if (!kept.ok) return;
+      expect(
+        deletesOf(a.server, held),
+        "a missing file was trashed while a folder it may have moved to could not be read",
+      ).toBe(0);
+      expect(kept.value.scan.unsure.map((file) => file.path)).toEqual([
+        "Held.md",
+      ]);
+      const status = await a.folder.status();
+      expect(status.ok, JSON.stringify(status)).toBe(true);
+      if (!status.ok) return;
+      const file = status.value.files.find((entry) => entry.path === "Held.md");
+      expect(
+        [file?.status, file?.flag],
+        "a held delete read as a write waiting to be sent",
+      ).toEqual(["held", "unsure"]);
+      expect(lastReport(a).problems).toContainEqual({
+        code: "held_file",
+        count: 1,
+      });
+    } finally {
+      chmodSync(b.dir, 0o755);
+    }
+    rmSync(b.dir, { recursive: true });
+    const swept = await a.folder.push();
+    expect(
+      swept.ok && swept.value.scan.trashed,
+      "a delete stayed held for a folder gone from a volume that is mounted",
+    ).toEqual(["Held.md"]);
+    expect(deletesOf(a.server, held)).toBe(1);
   });
 
   it("holds a delete while another folder cannot be read whole", async () => {

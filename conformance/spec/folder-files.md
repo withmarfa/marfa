@@ -2222,6 +2222,22 @@ When a missing file could be in unreadable registered directories or several fil
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders-one-mac.test.ts › holds a delete while another folder cannot be read whole`, `device/folders-one-mac.test.ts › keeps an unreadable file moved to another folder before its next scan`, `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
 
+### `folder-files/uncertain-move-held-status`
+
+While a device defers a missing file's deletion because it cannot tell where the file went, a device MUST list that file in the folder's status as `held` with the flag `unsure`.
+
+**Reason:** no delete waits to be sent until the device can tell, so the file is one the person may have to act on, and a report counts it under `held_file` (`folder-sync/report-held-files`).
+
+**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read, and sends it once that folder's directory is gone`.
+
+### `folder-files/unlisted-gone-not-deferred`
+
+If a directory that the machine's folder registry no longer lists, which a device found in an earlier pass, no longer exists and the nearest directory above its path is on the volume that directory was on, then a device MUST NOT defer a missing file's deletion for that directory.
+
+**Reason:** the device keeps such a directory so that a registry that loses it does not hide a move into it. A volume that is not mounted leaves the nearest directory above the path on another volume, and that directory is then held as unreadable (`folder-files/uncertain-move-deferred`).
+
+**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read, and sends it once that folder's directory is gone`.
+
 ### `folder-files/uncertain-move-no-replacement`
 
 While a missing file could be in unreadable registered directories or among several files elsewhere with its bytes, a device MUST NOT write the file again.
