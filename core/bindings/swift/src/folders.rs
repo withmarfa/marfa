@@ -555,10 +555,11 @@ guarded! {
         /// not there. Its first sync waits: `sync` says what it will do, and
         /// `confirm_first_sync` lets it go. The answer says why the directory is
         /// in cloud-synced or network storage, where it is, and whether git
-        /// tracks it; the folder is added all the same. Reads the file system, so it can wait on a mount that
-        /// does not answer. Over a folder a watch holds, asks the watch to let it
-        /// go and waits up to 10 seconds, as every call that works a folder does:
-        /// past that, it is refused with `ReadingHandle`, naming the folder.
+        /// tracks it; the folder is added all the same. Reads the file system,
+        /// so it can wait on a mount that does not answer. Over a folder a watch
+        /// holds, asks the watch to let it go and waits up to 10 seconds, as
+        /// every call that works a folder does: past that, it is refused with
+        /// `ReadingHandle`, naming the folder.
         pub fn add(&self, dir: String, folder: String) -> Result<AddedFolder, MarfaError> {
             let added = marfa_core::Folder::add(&dir, &folder, self.server(), self.renew())
                 .map_err(asked(&dir))?;
