@@ -82,7 +82,6 @@ fn unread_file(row: &state::Unread) -> KeptFile {
     }
 }
 
-/// Why a file a discard left under its private name is kept there.
 fn left_reason(left: &str) -> String {
     format!(
         "{left}, so it stays under this name until Marfa can put it back; delete it when it is not needed"
@@ -179,7 +178,6 @@ fn settle_retained_row(
             }
             Ok(RowSettled::Kept)
         }
-        // The row stays, so the next pass can put the file back at its name.
         landing::Settled::Left => Ok(RowSettled::Kept),
         landing::Settled::PutBack { metadata, replaced } => {
             let path = joined(&row.dir, &retained.target);
@@ -340,7 +338,6 @@ impl Folder {
     /// them, in path order.
     pub fn kept_files(&self) -> Result<Vec<KeptFile>> {
         let conn = self.core.conn()?;
-        // A file a discard moved is listed where it is, under its private name.
         let mut moved = std::collections::HashMap::new();
         let mut files = Vec::new();
         for (path, mark) in state::discarding(&conn)? {
@@ -497,10 +494,7 @@ impl Folder {
         Ok(looked)
     }
 
-    /// Settles each private name a discard marked: a file there goes back to
-    /// its kept name where its row stands and that name is free, so the row
-    /// settles it as before; one that cannot stays marked and listed. A mark
-    /// whose name holds nothing is cleared.
+    /// Restore the kept name so the retained record can settle the file.
     fn settle_discarding(&self, conn: &rusqlite::Connection) -> Result<()> {
         let marks = state::discarding(conn)?;
         if marks.is_empty() {
@@ -984,8 +978,7 @@ mod tests {
         assert!(holds(&root, "the person's edit"));
     }
 
-    /// A folder keeping the file `Notes/Plan.md` held, under a record that
-    /// reads unless `unread`. Answers the folder's root and the kept name.
+    /// Creates a retained file with a readable or damaged record.
     #[cfg(debug_assertions)]
     fn kept_aside(
         unread: bool,
@@ -1064,7 +1057,6 @@ mod tests {
                 kept,
                 "unread {unread}"
             );
-            // The next pass puts it back at its name, and it stays listed.
             folder.scan().unwrap();
             let after = listed(&root, &folder.kept_files().unwrap());
             assert!(

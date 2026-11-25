@@ -398,7 +398,6 @@ impl Folder {
         if let Some(reads) = reads {
             reads.finish(self, &walked);
         }
-        // As the next scan settles a removal a stop left.
         let removing = self.taken_unsettled()?;
         files.retain(|file| !matches!(removing.get(&file.path), Some(None)));
         for file in &mut files {

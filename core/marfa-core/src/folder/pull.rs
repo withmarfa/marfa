@@ -223,7 +223,7 @@ fn beyond_a_link(error: &std::io::Error) -> bool {
 
 /// What recovery finds at the path of a removal a stop left.
 pub(super) enum TakenNow {
-    /// The file the removal recorded, so the removal did not happen.
+    /// The recorded file is at its path again.
     Present,
     /// Nothing, with no link on the path.
     Absent,
@@ -231,8 +231,7 @@ pub(super) enum TakenNow {
     Unsure(String),
 }
 
-/// The flag of a file whose removal stopped where Marfa cannot tell what
-/// became of it.
+/// The status flag for an unresolved removal.
 pub(super) const REMOVING: &str = "removing";
 
 fn held_removal(why: &str) -> String {
@@ -1987,7 +1986,6 @@ impl Folder {
                     Err(error) if beyond_a_link(error) => {
                         Some(TakenAway::Refused(NOT_INSIDE.into()))
                     }
-                    // The file may be out of its path, so the record stays.
                     Err(error) => {
                         return Err(CoreError::Store(format!(
                             "cannot remove {}: {error}",
@@ -1995,8 +1993,6 @@ impl Folder {
                         )));
                     }
                 };
-                // A file kept went back to its path, or a save took it, which
-                // the removal saw; anything else waits for recovery to tell.
                 if let Some(kept) = kept {
                     match self.file_identity(&path) {
                         Ok(Some(_)) => {
@@ -2035,8 +2031,7 @@ impl Folder {
         Ok(TakenAway::Ended(ended))
     }
 
-    /// Whether the file a removal recorded at `path` is still there, read
-    /// through directories opened without following a link.
+    /// Checks the path without following directory links.
     pub(super) fn taken_now(&self, path: &str, taken: Option<&state::Taken>) -> TakenNow {
         let Some(taken) = taken else {
             return TakenNow::Unsure("Marfa cannot read its record of the removal".into());
@@ -2055,9 +2050,7 @@ impl Folder {
         }
     }
 
-    /// The device and inode of the regular file at `path`, `None` where
-    /// something else is there, through directories opened without
-    /// following a link.
+    /// Returns `None` for a nonregular entry.
     fn file_identity(&self, path: &Path) -> std::io::Result<Option<(u64, u64)>> {
         let (directory, name) = self.location(path, false)?;
         let name = Path::new(&name);
@@ -2067,11 +2060,7 @@ impl Folder {
         }
     }
 
-    /// Settles each removal a stop left, before a pass sends its files. A
-    /// file gone ends its binding with no delete, even where the owner
-    /// deleted it in the gap: its item is kept, which loses nothing. Answers
-    /// each path it cannot settle, with why, for which the pass sends nothing
-    /// and deletes nothing.
+    /// An owner's delete after a stop is indistinguishable from a completed removal.
     pub(super) fn settle_taken(&self) -> Result<HashMap<String, String>> {
         let taken = state::taken(&*self.core.conn()?)?;
         let mut unsettled = HashMap::new();
@@ -2105,9 +2094,7 @@ impl Folder {
         Ok(unsettled)
     }
 
-    /// The removals a stop left, as the next pass would settle them, read
-    /// without writing: each path it cannot settle with why, and `None` for
-    /// each whose binding it ends.
+    /// Status previews recovery without changing the binding.
     pub(super) fn taken_unsettled(&self) -> Result<HashMap<String, Option<String>>> {
         let taken = state::taken(&*self.core.conn()?)?;
         let gone = self.root_gone();

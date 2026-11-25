@@ -529,8 +529,7 @@ mod tests {
         }
     }
 
-    /// Stops a removal of `path` at `point`, and opens the folder again as
-    /// the next process would.
+    /// Reopens the folder after the injected stop.
     #[cfg(debug_assertions)]
     fn stopped_at(folder: Folder, root: &Path, path: &str, point: &str) -> Folder {
         {
@@ -647,8 +646,7 @@ mod tests {
         assert_eq!(deletes_queued(&folder).len(), 1);
     }
 
-    /// Accepted: the owner's delete in the gap after a stopped removal reads
-    /// as the removal, so the item is kept and nothing is lost.
+    /// The device cannot distinguish the owner's delete from its own removal.
     #[cfg(debug_assertions)]
     #[test]
     fn a_removal_stopped_before_the_move_aside_then_deleted_by_the_owner_keeps_the_item() {
@@ -690,7 +688,6 @@ mod tests {
         assert_eq!(state::taken(&conn).unwrap().len(), 1);
         drop(conn);
         assert!(held_in_status(&folder, "new.md"));
-        // Once its path is empty, the binding ends as any stopped removal's does.
         std::fs::remove_file(root.join("new.md")).unwrap();
         scanned_past_the_grace(&folder, "new.md");
         assert!(deletes_queued(&folder).is_empty());

@@ -392,9 +392,7 @@ fn under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreE
     Ok(found)
 }
 
-/// One `meta` row per bound file a removal is taking away, written before
-/// the file moves and cleared only with the binding's end or once the file
-/// is proved still at its path, so no gap a stop leaves reads as a delete.
+/// A removal records its intent before the file leaves its path.
 const TAKEN: &str = "folder_taken:";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -415,8 +413,7 @@ pub(crate) fn clear_taken(conn: &Connection, path: &str) -> Result<(), CoreError
     crate::store::meta_delete(conn, &format!("{TAKEN}{path}"))
 }
 
-/// Every removal not yet settled, by path; `None` where its row does not
-/// read, which recovery cannot settle.
+/// An unreadable record still identifies its path by its key.
 pub(crate) fn taken(conn: &Connection) -> Result<Vec<(String, Option<Taken>)>, CoreError> {
     Ok(under(conn, TAKEN)?
         .into_iter()
@@ -662,9 +659,7 @@ pub(crate) fn any_retained(conn: &Connection) -> Result<bool, CoreError> {
 
 const DISCARDING: &str = "folder_discarding:";
 
-/// A kept file a discard moves to a private name, recorded before the move
-/// and cleared only once that name holds nothing, so the file is listed
-/// under whichever name it has.
+/// The private name must be recoverable before the rename.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Discarding {
     /// The id of the kept file's record.
@@ -687,8 +682,6 @@ impl Discarding {
     }
 }
 
-/// Records `discarding` as `mark` says: moving or left under its private
-/// name, or cleared once that name holds nothing.
 pub(crate) fn mark_discarding(
     conn: &Connection,
     discarding: Discarding,
@@ -708,8 +701,7 @@ pub(crate) fn set_discarding(conn: &Connection, discarding: &Discarding) -> Resu
     crate::store::meta_set(conn, &discarding.key(), &value)
 }
 
-/// Every kept file a discard moved or was moving to a private name, each
-/// by its path there; `None` where the row does not read.
+/// The key retains the private path even if the value cannot be read.
 pub(crate) fn discarding(
     conn: &Connection,
 ) -> Result<Vec<(String, Option<Discarding>)>, CoreError> {
@@ -719,7 +711,6 @@ pub(crate) fn discarding(
         .collect())
 }
 
-/// Clears a record by its path.
 pub(crate) fn clear_discarding_at(conn: &Connection, path: &str) -> Result<(), CoreError> {
     crate::store::meta_delete(conn, &format!("{DISCARDING}{path}"))
 }

@@ -390,13 +390,11 @@ pub(crate) trait Ledger {
     /// Records the file read, out of its path and kept under its reserved
     /// name in the aside directory, for each pass to settle.
     fn retain(&self, retained: &Retained) -> io::Result<()>;
-    /// Records where a discard of `retained` has its file, as
-    /// [`discard_checked`] marks it.
+    /// Records the private name before a discard can strand the file.
     fn discarding(&self, retained: &Retained, private: &Path, mark: Mark<'_>) -> io::Result<()>;
 }
 
-/// What [`discard_checked`] records of the private name it moves a kept file
-/// to, so the file is listed under whichever name holds it.
+/// The state of a discard's private name.
 pub(crate) enum Mark<'a> {
     /// Before the move: the file may be under either name.
     Moving,
@@ -930,10 +928,7 @@ pub(crate) enum Discard {
     Left,
 }
 
-/// A private name keeps a save at the old name out of the final check and
-/// unlink. `mark` records the private name before the move, so a file under
-/// it is listed until it goes back or is deleted; once moved, every outcome
-/// is answered, never an error.
+/// The private name protects saves to the old name during the final check.
 pub(crate) fn discard_checked(
     dir: &Directory,
     name: &Path,
@@ -944,7 +939,6 @@ pub(crate) fn discard_checked(
     write_before_discard(dir, name);
     let private = reserved(&uuid::Uuid::now_v7().simple().to_string());
     mark(&private, Mark::Moving)?;
-    // A mark left behind names an empty name, which the next pass clears.
     let free = || {
         let _ = mark(&private, Mark::Free);
     };
@@ -961,7 +955,6 @@ pub(crate) fn discard_checked(
     }
     stop_if_asked(name, "crash-after-private-rename");
     let left = |reason: String| {
-        // Marked as moving already, so listed under this name either way.
         let _ = mark(&private, Mark::Left(&reason));
         Ok(Discard::Left)
     };

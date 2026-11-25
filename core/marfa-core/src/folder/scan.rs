@@ -132,8 +132,7 @@ struct ScanState {
     /// Each path whose file waits while another file carries the item bound
     /// there.
     held_carried: HashMap<String, HeldCarried>,
-    /// Why each path a stopped removal left unsettled is held: nothing is
-    /// sent for its file and nothing deletes its item.
+    /// Paths held for an unresolved removal, with the reason for each hold.
     removing: HashMap<String, String>,
 }
 

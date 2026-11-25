@@ -1204,7 +1204,7 @@ If a program writes to a file a folder keeps under a name of the form `.marfa-ke
 
 If a discard leaves a kept file under a name other than the one it was listed at, as when the device stops or cannot delete the file, then a device MUST list the file in `folders kept` at the name that holds it until the file is put back or deleted.
 
-**Reason:** a file listed at a name that holds nothing is lost to the owner, who cannot find it to keep or delete it. Where the old name is free, the next pass moves the file back to it.
+**Reason:** the owner needs the file's current name to recover or delete it.
 
 **Tests:** `device/folders-open-writer.test.ts › lists a kept file under the name it is left at where a discard %s, until it is deleted`.
 
