@@ -1554,12 +1554,6 @@ When an unbound folder item’s placement already holds exactly its rendered byt
 
 **Tests:** `device/folders.test.ts › takes back a file of its own the mapping had lost`, `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`.
 
-### `folder-files/adopted-file-journal-cleared`
-
-When a device binds an existing file to an unbound item under `folder-files/rendered-file-adopted`, a device MUST clear that item's deletion journal entry at the file's path.
-
-**Tests:** `device/folders-one-mac.test.ts › adopts the item's own bytes at its path, and keeps a previous file's delete, while another folder keeps its file ($mode, previous file $previous)`.
-
 ### `folder-files/adopted-file-previous-journal-kept`
 
 When a device binds an existing file to an unbound item under `folder-files/rendered-file-adopted` at a path where another item's file was journaled as deleted, a device MUST keep the other item's deletion journal entry.
