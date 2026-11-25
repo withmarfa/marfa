@@ -857,6 +857,7 @@ marfa items transition [OPTIONS] --state <STATE> <ID>
 | Option | Description |
 | --- | --- |
 | `--state <STATE>` | The state to move it to. One of `active`, `archived`, `trashed`. |
+| `--from <FROM>` | The state you read the item in. If it is in another state now, nothing moves and the server answers `state_conflict`. One of `active`, `archived`, `trashed`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items purge
@@ -3883,6 +3884,7 @@ marfa device items transition [OPTIONS] --state <STATE> <ID>
 | Option | Description |
 | --- | --- |
 | `--state <STATE>` | The state to move it to. `revoked` is the server's alone. One of `active`, `archived`, `trashed`, `revoked`. |
+| `--from <FROM>` | The state you read the item in. If the copy shows it in another state, nothing is queued and the answer is `state_conflict`. One of `active`, `archived`, `trashed`. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
