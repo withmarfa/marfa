@@ -89,9 +89,22 @@ pub enum FoldersCommand {
     /// `folders list` shows. Where that path is gone, passes through a link,
     /// or holds state the registry does not show to be the directory's own, the
     /// directory is only taken off the list and nothing is deleted.
+    ///
+    /// A directory the registry does not list, and that holds no folder
+    /// state, but that listed folders still remember as another folder on
+    /// this machine, is forgotten in each of them, after a confirmation. While
+    /// they remember it and it cannot be read, as when its volume is not
+    /// mounted, they hold every file deleted by hand. Once it is forgotten,
+    /// their next pass sends those deletes. This changes no file, nothing on
+    /// the server and no listed folder, and says which folders forgot it.
     Remove {
         /// The directory.
         dir: PathBuf,
+        /// Confirm forgetting a directory that folders remember without
+        /// asking, for scripts. Without it, forgetting asks at a terminal, and
+        /// is refused with `--json` or anywhere else.
+        #[arg(long)]
+        yes: bool,
     },
     /// Say where every file in the directory stands, from its own store,
     /// asking the server nothing, and whether the watch of the directory runs
@@ -420,34 +433,39 @@ pub fn run(
                     .join("\n")
             })
         }
-        FoldersCommand::Remove { dir } => {
-            match Folder::remove_at_asking(&dir).map_err(asked(&dir))? {
-                Removal::Deleted {
-                    dir,
-                    folder,
-                    unsent,
-                } => output::report(
-                    &serde_json::json!({
-                        "dir": dir,
-                        "removed": true,
-                        "folder": folder,
-                        "unsent": unsent.writes,
-                        "files": unsent.files,
-                    }),
-                    json,
-                    || removed_said(&dir, &folder, &unsent),
-                ),
-                Removal::Unlisted { dir, reason } => output::report(
-                    &serde_json::json!({ "dir": dir, "removed": false, "reason": reason }),
-                    json,
-                    || {
-                        format!(
-                            "{} was taken off the list; nothing was deleted because {}",
-                            dir.display(),
-                            printable(&reason)
-                        )
-                    },
-                ),
+        FoldersCommand::Remove { dir, yes } => {
+            let remembering = Folder::remembered_by(&dir)?;
+            if !remembering.is_empty() {
+                forget_remembered(&dir, &remembering, yes, json)
+            } else {
+                match Folder::remove_at_asking(&dir).map_err(asked(&dir))? {
+                    Removal::Deleted {
+                        dir,
+                        folder,
+                        unsent,
+                    } => output::report(
+                        &serde_json::json!({
+                            "dir": dir,
+                            "removed": true,
+                            "folder": folder,
+                            "unsent": unsent.writes,
+                            "files": unsent.files,
+                        }),
+                        json,
+                        || removed_said(&dir, &folder, &unsent),
+                    ),
+                    Removal::Unlisted { dir, reason } => output::report(
+                        &serde_json::json!({ "dir": dir, "removed": false, "reason": reason }),
+                        json,
+                        || {
+                            format!(
+                                "{} was taken off the list; nothing was deleted because {}",
+                                dir.display(),
+                                printable(&reason)
+                            )
+                        },
+                    ),
+                }
             }
         }
         FoldersCommand::Status { dir } => {
@@ -818,6 +836,72 @@ fn from_key_file(path: &Path, dir: Option<&Path>, named: &Named) -> Result<Named
         key: Some(held.key),
         profile: None,
     })
+}
+
+fn forget_remembered(
+    dir: &Path,
+    remembering: &[PathBuf],
+    yes: bool,
+    json: bool,
+) -> Result<(), CliError> {
+    let at_terminal =
+        !json && std::io::stdin().is_terminal() && crate::output::stderr_is_terminal();
+    if !yes && !at_terminal {
+        return Err(CliError::Usage(format!(
+            "{} is not listed, but {} folder(s) on this machine remember it; `folders remove` forgets it in them only after a confirmation at a terminal and without --json, and otherwise changes nothing; pass --yes to confirm it",
+            dir.display(),
+            remembering.len()
+        )));
+    }
+    let agreed = yes || asks_to_forget(dir, remembering)?;
+    let forgotten = if agreed {
+        Folder::forget_remembered(dir).map_err(asked(dir))?
+    } else {
+        Vec::new()
+    };
+    output::report(
+        &serde_json::json!({
+            "dir": dir,
+            "removed": false,
+            "forgotten_by": forgotten,
+            "declined": !agreed,
+        }),
+        json,
+        || {
+            if !agreed {
+                return "nothing was forgotten".to_string();
+            }
+            let mut lines = vec![format!(
+                "{} is forgotten in {} folder(s); their next pass decides the files they held for it:",
+                dir.display(),
+                forgotten.len()
+            )];
+            lines.extend(forgotten.iter().map(|root| format!("  {}", root.display())));
+            lines.join("\n")
+        },
+    )
+}
+
+/// Asks at a terminal; the caller has already made sure there is one.
+fn asks_to_forget(dir: &Path, remembering: &[PathBuf]) -> Result<bool, CliError> {
+    use std::io::{BufRead, Write};
+    let mut question = crate::output::stderr();
+    writeln!(
+        question,
+        "{} is not listed, but these folders remember it, and hold each file deleted by hand while it cannot be read:",
+        dir.display()
+    )?;
+    for root in remembering {
+        writeln!(question, "  {}", root.display())?;
+    }
+    write!(
+        question,
+        "Forget it? Their next pass then sends the deletes they held. [y/N] "
+    )?;
+    question.flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
 fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliError> {

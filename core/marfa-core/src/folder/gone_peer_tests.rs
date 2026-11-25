@@ -61,7 +61,10 @@ fn a_delete_stays_held_for_a_remembered_folder_whose_directory_is_gone_until_it_
         assert_eq!(unread.deleted, 0, "{unread:?}");
         let reasons = unsure_reasons(&unread);
         assert_eq!(reasons.len(), 1, "{unread:?}");
-        let forgets = format!("`marfa folders remove {}` forgets it", other.path().display());
+        let forgets = format!(
+            "`marfa folders remove {}` forgets it",
+            other.path().display()
+        );
         assert!(
             reasons[0].contains(&forgets),
             "the advice names no step that ends the hold: {}",
@@ -97,13 +100,21 @@ fn a_delete_stays_held_for_a_remembered_folder_whose_directory_is_gone_until_it_
         "a listed folder was taken for one only remembered"
     );
     assert!(
-        Folder::remembered_by(other.path().join("never")).unwrap().is_empty(),
+        Folder::remembered_by(other.path().join("never"))
+            .unwrap()
+            .is_empty(),
         "a directory no folder remembers was taken for one remembered"
     );
     let root = a.root.clone();
-    assert_eq!(Folder::remembered_by(other.path()).unwrap(), [root.clone()]);
+    assert_eq!(
+        Folder::remembered_by(other.path()).unwrap(),
+        std::slice::from_ref(&root)
+    );
     drop(a);
-    assert_eq!(Folder::forget_remembered(other.path()).unwrap(), [root.clone()]);
+    assert_eq!(
+        Folder::forget_remembered(other.path()).unwrap(),
+        std::slice::from_ref(&root)
+    );
     assert!(Folder::remembered_by(other.path()).unwrap().is_empty());
     let a = Folder::open(&root, None).unwrap();
     let swept = a.scan().unwrap();

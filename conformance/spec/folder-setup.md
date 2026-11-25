@@ -1160,6 +1160,28 @@ When a removal takes a registry entry off without deleting folder state, the CLI
 
 **Tests:** `cli/folder.test.ts › removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to`, `cli/folder.test.ts › takes a listed folder off the list without removing a folder moved into its place`.
 
+### `folder-setup/remove-remembered-forgets`
+
+When `folders remove` is confirmed for a directory that the machine’s folder registry does not list and that holds no folder state, a device MUST stop deferring missing files' deletions for that directory in every listed folder that found it in an earlier pass.
+
+**Reason:** a folder that the registry no longer lists cannot be told gone from one on a volume that is not mounted (`folder-files/unlisted-missing-deferred`), so the person decides.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone, until folders remove forgets it`.
+
+### `folder-setup/remove-remembered-confirmed`
+
+If `folders remove` is not given `--yes` for a directory that the machine’s folder registry does not list, that holds no folder state and that a listed folder found in an earlier pass, and no person at a terminal confirms it, then the CLI MUST change nothing.
+
+**Reason:** once the directory is forgotten, the next pass of each folder that found it sends the deletes it held.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone, until folders remove forgets it`.
+
+### `folder-setup/remove-remembered-reported`
+
+When `folders remove` forgets a directory that listed folders found in an earlier pass, the CLI MUST report `removed` as `false` and list in `forgotten_by` the directory of each folder that forgot it.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone, until folders remove forgets it`.
+
 ### `folder-setup/remove-unlisted-names-other`
 
 When a removal takes a listed entry off without deleting folder state because the state at the entry's directory has the store identity that the machine’s folder registry lists for another entry, the CLI MUST name that other entry's listed path in the reason.
@@ -1172,13 +1194,21 @@ When a folder is registered, a device MUST record the identity of the directory 
 
 **Reason:** The path alone cannot say whether the directory standing there is the one the folder was admitted at. The identity is an opaque value in each `folders list --json` entry, as `root`, which a program compares for equality and does not parse.
 
-**Tests:** `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and drops one that records none once its state is removed`.
+**Tests:** `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and keeps one that records none until it is removed`.
 
 ### `folder-setup/registry-removed-state`
 
-When a registry read finds that the directory at a listed folder’s path holds no folder state and is not known to differ from the directory the folder was admitted at, a device MUST remove that directory’s registry entry.
+When a registry read finds that the directory at a listed folder’s path holds no folder state and is the directory the folder's entry records it was admitted at, a device MUST remove that directory’s registry entry.
 
-**Tests:** `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`, `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and drops one that records none once its state is removed`.
+**Tests:** `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`, `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and keeps one that records none until it is removed`.
+
+### `folder-setup/registry-rootless-kept`
+
+When a registry read finds that a listed folder’s entry records no identity of the directory the folder was admitted at, a device MUST retain the entry, whatever the directory at its path holds.
+
+**Reason:** an empty directory at the path, such as the mount point of a volume that is not mounted, cannot be told from the folder's directory with its state removed. `folders remove` takes the entry off.
+
+**Tests:** `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and keeps one that records none until it is removed`.
 
 ### `folder-setup/registry-replaced-kept`
 

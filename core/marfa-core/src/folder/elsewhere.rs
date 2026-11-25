@@ -85,9 +85,7 @@ fn remembering(dir: &Path) -> Result<(Vec<PathBuf>, [PathBuf; 2])> {
         return Ok((Vec::new(), spellings));
     };
     let listed = registry.folders()?;
-    if Folder::is_at(&spellings[0])
-        || listed.iter().any(|entry| spellings.contains(&entry.dir))
-    {
+    if Folder::is_at(&spellings[0]) || listed.iter().any(|entry| spellings.contains(&entry.dir)) {
         return Ok((Vec::new(), spellings));
     }
     let by = listed
@@ -862,7 +860,12 @@ mod tests {
             std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
             let core = Core::open(dir.join(STATE_DIR).join("core.sqlite"), None).unwrap();
             super::super::settings_file::bind(&core, folder).unwrap();
-            store::meta_set(&core.conn().unwrap(), META_STORE, &format!("store-{folder}")).unwrap();
+            store::meta_set(
+                &core.conn().unwrap(),
+                META_STORE,
+                &format!("store-{folder}"),
+            )
+            .unwrap();
         };
         let identity = |dir: &Path| {
             Directory::open(dir)
@@ -881,7 +884,11 @@ mod tests {
                 dir: at(name),
                 folder: name.to_string(),
                 store: Some(format!("store-{name}")),
-                root: if name == "rootless" { None } else { identity(&at(name)) },
+                root: if name == "rootless" {
+                    None
+                } else {
+                    identity(&at(name))
+                },
             });
         }
         // Each as an unmounted volume can look: an empty directory or none.
@@ -906,7 +913,13 @@ mod tests {
         let mut remaining: Vec<String> = peers
             .all()
             .iter()
-            .map(|peer| peer.root.file_name().unwrap().to_string_lossy().into_owned())
+            .map(|peer| {
+                peer.root
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
         remaining.sort();
         assert_eq!(remaining, ["missing", "replaced", "rootless"]);
