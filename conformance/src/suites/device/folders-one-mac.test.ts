@@ -1358,8 +1358,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       if (mode === "already-present")
         writeFileSync(join(b.dir, "photo.png"), bytes);
       if (mode === "appearing") {
-        // The bytes appear between the write and its rename, which leaves
-        // them; the next pull finds them at the path.
         const raced = await withFault("create-before-rename=photo.png", () =>
           b.folder.pull(),
         );
@@ -1367,6 +1365,12 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         expect(
           raced.ok && [raced.value.unwritten, raced.value.unchanged],
         ).toEqual([1, 0]);
+        const failed = await b.folder.status();
+        expect(
+          failed.ok &&
+            failed.value.files.find((file) => file.path === "photo.png")
+              ?.item_id,
+        ).toBe(previous ? gone.id : undefined);
       }
       const pulled = await b.folder.pull();
       expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
@@ -3017,8 +3021,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       properties: { title: "Brief", body: "the brief\n" },
     };
     const picture = Buffer.from("a picture fetched in the brief's pull\n");
-    // Made later than the brief, so the pull that writes the brief fetches
-    // it in the same pass.
+    // The creation time puts the blob fetch in the pull that writes Brief.md.
     const image = {
       id: "01a00000-0000-7000-8000-0000000041d4",
       type: "core.file.image",
@@ -3046,8 +3049,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         "core.file": [{ item: image }],
       },
       (server) => {
-        // The brief is edited in the first folder while the second fetches
-        // this picture.
         const hex = hashOf(picture).slice("sha256:".length);
         server.copyAnswer(
           "GET",
