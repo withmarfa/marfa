@@ -215,17 +215,13 @@ impl PullReport {
     }
 }
 
-/// What became of a file a pull or a confirmation took away.
-/// Why a file whose path runs through a symbolic link, or no longer
-/// resolves inside the folder, stays where it is.
 pub(super) const NOT_INSIDE: &str = "it is not inside the folder: a directory on its path is a symbolic link or no longer a directory";
 
-/// Whether opening a path failed because a directory on it is a symbolic
-/// link or no directory at all.
 fn beyond_a_link(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotADirectory || super::is_loop(error)
 }
 
+/// What became of a file a pull or a confirmation took away.
 pub(super) enum TakenAway {
     /// The file is gone and its binding ended, with this many placements.
     Ended(usize),
@@ -1941,8 +1937,7 @@ impl Folder {
         if !plainly_inside(&self.root_dir, &row.path) {
             return Ok(TakenAway::Refused(NOT_INSIDE.into()));
         }
-        // First: a failure leaves the file and its binding, and the next pass
-        // finds no placement left to end and takes the file away.
+        // Keep the binding until its placement can be ended.
         let ended = self.end_placement(&row.item_id, &row.path)?;
         #[cfg(debug_assertions)]
         crate::fault::hold(|| "folder-take-away-ended");
@@ -2004,9 +1999,7 @@ impl Folder {
         Ok(TakenAway::Ended(ended))
     }
 
-    /// Ends the binding of each file a removal stopped after it set out to
-    /// take it away, where the file is gone, and lets one still there stay
-    /// bound, so neither reads as the person's delete or a new file.
+    /// Reconciles pending removals before the scan journals missing files.
     pub(super) fn settle_taken(&self) -> Result<()> {
         let taken = state::taken(&*self.core.conn()?)?;
         for (path, item_id) in taken {

@@ -923,10 +923,7 @@ pub(crate) enum Discard {
     Stranded(PathBuf),
 }
 
-/// Deletes the kept file at `name` in `dir` only while it is the file
-/// `still` proves at the private name it is given, with the identity `at` where given. It moves to a
-/// private reserved name first, so no save at `name` meets the check, and
-/// goes back where it is no longer that file.
+/// A private name keeps a save at the old name out of the final check and unlink.
 pub(crate) fn discard_checked(
     dir: &Directory,
     name: &Path,

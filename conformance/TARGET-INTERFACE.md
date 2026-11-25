@@ -322,6 +322,10 @@ stays because that thing is what it checks.
 - `device/folders-open-writer.test.ts`, "keeps a file it keeps under a record
   it cannot read when a program wrote to it, though the owner discards",
   spoils the same record, for the same reason.
+- In the same file, "never deletes a kept file a program writes to as the
+  owner discards it, where its record %s" and "lists through a binding a file
+  kept under a record it cannot read, and discards it only %s as set aside"
+  also use an unreadable record. No operation or fault produces one.
 - `compliance/mcp-sign-in-acts.test.ts`, "refuses a confirmation once a new
   approval added a destination since the preview, with a new preview", adds a
   redirect URI to an app's stored registration while the server runs. Only a
