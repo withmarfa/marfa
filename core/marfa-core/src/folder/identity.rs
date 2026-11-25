@@ -39,6 +39,16 @@ mod rule {
 
 pub use rule::Identity;
 
+/// The device an identity's key names.
+pub fn device_in(key: &str) -> Option<u64> {
+    key.split(':').next()?.parse().ok()
+}
+
+/// The device a file is on.
+pub fn device(metadata: &Metadata) -> u64 {
+    device_of(metadata)
+}
+
 pub fn of(metadata: &Metadata) -> Option<Identity> {
     Identity::from_parts(device_of(metadata), inode_of(metadata), born(metadata)?)
 }

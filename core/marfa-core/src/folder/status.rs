@@ -234,8 +234,24 @@ impl Folder {
         };
         // Each bound path the last sweep found another file carrying, with
         // its item and that file.
-        let carried: HashMap<String, (String, String)> = state::journaled(&*self.core.conn()?)?
-            .into_iter()
+        let journaled = state::journaled(&*self.core.conn()?)?;
+        // Each bound path the last sweep could not tell a move of, and why.
+        let unsure: HashMap<&str, &str> = journaled
+            .iter()
+            .filter_map(|row| match &row.kept {
+                Some(state::Kept::Unsure(reason))
+                    if by_path
+                        .get(row.path.as_str())
+                        .is_some_and(|bound| bound.item_id == row.item_id) =>
+                {
+                    Some((row.path.as_str(), reason.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        let carried: HashMap<String, (String, String)> = journaled
+            .iter()
+            .cloned()
             .filter_map(|row| match row.kept {
                 Some(state::Kept::Carried(carrier))
                     if by_path
@@ -387,6 +403,11 @@ impl Folder {
                 .because(
                     "gone",
                     "is gone, and its item is already in the bin or no longer held, so no delete is sent: a scan past the grace lets the file go",
+                )
+            } else if let Some(reason) = unsure.get(bound.path.as_str()) {
+                FileStatus::new(&bound.path, at, "held").because(
+                    "unsure",
+                    format!("is missing and its item is not trashed, since where it went cannot be told: {reason}"),
                 )
             } else {
                 FileStatus {

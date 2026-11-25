@@ -848,9 +848,101 @@ pub(super) fn gone(entry: &Registered) -> bool {
     )
 }
 
+/// Whether the folder's directory is gone from a volume that is mounted: its
+/// path does not exist, and the nearest directory above it that does is on
+/// the device the admitted directory was on. An unmounted volume leaves that
+/// directory on another device, and an entry that records no admitted
+/// directory, or a path that cannot be read, cannot tell, so they are kept.
+#[cfg(unix)]
+pub(super) fn gone_from_its_volume(entry: &Registered) -> bool {
+    use std::io::ErrorKind::{NotADirectory, NotFound};
+    let Some(device) = entry.root.as_deref().and_then(super::identity::device_in) else {
+        return false;
+    };
+    if !matches!(std::fs::symlink_metadata(&entry.dir), Err(error) if matches!(error.kind(), NotFound | NotADirectory))
+    {
+        return false;
+    }
+    for above in entry.dir.ancestors().skip(1) {
+        match std::fs::metadata(above) {
+            Ok(metadata) => return super::identity::device(&metadata) == device,
+            Err(error) if matches!(error.kind(), NotFound | NotADirectory) => {}
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
+#[cfg(not(unix))]
+pub(super) fn gone_from_its_volume(_: &Registered) -> bool {
+    false
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_is_gone_from_its_volume_only_where_the_volume_it_was_on_is_mounted() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let dir = folder_at(temp.path(), "notes");
+        let admitted = root_identity(&Directory::open(&dir).unwrap()).unwrap();
+        let entry = |root: Option<String>| Registered {
+            dir: dir.join("deeper"),
+            folder: "f1".into(),
+            store: Some("s1".into()),
+            root,
+        };
+        let device = super::super::identity::device_in(&admitted).unwrap();
+        let elsewhere = admitted.replacen(&device.to_string(), &(device ^ 1).to_string(), 1);
+        // The witness: present, it is not gone.
+        let present = Registered {
+            dir: dir.clone(),
+            ..entry(Some(admitted.clone()))
+        };
+        assert!(!gone_from_its_volume(&present));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(
+            gone_from_its_volume(&Registered {
+                dir: dir.clone(),
+                ..entry(Some(admitted.clone()))
+            }),
+            "a directory removed from a mounted volume was not taken for gone"
+        );
+        assert!(gone_from_its_volume(&entry(Some(admitted))));
+        assert!(
+            !gone_from_its_volume(&entry(Some(elsewhere))),
+            "a directory on a volume that is not mounted was taken for gone"
+        );
+        assert!(
+            !gone_from_its_volume(&entry(None)),
+            "a directory with no admitted identity was taken for gone"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_whose_parent_cannot_be_read_is_not_gone_from_its_volume() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let parent = temp.path().join("parent");
+        let dir = folder_at(&parent, "notes");
+        let admitted = root_identity(&Directory::open(&dir).unwrap());
+        let entry = Registered {
+            dir: dir.clone(),
+            folder: "f1".into(),
+            store: None,
+            root: admitted,
+        };
+        std::fs::remove_dir_all(&dir).unwrap();
+        // The witness: readable, the parent shows the directory removed.
+        assert!(gone_from_its_volume(&entry));
+        let _sealed = crate::test_folders::locked(&parent, 0o000);
+        assert!(
+            !gone_from_its_volume(&entry),
+            "a directory whose parent cannot be read was taken for gone"
+        );
+    }
 
     thread_local! {
         /// A registry of one test's own. Every test in a process otherwise
