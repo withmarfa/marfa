@@ -831,15 +831,14 @@ fn root_identity(root: &Directory) -> Option<String> {
 /// missing or unreadable root is kept, since a disconnected volume cannot
 /// establish that the admitted folder was removed. So is a root that is not
 /// the admitted directory, such as an empty mount point or a recreated
-/// directory standing at the path, whatever it holds. An entry that records
-/// no admitted directory is judged by what its path holds.
+/// directory standing at the path, whatever it holds, and an entry that
+/// records no admitted directory, which nothing tells from an empty mount
+/// point.
 pub(super) fn gone(entry: &Registered) -> bool {
-    let Ok(root) = Directory::open(&entry.dir) else {
+    let (Ok(root), Some(admitted)) = (Directory::open(&entry.dir), entry.root.as_deref()) else {
         return false;
     };
-    if let Some(admitted) = entry.root.as_deref()
-        && root_identity(&root).as_deref() != Some(admitted)
-    {
+    if root_identity(&root).as_deref() != Some(admitted) {
         return false;
     }
     matches!(
@@ -848,94 +847,9 @@ pub(super) fn gone(entry: &Registered) -> bool {
     )
 }
 
-#[cfg(unix)]
-pub(super) fn gone_from_its_volume(entry: &Registered) -> bool {
-    use std::io::ErrorKind::{NotADirectory, NotFound};
-    let Some(device) = entry.root.as_deref().and_then(super::identity::device_in) else {
-        return false;
-    };
-    if !matches!(std::fs::symlink_metadata(&entry.dir), Err(error) if matches!(error.kind(), NotFound | NotADirectory))
-    {
-        return false;
-    }
-    for above in entry.dir.ancestors().skip(1) {
-        match std::fs::metadata(above) {
-            Ok(metadata) => return super::identity::device(&metadata) == device,
-            Err(error) if matches!(error.kind(), NotFound | NotADirectory) => {}
-            Err(_) => return false,
-        }
-    }
-    false
-}
-
-#[cfg(not(unix))]
-pub(super) fn gone_from_its_volume(_: &Registered) -> bool {
-    false
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-
-    #[cfg(unix)]
-    #[test]
-    fn a_directory_is_gone_from_its_volume_only_where_the_volume_it_was_on_is_mounted() {
-        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
-        let dir = folder_at(temp.path(), "notes");
-        let admitted = root_identity(&Directory::open(&dir).unwrap()).unwrap();
-        let entry = |root: Option<String>| Registered {
-            dir: dir.join("deeper"),
-            folder: "f1".into(),
-            store: Some("s1".into()),
-            root,
-        };
-        let device = super::super::identity::device_in(&admitted).unwrap();
-        let elsewhere = admitted.replacen(&device.to_string(), &(device ^ 1).to_string(), 1);
-        let present = Registered {
-            dir: dir.clone(),
-            ..entry(Some(admitted.clone()))
-        };
-        assert!(!gone_from_its_volume(&present));
-        std::fs::remove_dir_all(&dir).unwrap();
-        assert!(
-            gone_from_its_volume(&Registered {
-                dir: dir.clone(),
-                ..entry(Some(admitted.clone()))
-            }),
-            "a directory removed from a mounted volume was not taken for gone"
-        );
-        assert!(gone_from_its_volume(&entry(Some(admitted))));
-        assert!(
-            !gone_from_its_volume(&entry(Some(elsewhere))),
-            "a directory on a volume that is not mounted was taken for gone"
-        );
-        assert!(
-            !gone_from_its_volume(&entry(None)),
-            "a directory with no admitted identity was taken for gone"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_directory_whose_parent_cannot_be_read_is_not_gone_from_its_volume() {
-        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
-        let parent = temp.path().join("parent");
-        let dir = folder_at(&parent, "notes");
-        let admitted = root_identity(&Directory::open(&dir).unwrap());
-        let entry = Registered {
-            dir: dir.clone(),
-            folder: "f1".into(),
-            store: None,
-            root: admitted,
-        };
-        std::fs::remove_dir_all(&dir).unwrap();
-        assert!(gone_from_its_volume(&entry));
-        let _sealed = crate::test_folders::locked(&parent, 0o000);
-        assert!(
-            !gone_from_its_volume(&entry),
-            "a directory whose parent cannot be read was taken for gone"
-        );
-    }
 
     thread_local! {
         /// A registry of one test's own. Every test in a process otherwise
@@ -1074,7 +988,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_entry_that_records_no_admitted_directory_is_judged_by_what_its_path_holds() {
+    fn an_entry_that_records_no_admitted_directory_stays_listed_until_a_pass_records_it() {
         let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let base = temp.path();
         let registry = Registry::at(base.join(FILE_NAME));
@@ -1091,6 +1005,7 @@ pub(crate) mod tests {
             .to_string(),
         )
         .unwrap();
+        // As an unmounted volume's empty mount point looks.
         std::fs::remove_dir_all(removed.join(STATE_DIR)).unwrap();
         let dirs = |registry: &Registry| -> Vec<PathBuf> {
             registry
@@ -1102,9 +1017,10 @@ pub(crate) mod tests {
         };
         assert_eq!(
             dirs(&registry),
-            vec![kept.clone()],
-            "an entry with no identity whose state was removed stayed listed"
+            vec![kept.clone(), removed.clone()],
+            "an entry with no identity whose path holds no state was taken for removed"
         );
+        assert!(registry.unregister(&removed, None).unwrap());
 
         // A pass that opens the folder records the identity, and from then
         // on a directory replacing it is not taken for it.

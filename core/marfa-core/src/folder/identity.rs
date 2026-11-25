@@ -39,14 +39,6 @@ mod rule {
 
 pub use rule::Identity;
 
-pub fn device_in(key: &str) -> Option<u64> {
-    key.split(':').next()?.parse().ok()
-}
-
-pub fn device(metadata: &Metadata) -> u64 {
-    device_of(metadata)
-}
-
 pub fn of(metadata: &Metadata) -> Option<Identity> {
     Identity::from_parts(device_of(metadata), inode_of(metadata), born(metadata)?)
 }

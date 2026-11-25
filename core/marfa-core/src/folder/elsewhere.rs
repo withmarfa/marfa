@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use super::lists::Lists;
-use super::registry::{Registered, Registry, gone, gone_from_its_volume};
+use super::registry::{self, Registered, Registry, gone};
 use super::{Catalog, Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
 use crate::directory::Directory;
 use crate::{Core, Result, store};
@@ -48,6 +48,89 @@ pub(super) fn lost(core: &Core, registry: &Registry) -> bool {
             .ok()
             .and_then(|conn| store::meta_get(&conn, META_LISTED_IN).ok()?)
             == Some(registry.path().display().to_string())
+}
+
+/// Whether `entry`'s directory now holds the state of a folder with another
+/// store, so the folder it names is no longer there.
+fn holds_another(entry: &Registered) -> bool {
+    let Some(expected) = entry.store.as_deref() else {
+        return false;
+    };
+    let Some(state_dir) = Directory::open(&entry.dir)
+        .ok()
+        .filter(|root| super::admitted_root(root).is_ok())
+        .and_then(|root| root.child(Path::new(STATE_DIR), false).ok())
+    else {
+        return false;
+    };
+    Core::read_directory(&state_dir, &entry.dir.join(STATE_DIR).join("core.sqlite"))
+        .ok()
+        .and_then(|core| store::meta_get(&*core.conn().ok()?, META_STORE).ok()?)
+        .is_some_and(|found| found != expected)
+}
+
+fn others_in(conn: &rusqlite::Connection) -> Vec<Registered> {
+    store::meta_get(conn, META_OTHERS)
+        .ok()
+        .flatten()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+/// Each listed folder that remembers `dir`, which is neither listed nor a
+/// folder's directory now.
+fn remembering(dir: &Path) -> Result<(Vec<PathBuf>, [PathBuf; 2])> {
+    let spellings = [registry::absolute(dir), registry::resolved(dir)];
+    let Some(registry) = Registry::located() else {
+        return Ok((Vec::new(), spellings));
+    };
+    let listed = registry.folders()?;
+    if Folder::is_at(&spellings[0])
+        || listed.iter().any(|entry| spellings.contains(&entry.dir))
+    {
+        return Ok((Vec::new(), spellings));
+    }
+    let by = listed
+        .into_iter()
+        .filter(|entry| {
+            Folder::reading(&entry.dir).is_ok_and(|folder| {
+                folder.core.conn().is_ok_and(|conn| {
+                    others_in(&conn)
+                        .iter()
+                        .any(|other| spellings.contains(&other.dir))
+                })
+            })
+        })
+        .map(|entry| entry.dir)
+        .collect();
+    Ok((by, spellings))
+}
+
+impl Folder {
+    /// The listed folders that remember `dir` as another folder on this
+    /// machine, and so hold a missing file's delete while it cannot be read.
+    /// Empty where the registry lists `dir` or a folder's state is there.
+    pub fn remembered_by(dir: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
+        Ok(remembering(dir.as_ref())?.0)
+    }
+
+    /// Forgets `dir` in each listed folder that remembers it, asking a
+    /// process that holds one to let it go, as `open_asking` does. Changes no
+    /// file and nothing on a server. Answers the folders that forgot it.
+    pub fn forget_remembered(dir: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
+        let (by, spellings) = remembering(dir.as_ref())?;
+        for root in &by {
+            let folder =
+                Folder::open_without_listing(root.clone(), None, Some(super::HANDOVER_WAIT))?;
+            let conn = folder.core.conn()?;
+            let kept: Vec<Registered> = others_in(&conn)
+                .into_iter()
+                .filter(|other| !spellings.contains(&other.dir))
+                .collect();
+            store::meta_set(&conn, META_OTHERS, &serde_json::to_string(&kept)?)?;
+        }
+        Ok(by)
+    }
 }
 
 pub(super) struct Peer {
@@ -258,7 +341,7 @@ impl Peer {
                 }
             } else if self.remembered {
                 Some(format!(
-                    "the registry no longer lists {}, and Marfa cannot open it. Check that its volume is mounted and the directory is readable. If another directory occupies its path, move that directory aside",
+                    "the folder {0} cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it, and if it is gone, `marfa folders remove {0}` forgets it",
                     self.root.display()
                 ))
             } else {
@@ -468,11 +551,7 @@ impl<'a> Peers<'a> {
                 Err(error) => return (Vec::new(), Some(error.to_string())),
             };
             let conn = self.of.core.conn().ok();
-            let known: Vec<Registered> = conn
-                .as_ref()
-                .and_then(|conn| store::meta_get(conn, META_OTHERS).ok()?)
-                .and_then(|json| serde_json::from_str(&json).ok())
-                .unwrap_or_default();
+            let known = conn.as_deref().map(others_in).unwrap_or_default();
             let mut others: Vec<Registered> = listed
                 .into_iter()
                 .filter(|entry| &entry.dir != own)
@@ -482,7 +561,7 @@ impl<'a> Peers<'a> {
                 let listed = others.iter().any(|other| {
                     other.dir == entry.dir || (entry.store.is_some() && other.store == entry.store)
                 });
-                if !listed && &entry.dir != own && !gone(&entry) && !gone_from_its_volume(&entry) {
+                if !listed && &entry.dir != own && !gone(&entry) && !holds_another(&entry) {
                     others.push(entry);
                 }
             }
@@ -776,40 +855,47 @@ mod tests {
     }
 
     #[test]
-    fn a_remembered_peer_with_no_identity_whose_state_was_removed_is_dropped() {
+    fn a_remembered_peer_is_dropped_only_where_its_directory_shows_it_is_another_or_no_folder() {
+        let (_, _registry) = super::super::registry::tests::own_registry();
         let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let make = |dir: &Path, folder: &str| {
             std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
             let core = Core::open(dir.join(STATE_DIR).join("core.sqlite"), None).unwrap();
             super::super::settings_file::bind(&core, folder).unwrap();
+            store::meta_set(&core.conn().unwrap(), META_STORE, &format!("store-{folder}")).unwrap();
         };
-        let own = temp.path().join("own");
-        let removed = temp.path().join("removed");
-        let replaced = temp.path().join("replaced");
-        make(&own, "01a00000-0000-7000-8000-0000000000a1");
-        make(&removed, "01a00000-0000-7000-8000-0000000000a2");
-        make(&replaced, "01a00000-0000-7000-8000-0000000000a3");
-        let identity = Directory::open(&replaced)
-            .unwrap()
-            .metadata()
-            .ok()
-            .and_then(|metadata| identity::of(&metadata))
-            .map(|identity| identity.key());
-        let remembered = |dir: &Path, folder: &str, root: Option<String>| Registered {
-            dir: dir.to_path_buf(),
-            folder: folder.to_string(),
-            store: Some(format!("store-{folder}")),
-            root,
+        let identity = |dir: &Path| {
+            Directory::open(dir)
+                .unwrap()
+                .metadata()
+                .ok()
+                .and_then(|metadata| identity::of(&metadata))
+                .map(|identity| identity.key())
         };
-        let known = vec![
-            remembered(&removed, "removed", None),
-            remembered(&replaced, "replaced", identity),
-        ];
-        std::fs::remove_dir_all(removed.join(STATE_DIR)).unwrap();
-        std::fs::rename(&replaced, temp.path().join("replaced-away")).unwrap();
-        std::fs::create_dir(&replaced).unwrap();
+        let at = |name: &str| temp.path().join(name);
+        make(&at("own"), "01a00000-0000-7000-8000-0000000000a1");
+        let mut known = Vec::new();
+        for name in ["rootless", "replaced", "missing", "emptied", "another"] {
+            make(&at(name), name);
+            known.push(Registered {
+                dir: at(name),
+                folder: name.to_string(),
+                store: Some(format!("store-{name}")),
+                root: if name == "rootless" { None } else { identity(&at(name)) },
+            });
+        }
+        // Each as an unmounted volume can look: an empty directory or none.
+        std::fs::remove_dir_all(at("rootless").join(STATE_DIR)).unwrap();
+        std::fs::rename(at("replaced"), at("replaced-away")).unwrap();
+        std::fs::create_dir(at("replaced")).unwrap();
+        std::fs::remove_dir_all(at("missing")).unwrap();
+        // Each shown gone: the admitted directory without its state, and
+        // another folder's state at the path.
+        std::fs::remove_dir_all(at("emptied").join(STATE_DIR)).unwrap();
+        std::fs::remove_dir_all(at("another")).unwrap();
+        make(&at("another"), "someone-else");
 
-        let folder = Folder::open(&own, None).unwrap();
+        let folder = Folder::open(at("own"), None).unwrap();
         store::meta_set(
             &folder.core.conn().unwrap(),
             META_OTHERS,
@@ -817,15 +903,13 @@ mod tests {
         )
         .unwrap();
         let peers = Peers::of(&folder, None);
-        let remaining: Vec<&Path> = peers.all().iter().map(|peer| peer.root.as_path()).collect();
-        assert!(
-            !remaining.contains(&removed.as_path()),
-            "a remembered folder with no identity whose state was removed stayed a peer"
-        );
-        assert!(
-            remaining.contains(&replaced.as_path()),
-            "a remembered folder whose directory was replaced by an empty one was dropped"
-        );
+        let mut remaining: Vec<String> = peers
+            .all()
+            .iter()
+            .map(|peer| peer.root.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        remaining.sort();
+        assert_eq!(remaining, ["missing", "replaced", "rootless"]);
     }
 
     #[test]
