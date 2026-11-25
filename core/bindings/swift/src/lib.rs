@@ -707,6 +707,8 @@ pub struct ItemType {
     pub icon: Option<String>,
     pub link_field: Option<String>,
     pub roles: Vec<String>,
+    /// The resolved feed expiry window in days. `nil` when the type has no window.
+    pub feed_days: Option<i64>,
 }
 
 /// One end of an edge.
@@ -792,6 +794,7 @@ impl From<marfa_core::ItemType> for ItemType {
             icon: held.icon,
             link_field: held.link_field,
             roles: held.roles,
+            feed_days: held.feed_days,
         }
     }
 }

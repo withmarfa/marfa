@@ -2685,6 +2685,82 @@ describe("the scripted answers match the server's", () => {
     });
   });
 
+  it("reads a type's feed window from a working copy as the server resolves it", async () => {
+    const named = `user.window-named-${ctx.runId}`;
+    const inheriting = `user.window-inherits-${ctx.runId}`;
+    const keeping = `user.window-keeps-${ctx.runId}`;
+    const keepingBelow = `user.window-keeps-below-${ctx.runId}`;
+    const bare = `user.window-bare-${ctx.runId}`;
+    const emptyPolicy = `user.window-empty-${ctx.runId}`;
+    const fields = { title: { type: "string" } };
+    for (const schema of [
+      { id: named, fields, retention_policy: { feed_days: 30 } },
+      { id: inheriting, parent: named, fields: {} },
+      {
+        id: keeping,
+        parent: named,
+        fields: {},
+        retention_policy: { feed_days: null },
+      },
+      { id: keepingBelow, parent: keeping, fields: {} },
+      { id: bare, fields },
+      { id: emptyPolicy, fields, retention_policy: {} },
+    ]) {
+      const registered = await client.registerType(
+        schema as unknown as Parameters<typeof client.registerType>[0],
+      );
+      expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    }
+
+    const device = new CliDevice({
+      binary: requireBinary(),
+      store: newStore("fidelity-feed-window"),
+      url: apiUrl,
+      key: apiKey,
+    });
+    const hydrated = await device.hydrate([bare], "library");
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+
+    const asked: Record<string, { served: number | null; held: unknown }> = {};
+    for (const id of [
+      named,
+      inheriting,
+      keeping,
+      keepingBelow,
+      bare,
+      emptyPolicy,
+    ]) {
+      const served = await client.getType(id);
+      expect(served.ok, JSON.stringify(served.error)).toBe(true);
+      const policy = (
+        served.data as unknown as {
+          retention_policy?: { feed_days?: number | null };
+        }
+      ).retention_policy;
+      const read = await device.itemType(id);
+      expect(read.ok, JSON.stringify(read)).toBe(true);
+      if (!read.ok) return;
+      asked[id] = {
+        served: policy?.feed_days ?? null,
+        held: read.value.feed_days,
+      };
+    }
+    expect(
+      Object.fromEntries(
+        Object.entries(asked).map(([id, { held }]) => [id, held]),
+      ),
+      "the copy answered a type's feed window otherwise than the server's read of the type does",
+    ).toEqual(
+      Object.fromEntries(
+        Object.entries(asked).map(([id, { served }]) => [id, served]),
+      ),
+    );
+    expect(
+      Object.values(asked).map(({ served }) => served),
+      "the types registered did not cover each case, so the comparison proves nothing",
+    ).toEqual([30, 30, null, null, null, null]);
+  });
+
   it("matches an item frame on the event stream", async (context) => {
     const marker = `fidelity-frame-${ctx.runId}`;
     const frames = await withStreamAtCursor(

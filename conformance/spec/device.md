@@ -5020,9 +5020,17 @@ A device MUST answer a read of either catalog from its copy alone, with no serve
 
 ### `device/catalog-type-read`
 
-A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its plural (`types/plural`), its fields with those it inherits, each naming the type that declares it, with the label it is shown by (`types/field-label`), and a field declared again nearer the type taking the place of the one above, and each display hint, the icon among them, from the nearest type that sets it (`types/read-display-hint`).
+A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its plural (`types/plural`), its fields with those it inherits, each naming the type that declares it, with the label it is shown by (`types/field-label`), and a field declared again nearer the type taking the place of the one above, each display hint, the icon among them, from the nearest type that sets it (`types/read-display-hint`), and its feed window (`device/catalog-feed-window`).
 
 **Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `device/folders-frontmatter.test.ts › takes each display hint from the nearest type that sets it, as the server resolves them`.
+
+### `device/catalog-feed-window`
+
+A device MUST answer an item type's `feed_days` as `GET /types/{id}` answers `retention_policy.feed_days` (`types/retention-policy-merge`): the type's own value, else the nearest ancestor's that names one, and none where the type names `null` or no type in its chain names a value.
+
+**Reason:** an app uses the window and the item's age to tell when a feed item is old enough to expire (`housekeeping/feed-expiry-arrival`), even offline (`device/catalog-offline`). A missing key inherits from a parent, while an explicit `null` overrides the parent's window (`types/list-declared-policy`).
+
+**Tests:** `device/fidelity.test.ts › reads a type's feed window from a working copy as the server resolves it`, `device/catalog.test.ts › moves the catalog version when only a type's feed window changes, and answers the window from the copy alone`.
 
 ### `device/catalog-type-tables`
 
