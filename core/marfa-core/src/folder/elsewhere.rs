@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use super::lists::Lists;
-use super::registry::{self, Registered, Registry, gone};
+use super::registry::{self, Registered, Registry};
 use super::{Catalog, Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
 use crate::directory::Directory;
 use crate::{Core, Result, store};
@@ -50,23 +50,22 @@ pub(super) fn lost(core: &Core, registry: &Registry) -> bool {
             == Some(registry.path().display().to_string())
 }
 
-/// Whether `entry`'s directory now holds the state of a folder with another
-/// store, so the folder it names is no longer there.
-fn holds_another(entry: &Registered) -> bool {
-    let Some(expected) = entry.store.as_deref() else {
-        return false;
-    };
-    let Some(state_dir) = Directory::open(&entry.dir)
-        .ok()
-        .filter(|root| super::admitted_root(root).is_ok())
-        .and_then(|root| root.child(Path::new(STATE_DIR), false).ok())
-    else {
-        return false;
-    };
-    Core::read_directory(&state_dir, &entry.dir.join(STATE_DIR).join("core.sqlite"))
-        .ok()
-        .and_then(|core| store::meta_get(&*core.conn().ok()?, META_STORE).ok()?)
-        .is_some_and(|found| found != expected)
+#[cfg(test)]
+pub(super) fn set_remembered(folder: &Folder, entries: &[Registered]) {
+    store::meta_set(
+        &folder.core.conn().unwrap(),
+        META_OTHERS,
+        &serde_json::to_string(entries).unwrap(),
+    )
+    .unwrap();
+}
+
+#[cfg(test)]
+pub(super) fn remembered_dirs(folder: &Folder) -> Vec<PathBuf> {
+    others_in(&folder.core.conn().unwrap())
+        .into_iter()
+        .map(|entry| entry.dir)
+        .collect()
 }
 
 fn others_in(conn: &rusqlite::Connection) -> Vec<Registered> {
@@ -77,53 +76,116 @@ fn others_in(conn: &rusqlite::Connection) -> Vec<Registered> {
         .unwrap_or_default()
 }
 
-/// Each listed folder that remembers `dir`, which is neither listed nor a
-/// folder's directory now.
-fn remembering(dir: &Path) -> Result<(Vec<PathBuf>, [PathBuf; 2])> {
-    let spellings = [registry::absolute(dir), registry::resolved(dir)];
-    let Some(registry) = Registry::located() else {
-        return Ok((Vec::new(), spellings));
-    };
-    let listed = registry.folders()?;
-    if Folder::is_at(&spellings[0]) || listed.iter().any(|entry| spellings.contains(&entry.dir)) {
-        return Ok((Vec::new(), spellings));
-    }
-    let by = listed
-        .into_iter()
-        .filter(|entry| {
-            Folder::reading(&entry.dir).is_ok_and(|folder| {
-                folder.core.conn().is_ok_and(|conn| {
-                    others_in(&conn)
-                        .iter()
-                        .any(|other| spellings.contains(&other.dir))
-                })
-            })
-        })
-        .map(|entry| entry.dir)
-        .collect();
-    Ok((by, spellings))
+/// The listed folders that remember a directory the registry does not list,
+/// by the exact path named.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Remembering {
+    pub dir: PathBuf,
+    pub holders: Vec<Holder>,
+    /// Listed folders that could not be read, with why, so whether they
+    /// remember the directory is not known.
+    pub unread: Vec<(PathBuf, String)>,
+}
+
+/// A listed folder and the entries it remembers at the directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Holder {
+    pub dir: PathBuf,
+    /// Its own store when read, so forgetting changes only the folder shown.
+    store: Option<String>,
+    pub entries: Vec<Registered>,
+}
+
+/// What forgetting a remembered directory changed.
+#[derive(Debug)]
+pub struct Forgotten {
+    pub forgotten: Vec<PathBuf>,
+    /// Each folder left as it was, with why.
+    pub unchanged: Vec<(PathBuf, crate::CoreError)>,
 }
 
 impl Folder {
-    /// Lists readable folders that remember the unlisted directory.
-    pub fn remembered_by(dir: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
-        Ok(remembering(dir.as_ref())?.0)
+    /// The listed folders that remember `dir` by that exact path, or `None`
+    /// where the registry lists a folder at it. Writes nothing.
+    pub fn remembering(dir: impl AsRef<Path>) -> Result<Option<Remembering>> {
+        let dir = registry::absolute(dir.as_ref());
+        let listed = match Registry::located() {
+            Some(registry) => registry.read()?.unwrap_or_default(),
+            None => Vec::new(),
+        };
+        if listed.iter().any(|entry| entry.dir == dir)
+            || registry::listed_at(&registry::resolved(&dir), &listed).is_some()
+        {
+            return Ok(None);
+        }
+        let mut found = Remembering {
+            dir,
+            holders: Vec::new(),
+            unread: Vec::new(),
+        };
+        let mut seen = HashSet::new();
+        for entry in listed {
+            if !seen.insert(entry.dir.clone()) {
+                continue;
+            }
+            let read = Folder::reading(&entry.dir).and_then(|folder| {
+                let conn = folder.core.conn()?;
+                Ok((store::meta_get(&conn, META_STORE)?, others_in(&conn)))
+            });
+            match read {
+                Ok((store, others)) => {
+                    let entries: Vec<Registered> = others
+                        .into_iter()
+                        .filter(|other| other.dir == found.dir)
+                        .collect();
+                    if !entries.is_empty() {
+                        found.holders.push(Holder {
+                            dir: entry.dir,
+                            store,
+                            entries,
+                        });
+                    }
+                }
+                Err(error) => found.unread.push((entry.dir, error.to_string())),
+            }
+        }
+        Ok(Some(found))
     }
 
-    /// Ask the person first. Forgetting this directory can release held deletions.
-    pub fn forget_remembered(dir: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
-        let (by, spellings) = remembering(dir.as_ref())?;
-        for root in &by {
-            let folder =
-                Folder::open_without_listing(root.clone(), None, Some(super::HANDOVER_WAIT))?;
-            let conn = folder.core.conn()?;
-            let kept: Vec<Registered> = others_in(&conn)
-                .into_iter()
-                .filter(|other| !spellings.contains(&other.dir))
-                .collect();
-            store::meta_set(&conn, META_OTHERS, &serde_json::to_string(&kept)?)?;
+    /// Ask the person first: forgetting can release held deletions. Removes
+    /// only the entries `shown` names, from each folder still the one shown.
+    pub fn forget_remembered(shown: &Remembering) -> Forgotten {
+        let mut done = Forgotten {
+            forgotten: Vec::new(),
+            unchanged: Vec::new(),
+        };
+        for holder in &shown.holders {
+            let forget = || -> Result<()> {
+                let folder = Folder::open_without_listing(
+                    holder.dir.clone(),
+                    None,
+                    Some(super::HANDOVER_WAIT),
+                )?;
+                if listed_store(&folder.core) != holder.store {
+                    return Err(crate::CoreError::Invalid(format!(
+                        "the folder state at {} is no longer the one shown",
+                        holder.dir.display()
+                    )));
+                }
+                let conn = folder.core.conn()?;
+                let kept: Vec<Registered> = others_in(&conn)
+                    .into_iter()
+                    .filter(|other| !holder.entries.contains(other))
+                    .collect();
+                store::meta_set(&conn, META_OTHERS, &serde_json::to_string(&kept)?)?;
+                Ok(())
+            };
+            match forget() {
+                Ok(()) => done.forgotten.push(holder.dir.clone()),
+                Err(error) => done.unchanged.push((holder.dir.clone(), error)),
+            }
         }
-        Ok(by)
+        done
     }
 }
 
@@ -551,11 +613,15 @@ impl<'a> Peers<'a> {
                 .filter(|entry| &entry.dir != own)
                 .collect();
             let listed = others.len();
+            let own_store = listed_store(&self.of.core);
+            // Only its store listed at another directory shows where a
+            // remembered folder went; whatever stands at its old path does not.
             for entry in known {
-                let listed = others.iter().any(|other| {
-                    other.dir == entry.dir || (entry.store.is_some() && other.store == entry.store)
-                });
-                if !listed && &entry.dir != own && !gone(&entry) && !holds_another(&entry) {
+                let elsewhere = entry.store.is_some()
+                    && (entry.store == own_store
+                        || others.iter().any(|other| other.store == entry.store));
+                let listed = elsewhere || others.iter().any(|other| other.dir == entry.dir);
+                if !listed && &entry.dir != own {
                     others.push(entry);
                 }
             }
@@ -849,7 +915,7 @@ mod tests {
     }
 
     #[test]
-    fn a_remembered_peer_is_dropped_only_where_its_directory_shows_it_is_another_or_no_folder() {
+    fn a_remembered_peer_is_dropped_only_where_its_store_is_listed_at_another_directory() {
         let (_, _registry) = super::super::registry::tests::own_registry();
         let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let make = |dir: &Path, folder: &str| {
@@ -874,7 +940,9 @@ mod tests {
         let at = |name: &str| temp.path().join(name);
         make(&at("own"), "01a00000-0000-7000-8000-0000000000a1");
         let mut known = Vec::new();
-        for name in ["rootless", "replaced", "missing", "emptied", "another"] {
+        for name in [
+            "rootless", "replaced", "missing", "emptied", "another", "moved",
+        ] {
             make(&at(name), name);
             known.push(Registered {
                 dir: at(name),
@@ -887,16 +955,17 @@ mod tests {
                 },
             });
         }
-        // Each as an unmounted volume can look: an empty directory or none.
+        // An unmounted volume can look like any of these, and a volume
+        // holding another folder can be mounted at the same path.
         std::fs::remove_dir_all(at("rootless").join(STATE_DIR)).unwrap();
         std::fs::rename(at("replaced"), at("replaced-away")).unwrap();
         std::fs::create_dir(at("replaced")).unwrap();
         std::fs::remove_dir_all(at("missing")).unwrap();
-        // Each shown gone: the admitted directory without its state, and
-        // another folder's state at the path.
         std::fs::remove_dir_all(at("emptied").join(STATE_DIR)).unwrap();
         std::fs::remove_dir_all(at("another")).unwrap();
         make(&at("another"), "someone-else");
+        std::fs::rename(at("moved"), at("moved-to")).unwrap();
+        drop(Folder::open(at("moved-to"), None).unwrap());
 
         let folder = Folder::open(at("own"), None).unwrap();
         store::meta_set(
@@ -918,7 +987,12 @@ mod tests {
             })
             .collect();
         remaining.sort();
-        assert_eq!(remaining, ["missing", "replaced", "rootless"]);
+        assert_eq!(
+            remaining,
+            [
+                "another", "emptied", "missing", "moved-to", "replaced", "rootless"
+            ]
+        );
     }
 
     #[test]
