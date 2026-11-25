@@ -2420,9 +2420,9 @@ When a person moves a folder's file into another registered directory whose quer
 
 ### `folder-files/moved-out-of-query-written-again`
 
-When a person moves a folder's file into another registered directory whose query does not hold the item, that directory has bound the file, and the rename grace has passed, a device MUST write the item's file again in the directory the file left while that folder's query holds the item.
+When a person moves a folder's file into another registered directory whose query does not hold the item, that directory has bound the file with the bytes the folder the file left last agreed with the server, and the rename grace has passed, a device MUST write the item's file again in the directory the file left while that folder's query holds the item.
 
-**Reason:** the item still belongs in the folder the file left, and with no file there it would show in no directory whose query holds it.
+**Reason:** the item still belongs in the folder the file left, and with no file there it would show in no directory whose query holds it. A moved file whose bytes changed in the other directory is one the scan of the folder it left cannot yet tell from a deletion, which #3570 covers.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file moved to a folder that does not hold its item there, unmatched, and the folder it left writes its file again and keeps its placement`, `cli/folder.test.ts › keeps a note's file in the folder it was moved into when that folder's query leaves the note out by %s, and the folder it left writes its file again`.
 
