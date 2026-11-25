@@ -364,10 +364,9 @@ fn flagged_for(flagged: &[Flagged], item_id: &str, path: &str) -> Option<Flagged
 #[cfg(test)]
 mod tests {
     use super::super::registry;
-    use super::super::tests::{
-        deletes_queued, folder_with, landed, past_the_grace, settled_under, state_held,
-        transitions_queued, trashed_elsewhere,
-    };
+    use super::super::tests::{deletes_queued, folder_with, landed, past_the_grace, settled_under};
+    #[cfg(debug_assertions)]
+    use super::super::tests::{state_held, transitions_queued, trashed_elsewhere};
     use super::*;
 
     struct Paused {

@@ -7731,6 +7731,7 @@ mod tests {
 
     /// As if a catch-up had applied another device's move of the item to the
     /// bin, which leaves its version as it was.
+    #[cfg(debug_assertions)]
     pub(super) fn trashed_elsewhere(folder: &Folder, item_id: &str) {
         folder
             .core
@@ -7745,6 +7746,7 @@ mod tests {
     }
 
     /// The payloads of the transitions queued for `item_id`.
+    #[cfg(debug_assertions)]
     pub(super) fn transitions_queued(folder: &Folder, item_id: &str) -> Vec<Value> {
         let conn = folder.core.conn().unwrap();
         let mut statement = conn
@@ -7757,6 +7759,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(debug_assertions)]
     pub(super) fn state_held(folder: &Folder, item_id: &str) -> ItemState {
         crate::store::items_by_ids(&folder.core.conn().unwrap(), &[item_id.to_string()])
             .unwrap()
