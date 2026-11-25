@@ -1454,6 +1454,43 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn a_paused_restore_brings_back_a_trashed_attachment_from_the_bin() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000e7c5",
+            serde_json::json!({
+                "query": { "types": ["core.note"], "state": ["active"] },
+                "removal_threshold": { "files": 0, "fraction": 0.0, "ceiling": 0 }
+            }),
+            Some(serde_json::json!([])),
+        );
+        std::fs::write(dir.path().join("photo.png"), [7, 7, 5]).unwrap();
+        std::fs::write(dir.path().join("note.md"), "![](photo.png)\n").unwrap();
+        assert_eq!(folder.scan().unwrap().created, 2);
+        let file = landed(&folder, "photo.png");
+        let note = landed(&folder, "note.md");
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        folder.pull().unwrap();
+        super::super::tests::set_item_state(&folder, &note, "archived");
+        trashed_elsewhere(&folder, &file);
+        let pulled = folder.pull().unwrap();
+        let paused = state::paused(&folder.core.conn().unwrap(), state::Removal::Pull).unwrap();
+        assert!(paused.iter().any(|path| path == "photo.png"), "{pulled:?}");
+        folder.restore().unwrap();
+        assert_eq!(
+            transitions_queued(&folder, &file),
+            [serde_json::json!({ "state": "active", "from": "trashed" })]
+        );
+        assert_eq!(state_held(&folder, &file), ItemState::Active);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn a_paused_restore_from_the_bin_respects_an_intervening_archive() {
         let (_, _registry) = registry::tests::own_registry();
         let (_dir, folder, id, restored) = restore_while_changed(

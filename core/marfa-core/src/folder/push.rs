@@ -403,29 +403,18 @@ impl Folder {
                 ItemState::Archived,
                 Some(ItemState::Active),
             );
-            let id = match archive {
+            match archive {
+                Ok(queued) => writes.queued.push(state::Queued {
+                    id: queued.id,
+                    save: writes.save,
+                    line: None,
+                    default: false,
+                }),
                 Err(error) if state_conflict(&error) => {
                     record_refused_state(file, ItemState::Archived, &error, &mut writes, flagged);
-                    self.bind_scanned(
-                        file,
-                        &item_id,
-                        Default::default(),
-                        Vec::new(),
-                        Kept {
-                            writes,
-                            ..Kept::default()
-                        },
-                    )?;
-                    return Ok(true);
                 }
-                other => other?.id,
-            };
-            writes.queued.push(state::Queued {
-                id,
-                save: 1,
-                line: None,
-                default: false,
-            });
+                Err(error) => return Err(error),
+            }
         }
         // Before the links, so a link naming a default's target adds no
         // second edge; a line the file writes fills that blank itself.
@@ -437,8 +426,14 @@ impl Folder {
             flagged,
         )?
         .add_to(&mut writes);
-        let form = self.form_for(&item_id, &document, edge_types)?;
-        self.place_with(&item_id, &file.key, form, withheld)?;
+        self.place_created_document(
+            &item_id,
+            &file.key,
+            &document,
+            edge_types,
+            withheld,
+            &mut writes,
+        )?;
         self.bind_scanned(
             file,
             &item_id,
@@ -451,6 +446,35 @@ impl Folder {
         )?;
         work.push(self.edge_work(file, &item_id, None));
         Ok(true)
+    }
+
+    pub(super) fn place_created_document(
+        &self,
+        item_id: &str,
+        path: &str,
+        document: &document::Document,
+        edge_types: &EdgeTypes,
+        withheld: &placement::Withheld,
+        writes: &mut state::Writes,
+    ) -> Result<()> {
+        let form = self.form_for(item_id, document, edge_types)?;
+        match self.place_with(item_id, path, form, withheld) {
+            Err(error)
+                if (writes.refused_state().is_some() || writes.placement_refused())
+                    && matches!(&error, CoreError::NotFound { server: None, code, .. } if code == "item_not_found") =>
+            {
+                writes.keep_refused(state::Refused {
+                    change: state::Change::InitialPlacement,
+                    reason: local_refusal_reason(&error),
+                    save: writes.save,
+                });
+            }
+            Ok(_) => writes
+                .refused
+                .retain(|r| r.change != state::Change::InitialPlacement),
+            Err(error) => return Err(error),
+        }
+        Ok(())
     }
 
     /// Records the item of a new file made in a state the query does not hold,
@@ -871,7 +895,9 @@ impl Folder {
             }
             state::Change::State(state) => own.state.is_none_or(|shown| shown == *state),
             // The file's edge work decides these.
-            state::Change::Edge { .. } | state::Change::DefaultEdge { .. } => true,
+            state::Change::Edge { .. }
+            | state::Change::DefaultEdge { .. }
+            | state::Change::InitialPlacement => true,
         });
         let (links, embeds, lines) = bound
             .map(|bound| {

@@ -471,7 +471,11 @@ impl Folder {
                 let flagged = Flagged::of(&bound.path, &held);
                 return Ok(entry.because(flagged.flag, flagged.reason));
             }
-            return Ok(match bound.writes.refused.last() {
+            let refused = bound
+                .writes
+                .refused_state()
+                .or_else(|| bound.writes.refused.last());
+            return Ok(match refused {
                 Some(refused) => entry.because(refused_flag(&refused.change), refused.reason.clone()),
                 None => match self.refused_create(&bound.item_id)? {
                     Some(reason) => entry.because(

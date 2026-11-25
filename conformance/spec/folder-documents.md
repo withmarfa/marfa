@@ -788,7 +788,7 @@ While a file holds a default edge that the server refused, a device MUST NOT sen
 
 ### `folder-documents/default-edge-cleared`
 
-When a default edge's write is accepted, a document's file writes a line of the edge's type, the defaults stop naming the edge, the device holds the edge, or the file's item is gone or in the bin, a device MUST clear the file's refusal of that default edge.
+When a default edge's write is accepted, a document's file writes a line of the edge's type, the defaults stop naming the edge, the device holds the edge, or the file's item is gone or in the bin without a refused initial placement, a device MUST clear the file's refusal of that default edge.
 
 **Reason:** a file item has no lines, so only a document's file clears a refusal by writing one. An edge the person made in an app and the device pulled is the edge the default asked for: sending it again would draw a refusal as a duplicate and show the file refused for an edge it has.
 
@@ -935,6 +935,8 @@ While an item is in the bin and its file holds a refused state change, a device 
 ### `folder-documents/refused-initial-archive`
 
 When a new document requests an archive and the device refuses that transition with `state_conflict`, a device MUST flag the file bound to the newly created item as `refused`.
+
+**Reason:** the archive is only one of the file's writes. Its default edges, placement with form, and edge lines are still judged. If the item went to the bin before placement, the binding retains those refusals so a scan can retry them after restoration.
 
 **Tests:** `device/binding-folders-refused-state.test.ts › binds a new file whose initial archive is refused and creates its item only once`.
 

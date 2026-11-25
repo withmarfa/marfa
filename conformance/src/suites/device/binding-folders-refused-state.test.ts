@@ -26,10 +26,15 @@ afterEach(async () => {
   harness = undefined;
 });
 
-async function open(label: string, seed?: WireItemOptions) {
+async function open(
+  label: string,
+  seed?: WireItemOptions,
+  defaults?: { edges: Record<string, string[]> },
+) {
   const events: SseFrame[] = [];
   const own = await bindingFolderHarness(label, {
     items: { "core.note": seed ? [{ item: seed }] : [] },
+    settings: { query: { types: ["core.note"] }, defaults },
     events: [copyHeldLog(events)],
   });
   harness = own;
@@ -133,8 +138,16 @@ it("keeps a renamed and edited file bound to the item whose state change was ref
 });
 
 it("binds a new file whose initial archive is refused and creates its item only once", async () => {
-  const { own, events } = await open("refused-initial-archive");
-  const text = "---\nstate: archived\n---\nmy words\n";
+  const parent = "01a00000-0000-7000-8000-00000000e702";
+  const { own, events } = await open(
+    "refused-initial-archive",
+    {
+      id: parent,
+      properties: { title: "Parent" },
+    },
+    { edges: { supersedes: [parent] } },
+  );
+  const text = `---\nstate: archived\nchild-of: "[[${parent}]]"\n---\nmy words\n`;
   put(own, "New.md", text);
   const scanned = await scanAcrossTrash(
     own,
@@ -161,4 +174,60 @@ it("binds a new file whose initial archive is refused and creates its item only 
   expect(sentCreates(own)).toHaveLength(1);
   await expectRefused(own, "New.md", id);
   expect(read(own, "New.md")).toBe(text);
+  const sentEdges = () =>
+    own.server.requests
+      .filter((r) => r.method === "POST" && r.pathname === "/edges")
+      .map((r) => JSON.parse(r.body));
+  expect(sentEdges()).toEqual([]);
+  events.push(
+    copyItemEvent(
+      "3",
+      "item.restored",
+      wireItem({
+        id,
+        state: "active",
+        properties: { title: "New", body: "my words\n" },
+      }),
+    ),
+  );
+  expect(await own.bound.testCatchUp()).toMatchObject({
+    ok: true,
+    value: { caughtUp: { applied: 1 } },
+  });
+  for (let pass = 0; pass < 2; pass++) {
+    expect(await own.bound.testScan()).toMatchObject({
+      ok: true,
+      value: { created: 0 },
+    });
+    expect(await own.bound.testDrain()).toMatchObject({ ok: true });
+    expect(sentEdges()).toHaveLength(3);
+    expect(sentEdges()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          from_id: id,
+          edge_type: "supersedes",
+          to_id: parent,
+        }),
+        expect.objectContaining({
+          from_id: parent,
+          edge_type: "parent-of",
+          to_id: id,
+        }),
+        expect.objectContaining({
+          from_id: id,
+          edge_type: "in-folder",
+          to_id: own.settings.id,
+          properties: expect.objectContaining({
+            path: "New.md",
+            form: expect.objectContaining({
+              keys: expect.arrayContaining([
+                expect.objectContaining({ key: "child-of" }),
+              ]),
+            }),
+          }),
+        }),
+      ]),
+    );
+    expect(sentCreates(own)).toHaveLength(1);
+  }
 });

@@ -1317,17 +1317,12 @@ impl Folder {
                 ));
                 continue;
             }
-            let claim = match claim {
+            let mut claim = match claim {
                 Some(Claim {
                     item_id,
                     bound: Some(bound),
                 }) if self.core.get(&item_id)?.is_none() => {
-                    if let Some(refused) = bound
-                        .writes
-                        .refused
-                        .iter()
-                        .find(|refused| matches!(refused.change, state::Change::State(_)))
-                    {
+                    if let Some(refused) = bound.writes.refused_state() {
                         report.flagged.push(Flagged {
                             path: file.key.clone(),
                             flag: "refused",
@@ -1359,6 +1354,22 @@ impl Folder {
                 }
                 other => other,
             };
+            if let Some(Claim {
+                item_id,
+                bound: Some(bound),
+            }) = &mut claim
+                && bound.writes.placement_refused()
+            {
+                self.place_created_document(
+                    item_id,
+                    &file.key,
+                    &file.document(),
+                    edge_types,
+                    &withheld,
+                    &mut bound.writes,
+                )?;
+                state::bind(&*self.core.conn()?, bound)?;
+            }
             match claim {
                 None if held_outside.contains(&at) || held_back.contains(&at) => {
                     // Read again by the next pass, which counts the drop anew.

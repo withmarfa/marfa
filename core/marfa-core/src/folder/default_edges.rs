@@ -3,8 +3,8 @@
 //! and asked again when it could now be accepted.
 
 use super::{
-    Flagged, Folder, ItemState, Map, Result, Settings, Value, local_admission_refusal,
-    local_refusal_reason, state,
+    Flagged, Folder, Map, Result, Settings, Value, local_admission_refusal, local_refusal_reason,
+    state,
 };
 use marfa_rules::catalog::End;
 
@@ -205,10 +205,9 @@ impl Folder {
 
     /// Settles each default edge a file holds refused. It is dropped once the
     /// edge is no longer wanted: the defaults stop naming it, the file writes
-    /// a line of that type, the copy holds the edge, or its item is gone or trashed. Otherwise a
-    /// refusal by the copy is judged again, since what refused it can change
-    /// without the file, and one by the server only after a later save of the
-    /// file, since the server would refuse the same write again.
+    /// a line of that type, the copy holds the edge, or its item is gone or
+    /// trashed without an initial placement still to make. A server refusal
+    /// waits for another save before the same write is tried again.
     pub(super) fn settle_default_edges(&self, settings: &Settings) -> Result<()> {
         let bounds = state::bound_refused(&*self.core.conn()?)?;
         for mut bound in bounds {
@@ -216,17 +215,17 @@ impl Folder {
                 continue;
             }
             let was = bound.writes.clone();
-            let live = self
-                .core
-                .get(&bound.item_id)?
-                .is_some_and(|item| item.state != ItemState::Trashed);
+            let live = self.core.get(&bound.item_id)?.is_some();
+            let awaits_restore = !live
+                && bound.writes.placement_refused()
+                && crate::store::item_held(&*self.core.conn()?, &bound.item_id)?;
             let owed: Vec<state::Refused> = std::mem::take(&mut bound.writes.refused);
             for refused in owed {
                 let state::Change::DefaultEdge { line, file } = &refused.change else {
                     bound.writes.refused.push(refused);
                     continue;
                 };
-                let wanted = live
+                let wanted = (live || awaits_restore)
                     && settings
                         .defaults
                         .edges
@@ -239,7 +238,9 @@ impl Folder {
                 if !wanted || self.holds_edge(&bound.item_id, line)? {
                     continue;
                 }
-                if !super::copy_refused(&refused) && refused.save >= bound.writes.save {
+                if awaits_restore
+                    || (!super::copy_refused(&refused) && refused.save >= bound.writes.save)
+                {
                     bound.writes.refused.push(refused);
                     continue;
                 }
