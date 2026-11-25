@@ -13,7 +13,7 @@ pub const SETTINGS: [&str; 4] = ["title", "query", "sort", "group"];
 pub(crate) const QUERY: [&str; 5] = ["types", "tier", "state", "filter", "beneath"];
 const SORT_KEY: [&str; 2] = ["by", "direction"];
 const GROUP: [&str; 4] = ["by", "bucket", "order", "hidden"];
-const OWN_FIELDS: [&str; 8] = [
+const OWN_FIELDS: [&str; 9] = [
     "title",
     "created_at",
     "updated_at",
@@ -22,11 +22,12 @@ const OWN_FIELDS: [&str; 8] = [
     "state",
     "tier",
     "tags",
+    "source",
 ];
 /// A sort names these and no other own field; a group does not name `last_activity_at`.
 const SORT_ONLY: [&str; 1] = ["last_activity_at"];
 /// A group names these and a sort does not.
-const GROUP_ONLY: [&str; 2] = ["source", "status_group"];
+const GROUP_ONLY: [&str; 1] = ["status_group"];
 const DATE_FIELDS: [&str; 3] = ["created_at", "updated_at", "occurred_at"];
 const DATE_BUCKETS: [&str; 4] = ["day", "week", "month", "year"];
 const PRESENCE: &str = "presence";
@@ -344,7 +345,7 @@ fn check_group(value: &Value, catalog: &Catalog) -> Result<()> {
     if !is_group_field(by) && !GROUP_ONLY.contains(&by) && !is_edge_field(by, catalog) {
         return Err(at(
             "group.by",
-            "A view groups by an own field, source, status_group, properties.<name>, or a registered edge type.",
+            "A view groups by an own field, status_group, properties.<name>, or a registered edge type.",
         ));
     }
     let mut closed = match group.get("bucket") {

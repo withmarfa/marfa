@@ -213,6 +213,7 @@ it.each([
   "state",
   "tier",
   "tags",
+  "source",
 ])("sorts the own field %s", async (by) => {
   const times = [
     "2026-01-03T00:00:00Z",
@@ -230,6 +231,7 @@ it.each([
         properties: { title: ["c", "a", "b"][index] },
         state: n === 1 ? "archived" : "active",
         tier: n === 1 ? "library" : "feed",
+        source: n === 1 ? "zeta" : "alpha",
       },
       tags: [["c"], ["a"], ["b"]][index],
     })),

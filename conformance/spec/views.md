@@ -24,7 +24,7 @@ The server MUST take as a view's `sort` a list of at most 10 keys of `by` and `d
 
 ### `views/field`
 
-The server MUST take as a sort `by` and a `group.by` an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier` or `tags`) or `properties.<name>`, as a sort `by` also `last_activity_at`, and as a `group.by` also `source`, `status_group`, or `edge[<type>]` or `backref[<type>]` for a registered edge type.
+The server MUST take as a sort `by` and a `group.by` an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier`, `tags` or `source`) or `properties.<name>`, as a sort `by` also `last_activity_at`, and as a `group.by` also `status_group`, or `edge[<type>]` or `backref[<type>]` for a registered edge type.
 
 **Tests:** `compliance/views.test.ts › takes a sort and a group on a date, an edge and a property, and refuses none of them`, `› refuses a malformed setting %j with %s naming %s, on a create and on a change`.
 
@@ -259,6 +259,14 @@ Where a view sorts by `title`, the server MUST order each item by the field its 
 **Reason:** the title a person sees is the field the type names, so the order matches what the screen shows.
 
 **Tests:** `compliance/views-items.test.ts › sorts by title, naming each type's own title field, with an untitled item last in either direction`, `› sorts by a title field a type registered at runtime names`.
+
+### `views/items-order-source`
+
+Where a view sorts by `source`, the server MUST order each item by its source code in binary lexical order of its UTF-8 bytes, in either direction, with the items of one source in ascending item ID order, and an item no key named a source for, which holds the code `unknown`, among them.
+
+**Reason:** a source's name and mark belong to the server, so the code is the one order a working copy can reproduce (`device/view-sort-own`). An item made with no source named is stored under the code `unknown`, so it sorts as that text and never first or last for want of one.
+
+**Tests:** `compliance/views-items.test.ts › sorts by each item's source code in binary order in either direction, the owner's own items among them, with ascending ids breaking ties across pages`.
 
 ### `views/items-order-tags`
 

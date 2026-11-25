@@ -410,6 +410,66 @@ describe("the view's items door", () => {
     ]);
   });
 
+  it("sorts by each item's source code in binary order in either direction, the owner's own items among them, with ascending ids breaking ties across pages", async () => {
+    const tag = `by-source-${ctx.runId}`;
+    const sources = [
+      await freshSource(),
+      await freshSource(),
+      await freshSource(),
+    ];
+    const made: { id: string; source: string }[] = [];
+    const add = async (source: string, writer: MarfaClient) => {
+      const r = await writer.createItem({
+        type: "core.note",
+        source,
+        properties: { title: "By source", batch: tag },
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      made.push({ id: r.data.item.id, source });
+    };
+    // Marfa stores an item no source was named for under "unknown"; an archive puts one back.
+    const own = [generateId(), generateId()];
+    const restored = await getOwnerClient().restoreArchive(
+      itemsArchive(
+        own.map((id) => ({
+          id,
+          type: "core.note",
+          source: "unknown",
+          properties: { title: "By source", batch: tag },
+        })),
+      ),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    for (const id of own) {
+      trackItem(ctx, id);
+      made.push({ id, source: "unknown" });
+    }
+    for (const source of [sources[1], sources[0], sources[1], sources[2]]) {
+      await add(source, writers.get(source)!);
+    }
+    await add(sources[0], writers.get(sources[0])!);
+
+    const bytes = (text: string) => Buffer.from(text, "utf8");
+    const expected = (direction: "asc" | "desc") =>
+      [...made]
+        .sort(
+          (a, b) =>
+            (direction === "asc" ? 1 : -1) *
+              Buffer.compare(bytes(a.source), bytes(b.source)) ||
+            Buffer.compare(bytes(a.id), bytes(b.id)),
+        )
+        .map((item) => item.id);
+    for (const direction of ["asc", "desc"] as const) {
+      const id = await viewOf(sources[0], {
+        query: { filter: `properties.batch eq "${tag}"` },
+        sort: [{ by: "source", direction }],
+      });
+      expect(await listed(id, 2)).toEqual(expected(direction));
+      expect(await listed(id, 100)).toEqual(expected(direction));
+    }
+  });
+
   it("sorts by a property across numbers, booleans and text, with null, objects and arrays last", async () => {
     const source = await freshSource();
     const made = new Map<string, string>();
