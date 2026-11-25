@@ -1112,10 +1112,7 @@ impl Folder {
         Ok((claims, waiting))
     }
 
-    /// Keeps, for each file claimed for an item this folder bound no file
-    /// of, the other folders' bindings of the item whose files are gone from
-    /// them: the file came from one of those, which can show it moved once
-    /// this folder lets it go.
+    /// Keep missing peer bindings as possible sources of a newly claimed item.
     fn note_arrivals(
         &self,
         snapshot: &[state::Bound],
@@ -3111,9 +3108,6 @@ impl Folder {
         Ok(())
     }
 
-    /// Looks in the other folders for a file missed for the first time, and
-    /// marks it moved where one holds it: what that folder does with it
-    /// before the grace ends cannot make the move a delete.
     fn look_on_first_miss(
         &self,
         path: &str,
@@ -3177,8 +3171,6 @@ impl Folder {
                 // A folder that still holds the item writes its file again.
                 Look::Moved => {
                     leaves = !holds;
-                    // What came here moved on, and the folder it went to
-                    // keeps the move.
                     super::trail::forget(&*self.core.conn()?, item_id)?;
                     Missing::Moved
                 }

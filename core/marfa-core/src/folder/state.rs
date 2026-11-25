@@ -912,8 +912,7 @@ pub fn copy_moment(conn: &Connection) -> Result<String, CoreError> {
     Ok(format!("{}/{revision}", cursor.unwrap_or_default()))
 }
 
-/// `OR IGNORE` keeps the first sighting, so a folder scanning every second
-/// still reaches the grace. Whether this is the first sighting.
+/// Returns true on first sight. Later scans preserve the start of the grace period.
 pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<bool, CoreError> {
     let added = conn.execute_cached(
         "INSERT OR IGNORE INTO folder_journal (path, item_id, missing_since)
@@ -929,8 +928,6 @@ pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<b
 
 const MOVED_MARK: &str = "folder_moved:";
 
-/// Records that, when first missed, the file at `path` was found in another
-/// folder on the device, which shows it moved whatever that folder does next.
 pub fn journal_mark_moved(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
     crate::store::meta_set(conn, &format!("{MOVED_MARK}{path}"), item_id)
 }

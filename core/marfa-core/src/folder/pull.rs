@@ -1932,8 +1932,7 @@ impl Folder {
         let ended = self.end_placement(&row.item_id, &row.path)?;
         let conn = self.core.conn()?;
         context.check(&conn)?;
-        // Kept before the file goes, so the folder a file moved here from can
-        // tell its file moved rather than was deleted.
+        // Keep move evidence before removing the receiver's file.
         if row.identity.is_some() {
             let step = super::trail::Step {
                 from: None,

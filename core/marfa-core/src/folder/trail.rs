@@ -1,6 +1,4 @@
-//! What a folder keeps of each file that came to it from, or left it for,
-//! another folder on the device, so the folder a file left can still show
-//! it moved once the folder it went to has let it go.
+//! Move evidence for a sender that checks after the receiver has released the file.
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -11,21 +9,16 @@ use crate::store::{meta_delete, meta_get, meta_set, meta_under};
 
 const TRAIL: &str = "folder_trail:";
 
-/// The most steps kept for one item, newest first.
 pub(super) const PER_ITEM: usize = 8;
-/// The most items a folder keeps steps for. Past it, the items whose newest
-/// step is oldest are dropped down to `ITEMS_AFTER_PRUNE`, so a long run of
-/// let-gos prunes once in a while rather than at each one.
+/// Pruning leaves room for new arrivals.
 pub(super) const ITEMS: usize = 2048;
 const ITEMS_AFTER_PRUNE: usize = ITEMS * 3 / 4;
-/// How long a step shows a move.
 pub(super) const KEPT_FOR_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 
 /// A file of the item that arrived here or that this folder let go.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Step {
-    /// The store of the folder whose binding the arriving file was; `None`
-    /// for a file this folder let go.
+    /// Source store, when known. A let-go has no source store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
     pub identity: Option<String>,
@@ -34,9 +27,6 @@ pub(super) struct Step {
 }
 
 impl Step {
-    /// Whether this step is the file `lost` names: the same file by its
-    /// identity, or, where either has none, the same bytes bound in the
-    /// folder `own` names.
     fn is(&self, lost: &state::Bound, own: Option<&str>) -> bool {
         match (&self.identity, &lost.identity) {
             (Some(step), Some(lost)) => step == lost,
@@ -69,13 +59,11 @@ pub(super) fn steps(conn: &Connection, item_id: &str, now: i64) -> Result<Vec<St
     Ok(fresh(read(conn, item_id)?, now))
 }
 
-/// Whether any of `steps` is the file `lost` names.
 pub(super) fn shows(steps: &[Step], lost: &state::Bound, own: Option<&str>) -> bool {
     steps.iter().any(|step| step.is(lost, own))
 }
 
-/// Keeps `step` for the item, within the bounds, in one savepoint so a
-/// failure keeps what was there.
+/// Pruning and insertion must succeed together.
 pub(super) fn record(conn: &Connection, item_id: &str, step: Step) -> Result<(), CoreError> {
     conn.execute_batch("SAVEPOINT folder_trail")?;
     let kept = keep(conn, item_id, step);
@@ -104,8 +92,7 @@ fn keep(conn: &Connection, item_id: &str, step: Step) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// Drops every item's stale steps, and past `ITEMS` the items whose newest
-/// step is oldest.
+/// Keep the most recently active items when the trail exceeds its limit.
 fn prune(conn: &Connection, now: i64) -> Result<(), CoreError> {
     let count: i64 = conn
         .prepare_cached("SELECT count(*) FROM meta WHERE key >= ?1 AND key < ?2")?
@@ -131,7 +118,6 @@ fn prune(conn: &Connection, now: i64) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// Lets go of the item's steps: its file moved on from this folder.
 pub(super) fn forget(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
     meta_delete(conn, &key(item_id))
 }

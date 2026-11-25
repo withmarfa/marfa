@@ -592,8 +592,7 @@ impl<'a> Peers<'a> {
         (same_bytes.len() == 1).then(|| same_bytes.remove(0))
     }
 
-    /// Each other folder's binding of the item whose file is gone from it,
-    /// with that folder's store.
+    /// Missing peer bindings and the stores that hold them.
     pub(super) fn left_with(&self, item_id: &str) -> Vec<(Option<String>, state::Bound)> {
         let mut left = Vec::new();
         for peer in self.all() {
@@ -618,8 +617,6 @@ impl<'a> Peers<'a> {
         left
     }
 
-    /// Whether what this folder or another kept shows the lost file moved:
-    /// marked so when first missed, or a step another folder keeps of it.
     fn shown_moved(&self, lost: &state::Bound) -> bool {
         let (marked, own) = match self.of.core.conn() {
             Ok(conn) => (
@@ -644,7 +641,6 @@ impl<'a> Peers<'a> {
         })
     }
 
-    /// Nowhere now, unless what was kept shows it moved.
     fn nowhere(&self, lost: &state::Bound) -> Look {
         if self.shown_moved(lost) {
             Look::Moved
