@@ -6,6 +6,7 @@ import type { Outcome } from "../../device/protocol.js";
 import {
   cleanup,
   createTestContext,
+  newRunId,
   trackItem,
   trackType,
 } from "../../utils/setup.js";
@@ -106,6 +107,45 @@ it("sends what it saved with no server once it has joined, after registering the
   expect(value(await joined.get(saved.item_id ?? "")).source).toBe(
     `${ctx.source}-registers`,
   );
+});
+
+it("refuses a declaration naming provenance as the server refuses it, then registers and reads the type once declared without it", async () => {
+  const attempt = newRunId().replaceAll("-", "");
+  const type = `app.live.provenance_${attempt}`;
+  const key = await appKey(attempt, true, type);
+  const definition = { id: type, fields: { title: { type: "string" } } };
+  const direct = await client.registerType({
+    ...definition,
+    provenance: { origin: "plugin", plugin: { name: "t", version: "1" } },
+  } as never);
+  expect(direct.ok).toBe(false);
+  expect(direct.error?.error.code).toBe("invalid_schema");
+  const offline = new CliDevice({
+    binary: requireBinary(),
+    store: newStore("save-live-provenance"),
+  });
+  value(await offline.status());
+  const refused = await offline.declareTypes([
+    {
+      ...definition,
+      provenance: { origin: "plugin", plugin: { name: "t", version: "1" } },
+    },
+  ]);
+  expect(refused.ok ? "declared" : refused.refusal.code).toBe("invalid");
+  value(await offline.declareTypes([definition]));
+  const joined = offline.reopen({ url: apiUrl, key });
+  trackType(ctx, type, client);
+  const report = value(await joined.hydrate([type], "library"));
+  expect(report.registered_types).toEqual([type]);
+  expect(report.unregistered_types).toEqual([]);
+  expect(
+    (await client.getType(type)).data.provenance?.origin,
+    "the server did not record the type as registered",
+  ).toBe("registered");
+  expect(value(await joined.itemType(type))).toMatchObject({
+    origin: "registered",
+    plugin: null,
+  });
 });
 
 it("says which declared types the key could not register, and the server refuses the write that names one", async () => {

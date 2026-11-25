@@ -5020,7 +5020,7 @@ A device MUST answer a read of either catalog from its copy alone, with no serve
 
 ### `device/catalog-type-read`
 
-A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its plural (`types/plural`), its fields with those it inherits, each naming the type that declares it, with the label it is shown by (`types/field-label`), and a field declared again nearer the type taking the place of the one above, each display hint, the icon among them, from the nearest type that sets it (`types/read-display-hint`), and its feed window (`device/catalog-feed-window`).
+A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its plural (`types/plural`), its fields with those it inherits, each naming the type that declares it, with the label it is shown by (`types/field-label`), and a field declared again nearer the type taking the place of the one above, each display hint, the icon among them, from the nearest type that sets it (`types/read-display-hint`), its feed window (`device/catalog-feed-window`), and where it came from (`device/catalog-type-provenance`).
 
 **Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `device/folders-frontmatter.test.ts › takes each display hint from the nearest type that sets it, as the server resolves them`.
 
@@ -5031,6 +5031,30 @@ A device MUST answer an item type's `feed_days` as `GET /types/{id}` answers `re
 **Reason:** an app uses the window and the item's age to tell when a feed item is old enough to expire (`housekeeping/feed-expiry-arrival`), even offline (`device/catalog-offline`). A missing key inherits from a parent, while an explicit `null` overrides the parent's window (`types/list-declared-policy`).
 
 **Tests:** `device/fidelity.test.ts › reads a type's feed window from a working copy as the server resolves it`, `device/catalog.test.ts › moves the catalog version when only a type's feed window changes, and answers the window from the copy alone`.
+
+### `device/catalog-type-provenance`
+
+A device MUST answer an item type's `origin` and `plugin` as `GET /types/{id}` answers `provenance.origin` and `provenance.plugin` (`types/provenance-read`), with `unknown` and no plugin if the listing omits the origin, names an unrecognized origin, or names `plugin` without both a plugin name and version.
+
+**Reason:** an app tells a plugin's type from the owner's own, before it tries to change one, from the copy alone (`device/catalog-offline`); `provenance.created_by` names a sign-in, so the device does not answer it.
+
+**Tests:** `device/fidelity.test.ts › reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates`, `device/catalog.test.ts › answers each type's origin and plugin from the copy alone, and moves the catalog version when a refresh changes provenance`.
+
+### `device/catalog-type-provenance-declared`
+
+When reading a type the app declared from the copy's own catalog, a device MUST answer `registered` with no plugin.
+
+**Reason:** a registration is recorded as registered (`types/provenance-read`), and a declaration cannot say otherwise (`device/declaration-provenance-refused`), so a device that answered `unknown` would tell an app that a type it declared has no known origin.
+
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names provenance as the server refuses a registration, and reads a declared type as registered`, `device/save-before-sync-live.test.ts › refuses a declaration naming provenance as the server refuses it, then registers and reads the type once declared without it`.
+
+### `device/catalog-type-provenance-version`
+
+A device MUST move the catalog version when a refresh changes a type's origin or plugin, and leave it where it was when the catalog it held and the one the refresh brings differ in nothing but `provenance.created_by`.
+
+**Reason:** a plugin update that changes only its version is visible through the catalog version (`device/catalog-version-moves`). The server keeps a type's creator on replacement (`types/creator-snapshot`), and a copy that still holds a creator answers the same catalog after catching up.
+
+**Tests:** `device/fidelity.test.ts › reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates`, `device/catalog.test.ts › answers each type's origin and plugin from the copy alone, and moves the catalog version when a refresh changes provenance`, `device/catalog.test.ts › keeps the catalog version where it was when a copy that held a type's creator catches up against the same catalog`.
 
 ### `device/catalog-type-tables`
 
@@ -5753,6 +5777,14 @@ If an app declares a type whose identifier breaks the type grammar or uses a res
 **Reason:** the server refuses such a status field when the type is registered (`types/status-refused`, `types/status-parent-wordless`), and a status field with no words takes no value. An app declares only `app.*`, its own machinery: an owner's own types go under `user.*` and shared types come from a plugin. This is the client's check, not the access boundary, which the server keeps by what a credential may register and reach (`types/register-reach`).
 
 **Tests:** `device/save-before-sync.test.ts › refuses a declaration that names a type of Marfa's, one it cannot read, a parent it does not know, or one type twice`, `› refuses a declaration of a type outside app.*, saying an app declares only types under it, and declares one under it`, `› refuses a declaration whose status field has no words in its chain, naming the field`, `device/declare-replaces.test.ts › refuses to declare a type outside the app's own namespace or one of Marfa's, and replaces the app's own`.
+
+### `device/declaration-provenance-refused`
+
+If an app declares a type that names `provenance`, then a device MUST refuse the declaration `invalid`, naming the key.
+
+**Reason:** the server refuses a registration that names `provenance` as an unread key (`types/unknown-key`) and records where a type came from itself (`types/provenance-read`), so a declaration the device took would fail its registration when a hydration made it, and a slice naming the type would then fail `unknown_type`.
+
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names provenance as the server refuses a registration, and reads a declared type as registered`, `device/save-before-sync-live.test.ts › refuses a declaration naming provenance as the server refuses it, then registers and reads the type once declared without it`.
 
 ### `device/declaration-field-refused`
 
@@ -8441,6 +8473,7 @@ If no server answered the request a call is refused for, then a device MUST carr
 The device fixtures drive a scripted server where the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every scripted answer the real server can also give matches the real one's shape; these are the answers it cannot check.
 
 - **Invalid copy proof.** The real server does not omit or forge its certificate, listing classification or completion marker, so scripted answers exercise fail-closed decoding.
+- **A type with a missing or unrecognized origin.** The real server always includes an origin from its contract, so `device/catalog.test.ts` scripts the missing and unrecognized values to exercise `device/catalog-type-provenance`.
 - **A transport failure.** A dropped connection, a refused connection and a read that times out are properties of the network between the device and the server. Nothing the API offers provokes one.
 - **A server at rest.** Offline and reconnect need the server to stop answering and start again under a device that is still running. Stopping the suite's own server ends the run.
 - **A revoked credential mid-queue.** Revoking the running key would take the rest of the file's fixtures with it, and the refusal is asserted for its effect on the queue rather than for the server's answer, which `keys-and-oauth/revoke-immediate` already covers.

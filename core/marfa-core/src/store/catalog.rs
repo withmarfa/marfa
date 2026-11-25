@@ -124,9 +124,16 @@ fn local_catalog(conn: &Connection) -> Result<(Vec<WireType>, Vec<Value>), CoreE
             CoreError::Store(format!("the declared type {id} cannot be read: {error}"))
         };
         // Held as the registry holds it, as a server's catalog already is.
-        let declared = marfa_rules::catalog::normalized_type(
+        let mut declared = marfa_rules::catalog::normalized_type(
             &serde_json::from_str(&json).map_err(unreadable)?,
         )?;
+        // The server records an app's declaration as a registered type.
+        if let Value::Object(row) = &mut declared {
+            row.insert(
+                "provenance".into(),
+                serde_json::json!({ "origin": "registered", "plugin": null }),
+            );
+        }
         types.push(serde_json::from_value(declared).map_err(unreadable)?);
     }
     Ok((types, shipped.edge_types))
@@ -280,9 +287,9 @@ fn without_icons(rows: &[TypeRow]) -> Vec<TypeRow> {
             let mut row = row.clone();
             if let Ok(Value::Object(mut json)) = serde_json::from_str::<Value>(&row.5) {
                 if let Some(Value::Object(hints)) = json.get_mut("display_hints") {
-                    hints.remove("icon");
+                    hints.shift_remove("icon");
                     if hints.is_empty() {
-                        json.remove("display_hints");
+                        json.shift_remove("display_hints");
                     }
                 }
                 row.5 = Value::Object(json).to_string();
@@ -292,7 +299,29 @@ fn without_icons(rows: &[TypeRow]) -> Vec<TypeRow> {
         .collect()
 }
 
+/// The rows held, as `type_rows_of` writes them: a copy that held a type's
+/// creator before the catalog left it out compares equal to the same catalog.
 fn held_type_rows(conn: &Connection) -> Result<Vec<TypeRow>, CoreError> {
+    let mut rows = stored_type_rows(conn)?;
+    for row in &mut rows {
+        if let Ok(Value::Object(mut json)) = serde_json::from_str::<Value>(&row.5)
+            && without_creator(&mut json)
+        {
+            row.5 = Value::Object(json).to_string();
+        }
+    }
+    Ok(rows)
+}
+
+/// Catalog versions ignore the sign-in that created a type but depend on member order.
+fn without_creator(json: &mut Map<String, Value>) -> bool {
+    match json.get_mut("provenance") {
+        Some(Value::Object(provenance)) => provenance.shift_remove("created_by").is_some(),
+        _ => false,
+    }
+}
+
+fn stored_type_rows(conn: &Connection) -> Result<Vec<TypeRow>, CoreError> {
     Ok(conn
         .prepare(
             "SELECT id, parent, label, title_field, thumbnail_field, json FROM types ORDER BY id",
@@ -323,6 +352,7 @@ fn type_rows_of(types: &[WireType]) -> Vec<TypeRow> {
             if let Some(label) = &entry.label {
                 json.insert("label".into(), Value::String(label.clone()));
             }
+            without_creator(&mut json);
             // The hints as the type declares them, not as it inherits them:
             // each hint is resolved from the nearest type that sets it.
             if let Some(declared) = &entry.display_hints {

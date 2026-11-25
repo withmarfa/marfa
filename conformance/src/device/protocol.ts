@@ -361,6 +361,10 @@ export interface ItemType {
   roles: string[];
   /** The resolved feed expiry window in days, or null when the type has no window. */
   feed_days: number | null;
+  /** Where the type came from, as the listing says. */
+  origin: "platform" | "registered" | "plugin" | "unknown";
+  /** The plugin that installed the type; null for any other origin. */
+  plugin: { name: string; version: string } | null;
 }
 
 /** An edge type as the copy holds it. */

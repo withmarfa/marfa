@@ -1160,6 +1160,163 @@ mod tests {
     }
 
     #[test]
+    fn a_type_reads_the_origin_and_plugin_the_listing_gives_it() {
+        use marfa_rules::catalog::TypeOrigin;
+        let conn = held(
+            serde_json::json!([
+                { "id": "core.thing", "fields": {},
+                  "provenance": { "origin": "platform", "plugin": null, "created_by": null } },
+                { "id": "acme.own", "fields": {},
+                  "provenance": { "origin": "registered", "plugin": null,
+                                  "created_by": { "kind": "key", "id": "k" } } },
+                { "id": "acme.plugged", "parent": "acme.own", "fields": {},
+                  "provenance": { "origin": "plugin",
+                                  "plugin": { "name": "tickets", "version": "1.2.0" } } },
+                { "id": "acme.unrecorded", "fields": {},
+                  "provenance": { "origin": "unknown", "plugin": null } },
+                { "id": "acme.future", "fields": {},
+                  "provenance": { "origin": "from-the-future", "plugin": null } },
+                { "id": "acme.bare", "fields": {} },
+                { "id": "acme.nameless", "fields": {},
+                  "provenance": { "origin": "plugin", "plugin": null } },
+                { "id": "acme.misplaced", "fields": {},
+                  "provenance": { "origin": "registered",
+                                  "plugin": { "name": "x", "version": "1" } } }
+            ]),
+            serde_json::json!([]),
+        );
+        let read = |id: &str| {
+            let held = item_type(&conn, id).unwrap();
+            (held.origin, held.plugin.map(|p| (p.name, p.version)))
+        };
+        assert_eq!(read("core.thing"), (TypeOrigin::Platform, None));
+        assert_eq!(read("acme.own"), (TypeOrigin::Registered, None));
+        assert_eq!(
+            read("acme.plugged"),
+            (TypeOrigin::Plugin, Some(("tickets".into(), "1.2.0".into()))),
+            "a child took its parent's provenance, or lost its own"
+        );
+        assert_eq!(read("acme.unrecorded"), (TypeOrigin::Unknown, None));
+        assert_eq!(
+            read("acme.future"),
+            (TypeOrigin::Unknown, None),
+            "an origin the copy does not know was an error or a guess"
+        );
+        assert_eq!(read("acme.bare"), (TypeOrigin::Unknown, None));
+        assert_eq!(
+            read("acme.nameless"),
+            (TypeOrigin::Unknown, None),
+            "a plugin origin naming no plugin was believed"
+        );
+        assert_eq!(
+            read("acme.misplaced"),
+            (TypeOrigin::Registered, None),
+            "a plugin on a type that is not a plugin's was kept"
+        );
+    }
+
+    #[test]
+    fn the_version_moves_when_only_a_types_plugin_changes_and_not_for_its_creator() {
+        let conn = store::open_in_memory().unwrap();
+        let catalog = |provenance: serde_json::Value| marfa_rules::wire::WireCatalog {
+            types: serde_json::from_value(serde_json::json!([
+                { "id": "acme.base", "fields": {}, "provenance": provenance }
+            ]))
+            .unwrap(),
+            edge_types: Vec::new(),
+        };
+        let plugin = |version: &str, creator: serde_json::Value| {
+            json!({ "origin": "plugin", "plugin": { "name": "tickets", "version": version },
+                    "created_by": creator })
+        };
+        store::replace_catalog(&conn, &catalog(plugin("1.0.0", json!(null)))).unwrap();
+        let first = store::catalog_version(&conn).unwrap();
+        store::replace_catalog(
+            &conn,
+            &catalog(plugin("1.0.0", json!({ "kind": "key", "id": "a" }))),
+        )
+        .unwrap();
+        assert_eq!(
+            store::catalog_version(&conn).unwrap(),
+            first,
+            "a creator the copy does not answer moved the version"
+        );
+        store::replace_catalog(&conn, &catalog(plugin("1.1.0", json!(null)))).unwrap();
+        assert_ne!(store::catalog_version(&conn).unwrap(), first);
+        let second = store::catalog_version(&conn).unwrap();
+        store::replace_catalog(
+            &conn,
+            &catalog(json!({ "origin": "registered", "plugin": null, "created_by": null })),
+        )
+        .unwrap();
+        assert_ne!(store::catalog_version(&conn).unwrap(), second);
+    }
+
+    #[test]
+    fn a_held_row_still_carrying_its_creator_is_the_catalog_the_server_sends_again() {
+        let conn = store::open_in_memory().unwrap();
+        let catalog: marfa_rules::wire::WireCatalog = marfa_rules::wire::WireCatalog {
+            types: serde_json::from_value(serde_json::json!([
+                { "id": "acme.base", "fields": {},
+                  "provenance": { "origin": "registered", "plugin": null,
+                                  "created_by": { "kind": "key", "id": "a" } } }
+            ]))
+            .unwrap(),
+            edge_types: Vec::new(),
+        };
+        store::replace_catalog(&conn, &catalog).unwrap();
+        // A copy written before the creator was left out holds it.
+        conn.execute(
+            "UPDATE types SET json = json_set(json, '$.provenance.created_by',
+                 json('{\"kind\":\"key\",\"id\":\"a\"}'))",
+            [],
+        )
+        .unwrap();
+        let held = store::catalog_version(&conn).unwrap();
+        assert_eq!(
+            store::replace_catalog(&conn, &catalog).unwrap(),
+            store::CatalogChange::Unchanged,
+            "a creator the copy never answers made the same catalog a change"
+        );
+        assert_eq!(store::catalog_version(&conn).unwrap(), held);
+    }
+
+    #[test]
+    fn a_held_creator_in_any_position_leaves_the_same_catalog_unchanged() {
+        let catalog: marfa_rules::wire::WireCatalog = marfa_rules::wire::WireCatalog {
+            types: serde_json::from_value(serde_json::json!([
+                { "id": "acme.base", "fields": {},
+                  "provenance": { "origin": "plugin",
+                                  "plugin": { "name": "tickets", "version": "1.0.0" },
+                                  "created_by": null } }
+            ]))
+            .unwrap(),
+            edge_types: Vec::new(),
+        };
+        let held_as = [
+            r#"{"created_by":null,"origin":"plugin","plugin":{"name":"tickets","version":"1.0.0"}}"#,
+            r#"{"origin":"plugin","created_by":null,"plugin":{"name":"tickets","version":"1.0.0"}}"#,
+            r#"{"origin":"plugin","plugin":{"name":"tickets","version":"1.0.0"},"created_by":null}"#,
+        ];
+        for held_as in held_as {
+            let conn = store::open_in_memory().unwrap();
+            store::replace_catalog(&conn, &catalog).unwrap();
+            conn.execute(
+                "UPDATE types SET json = json_set(json, '$.provenance', json(?1))",
+                [held_as],
+            )
+            .unwrap();
+            let held = store::catalog_version(&conn).unwrap();
+            assert_eq!(
+                store::replace_catalog(&conn, &catalog).unwrap(),
+                store::CatalogChange::Unchanged,
+                "a creator held as {held_as} made the same catalog a change"
+            );
+            assert_eq!(store::catalog_version(&conn).unwrap(), held);
+        }
+    }
+
+    #[test]
     fn a_type_whose_parents_loop_is_refused_rather_than_resolved() {
         let conn = held(
             serde_json::json!([

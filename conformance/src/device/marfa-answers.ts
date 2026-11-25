@@ -171,6 +171,8 @@ export function wireType(
     mergePolicy?: { fields: Record<string, string>; default: string };
     /** The retention policy the type declares; absent where it declares none. */
     retentionPolicy?: Record<string, unknown>;
+    /** Overrides the fixture's platform or registered provenance. */
+    provenance?: Record<string, unknown>;
   } = {},
 ): Record<string, unknown> {
   // Core and system roots are shipped; the other fixture roots model registrations.
@@ -212,13 +214,15 @@ export function wireType(
       default: "last_writer_wins",
     },
     own_roles: [],
-    provenance: shipped
-      ? { origin: "platform", plugin: null, created_by: null }
-      : {
-          origin: "registered",
-          plugin: null,
-          created_by: { kind: "key", id: "fixture-key", name: "Fixture key" },
-        },
+    provenance:
+      options.provenance ??
+      (shipped
+        ? { origin: "platform", plugin: null, created_by: null }
+        : {
+            origin: "registered",
+            plugin: null,
+            created_by: { kind: "key", id: "fixture-key", name: "Fixture key" },
+          }),
   };
 }
 
