@@ -375,6 +375,8 @@ impl Folder {
             settings,
         )?;
         if read.lines.state == Some(ItemState::Archived) {
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| format!("folder-initial-archive:{}", file.key));
             let id = self
                 .core
                 .transition_item_from(&item_id, ItemState::Archived, Some(ItemState::Active))?
