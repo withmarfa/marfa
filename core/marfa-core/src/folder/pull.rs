@@ -2033,6 +2033,11 @@ impl Folder {
         Ok(TakenAway::Ended(ended))
     }
 
+    /// Without a birth time, the same bytes at the same inode may still be
+    /// another file given that inode.
+    const UNTOLD: &str =
+        "Marfa cannot tell whether the file at its path is the one it was removing";
+
     /// Checks the path without following directory links.
     pub(super) fn taken_now(&self, path: &str, taken: Option<&state::Taken>) -> TakenNow {
         let Some(taken) = taken else {
@@ -2052,26 +2057,27 @@ impl Folder {
         }
     }
 
-    /// A matching device and inode alone may be the next file given the
-    /// inode, so the birth time, where kept, and the bytes decide.
+    /// A matching device and inode may be the next file given the inode. The
+    /// bytes decide first; matching bytes count as the file only where the
+    /// birth time tells it from a reused inode, and are held otherwise.
     fn still_the_file(&self, path: &str, taken: &state::Taken) -> TakenNow {
-        let another = || TakenNow::Unsure("another file is at its path".into());
-        if let (Some(recorded), Some(found)) = (taken.born, self.born_at(path))
-            && recorded != found
-        {
-            return another();
-        }
         let Some(hash) = taken.hash.as_deref() else {
-            return TakenNow::Unsure("Marfa cannot tell whether the file at its path is the one it was removing".into());
+            return TakenNow::Unsure(Self::UNTOLD.into());
         };
         match self.root_dir.read(Path::new(path)) {
-            Ok(bytes) if state::hash(&bytes) == hash => TakenNow::Present,
-            Ok(_) => another(),
+            Ok(bytes) if state::hash(&bytes) != hash => {
+                TakenNow::Unsure("another file is at its path".into())
+            }
+            Ok(_) => match (taken.born, self.born_at(path)) {
+                (Some(recorded), Some(found)) if recorded == found => TakenNow::Present,
+                (Some(_), Some(_)) => TakenNow::Unsure("another file is at its path".into()),
+                _ => TakenNow::Unsure(Self::UNTOLD.into()),
+            },
             Err(error) => TakenNow::Unsure(format!("Marfa cannot look at it: {error}")),
         }
     }
 
-    fn born_at(&self, path: &str) -> Option<u128> {
+    pub(super) fn born_at(&self, path: &str) -> Option<u128> {
         self.root_dir
             .observed_identity(Path::new(path))
             .ok()

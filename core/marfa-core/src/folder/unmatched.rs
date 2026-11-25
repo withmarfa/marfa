@@ -557,6 +557,23 @@ mod tests {
         }
     }
 
+    /// Where the file system keeps no birth time, a file that stayed cannot be
+    /// told from the next file given its inode, so it is held, not settled.
+    #[cfg(debug_assertions)]
+    fn births_kept(folder: &Folder, path: &str) -> bool {
+        folder.born_at(path).is_some()
+    }
+
+    /// Held, with its record, and no delete once the person removes it.
+    #[cfg(debug_assertions)]
+    fn held_until_removed(folder: &Folder, root: &Path, path: &str) {
+        assert_eq!(state::taken(&folder.core.conn().unwrap()).unwrap().len(), 1);
+        assert!(held_in_status(folder, path));
+        std::fs::remove_file(root.join(path)).unwrap();
+        scanned_past_the_grace(folder, path);
+        assert!(deletes_queued(folder).is_empty());
+    }
+
     #[cfg(debug_assertions)]
     fn held_in_status(folder: &Folder, path: &str) -> bool {
         folder
@@ -596,6 +613,9 @@ mod tests {
         let folder = stopped_at(folder, &root, "new.md", "crash-before-take-away");
 
         folder.scan().unwrap();
+        if !births_kept(&folder, "new.md") {
+            return held_until_removed(&folder, &root, "new.md");
+        }
         assert!(
             state::taken(&folder.core.conn().unwrap())
                 .unwrap()
@@ -635,6 +655,9 @@ mod tests {
         std::fs::rename(&aside[0], root.join("new.md")).unwrap();
 
         folder.scan().unwrap();
+        if !births_kept(&folder, "new.md") {
+            return held_until_removed(&folder, &root, "new.md");
+        }
         {
             let conn = folder.core.conn().unwrap();
             assert!(state::taken(&conn).unwrap().is_empty());
@@ -722,7 +745,8 @@ mod tests {
         std::fs::rename(elsewhere.path().join("sub"), root.join("sub")).unwrap();
         folder.scan().unwrap();
         let conn = folder.core.conn().unwrap();
-        assert!(state::taken(&conn).unwrap().is_empty());
+        let settled = births_kept(&folder, "sub/new.md");
+        assert_eq!(state::taken(&conn).unwrap().is_empty(), settled);
         assert!(state::bound_at(&conn, "sub/new.md").unwrap().is_some());
     }
 }
