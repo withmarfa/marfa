@@ -2067,10 +2067,11 @@ impl Folder {
         }
     }
 
-    /// Settles each removal a stop left, before the sweep journals missing
-    /// files. A file gone ends its binding with no delete, even where the
-    /// owner deleted it in the gap: its item is kept, which loses nothing.
-    /// Answers each path it cannot settle, with why, which no sweep deletes.
+    /// Settles each removal a stop left, before a pass sends its files. A
+    /// file gone ends its binding with no delete, even where the owner
+    /// deleted it in the gap: its item is kept, which loses nothing. Answers
+    /// each path it cannot settle, with why, for which the pass sends nothing
+    /// and deletes nothing.
     pub(super) fn settle_taken(&self) -> Result<HashMap<String, String>> {
         let taken = state::taken(&*self.core.conn()?)?;
         let mut unsettled = HashMap::new();
