@@ -88,7 +88,7 @@ interface PushReport {
     rewritten: number;
     unchanged: number;
     unmatched: number;
-    taken: number;
+    kept: number;
   };
 }
 
@@ -1675,11 +1675,11 @@ describe("a folder round trip", () => {
     }
   }
 
-  it("ends a folder's placement of an item whose file another folder took in, and no sooner", async () => {
-    await onOwnRegistry(takenIn);
+  it("ends a folder's placement of an item whose file the person moved to the folder that holds it, and no sooner", async () => {
+    await onOwnRegistry(movedToHolder);
   });
 
-  async function takenIn(): Promise<void> {
+  async function movedToHolder(): Promise<void> {
     const one = await follow("placed-one", {
       types: ["core.note"],
       filter: 'tags contains "one"',
@@ -1712,9 +1712,14 @@ describe("a folder round trip", () => {
       await placedIn(id),
       "the placement ended while the file still sat in the folder",
     ).toEqual({ [one.id]: name });
-    const took = await sync(two.folder);
-    expect(took.pull).toMatchObject({ taken: 1 });
-    expect(existsSync(join(one.folder, name))).toBe(false);
+    renameSync(join(one.folder, name), join(two.folder, name));
+    const moved = await sync(two.folder);
+    expect([moved.scan.created, moved.pull.written]).toEqual([0, 0]);
+    expect(
+      readFileSync(join(two.folder, name), "utf8")
+        .match(/^marfa_id: (.+)$/m)?.[1]
+        ?.trim(),
+    ).toBe(id);
 
     // The folder it left finds the file gone from its directory, and moved.
     await sync(one.folder);
@@ -1727,7 +1732,7 @@ describe("a folder round trip", () => {
     expect(swept.scan.moved_away).toBe(1);
     expect(
       await placedIn(id),
-      "the folder went on placing an item whose file another folder took in",
+      "the folder went on placing an item whose file was moved to another folder",
     ).toEqual({ [two.id]: name });
     const item = await c.cli.json<ItemEnvelope>(["items", "get", id]);
     expect(item.item.state).toBe("active");
@@ -1881,91 +1886,96 @@ describe("a folder round trip", () => {
     },
   );
 
-  it("takes a note's file back into the folder it left, and says so, when the folder it was moved into does not hold the note", async () => {
-    await onOwnRegistry(async () => {
-      const since = new Date().toISOString();
-      const left = await follow("held-by", { types: ["core.note"] });
-      const reached = await follow("not-held", {
-        types: ["core.note"],
-        filter: `tags contains "${unique("elsewhere")}"`,
+  it.each(["a tag", "its state"])(
+    "keeps a note's file in the folder it was moved into when that folder's query leaves the note out by %s, and the folder it left writes its file again",
+    async (by) => {
+      await onOwnRegistry(async () => {
+        const since = new Date().toISOString();
+        const byState = by === "its state";
+        const left = await follow(`held-by-${byState ? "state" : "tag"}`, {
+          types: ["core.note"],
+        });
+        const reached = await follow(
+          `not-held-${byState ? "state" : "tag"}`,
+          byState
+            ? { types: ["core.note"], state: ["archived"] }
+            : {
+                types: ["core.note"],
+                filter: `tags contains "${unique("elsewhere")}"`,
+              },
+        );
+        const word = unique("wanders");
+        const text = `---\ntitle: Wander\n---\n${word}\n`;
+        writeFileSync(join(left.folder, "Wander.md"), text);
+        writeFileSync(
+          join(left.folder, "Gone.md"),
+          `---\ntitle: Gone\n---\n${word} deleted\n`,
+        );
+        await sync(left.folder);
+        const idOf = (path: string) =>
+          /^marfa_id: (.+)$/m.exec(readFileSync(path, "utf8"))![1]!.trim();
+        const id = idOf(join(left.folder, "Wander.md"));
+        const gone = idOf(join(left.folder, "Gone.md"));
+        trackItem(c.ctx, id);
+        trackItem(c.ctx, gone);
+        const before = await c.cli.json<ItemEnvelope>(["items", "get", id]);
+        const moved = readFileSync(join(left.folder, "Wander.md"), "utf8");
+
+        renameSync(
+          join(left.folder, "Wander.md"),
+          join(reached.folder, "Wander.md"),
+        );
+        // The witness: a file the person deletes, found in no folder on the
+        // machine, is trashed past the grace.
+        rmSync(join(left.folder, "Gone.md"));
+        await sync(reached.folder);
+        expect(existsSync(join(reached.folder, "Wander.md"))).toBe(true);
+        await sync(left.folder);
+        await pastTheGrace();
+        await sync(reached.folder);
+        const swept = await sync(left.folder);
+
+        expect(swept.scan.trashed).toEqual(["Gone.md"]);
+        expect(
+          swept.pull.written,
+          "the folder the file left wrote no file of the note it holds",
+        ).toBe(1);
+        expect(idOf(join(left.folder, "Wander.md"))).toBe(id);
+        expect(
+          readFileSync(join(reached.folder, "Wander.md"), "utf8"),
+          "the file the person moved was moved back, changed or removed",
+        ).toBe(moved);
+        // Left out by a tag, the file is listed as unmatched; left out by
+        // its state, it is kept as a file of an item that left by its state.
+        const again = await sync(reached.folder);
+        expect(
+          byState ? again.pull.kept : again.pull.unmatched,
+          "the folder that does not hold the note did not keep its file",
+        ).toBe(1);
+        const listed = await c.cli.json<{ unmatched: Array<{ path: string }> }>(
+          ["folders", "unmatched", reached.folder],
+        );
+        expect(listed.unmatched.map((file) => file.path)).toEqual(
+          byState ? [] : ["Wander.md"],
+        );
+        await sync(left.folder);
+        expect(await placedIn(id)).toEqual({
+          [left.id]: "Wander.md",
+          [reached.id]: "Wander.md",
+        });
+        const after = await c.cli.json<ItemEnvelope>(["items", "get", id]);
+        expect(
+          [after.item.state, after.item.version],
+          "the note whose file the person moved was trashed or changed",
+        ).toEqual(["active", before.item.version]);
+        const trashed = await c.cli.json<ItemEnvelope>(["items", "get", gone]);
+        expect(trashed.item.state).toBe("trashed");
+        expect(
+          (await notesWith(word, since)).map((item) => item.id).sort(),
+        ).toEqual([id, gone].sort());
       });
-      const word = unique("wanders");
-      writeFileSync(
-        join(left.folder, "Wander.md"),
-        `---\ntitle: Wander\n---\n${word}\n`,
-      );
-      await sync(left.folder);
-      const id = /^marfa_id: (.+)$/m
-        .exec(readFileSync(join(left.folder, "Wander.md"), "utf8"))![1]!
-        .trim();
-      trackItem(c.ctx, id);
-      const before = await c.cli.json<ItemEnvelope>(["items", "get", id]);
-
-      renameSync(
-        join(left.folder, "Wander.md"),
-        join(reached.folder, "Wander.md"),
-      );
-      const kept = await sync(reached.folder);
-      expect(
-        [kept.pull.unmatched, existsSync(join(reached.folder, "Wander.md"))],
-        "the folder that does not hold the note did not keep its file as unmatched",
-      ).toEqual([1, true]);
-      await sync(left.folder);
-      await pastTheGrace();
-      await sync(reached.folder);
-      const taken = await sync(left.folder);
-
-      expect(taken.pull).toMatchObject({ taken: 1 });
-      expect(existsSync(join(left.folder, "Wander.md"))).toBe(true);
-      expect(
-        existsSync(join(reached.folder, "Wander.md")),
-        "the file stayed in the folder that does not hold the note",
-      ).toBe(false);
-      await sync(reached.folder);
-      await pastTheGrace();
-      await sync(reached.folder);
-      expect(await placedIn(id)).toEqual({ [left.id]: "Wander.md" });
-      const after = await c.cli.json<ItemEnvelope>(["items", "get", id]);
-      expect([after.item.state, after.item.version]).toEqual([
-        "active",
-        before.item.version,
-      ]);
-      expect(await notesWith(word, since)).toHaveLength(1);
-    });
-  });
-
-  it("leaves a note's file in the folder it was moved into when that folder's query leaves the note out by its state", async () => {
-    await onOwnRegistry(async () => {
-      const left = await follow("held-by-state", { types: ["core.note"] });
-      const reached = await follow("archived-only", {
-        types: ["core.note"],
-        state: ["archived"],
-      });
-      const word = unique("stays");
-      writeFileSync(
-        join(left.folder, "Stay.md"),
-        `---\ntitle: Stay\n---\n${word}\n`,
-      );
-      await sync(left.folder);
-      const id = /^marfa_id: (.+)$/m
-        .exec(readFileSync(join(left.folder, "Stay.md"), "utf8"))![1]!
-        .trim();
-      trackItem(c.ctx, id);
-
-      renameSync(join(left.folder, "Stay.md"), join(reached.folder, "Stay.md"));
-      await sync(reached.folder);
-      await sync(left.folder);
-      await pastTheGrace();
-      await sync(reached.folder);
-      const back = await sync(left.folder);
-
-      expect(back.pull).toMatchObject({ taken: 0 });
-      expect(
-        existsSync(join(reached.folder, "Stay.md")),
-        "the folder whose query leaves the note out by its state gave the file up",
-      ).toBe(true);
-    });
-  });
+    },
+  );
 });
 
 describe("adding a directory to follow a folder named by its title", () => {

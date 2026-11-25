@@ -1,13 +1,10 @@
 import {
-  appendFileSync,
   chmodSync,
   copyFileSync,
   existsSync,
-  lstatSync,
   mkdirSync,
   realpathSync,
   readFileSync,
-  readlinkSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -23,7 +20,6 @@ import {
   copyItemEvent,
   wireEdge,
   wireItem,
-  writeAnswers,
 } from "../../device/marfa-answers.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 import {
@@ -55,7 +51,6 @@ import {
   sentCreates,
   sentTitles,
   sentUpdates,
-  withFault,
 } from "./folders.shared.js";
 import { ON_MACOS } from "../../utils/platform.js";
 
@@ -684,581 +679,105 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, alsoGone)).toBe(1);
   });
 
-  function denySourceRemoval(source: string, immutable: boolean): () => void {
-    if (immutable) {
-      execFileSync("chflags", ["uchg", source]);
-      expect(() =>
-        renameSync(source, join(source, "..", "refused-move")),
-      ).toThrow();
-      return () => {
-        if (existsSync(source)) execFileSync("chflags", ["nouchg", source]);
+  it.each(["the folder it left", "the folder that holds it"])(
+    "writes its own file of an item another folder keeps unmatched, and leaves that folder's file where it is, %s hearing first",
+    async (first) => {
+      const plan = {
+        id: "01a00000-0000-7000-8000-0000000023a1",
+        properties: { title: "Plan", body: "the plan\n" },
       };
-    }
-    const parent = join(source, "..");
-    chmodSync(parent, 0o555);
-    expect(() => renameSync(source, join(parent, "refused-move"))).toThrow();
-    return () => chmodSync(parent, 0o755);
-  }
-
-  it("refuses an ordinary source removal denial instead of copying", async () => {
-    const plan = {
-      id: "01a00000-0000-7000-8000-0000000029c1",
-      properties: { title: "Plan", body: "permission refusal\n" },
-    };
-    const control = {
-      id: "01a00000-0000-7000-8000-0000000029c2",
-      properties: { title: "Control", body: "ordinary move\n" },
-    };
-    const { a, b, edges } = await onOneMac(
-      "ordinary-source-denial",
-      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
-      {
-        "core.note": [
-          { item: plan, tags: ["a"] },
-          { item: control, tags: ["a"] },
-        ],
-      },
-    );
-    expect((await a.folder.pull()).ok).toBe(true);
-    expect((await b.folder.pull()).ok).toBe(true);
-    expect((await a.folder.push()).ok).toBe(true);
-    edges.relocate(plan.id, a.settings.id, "Retained/Plan.md");
-    const source = join(a.dir, "Retained/Plan.md");
-    expect((await a.folder.push()).ok).toBe(true);
-    const before = readFileSync(source);
-    const allowRemoval = denySourceRemoval(source, false);
-    try {
-      for (const item of [plan, control]) {
-        edges.events.push(
-          copyItemEvent(
-            String(edges.events.length + 2),
-            "metadata.changed",
-            wireItem(item),
-            { tags: ["b"] },
-          ),
-        );
-      }
-      expect((await a.folder.push()).ok).toBe(true);
-      const refused = await b.folder.push();
-      expect(
-        refused.ok && [
-          refused.value.pull?.taken,
-          refused.value.pull?.unwritten,
-        ],
-      ).toEqual([1, 1]);
-      expect(readFileSync(source)).toEqual(before);
-      expect(existsSync(join(b.dir, "Plan.md"))).toBe(false);
-      expect(existsSync(join(a.dir, "Control.md"))).toBe(false);
-      expect(read(b, "Control.md")).toContain("ordinary move");
-      const status = await a.folder.status();
-      expect(
-        status.ok &&
-          status.value.files.find((file) => file.path === "Retained/Plan.md")
-            ?.item_id,
-      ).toBe(plan.id);
-      allowRemoval();
-      const retried = await b.folder.pull();
-      expect(retried.ok && retried.value.taken).toBe(1);
-      expect(readFileSync(join(b.dir, "Plan.md"))).toEqual(before);
-      expect(existsSync(source)).toBe(false);
-      const quiet = await b.folder.scan();
-      expect(quiet.ok && [quiet.value.created, quiet.value.updated]).toEqual([
-        0, 0,
-      ]);
-    } finally {
-      allowRemoval();
-    }
-  });
-
-  it.each([
-    { mode: "protected", later: "remove" },
-    { mode: "cross-volume-control", later: "remove" },
-    { mode: "protected", later: "edit" },
-    { mode: "directory-control", later: "remove" },
-    { mode: "directory-control", later: "edit" },
-  ])(
-    "takes in a readable source and preserves denied-removal ownership ($mode, $later)",
-    async ({ mode, later }) => {
-      const locked = {
-        id: "01a00000-0000-7000-8000-0000000029a1",
-        properties: { title: "Locked", body: "kept source bytes\n" },
-      };
-      const control = {
-        id: "01a00000-0000-7000-8000-0000000029a2",
-        properties: { title: "Control", body: "ordinary move\n" },
-      };
-      const stay = {
-        id: "01a00000-0000-7000-8000-0000000029a3",
-        properties: { title: "Stay", body: "continuation before\n" },
+      const gone = {
+        id: "01a00000-0000-7000-8000-0000000023a2",
+        properties: { title: "Gone", body: "deleted for real\n" },
       };
       const { a, b, edges } = await onOneMac(
-        "protected-source",
+        `kept-where-it-is-${first.split(" ").at(-1)!}`,
         { query: { types: ["core.note"], filter: 'tags contains "a"' } },
         { query: { types: ["core.note"], filter: 'tags contains "b"' } },
         {
           "core.note": [
-            { item: locked, tags: ["a"] },
-            { item: control, tags: ["a"] },
-            { item: stay, tags: ["a"] },
+            { item: plan, tags: ["a"] },
+            { item: gone, tags: ["a"] },
           ],
         },
       );
-      expect((await a.folder.pull()).ok).toBe(true);
-      expect((await b.folder.pull()).ok).toBe(true);
-      const sourceKey = "Retained/Locked.md";
       expect((await a.folder.push()).ok).toBe(true);
-      edges.relocate(locked.id, a.settings.id, sourceKey);
-      const source = join(a.dir, sourceKey);
-      expect((await a.folder.push()).ok).toBe(true);
-      const before = read(a, sourceKey);
-      // Immutable flags are macOS-specific; directory denial exercises retained
-      // ownership through the existing cross-volume copy path on every platform.
-      const immutable =
-        process.platform === "darwin" && mode !== "directory-control";
-      chmodSync(source, 0o750);
-      if (process.platform === "darwin") {
-        const tag = Buffer.from(
-          '<?xml version="1.0"?><plist version="1.0"><array><string>Fixture\n6</string></array></plist>',
-        );
-        execFileSync("xattr", [
-          "-wx",
-          "com.apple.metadata:_kMDItemUserTags",
-          tag.toString("hex"),
-          source,
-        ]);
-        execFileSync("xattr", [
-          "-w",
-          "com.apple.quarantine",
-          "0081;fixture;Marfa;",
-          source,
-        ]);
-      }
-      const sourceIdentity = statSync(source).ino;
-      const allowRemoval = denySourceRemoval(source, immutable);
-      try {
-        expect(read(a, sourceKey)).toBe(before);
-        for (const item of [locked, control]) {
-          edges.events.push(
-            copyItemEvent(
-              String(edges.events.length + 2),
-              "metadata.changed",
-              wireItem(item),
-              { tags: ["b"] },
-            ),
-          );
-        }
-        expect((await a.folder.push()).ok).toBe(true);
-        const sourceState = () =>
-          execFileSync(
-            "sqlite3",
-            [
-              "-json",
-              join(a.dir, ".marfa", "core.sqlite"),
-              "SELECT item_id,identity,content_hash,written_hash,writes,own FROM folder_files WHERE path='Retained/Locked.md'",
-            ],
-            { encoding: "utf8" },
-          );
-        const owned = sourceState();
-        const moved = await withFault(
-          mode === "cross-volume-control" || !immutable
-            ? "cross-volume-move"
-            : "",
-          () => b.folder.push(),
-        );
-        expect(moved.ok, JSON.stringify(moved)).toBe(true);
-        if (!moved.ok) return;
+      expect((await b.folder.push()).ok).toBe(true);
+      expect(existsSync(join(b.dir, "Plan.md"))).toBe(false);
 
-        expect(existsSync(join(b.dir, "Control.md"))).toBe(true);
-        expect(existsSync(join(a.dir, "Control.md"))).toBe(false);
-        expect(read(a, sourceKey)).toBe(before);
-        if (immutable) {
-          expect(
-            execFileSync("ls", ["-lO", source], { encoding: "utf8" }),
-          ).toContain("uchg");
-        } else {
-          expect(statSync(join(source, "..")).mode & 0o222).toBe(0);
-        }
-        expect(moved.value.pull?.taken, owned).toBe(2);
-        expect(moved.value.pull?.unwritten).toBe(0);
-        expect(read(b, "Locked.md")).toBe(before);
-        expect(idIn(b, "Locked.md")).toBe(locked.id);
-        const destination = join(b.dir, "Locked.md");
-        expect(statSync(source).ino).toBe(sourceIdentity);
-        expect(statSync(destination).ino).not.toBe(sourceIdentity);
-        expect(statSync(destination).mode & 0o777).toBe(0o750);
-        if (process.platform === "darwin") {
-          expect(
-            execFileSync("ls", ["-lO", destination], { encoding: "utf8" }),
-          ).not.toContain("uchg");
-          for (const attribute of [
-            "com.apple.metadata:_kMDItemUserTags",
-            "com.apple.quarantine",
-          ]) {
-            expect(
-              execFileSync("xattr", ["-px", attribute, destination]),
-            ).toEqual(execFileSync("xattr", ["-px", attribute, source]));
-          }
-        }
-        execFileSync("sqlite3", [
-          join(a.dir, ".marfa", "core.sqlite"),
-          `INSERT INTO folder_journal(path,item_id,missing_since) VALUES('Retained/Locked.md','${locked.id}','2026-01-01T00:00:00Z')`,
-        ]);
-        const sourceJournal = () =>
-          execFileSync(
-            "sqlite3",
-            [
-              "-json",
-              join(a.dir, ".marfa", "core.sqlite"),
-              "SELECT path,item_id,missing_since FROM folder_journal WHERE path='Retained/Locked.md'",
-            ],
-            { encoding: "utf8" },
-          );
-        const journal = sourceJournal();
-        expect(journal).toContain(locked.id);
-        edges.events.push(
-          copyItemEvent(
-            String(edges.events.length + 2),
-            "item.updated",
-            wireItem({
-              ...stay,
-              version: 2,
-              properties: { title: "Stay", body: "continuation after\n" },
-            }),
-            { tags: ["a"] },
-          ),
-        );
-        expect((await a.folder.device().catchUp()).ok).toBe(true);
-        for (let pass = 0; pass < 2; pass++) {
-          const retained = await a.folder.pull();
-          expect(retained.ok, JSON.stringify(retained)).toBe(true);
-          if (!retained.ok) return;
-          expect(retained.value.unmatched).toBeGreaterThanOrEqual(1);
-          expect(read(a, "Stay.md")).toContain("continuation after");
-          expect(read(a, sourceKey)).toBe(before);
-          expect(statSync(source).ino).toBe(sourceIdentity);
-          expect(sourceState()).toBe(owned);
-          expect(sourceJournal()).toBe(journal);
-          const status = await a.folder.status();
-          expect(
-            status.ok &&
-              status.value.files.find((file) => file.path === sourceKey)
-                ?.item_id,
-          ).toBe(locked.id);
-          expect(
-            status.ok &&
-              status.value.files.find((file) => file.path === sourceKey)
-                ?.status,
-          ).toBe("unmatched");
-          const repeated = await b.folder.pull();
-          expect(repeated.ok && repeated.value.taken).toBe(0);
-        }
-        expect(sourceState()).toBe(owned);
-        expect(sourceJournal()).toBe(journal);
-        allowRemoval();
-        // Removable now, the source stays until the person removes it.
-        const stays = await a.folder.pull();
-        expect(stays.ok, JSON.stringify(stays)).toBe(true);
-        expect(
-          existsSync(source),
-          "the folder removed its source because the other folder holds the item",
-        ).toBe(true);
-        const listed = await a.folder.unmatched();
-        expect(
-          listed.ok && listed.value.unmatched.map((file) => file.path),
-        ).toContain(sourceKey);
-        if (later === "edit") {
-          const beforeEdit = read(a, sourceKey);
-          expect(beforeEdit).toContain("kept source bytes\n");
-          appendFileSync(source, "owner edit\n");
-          const kept = await a.folder.pull();
-          expect(kept.ok, JSON.stringify(kept)).toBe(true);
-          expect(read(a, sourceKey)).toBe(beforeEdit + "owner edit\n");
-          const scanned = await a.folder.scan();
-          expect(scanned.ok && scanned.value.updated).toBe(1);
-          const queued = await a.folder.device().queue();
-          expect(
-            queued.ok &&
-              queued.value.some(
-                (row) =>
-                  row.item_id === locked.id && row.kind === "update_item",
-              ),
-          ).toBe(true);
-        } else {
-          const released = await a.folder.removeUnmatched({ yes: true });
-          expect(released.ok, JSON.stringify(released)).toBe(true);
-          expect(
-            released.ok && released.value.removed.map((file) => file.path),
-          ).toContain(sourceKey);
-          expect(existsSync(source)).toBe(false);
-          expect(sourceState().trim()).toBe("");
-          expect(sourceJournal().trim()).toBe("");
-          expect((await a.folder.scan()).ok).toBe(true);
-          const queued = await a.folder.device().queue();
-          expect(
-            queued.ok &&
-              queued.value.filter((row) => row.kind === "delete_item"),
-          ).toEqual([]);
-        }
-        expect(deletesOf(a.server, locked.id)).toBe(0);
-        const quiet = await b.folder.scan();
-        expect(quiet.ok && [quiet.value.created, quiet.value.updated]).toEqual([
-          0, 0,
-        ]);
-      } finally {
-        allowRemoval();
-      }
-    },
-  );
-
-  it.each([
-    "copy-failure",
-    "attribute-failure",
-    "sync-failure",
-    "create-before-rename",
-    "symlink-before-rename",
-    "crash-before-copy-publish",
-    "crash-after-copy-publish",
-  ])(
-    "preserves a source across copy publication failures (%s)",
-    async (fault) => {
-      const item = {
-        id: "01a00000-0000-7000-8000-0000000029b1",
-        properties: { title: "Locked", body: "complete copy\n" },
-      };
-      const { a, b, edges } = await onOneMac(
-        "protected-copy-failure",
-        { query: { types: ["core.note"], filter: 'tags contains "a"' } },
-        { query: { types: ["core.note"], filter: 'tags contains "b"' } },
-        { "core.note": [{ item, tags: ["a"] }] },
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "metadata.changed",
+          wireItem(plan),
+          { tags: ["b"] },
+        ),
       );
-      expect((await a.folder.pull()).ok).toBe(true);
-      expect((await b.folder.pull()).ok).toBe(true);
-      const sourceKey = "Retained/Locked.md";
-      expect((await a.folder.push()).ok).toBe(true);
-      edges.relocate(item.id, a.settings.id, sourceKey);
-      const source = join(a.dir, sourceKey);
-      expect((await a.folder.push()).ok).toBe(true);
-      // macOS confirms immutable protection. Other platforms use cross-volume
-      // refusal plus a real directory permission denial to reach the copy path.
-      const immutable = process.platform === "darwin";
-      const target = join(b.dir, "Locked.md");
-      const before = read(a, sourceKey);
-      const allowRemoval = denySourceRemoval(source, immutable);
-      try {
-        edges.events.push(
-          copyItemEvent(
-            String(edges.events.length + 2),
-            "metadata.changed",
-            wireItem(item),
-            {
-              tags: ["b"],
-            },
-          ),
-        );
-        expect((await a.folder.push()).ok).toBe(true);
-        const crashed = fault.startsWith("crash-");
-        if (crashed) {
-          await expect(
-            withFault(
-              `${immutable ? "" : "cross-volume-move,"}${fault}=Locked.md`,
-              () => b.folder.push(),
-            ),
-          ).rejects.toThrow(/could not be run/);
-        } else {
-          const refused = await withFault(
-            `${immutable ? "" : "cross-volume-move,"}${fault}=Locked.md`,
-            () => b.folder.push(),
-          );
-          expect(
-            refused.ok && [
-              refused.value.pull?.taken,
-              refused.value.pull?.unwritten,
-            ],
-          ).toEqual([0, 1]);
-        }
-        expect(read(a, sourceKey)).toBe(before);
-        if (immutable) {
-          expect(
-            execFileSync("ls", ["-lO", source], { encoding: "utf8" }),
-          ).toContain("uchg");
-        } else {
-          expect(statSync(join(source, "..")).mode & 0o222).toBe(0);
-        }
-        if (fault === "create-before-rename") {
-          expect(read(b, "Locked.md")).toBe("appeared meanwhile\n");
-          rmSync(target);
-        } else if (fault === "symlink-before-rename") {
-          expect(lstatSync(target).isSymbolicLink()).toBe(true);
-          expect(readlinkSync(target)).toBe("absent-fixture-target");
-          rmSync(target);
-        } else if (fault === "crash-after-copy-publish") {
-          expect(read(b, "Locked.md")).toBe(before);
-        } else {
-          expect(existsSync(target)).toBe(false);
-        }
-        const restarted = await b.folder.scan();
-        expect(
-          restarted.ok && [
-            restarted.value.created,
-            restarted.value.updated,
-            restarted.value.missing,
-          ],
-        ).toEqual([0, 0, 0]);
-        expect(
-          readdirSync(b.dir).filter(
-            (name) => name.startsWith(".marfa-") && name.endsWith(".tmp"),
-          ),
-        ).toEqual([]);
-        const retry = await withFault(
-          immutable ? "" : "cross-volume-move",
-          () => b.folder.pull(),
-        );
-        expect(retry.ok && retry.value.taken).toBe(
-          fault === "crash-after-copy-publish" ? 0 : 1,
-        );
-        expect(read(b, "Locked.md")).toContain("complete copy\n");
-        expect(read(a, sourceKey)).toBe(before);
-        expect(idIn(b, "Locked.md")).toBe(item.id);
-        const quiet = await b.folder.scan();
-        expect(quiet.ok && [quiet.value.created, quiet.value.updated]).toEqual([
-          0, 0,
-        ]);
-        const queue = await b.folder.device().queue();
-        expect(
-          queue.ok && queue.value.filter((row) => row.kind === "delete_item"),
-        ).toEqual([]);
-        expect(deletesOf(a.server, item.id)).toBe(0);
-      } finally {
-        allowRemoval();
+      const leftFirst = first === "the folder it left";
+      if (leftFirst) {
+        const left = await a.folder.push();
+        expect(left.ok && left.value.pull?.unmatched).toBe(1);
       }
+      const holds = await b.folder.push();
+      expect(holds.ok, JSON.stringify(holds)).toBe(true);
+      if (!holds.ok) return;
+      expect(
+        holds.value.pull?.written,
+        "the folder that holds the item wrote no file of its own",
+      ).toBe(1);
+      expect(idIn(b, "Plan.md")).toBe(plan.id);
+      expect(sentCreates(b)).toEqual([]);
+      expect(
+        read(a, "Plan.md"),
+        "the file of the folder the item left was moved or changed",
+      ).toContain("the plan\n");
+      expect(idIn(a, "Plan.md")).toBe(plan.id);
+
+      // Changed elsewhere, the item reaches the file of the folder that
+      // holds it.
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "item.updated",
+          wireItem({
+            ...plan,
+            version: 2,
+            properties: { title: "Plan", body: "changed elsewhere\n" },
+          }),
+          { tags: ["b"] },
+        ),
+      );
+      const current = await b.folder.push();
+      expect(current.ok && current.value.pull?.rewritten).toBe(1);
+      expect(read(b, "Plan.md")).toContain("changed elsewhere\n");
+      expect(edges.placements(b.settings.id).get(plan.id)).toBe("Plan.md");
+
+      // The witness: a file the person deletes in the folder it left, of an
+      // item no folder on the Mac holds a file of, is sent as a delete.
+      rmSync(join(a.dir, "Gone.md"));
+      expect((await a.folder.push()).ok).toBe(true);
+      await pastTheGrace();
+      const swept = await a.folder.push();
+      expect(swept.ok, JSON.stringify(swept)).toBe(true);
+      if (!swept.ok) return;
+      expect(deletesOf(a.server, gone.id)).toBe(1);
+      expect(
+        deletesOf(a.server, plan.id),
+        "the folder the item left sent a delete for it",
+      ).toBe(0);
+      expect(
+        existsSync(join(a.dir, "Plan.md")),
+        "the folder the item left lost its file",
+      ).toBe(true);
+      expect(idIn(a, "Plan.md")).toBe(plan.id);
+      const unmatched = await a.folder.unmatched();
+      expect(
+        unmatched.ok && unmatched.value.unmatched.map((file) => file.path),
+      ).toEqual(["Plan.md"]);
+      expect(edges.placements(a.settings.id).get(plan.id)).toBe("Plan.md");
+      expect(read(b, "Plan.md")).toContain("changed elsewhere\n");
     },
   );
-
-  it("takes in an unmatched file from another folder", async () => {
-    const plan = {
-      id: "01a00000-0000-7000-8000-0000000023a1",
-      properties: { title: "Plan", body: "the plan\n" },
-    };
-    const brief = {
-      id: "01a00000-0000-7000-8000-0000000023a2",
-      properties: { title: "Brief", body: "the brief\n" },
-    };
-    const { a, b, edges } = await onOneMac(
-      "take-in",
-      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
-      {
-        "core.note": [
-          { item: plan, tags: ["a"] },
-          { item: brief, tags: ["a"] },
-        ],
-      },
-    );
-    expect((await a.folder.pull()).ok).toBe(true);
-    expect((await b.folder.pull()).ok).toBe(true);
-    expect(existsSync(join(a.dir, "Plan.md"))).toBe(true);
-    expect(existsSync(join(b.dir, "Plan.md"))).toBe(false);
-
-    edges.events.push(
-      copyItemEvent(
-        String(edges.events.length + 2),
-        "metadata.changed",
-        wireItem(plan),
-        { tags: ["b"] },
-      ),
-    );
-    const left = await a.folder.push();
-    expect(left.ok, JSON.stringify(left)).toBe(true);
-    const took = await b.folder.push();
-    expect(took.ok, JSON.stringify(took)).toBe(true);
-    if (!took.ok) return;
-    expect(
-      took.value.pull?.taken,
-      "the receiving folder wrote a new file while the unmatched source was available",
-    ).toBe(1);
-    expect(took.value.pull?.written).toBe(0);
-    expect(existsSync(join(b.dir, "Plan.md"))).toBe(true);
-    expect(
-      existsSync(join(a.dir, "Plan.md")),
-      "the move left the source file in place",
-    ).toBe(false);
-    expect(idIn(b, "Plan.md")).toBe(plan.id);
-    expect(sentCreates(b)).toEqual([]);
-
-    // Changed elsewhere meanwhile, it is not written back where it was.
-    edges.events.push(
-      copyItemEvent(
-        String(edges.events.length + 2),
-        "item.updated",
-        wireItem({
-          ...plan,
-          version: 2,
-          properties: { title: "Plan", body: "changed elsewhere\n" },
-        }),
-        { tags: ["b"] },
-      ),
-    );
-
-    // The folder that took it reads no change in it.
-    const quiet = await b.folder.scan();
-    expect(quiet.ok && [quiet.value.created, quiet.value.updated]).toEqual([
-      0, 0,
-    ]);
-    expect((await b.folder.push()).ok).toBe(true);
-    expect(edges.placements(b.settings.id).get(plan.id)).toBe("Plan.md");
-
-    // The other way round: the folder that holds it now hears first and
-    // writes a file of its own, and the folder it left keeps its file.
-    edges.events.push(
-      copyItemEvent(
-        String(edges.events.length + 2),
-        "metadata.changed",
-        wireItem(brief),
-        { tags: ["b"] },
-      ),
-    );
-    const first = await b.folder.push();
-    expect(first.ok && first.value.pull?.written).toBe(1);
-    const stayed = await a.folder.push();
-    expect(stayed.ok, JSON.stringify(stayed)).toBe(true);
-    if (!stayed.ok) return;
-    expect(
-      existsSync(join(a.dir, "Plan.md")),
-      "a file another folder took in was written back where it was taken from",
-    ).toBe(false);
-    expect(
-      existsSync(join(a.dir, "Brief.md")),
-      "the folder that no longer holds the item removed its file because another folder holds the item",
-    ).toBe(true);
-    const unmatched = await a.folder.unmatched();
-    expect(
-      unmatched.ok && unmatched.value.unmatched.map((file) => file.path),
-    ).toContain("Brief.md");
-    expect(idIn(a, "Brief.md")).toBe(brief.id);
-    expect(existsSync(join(b.dir, "Brief.md"))).toBe(true);
-
-    // The folder it left trashes nothing.
-    expect((await a.folder.push()).ok).toBe(true);
-    await pastTheGrace();
-    const swept = await a.folder.push();
-    expect(swept.ok, JSON.stringify(swept)).toBe(true);
-    if (!swept.ok) return;
-    expect(swept.value.scan.moved_away).toBe(1);
-    expect(deletesOf(a.server, plan.id)).toBe(0);
-    expect(deletesOf(a.server, brief.id)).toBe(0);
-
-    // Past the grace, a file at the path it was taken from is a copy,
-    // whatever it carries: the item's file is the one the other folder holds.
-    writeFileSync(join(a.dir, "Plan.md"), read(b, "Plan.md"));
-    const later = await a.folder.push();
-    expect(later.ok, JSON.stringify(later)).toBe(true);
-    if (!later.ok) return;
-    expect(
-      later.value.scan.created,
-      "a later copy at the path the item was taken from took the item over",
-    ).toBe(1);
-  });
 
   it.each(["the first folder", "the second folder"])(
     "keeps both folders' files as unmatched when one change drops the item from both, %s pulling first",
@@ -1356,7 +875,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, brief.id)).toBe(0);
   });
 
-  it("ends a folder's placement of an item whose file another folder took in, and keeps it for a file it keeps", async () => {
+  it("ends a folder's placement of an item whose file the person moved to the folder that holds it, and keeps it for a file it keeps", async () => {
     const plan = {
       id: "01a00000-0000-7000-8000-0000000023e1",
       properties: { title: "Plan", body: "the plan\n" },
@@ -1394,16 +913,24 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       ]),
     );
 
-    // The folder holding the item takes the file in: the folder it left
-    // still has the file until then, and so its placement.
+    // The person moves the file to the folder holding the item: the folder
+    // it left still has the file until then, and so its placement.
     retag(plan);
     expect((await a.folder.push()).ok).toBe(true);
     expect(
       edges.placements(a.settings.id).has(plan.id),
       "the placement ended while the file still sat in the folder",
     ).toBe(true);
-    const took = await b.folder.push();
-    expect(took.ok && took.value.pull?.taken).toBe(1);
+    const heard = await b.folder.device().catchUp();
+    expect(heard.ok, JSON.stringify(heard)).toBe(true);
+    renameSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
+    const moved = await b.folder.push();
+    expect(moved.ok, JSON.stringify(moved)).toBe(true);
+    if (!moved.ok) return;
+    expect([moved.value.scan.created, moved.value.pull?.written]).toEqual([
+      0, 0,
+    ]);
+    expect(idIn(b, "Plan.md")).toBe(plan.id);
     expect((await a.folder.push()).ok).toBe(true);
     await pastTheGrace();
     const swept = await a.folder.push();
@@ -1412,7 +939,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(swept.value.scan.moved_away).toBe(1);
     expect(
       edges.placements(a.settings.id).has(plan.id),
-      "a folder went on placing an item whose file another folder took in",
+      "a folder went on placing an item whose file was moved to another folder",
     ).toBe(false);
     expect(edges.placements(b.settings.id).get(plan.id)).toBe("Plan.md");
 
@@ -1535,11 +1062,11 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, left.id)).toBe(0);
   });
 
-  it("writes its own file, and takes none from the other directory of the folder, when a widened query brings an item back", async () => {
+  it("writes its own file, and leaves the other directory of the folder its file, when a widened query brings an item back", async () => {
     const { a, b, left, query } = await sameFolderTwice("same-folder-widened");
     query('tags contains "vkeep"');
-    // The first directory is shut while the second pushes, so no departure
-    // takes the file and only the take-in below is tested.
+    // The first directory is shut while the second pushes, so the second
+    // keeps its file whatever the first holds.
     chmodSync(a.dir, 0o000);
     try {
       await keptUnmatched(b, "the directory took the file away");
@@ -1556,10 +1083,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const widened = await a.folder.push();
     expect(widened.ok, JSON.stringify(widened)).toBe(true);
     if (!widened.ok) return;
-    expect(
-      widened.value.pull?.taken,
-      "the directory took a file from another directory following the same folder",
-    ).toBe(0);
     expect(widened.value.pull?.written).toBe(1);
     expect(idIn(a, "VB.md")).toBe(left.id);
     expect(
@@ -1642,287 +1165,74 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     },
   );
 
-  it("keeps a folder's placement of an item it holds when its file is moved to a folder that does not", async () => {
+  it("keeps a file moved to a folder that does not hold its item there, unmatched, and the folder it left writes its file again and keeps its placement", async () => {
     const plan = {
       id: "01a00000-0000-7000-8000-0000000023f1",
       properties: { title: "Plan", body: "the plan\n" },
     };
-    const { a, b, edges } = await onOneMac(
+    const gone = {
+      id: "01a00000-0000-7000-8000-0000000023f2",
+      properties: { title: "Gone", body: "deleted for real\n" },
+    };
+    const { a, b, door, edges } = await onOneMac(
       "placement-kept-on-move",
       { query: { types: ["core.note"], filter: 'tags contains "a"' } },
       { query: { types: ["core.note"], filter: 'tags contains "b"' } },
-      { "core.note": [{ item: plan, tags: ["a"] }] },
+      {
+        "core.note": [
+          { item: plan, tags: ["a"] },
+          { item: gone, tags: ["a"] },
+        ],
+      },
     );
     expect((await a.folder.push()).ok).toBe(true);
-    renameSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
     expect((await b.folder.push()).ok).toBe(true);
+    const moved = read(a, "Plan.md");
+    renameSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
+    // The witness: a file the person deletes, found in no folder on the Mac,
+    // is sent as a delete.
+    rmSync(join(a.dir, "Gone.md"));
+    const kept = await b.folder.push();
+    expect(kept.ok && kept.value.pull?.unmatched).toBe(1);
     expect((await a.folder.push()).ok).toBe(true);
     await pastTheGrace();
     const swept = await a.folder.push();
     expect(swept.ok, JSON.stringify(swept)).toBe(true);
     if (!swept.ok) return;
     expect(swept.value.scan.moved_away).toBe(1);
+    expect(deletesOf(a.server, gone.id)).toBe(1);
+    expect(
+      swept.value.pull?.written,
+      "the folder the file left wrote no file of the item it holds",
+    ).toBe(1);
+    expect(idIn(a, "Plan.md")).toBe(plan.id);
+    expect(read(a, "Plan.md")).toContain("the plan\n");
     expect(
       edges.placements(a.settings.id).get(plan.id),
       "a folder ended its placement of an item its own query still holds",
     ).toBe("Plan.md");
-    expect(deletesOf(a.server, plan.id)).toBe(0);
+
+    // The file stays where the person put it, unmatched there.
+    const again = await b.folder.push();
+    expect(again.ok && again.value.pull?.unmatched).toBe(1);
+    expect(
+      read(b, "Plan.md"),
+      "the file the person moved was moved back, changed or removed",
+    ).toBe(moved);
+    const unmatched = await b.folder.unmatched();
+    expect(
+      unmatched.ok && unmatched.value.unmatched.map((file) => file.path),
+    ).toEqual(["Plan.md"]);
+    expect(
+      deletesOf(a.server, plan.id) + deletesOf(b.server, plan.id),
+      "a folder sent a delete of the item whose file the person moved",
+    ).toBe(0);
+    // The scripted server drops an item it is sent a delete of.
+    expect(door.rows.has(gone.id)).toBe(false);
+    expect(door.rows.get(plan.id)?.properties.body).toBe("the plan\n");
   });
 
-  it.each(["same-volume", "cross-volume"])(
-    "keeps both files when a destination appears just before a move-in (%s)",
-    async (mode) => {
-      const plan = {
-        id: "01a00000-0000-7000-8000-0000000023d1",
-        properties: { title: "Plan", body: "the plan\n" },
-      };
-      const control = {
-        id: "01a00000-0000-7000-8000-0000000023d2",
-        properties: { title: "Control", body: "the control\n" },
-      };
-      const { a, b, edges } = await onOneMac(
-        "take-in-no-replace",
-        { query: { types: ["core.note"], filter: 'tags contains "a"' } },
-        { query: { types: ["core.note"], filter: 'tags contains "b"' } },
-        {
-          "core.note": [
-            { item: plan, tags: ["a"] },
-            { item: control, tags: ["a"] },
-          ],
-        },
-      );
-      expect((await a.folder.pull()).ok).toBe(true);
-      expect((await b.folder.pull()).ok).toBe(true);
-      for (const item of [plan, control]) {
-        edges.events.push(
-          copyItemEvent(
-            String(edges.events.length + 2),
-            "metadata.changed",
-            wireItem(item),
-            { tags: ["b"] },
-          ),
-        );
-      }
-      expect((await a.folder.push()).ok).toBe(true);
-      const before = read(a, "Plan.md");
-      const controlBytes = read(a, "Control.md");
-      const fault =
-        mode === "same-volume"
-          ? "create-before-move=Plan.md"
-          : "cross-volume-move,create-before-rename=Plan.md";
-      const moved = await withFault(fault, () => b.folder.push());
-      expect(moved.ok, JSON.stringify(moved)).toBe(true);
-      if (!moved.ok) return;
-      expect(read(b, "Control.md")).toBe(controlBytes);
-      expect(existsSync(join(a.dir, "Control.md"))).toBe(false);
-      expect(read(b, "Plan.md")).toBe("appeared meanwhile\n");
-      expect(read(a, "Plan.md")).toBe(before);
-      expect(moved.value.pull?.taken).toBe(1);
-      expect(moved.value.pull?.unwritten).toBe(1);
-      const source = await a.folder.status();
-      const destination = await b.folder.status();
-      expect(
-        source.ok &&
-          source.value.files.find((file) => file.path === "Plan.md")?.item_id,
-      ).toBe(plan.id);
-      expect(
-        destination.ok &&
-          destination.value.files.find((file) => file.path === "Plan.md")
-            ?.item_id,
-      ).toBeUndefined();
-      rmSync(join(b.dir, "Plan.md"));
-      const retry = await b.folder.pull();
-      expect(retry.ok && retry.value.taken, JSON.stringify(retry)).toBe(1);
-      expect(read(b, "Plan.md")).toBe(before);
-      expect(existsSync(join(a.dir, "Plan.md"))).toBe(false);
-      const scan = await b.folder.scan();
-      expect(scan.ok && [scan.value.created, scan.value.updated]).toEqual([
-        0, 0,
-      ]);
-    },
-  );
-
-  it.each([
-    { mode: "same-volume", previous: false },
-    { mode: "cross-volume", previous: false },
-    { mode: "same-volume", previous: true },
-    { mode: "cross-volume", previous: true },
-    { mode: "already-present", previous: false },
-    { mode: "unopposed-move", previous: true },
-    { mode: "unopposed-copy", previous: true },
-    { mode: "protected", previous: false },
-    { mode: "protected", previous: true },
-    { mode: "unopposed-protected", previous: true },
-    { mode: "directory-control", previous: false },
-    { mode: "directory-control", previous: true },
-    { mode: "unopposed-directory-control", previous: true },
-  ])(
-    "preserves ownership for an identical move destination ($mode, previous binding $previous)",
-    async ({ mode, previous }) => {
-      const bytes = Buffer.from("appeared meanwhile\n");
-      const photo = {
-        id: "01a00000-0000-7000-8000-0000000023e1",
-        type: "core.file.image",
-        properties: {
-          title: "photo.png",
-          blob_ref: hashOf(bytes),
-          mime_type: "image/png",
-        },
-      };
-      const gone = { ...photo, id: "01a00000-0000-7000-8000-0000000023e2" };
-      const { a, b, edges } = await onOneMac(
-        "identical-move-destination",
-        { query: { types: ["core.file.image"], filter: 'tags contains "a"' } },
-        {
-          query: {
-            types: ["core.file.image"],
-            filter: 'tags contains "b"',
-            state: ["active"],
-          },
-        },
-        {
-          "core.file.image": [
-            { item: photo, tags: ["a"] },
-            ...(previous ? [{ item: gone, tags: ["b"] }] : []),
-          ],
-        },
-        (server) => {
-          scriptBlob(server, bytes);
-          acceptUploads(server);
-        },
-      );
-      expect((await a.folder.pull()).ok).toBe(true);
-      expect((await b.folder.pull()).ok).toBe(true);
-      if (previous) {
-        expect(readFileSync(join(b.dir, "photo.png"))).toEqual(bytes);
-        rmSync(join(b.dir, "photo.png"));
-        const journaled = await b.folder.scan();
-        expect(journaled.ok && journaled.value.missing).toBe(1);
-        edges.events.push(
-          copyItemEvent(
-            String(edges.events.length + 2),
-            "item.state_changed",
-            wireItem({ ...gone, state: "archived" }),
-            { tags: ["b"] },
-          ),
-        );
-      }
-      const retained =
-        mode.includes("protected") || mode.includes("directory-control");
-      const immutable =
-        process.platform === "darwin" && mode.includes("protected");
-      const sourceKey =
-        retained && !immutable ? "Retained/photo.png" : "photo.png";
-      const source = join(a.dir, sourceKey);
-      if (sourceKey !== "photo.png") {
-        expect((await a.folder.push()).ok).toBe(true);
-        edges.relocate(photo.id, a.settings.id, sourceKey);
-        expect((await a.folder.push()).ok).toBe(true);
-      }
-      edges.events.push(
-        copyItemEvent(
-          String(edges.events.length + 2),
-          "metadata.changed",
-          wireItem(photo),
-          { tags: ["b"] },
-        ),
-      );
-      const allowRemoval = retained
-        ? denySourceRemoval(source, immutable)
-        : undefined;
-      const pulled = await (async () => {
-        try {
-          expect((await a.folder.push()).ok).toBe(true);
-          expect((await b.folder.device().catchUp()).ok).toBe(true);
-          if (mode === "already-present")
-            writeFileSync(join(b.dir, "photo.png"), bytes);
-          const fault =
-            mode === "same-volume"
-              ? "create-before-move=photo.png"
-              : mode === "cross-volume" ||
-                  mode === "protected" ||
-                  mode === "directory-control"
-                ? `${mode === "cross-volume" ? "cross-volume-move," : ""}create-before-rename=photo.png`
-                : mode === "unopposed-copy"
-                  ? "cross-volume-move"
-                  : "";
-          const copied = retained && !immutable;
-          return await withFault(
-            `${copied ? "cross-volume-move," : ""}${fault}`,
-            () => b.folder.pull(),
-          );
-        } finally {
-          allowRemoval?.();
-        }
-      })();
-      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
-      const unopposed = mode.startsWith("unopposed-");
-      if (unopposed && !retained) expect(existsSync(source)).toBe(false);
-      else expect(readFileSync(source)).toEqual(bytes);
-      expect(readFileSync(join(b.dir, "photo.png"))).toEqual(bytes);
-      const status = await b.folder.status();
-      if (unopposed) {
-        expect(
-          pulled.ok && [pulled.value.unwritten, pulled.value.taken],
-        ).toEqual([0, 1]);
-        expect(
-          status.ok &&
-            status.value.files.find((file) => file.path === "photo.png")
-              ?.item_id,
-        ).toBe(photo.id);
-      } else if (mode === "already-present") {
-        expect(
-          pulled.ok && [pulled.value.unwritten, pulled.value.unchanged],
-        ).toEqual([0, 1]);
-        expect(
-          status.ok &&
-            status.value.files.find((file) => file.path === "photo.png")
-              ?.item_id,
-        ).toBe(photo.id);
-      } else {
-        expect(
-          pulled.ok && [
-            pulled.value.unwritten,
-            pulled.value.unchanged,
-            pulled.value.taken,
-          ],
-        ).toEqual([1, 0, 0]);
-        expect(
-          status.ok &&
-            status.value.files.find((file) => file.path === "photo.png")
-              ?.item_id,
-        ).toBe(previous ? gone.id : undefined);
-        const reconsidered = await b.folder.pull();
-        expect(
-          reconsidered.ok && [
-            reconsidered.value.unwritten,
-            reconsidered.value.unchanged,
-          ],
-        ).toEqual([0, 1]);
-        expect(readFileSync(source)).toEqual(bytes);
-        expect(readFileSync(join(b.dir, "photo.png"))).toEqual(bytes);
-        const rebound = await b.folder.status();
-        expect(
-          rebound.ok &&
-            rebound.value.files.find((file) => file.path === "photo.png")
-              ?.item_id,
-        ).toBe(photo.id);
-      }
-      if (previous) {
-        await pastTheGrace();
-        expect((await b.folder.scan()).ok).toBe(true);
-        const queued = await b.folder.device().queue();
-        expect(
-          queued.ok &&
-            queued.value
-              .filter((row) => row.kind === "delete_item")
-              .map((row) => row.item_id),
-        ).toEqual([gone.id]);
-      }
-    },
-  );
-
-  it("takes no file back by its bytes for an item another folder on the Mac took in", async () => {
+  it("takes no file back by its bytes for an item another folder on the Mac holds a file of", async () => {
     const bytes = Buffer.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x23, 0xc1,
     ]);
@@ -1950,7 +1260,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect((await a.folder.push()).ok).toBe(true);
     expect(edges.placements(a.settings.id).get(photo.id)).toBe("photo.png");
 
-    // Retagged elsewhere: the other folder takes the file in.
+    // Retagged elsewhere: the other folder writes its own file, and the
+    // person removes the one the first folder keeps unmatched.
     edges.events.push(
       copyItemEvent(
         String(edges.events.length + 2),
@@ -1960,18 +1271,20 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       ),
     );
     expect((await a.folder.push()).ok).toBe(true);
-    const took = await b.folder.push();
-    expect(took.ok && took.value.pull?.taken, JSON.stringify(took)).toBe(1);
-    expect(existsSync(join(a.dir, "photo.png"))).toBe(false);
-    // The first folder finds its file moved, past the grace, and lets its
-    // binding go.
+    const wrote = await b.folder.push();
+    expect(wrote.ok && wrote.value.pull?.written, JSON.stringify(wrote)).toBe(
+      1,
+    );
+    rmSync(join(a.dir, "photo.png"));
+    // The first folder finds its file gone, past the grace, the item's file
+    // in the other folder, and lets its binding go.
     expect((await a.folder.push()).ok).toBe(true);
     await pastTheGrace();
     const swept = await a.folder.push();
     expect(swept.ok && swept.value.scan.moved_away).toBe(1);
     expect(
       edges.placements(a.settings.id).has(photo.id),
-      "the first folder went on placing an item whose file another folder took in",
+      "the first folder went on placing an item whose file it no longer has",
     ).toBe(false);
     const creates = sentCreates(a).length;
 
@@ -2028,10 +1341,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       const other = await b.folder.pull();
       expect(other.ok, JSON.stringify(other)).toBe(true);
       if (!other.ok) return;
-      expect(
-        [other.value.taken, other.value.written],
-        "the folder holding the file took the note's attachment out of the other folder",
-      ).toEqual([0, 1]);
+      expect(other.value.written).toBe(1);
       for (const made of [a, b]) {
         expect(readFileSync(join(made.dir, "scan.png"))).toEqual(bytes);
       }
@@ -2049,7 +1359,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   );
 
   it.each(["the folder it left", "the folder it moved to"])(
-    "moves a note's attachment with the note to another notes folder when %s hears first",
+    "writes a note and its attachment of its own when the note moves to another notes folder, and the folder it left keeps both, %s hearing first",
     async (first) => {
       const bytes = Buffer.from([
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x23, 0xd4,
@@ -2099,20 +1409,19 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       );
       const leftFirst = first === "the folder it left";
       if (leftFirst) expect((await a.folder.push()).ok).toBe(true);
-      const took = await b.folder.push();
-      expect(took.ok, JSON.stringify(took)).toBe(true);
-      if (!took.ok) return;
+      const wrote = await b.folder.push();
+      expect(wrote.ok, JSON.stringify(wrote)).toBe(true);
+      if (!wrote.ok) return;
       expect(
-        [took.value.pull?.taken, took.value.pull?.written],
-        "the folder the note moved to took in the note and not its attachment",
-      ).toEqual(leftFirst ? [2, 0] : [0, 2]);
+        wrote.value.pull?.written,
+        "the folder the note moved to wrote the note without its attachment",
+      ).toBe(2);
       expect(readFileSync(join(b.dir, "scan.png"))).toEqual(bytes);
-      expect(existsSync(join(b.dir, "Plan.md"))).toBe(true);
+      expect(idIn(b, "Plan.md")).toBe(plan.id);
       expect((await a.folder.push()).ok).toBe(true);
       await pastTheGrace();
-      // Heard second, the folder the note left keeps the note's file
-      // unmatched, and the attachment beside it as the note's.
-      const kept = leftFirst ? 0 : 1;
+      // The folder the note left keeps the note's file unmatched, and the
+      // attachment beside it as the note's.
       for (const pass of ["first", "second"]) {
         const left = await a.folder.push();
         expect(left.ok, JSON.stringify(left)).toBe(true);
@@ -2120,17 +1429,14 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         expect(
           [left.value.pull?.unmatched, left.value.pull?.written],
           `past the grace, the ${pass} pass of the folder the note left`,
-        ).toEqual([kept, 0]);
+        ).toEqual([1, 0]);
       }
-      expect(existsSync(join(a.dir, "scan.png"))).toBe(!leftFirst);
-      expect(existsSync(join(a.dir, "Plan.md"))).toBe(!leftFirst);
-      expect(deletesOf(a.server, scan.id) + deletesOf(a.server, plan.id)).toBe(
-        0,
-      );
+      expect(readFileSync(join(a.dir, "scan.png"))).toEqual(bytes);
+      expect(idIn(a, "Plan.md")).toBe(plan.id);
     },
   );
 
-  it("keeps a file saved back where another folder took the item's file from as the item's while its binding lasts", async () => {
+  it("keeps a file saved back where the person moved the item's file to another folder from as the item's while its binding lasts", async () => {
     const plan = {
       id: "01a00000-0000-7000-8000-0000000023b1",
       properties: { title: "Plan", body: "the plan\n" },
@@ -2152,8 +1458,12 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       ),
     );
     expect((await a.folder.push()).ok).toBe(true);
-    const took = await b.folder.push();
-    expect(took.ok && took.value.pull?.taken).toBe(1);
+    const heard = await b.folder.device().catchUp();
+    expect(heard.ok, JSON.stringify(heard)).toBe(true);
+    renameSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
+    const moved = await b.folder.push();
+    expect(moved.ok && moved.value.scan.created).toBe(0);
+    expect(idIn(b, "Plan.md")).toBe(plan.id);
 
     // An editor that held the file saves it back, inside the grace: the
     // binding of that path still names the item.
@@ -3502,69 +2812,127 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(idIn(b, "Filed here.md")).toBe(shared);
   });
 
-  it("leaves an edited unmatched file in its source folder", async () => {
+  it.each(["its state", "a tag"])(
+    "keeps a file in the folder an item left by a tag when the folder that wrote its own file drops the item by %s, and sends no delete",
+    async (dropped) => {
+      const plan = {
+        id: "01a00000-0000-7000-8000-00000000035a",
+        properties: { title: "Plan", body: "the plan\n" },
+      };
+      const gone = {
+        id: "01a00000-0000-7000-8000-00000000035b",
+        properties: { title: "Gone", body: "deleted for real\n" },
+      };
+      const byState = dropped === "its state";
+      const { a, b, door, edges } = await onOneMac(
+        `archived-elsewhere-${byState ? "state" : "tag"}`,
+        {
+          query: {
+            types: ["core.note"],
+            filter: 'tags contains "a"',
+            state: ["active", "archived"],
+          },
+        },
+        {
+          query: {
+            types: ["core.note"],
+            filter: 'tags contains "b"',
+            state: ["active"],
+          },
+        },
+        {
+          "core.note": [
+            { item: plan, tags: ["a"] },
+            { item: gone, tags: ["a"] },
+          ],
+        },
+      );
+      expect((await a.folder.push()).ok).toBe(true);
+      expect((await b.folder.push()).ok).toBe(true);
+
+      // The item leaves the first folder by a tag and enters the second.
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "metadata.changed",
+          wireItem(plan),
+          { tags: ["b"] },
+        ),
+      );
+      const left = await a.folder.push();
+      expect(left.ok && left.value.pull?.unmatched).toBe(1);
+      const wrote = await b.folder.push();
+      expect(wrote.ok && wrote.value.pull?.written).toBe(1);
+      expect(idIn(b, "Plan.md")).toBe(plan.id);
+
+      // Then it leaves the second folder too: archived, which the second
+      // folder's query leaves out, or by another tag.
+      if (byState) {
+        door.transition(plan.id, "archived");
+        edges.events.push(
+          copyItemEvent(
+            String(edges.events.length + 2),
+            "item.updated",
+            wireItem({ ...plan, version: 2, state: "archived" }),
+            { tags: ["b"] },
+          ),
+        );
+      } else {
+        edges.events.push(
+          copyItemEvent(
+            String(edges.events.length + 2),
+            "metadata.changed",
+            wireItem(plan),
+            { tags: [] },
+          ),
+        );
+      }
+      const caught = await b.folder.push();
+      expect(caught.ok, JSON.stringify(caught)).toBe(true);
+      if (!caught.ok) return;
+      expect([
+        caught.value.pull?.removed,
+        caught.value.pull?.unmatched,
+      ]).toEqual(byState ? [1, 0] : [0, 1]);
+
+      // The witness: a file the person deletes in the first folder, found in
+      // no folder on the Mac, is sent as a delete past the grace.
+      rmSync(join(a.dir, "Gone.md"));
+      expect((await a.folder.push()).ok).toBe(true);
+      await pastTheGrace();
+      const swept = await a.folder.push();
+      expect(swept.ok, JSON.stringify(swept)).toBe(true);
+      if (!swept.ok) return;
+      expect(deletesOf(a.server, gone.id)).toBe(1);
+      expect(
+        deletesOf(a.server, plan.id),
+        "the folder the item left sent a delete for it",
+      ).toBe(0);
+      expect(
+        read(a, "Plan.md"),
+        "the folder the item left lost or changed its file",
+      ).toContain("the plan\n");
+      expect(idIn(a, "Plan.md")).toBe(plan.id);
+      expect(door.rows.get(plan.id)?.state).toBe(
+        byState ? "archived" : undefined,
+      );
+      expect(door.rows.get(plan.id)?.properties.body).toBe("the plan\n");
+    },
+  );
+
+  it("sends an edit queued in the folder an item left, and keeps it on disk, when the folder holding the item writes its own file", async () => {
     const plan = {
-      id: "01a00000-0000-7000-8000-0000000041d1",
+      id: "01a00000-0000-7000-8000-00000000035c",
       properties: { title: "Plan", body: "the plan\n" },
     };
-    const brief = {
-      id: "01a00000-0000-7000-8000-0000000041d3",
-      properties: { title: "Brief", body: "the brief\n" },
-    };
-    const picture = Buffer.from(
-      "a picture fetched before the brief is taken\n",
-    );
-    // Made later than the brief, so the pull that takes the brief in
-    // fetches it first.
-    const image = {
-      id: "01a00000-0000-7000-8000-0000000041d4",
-      type: "core.file.image",
-      created_at: "2026-09-19T00:00:00.000Z",
-      properties: {
-        title: "picture.png",
-        blob_ref: hashOf(picture),
-        mime_type: "image/png",
-      },
-    };
-    const { a, b, edges } = await onOneMac(
-      "take-in-edited",
+    const { a, b, door, edges } = await onOneMac(
+      "queued-edit-kept",
       { query: { types: ["core.note"], filter: 'tags contains "a"' } },
-      {
-        query: {
-          types: ["core.note", "core.file"],
-          filter: 'tags contains "b"',
-        },
-      },
-      {
-        "core.note": [
-          { item: plan, tags: ["a"] },
-          { item: brief, tags: ["a"] },
-        ],
-        "core.file": [{ item: image }],
-      },
-      (server) => {
-        // The brief is edited while the pull that would take it in fetches
-        // this picture, after it read the brief and before it moves it.
-        const hex = hashOf(picture).slice("sha256:".length);
-        server.copyAnswer(
-          "GET",
-          `/blobs/${hashOf(picture)}/url`,
-          writeAnswers.link(`${server.url}/links/${hex}`),
-        );
-        server.copyAnswer("GET", `/links/${hex}`, () => {
-          const path = join(harness!.dir, "Brief.md");
-          writeFileSync(
-            path,
-            readFileSync(path, "utf8").replace(
-              "the brief\n",
-              "edited mid-pull\n",
-            ),
-          );
-          return { kind: "bytes", status: 200, body: picture };
-        });
-      },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { "core.note": [{ item: plan, tags: ["a"] }] },
     );
-    expect((await a.folder.pull()).ok).toBe(true);
+    expect((await a.folder.push()).ok).toBe(true);
+    expect((await b.folder.push()).ok).toBe(true);
     edges.events.push(
       copyItemEvent(
         String(edges.events.length + 2),
@@ -3573,87 +2941,89 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         { tags: ["b"] },
       ),
     );
-    expect((await a.folder.push()).ok).toBe(true);
+    expect((await a.folder.device().catchUp()).ok).toBe(true);
+    const left = await a.folder.pull();
+    expect(left.ok && left.value.unmatched, JSON.stringify(left)).toBe(1);
+
+    // The person's edit is read and queued, not sent.
     writeFileSync(
       join(a.dir, "Plan.md"),
-      read(a, "Plan.md").replace("the plan\n", "edited, not yet read\n"),
+      read(a, "Plan.md").replace("the plan\n", "the plan, edited\n"),
     );
-    const took = await b.folder.push();
-    expect(took.ok, JSON.stringify(took)).toBe(true);
-    if (!took.ok) return;
-    expect(
-      took.value.pull?.taken,
-      "the receiving folder moved a file with an unscanned edit",
-    ).toBe(0);
-    expect(read(a, "Plan.md")).toContain("edited, not yet read\n");
-
-    // Edited after the pull that takes it in read it, it is read again just
-    // before it is taken.
-    for (const item of [brief, image]) {
-      edges.events.push(
-        copyItemEvent(
-          String(edges.events.length + 2),
-          "metadata.changed",
-          wireItem(item),
-          { tags: ["b"] },
-        ),
-      );
-    }
-    expect((await a.folder.push()).ok).toBe(true);
-    expect(read(a, "Brief.md")).toContain("the brief\n");
-    const racing = await b.folder.push();
-    expect(racing.ok, JSON.stringify(racing)).toBe(true);
-    if (!racing.ok) return;
-    expect(
-      existsSync(join(b.dir, "picture.png")),
-      "the picture was not fetched, so nothing edited the brief mid-pull",
-    ).toBe(true);
-    expect(
-      racing.value.pull?.taken,
-      "the receiving folder moved a file edited after the pull read it",
-    ).toBe(0);
-    expect(read(a, "Brief.md")).toContain("edited mid-pull\n");
-    expect(read(b, "Brief.md")).toContain("the brief\n");
-  });
-
-  it("does not take in the file of an item that left its folder by state", async () => {
-    const plan = {
-      id: "01a00000-0000-7000-8000-0000000041d2",
-      properties: { title: "Plan", body: "the plan\n" },
-    };
-    const { a, b, edges } = await onOneMac(
-      "left-by-state",
-      { query: { types: ["core.note"], state: ["active"] } },
-      { query: { types: ["core.note"], state: ["archived"] } },
-      { "core.note": [{ item: plan }] },
-    );
-    expect((await a.folder.pull()).ok).toBe(true);
-    expect((await b.folder.pull()).ok).toBe(true);
-    expect(existsSync(join(b.dir, "Plan.md"))).toBe(false);
+    const queued = await a.folder.scan();
+    expect(queued.ok && queued.value.updated, JSON.stringify(queued)).toBe(1);
+    // Newer metadata rewrites the file, with the queued edit in it.
     edges.events.push(
       copyItemEvent(
         String(edges.events.length + 2),
-        "item.updated",
-        wireItem({ ...plan, version: 2, state: "archived" }),
+        "metadata.changed",
+        wireItem(plan),
+        { tags: ["b", "later"] },
       ),
     );
-    // The folder it left has heard, and not pulled yet: its file is still
-    // there, its own bytes, for a pull to take away (35).
-    const heard = await a.folder.device().catchUp();
-    expect(heard.ok && heard.value.applied).toBe(1);
-    const pulled = await b.folder.push();
+    expect((await a.folder.device().catchUp()).ok).toBe(true);
+    const rewrote = await a.folder.pull();
+    expect(rewrote.ok, JSON.stringify(rewrote)).toBe(true);
+    expect(read(a, "Plan.md")).toContain("the plan, edited\n");
+    expect(read(a, "Plan.md")).toContain("later");
+
+    const wrote = await b.folder.push();
+    expect(wrote.ok && wrote.value.pull?.written).toBe(1);
+    expect(idIn(b, "Plan.md")).toBe(plan.id);
+    expect(
+      read(a, "Plan.md"),
+      "the file holding the queued edit left its folder",
+    ).toContain("the plan, edited\n");
+
+    const sent = await a.folder.push();
+    expect(sent.ok, JSON.stringify(sent)).toBe(true);
+    expect(door.rows.get(plan.id)?.properties.body).toBe("the plan, edited\n");
+    expect(read(a, "Plan.md")).toContain("the plan, edited\n");
+    expect((await b.folder.push()).ok).toBe(true);
+    expect(read(b, "Plan.md")).toContain("the plan, edited\n");
+    expect(read(a, "Plan.md")).toContain("the plan, edited\n");
+  });
+
+  it("moves no file out of a paused directory when another folder comes to hold its item", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-00000000035d",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const { a, b, edges } = await onOneMac(
+      "paused-source",
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { "core.note": [{ item: plan, tags: ["a"] }] },
+    );
+    expect((await a.folder.push()).ok).toBe(true);
+    expect((await b.folder.push()).ok).toBe(true);
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "metadata.changed",
+        wireItem(plan),
+        { tags: ["b"] },
+      ),
+    );
+    const left = await a.folder.push();
+    expect(left.ok && left.value.pull?.unmatched).toBe(1);
+    const held = read(a, "Plan.md");
+    const paused = await a.folder.pause();
+    expect(paused.ok && paused.value.paused).toBe(true);
+
+    expect((await b.folder.device().catchUp()).ok).toBe(true);
+    const pulled = await b.folder.pull();
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
     if (!pulled.ok) return;
+    expect(pulled.value.written).toBe(1);
+    expect(idIn(b, "Plan.md")).toBe(plan.id);
     expect(
-      pulled.value.pull?.taken,
-      "the receiving folder moved a file that left its source query by state",
-    ).toBe(0);
-    expect(pulled.value.pull?.written).toBe(1);
-    expect(read(b, "Plan.md")).toContain("state: archived");
-    expect(existsSync(join(a.dir, "Plan.md"))).toBe(true);
-    const left = await a.folder.pull();
-    expect(left.ok && left.value.removed).toBe(1);
-    expect(existsSync(join(a.dir, "Plan.md"))).toBe(false);
+      read(a, "Plan.md"),
+      "a file was moved or changed in a paused directory",
+    ).toBe(held);
+    expect(readdirSync(a.dir).filter((name) => name.endsWith(".md"))).toEqual([
+      "Plan.md",
+    ]);
   });
 
   it("refuses to remove a folder with a blocked write", async () => {
@@ -4543,43 +3913,5 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     ).toHaveLength(1);
     expect(sentTitles(b)).toEqual([]);
     expect(readFileSync(target)).toEqual(wide);
-  });
-
-  it("keeps a file a crash cut off taking in where it was, and journals no delete", async () => {
-    const plan = {
-      id: "01a00000-0000-7000-8000-00000000fa45",
-      properties: { title: "Plan", body: "the plan\n" },
-    };
-    const { a, b, edges } = await onOneMac(
-      "take-in-cut-off",
-      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
-      { "core.note": [{ item: plan, tags: ["a"] }] },
-    );
-    expect((await a.folder.pull()).ok).toBe(true);
-    expect((await b.folder.pull()).ok).toBe(true);
-    edges.events.push(
-      copyItemEvent("2", "metadata.changed", wireItem(plan), { tags: ["b"] }),
-    );
-    expect((await a.folder.push()).ok).toBe(true);
-    await expect(
-      withFault("crash-before-rename=Plan.md", () => b.folder.push()),
-    ).rejects.toThrow(/could not be run/);
-    // The witness: the crash came before the file moved.
-    expect([
-      existsSync(join(a.dir, "Plan.md")),
-      existsSync(join(b.dir, "Plan.md")),
-    ]).toEqual([true, false]);
-    const after = await b.folder.scan();
-    expect(after.ok, JSON.stringify(after)).toBe(true);
-    if (!after.ok) return;
-    expect(
-      after.value.missing,
-      "a file a crash kept from being taken in was journaled as deleted",
-    ).toBe(0);
-    // And the next push takes it in.
-    const took = await b.folder.push();
-    expect(took.ok && took.value.pull?.taken).toBe(1);
-    expect(idIn(b, "Plan.md")).toBe(plan.id);
   });
 });
