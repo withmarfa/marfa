@@ -1757,7 +1757,7 @@ export interface paths {
         };
         /**
          * Get folder directories
-         * @description Returns one level of a folder's directory tree with file counts. Counts include items you can list with an `in-folder` edge to the folder, including archived items. Items in the trash are excluded.
+         * @description Returns one level of a folder's directory tree with file counts. Counts include items you can list with an `in-folder` edge to the folder, including archived items. Items in the trash are excluded, and so is a placement whose stored `path` is damaged: `unreadable_placements` counts those.
          */
         get: operations["getFolderDirectories"];
         put?: never;
@@ -10746,6 +10746,11 @@ export interface components {
              * @example 8
              */
             total_files: number;
+            /**
+             * @description How many placements you can read are left out of every count because the stored `path` is not a string or is a path no write would accept. It names no file or path, and counts nothing you cannot read.
+             * @example 0
+             */
+            unreadable_placements: number;
             /** @description The immediate subdirectories that contain a placed file you can list, sorted by the UTF-8 bytes of their paths. */
             directories: components["schemas"]["FolderDirectory"][];
         };
@@ -32591,6 +32596,7 @@ export interface operations {
                      *       "under": "notes",
                      *       "direct_files": 2,
                      *       "total_files": 8,
+                     *       "unreadable_placements": 0,
                      *       "directories": [
                      *         {
                      *           "path": "notes/2026",

@@ -57,6 +57,10 @@ impl Reply {
             .collect()
     }
 
+    fn unreadable(&self) -> i64 {
+        self.ok()["unreadable_placements"].as_i64().unwrap()
+    }
+
     fn numbers(&self) -> (i64, i64) {
         let body = self.ok();
         (
@@ -936,47 +940,101 @@ async fn every_returned_path_expands_as_given() {
     assert_eq!(dotted.ok(), notes.ok());
 }
 
+const DAMAGED: [(&str, &str); 11] = [
+    ("a/number.md", "7"),
+    ("a/real.md", "1.5"),
+    ("a/gone.md", "NULL"),
+    ("b/nul.md", "jsonb('null')"),
+    ("a/dot.md", "'.'"),
+    ("a/empty.md", "''"),
+    ("a/dotdot.md", "'../two.md'"),
+    ("a/slash.md", "'/lead.md'"),
+    ("b/back.md", "'b\\back.md'"),
+    ("c/drive.md", "'C:x.md'"),
+    ("c/long.md", "'a/' || replace(hex(zeroblob(512)), '0', 'x')"),
+];
+
+/// The SQL that damages the stored path of each of `DAMAGED`.
+fn damage() -> String {
+    DAMAGED
+        .iter()
+        .map(|(from, to)| match *to {
+            "NULL" => format!(
+                "UPDATE edges SET properties = jsonb_remove(properties, '$.path') \
+                 WHERE json_extract(properties, '$.path') = '{from}';"
+            ),
+            to => format!(
+                "UPDATE edges SET properties = jsonb_set(properties, '$.path', {to}) \
+                 WHERE json_extract(properties, '$.path') = '{from}';"
+            ),
+        })
+        .collect()
+}
+
 #[tokio::test]
-async fn a_stored_path_that_is_not_text_or_names_no_file_is_left_out_of_every_count() {
+async fn a_stored_path_a_write_would_refuse_is_left_out_of_every_count_and_reported() {
     let instance = Instance::start().await;
     let folder = instance.folder().await;
-    instance
-        .places(
-            &folder,
-            &[
-                "a/one.md",
-                "a/number.md",
-                "a/real.md",
-                "a/gone.md",
-                "b/nul.md",
-                "a/dot.md",
-                "a/empty.md",
-            ],
-        )
-        .await;
-    let instance = instance
-        .rewrite(
-            "UPDATE edges SET properties = jsonb_set(properties, '$.path', 7) \
-             WHERE json_extract(properties, '$.path') = 'a/number.md'; \
-             UPDATE edges SET properties = jsonb_set(properties, '$.path', 1.5) \
-             WHERE json_extract(properties, '$.path') = 'a/real.md'; \
-             UPDATE edges SET properties = jsonb_remove(properties, '$.path') \
-             WHERE json_extract(properties, '$.path') = 'a/gone.md'; \
-             UPDATE edges SET properties = jsonb_set(properties, '$.path', jsonb('null')) \
-             WHERE json_extract(properties, '$.path') = 'b/nul.md'; \
-             UPDATE edges SET properties = jsonb_set(properties, '$.path', '.') \
-             WHERE json_extract(properties, '$.path') = 'a/dot.md'; \
-             UPDATE edges SET properties = jsonb_set(properties, '$.path', '') \
-             WHERE json_extract(properties, '$.path') = 'a/empty.md';",
-        )
-        .await;
+    let mut paths = vec!["a/one.md"];
+    paths.extend(DAMAGED.iter().map(|(from, _)| *from));
+    instance.places(&folder, &paths).await;
+    let before = instance.tree(&folder, "").await;
+    assert_eq!(before.unreadable(), 0);
+    assert_eq!(before.numbers(), (0, 12));
 
+    let instance = instance.rewrite(&damage()).await;
     let top = instance.tree(&folder, "").await;
     assert_eq!(top.directories(), vec![row("a", 1, 1, false)]);
     assert_eq!(top.numbers(), (0, 1));
+    assert_eq!(top.unreadable(), 11);
     let under = instance.tree(&folder, "?under=a").await;
     assert_eq!(under.directories(), vec![]);
     assert_eq!(under.numbers(), (1, 1));
+    assert_eq!(under.unreadable(), 11);
+    let named = under.text.to_lowercase();
+    for hidden in ["dotdot", "two.md", "lead", "drive", "back"] {
+        assert!(!named.contains(hidden), "{hidden} in {named}");
+    }
+}
+
+#[tokio::test]
+async fn the_report_of_damaged_placements_counts_only_what_the_credential_may_read() {
+    let instance = Instance::start().await;
+    let folder = instance.folder().await;
+    instance.place(&folder, "a/note.md").await;
+    let task = instance.item(&instance.owner, "core.task").await;
+    instance.place_item(&task, &folder, "a/task.md").await;
+    instance.place(&folder, "a/bad-note.md").await;
+    let binned = instance.place(&folder, "a/bad-binned.md").await;
+    instance.transition(&binned, "trashed").await;
+    let instance = instance
+        .rewrite(
+            "UPDATE edges SET properties = jsonb_set(properties, '$.path', '../x.md') \
+             WHERE json_extract(properties, '$.path') IN \
+             ('a/task.md', 'a/bad-note.md', 'a/bad-binned.md');",
+        )
+        .await;
+    let notes_only = instance
+        .mint(
+            "notes",
+            "notes",
+            json!({ "system.folder": "read", "core.note": "read" }),
+            None,
+        )
+        .await;
+    let read = instance
+        .call(
+            &notes_only,
+            Method::GET,
+            &format!("/folders/{folder}/directories"),
+            Value::Null,
+        )
+        .await;
+    assert_eq!(read.numbers(), (0, 1));
+    assert_eq!(read.unreadable(), 1);
+    let whole = instance.tree(&folder, "").await;
+    assert_eq!(whole.numbers(), (0, 1));
+    assert_eq!(whole.unreadable(), 2);
 }
 
 #[tokio::test]

@@ -11,6 +11,7 @@ interface Tree {
   under: string;
   direct_files: number;
   total_files: number;
+  unreadable_placements: number;
   directories: {
     path: string;
     direct_files: number;
@@ -41,6 +42,7 @@ beforeAll(async () => {
     "notes/one.md",
     "notes/2026/jan.md",
     "./A:notes/child/page.md",
+    "-drafts/-sub/one.md",
   ]) {
     const note = await key.json<{ item: { id: string } }>([
       "items",
@@ -74,8 +76,13 @@ it("lists a folder's directories one level at a time, and opens each by the path
   const top = await key.json<Tree>(["folders", "directories", folder]);
   expect(top.under).toBe("");
   expect(top.direct_files).toBe(1);
-  expect(top.total_files).toBe(4);
-  expect(top.directories.map((d) => d.path)).toEqual(["A:notes", "notes"]);
+  expect(top.total_files).toBe(5);
+  expect(top.unreadable_placements).toBe(0);
+  expect(top.directories.map((d) => d.path)).toEqual([
+    "-drafts",
+    "A:notes",
+    "notes",
+  ]);
   for (const directory of top.directories) {
     const opened = await key.json<Tree>([
       "folders",
@@ -107,7 +114,7 @@ it("lists a folder's directories one level at a time, and opens each by the path
 
 it("reads through the private socket and says each directory in plain output", async () => {
   const viaSocket = await local.json<Tree>(["folders", "directories", folder]);
-  expect(viaSocket.total_files).toBe(4);
+  expect(viaSocket.total_files).toBe(5);
   const plain = await key.run([
     "folders",
     "directories",
@@ -117,7 +124,7 @@ it("reads through the private socket and says each directory in plain output", a
   ]);
   expect(plain.code, plain.stderr).toBe(0);
   expect(plain.stdout).toContain(
-    "1 file(s) directly at notes; 4 file(s) in the folder",
+    "1 file(s) directly at notes; 5 file(s) in the folder",
   );
   expect(plain.stdout).toContain("notes/2026: 1 file(s) directly, 1 in all");
 });

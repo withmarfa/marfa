@@ -23,6 +23,7 @@ interface Tree {
   under: string;
   direct_files: number;
   total_files: number;
+  unreadable_placements: number;
   directories: Directory[];
 }
 
@@ -162,6 +163,7 @@ describe("GET /folders/{id}/directories", () => {
     expect(top.under).toBe("");
     expect(top.direct_files).toBe(1);
     expect(top.total_files).toBe(8);
+    expect(top.unreadable_placements).toBe(0);
     expect(rows(top)).toEqual([
       ["notes", 2, 5, true],
       ["projects", 1, 2, true],
@@ -363,38 +365,38 @@ describe("GET /folders/{id}/directories", () => {
     expect(rows(await tree(dir, "?under=g"))).toEqual([["g/h", 1, 1, false]]);
   });
 
-  it("leaves out a stored path that is not a string or names no file", async () => {
+  it("leaves out a stored path that a write would refuse, and reports how many", async () => {
     const dir = await folder();
-    const paths = [
-      "a/one.md",
-      "a/number.md",
-      "a/float.md",
-      "a/gone.md",
-      "b/null.md",
-      "a/dot.md",
-      "a/empty.md",
+    const damaged: [string, string][] = [
+      ["a/number.md", "7"],
+      ["a/float.md", "1.5"],
+      ["b/null.md", "jsonb('null')"],
+      ["a/dot.md", "'.'"],
+      ["a/empty.md", "''"],
+      ["a/dotdot.md", "'../two.md'"],
+      ["a/slash.md", "'/lead.md'"],
+      ["b/back.md", "'b\\back.md'"],
+      ["c/drive.md", "'C:x.md'"],
+      ["c/long.md", "'a/' || replace(hex(zeroblob(512)), '0', 'x')"],
     ];
+    const paths = ["a/one.md", "a/gone.md", ...damaged.map(([from]) => from)];
     await placeAll(dir, paths);
     const before = await tree(dir);
     expect(rows(before)).toEqual([
-      ["a", 6, 6, false],
-      ["b", 1, 1, false],
+      ["a", 8, 8, false],
+      ["b", 2, 2, false],
+      ["c", 2, 2, false],
     ]);
-    expect(before.total_files).toBe(7);
+    expect(before.total_files).toBe(12);
+    expect(before.unreadable_placements).toBe(0);
     await server.restart(() => {
       const db = new DatabaseSync(server.sqlitePath);
       try {
-        const set = (from: string, to: string) =>
-          db
-            .prepare(
-              `UPDATE edges SET properties = jsonb_set(properties, '$.path', ${to}) WHERE json_extract(properties, '$.path') = ?`,
-            )
-            .run(from);
-        set("a/number.md", "7");
-        set("a/float.md", "1.5");
-        set("b/null.md", "jsonb('null')");
-        set("a/dot.md", "'.'");
-        set("a/empty.md", "''");
+        for (const [from, to] of damaged) {
+          db.prepare(
+            `UPDATE edges SET properties = jsonb_set(properties, '$.path', ${to}) WHERE json_extract(properties, '$.path') = ?`,
+          ).run(from);
+        }
         db.prepare(
           "UPDATE edges SET properties = jsonb_remove(properties, '$.path') WHERE json_extract(properties, '$.path') = 'a/gone.md'",
         ).run();
@@ -406,9 +408,44 @@ describe("GET /folders/{id}/directories", () => {
     expect(rows(top)).toEqual([["a", 1, 1, false]]);
     expect(top.direct_files).toBe(0);
     expect(top.total_files).toBe(1);
+    expect(top.unreadable_placements).toBe(11);
     const under = await tree(dir, "?under=a");
     expect(rows(under)).toEqual([]);
     expect(under.direct_files).toBe(1);
+    expect(under.unreadable_placements).toBe(11);
+    expect(JSON.stringify(top)).not.toMatch(/two\.md|lead|back|drive|long/);
+  });
+
+  it("reports only the damaged placements the credential may read and leaves out those in the bin", async () => {
+    const dir = await folder();
+    await place(dir, "a/note.md");
+    await placeItem(await item("core.task"), dir, "a/task.md");
+    await place(dir, "a/bad-note.md");
+    const binned = await place(dir, "a/bad-binned.md");
+    const moved = await call("POST", `/items/${binned}/transition`, {
+      state: "trashed",
+    });
+    expect(moved.status, await moved.clone().text()).toBe(200);
+    await server.restart(() => {
+      const db = new DatabaseSync(server.sqlitePath);
+      try {
+        db.prepare(
+          "UPDATE edges SET properties = jsonb_set(properties, '$.path', '../x.md') WHERE json_extract(properties, '$.path') IN ('a/task.md', 'a/bad-note.md', 'a/bad-binned.md')",
+        ).run();
+      } finally {
+        db.close();
+      }
+    });
+    const notesOnly = await key({
+      "system.folder": "read",
+      "core.note": "read",
+    });
+    const typed = await tree(dir, "", notesOnly);
+    expect(typed.total_files).toBe(1);
+    expect(typed.unreadable_placements).toBe(1);
+    const whole = await tree(dir);
+    expect(whole.total_files).toBe(1);
+    expect(whole.unreadable_placements).toBe(2);
   });
 
   it("counts an archived item and leaves out an item in the bin", async () => {

@@ -62,10 +62,12 @@ pub enum FoldersCommand {
     /// has a count of files directly inside it and a count that includes its
     /// subdirectories. The result also counts files at the requested level and
     /// in the whole folder. A key needs read access to `system.folder` and
-    /// `in-folder`. Counts include only files the caller can read.
+    /// `in-folder`. Counts include only files the caller can read. A placement
+    /// whose stored path no write would accept is left out of every count and
+    /// reported as `unreadable_placements`.
     ///
     /// With `--json`, the result has `folder_id`, `under`, `direct_files`,
-    /// `total_files` and `directories`. Each directory has `path`,
+    /// `total_files`, `unreadable_placements` and `directories`. Each directory has `path`,
     /// `direct_files`, `all_files` and `has_directories`.
     Directories {
         /// The folder's `system.folder` ID.
@@ -73,7 +75,7 @@ pub enum FoldersCommand {
         /// A directory path from the folder's root, such as `notes/2026`.
         /// Use up to 1024 characters. A leading slash, backslash, NUL or
         /// `..` component is invalid.
-        #[arg(long, value_name = "PATH")]
+        #[arg(long, value_name = "PATH", allow_hyphen_values = true)]
         under: Option<String>,
     },
     /// Make a directory stop following its folder: its own state under
@@ -1191,6 +1193,12 @@ fn describe_directories(report: &serde_json::Value) -> String {
             report["direct_files"], report["total_files"]
         ),
     ];
+    let unreadable = report["unreadable_placements"].as_i64().unwrap_or(0);
+    if unreadable > 0 {
+        lines.push(format!(
+            "{unreadable} placement(s) with a damaged path left out of every count"
+        ));
+    }
     for directory in report["directories"].as_array().into_iter().flatten() {
         lines.push(format!(
             "{}: {} file(s) directly, {} in all{}",
@@ -2136,12 +2144,34 @@ mod tests {
     }
 
     #[test]
+    fn folder_directories_takes_an_under_that_starts_with_a_hyphen() {
+        use clap::Parser;
+        let parsed = crate::Cli::try_parse_from([
+            "marfa",
+            "folders",
+            "directories",
+            "folder",
+            "--under",
+            "-drafts",
+        ])
+        .unwrap();
+        let crate::Command::Folders {
+            command: FoldersCommand::Directories { under, .. },
+        } = parsed.command
+        else {
+            panic!("not a directories command");
+        };
+        assert_eq!(under.as_deref(), Some("-drafts"));
+    }
+
+    #[test]
     fn a_directory_listing_says_each_level_and_each_directory() {
         let said = describe_directories(&serde_json::json!({
             "folder_id": "f1",
             "under": "notes",
             "direct_files": 2,
             "total_files": 8,
+            "unreadable_placements": 2,
             "directories": [
                 { "path": "notes/2026", "direct_files": 1, "all_files": 3, "has_directories": true },
                 { "path": "notes/old", "direct_files": 1, "all_files": 1, "has_directories": false },
@@ -2150,6 +2180,7 @@ mod tests {
         assert_eq!(
             said,
             "folder f1\n2 file(s) directly at notes; 8 file(s) in the folder\n\
+             2 placement(s) with a damaged path left out of every count\n\
              notes/2026: 1 file(s) directly, 3 in all, with directories beneath\n\
              notes/old: 1 file(s) directly, 1 in all"
         );

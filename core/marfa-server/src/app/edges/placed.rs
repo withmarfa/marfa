@@ -22,6 +22,7 @@ pub struct Directory {
 pub struct Tree {
     pub direct_files: i64,
     pub total_files: i64,
+    pub unreadable_placements: i64,
     pub directories: Vec<Directory>,
 }
 
@@ -50,20 +51,17 @@ impl Children {
     }
 }
 
-fn count_by_name(path: &str, under: &[String], here: &mut i64, children: &mut Children) -> bool {
+fn count_by_name(path: &str, under: &[String], here: &mut i64, children: &mut Children) {
     let mut path: Vec<&str> = names(path).collect();
-    if path.pop().is_none() {
-        return false;
-    }
+    path.pop();
     if path.len() < under.len() || path.iter().zip(under).any(|(name, held)| name != held) {
-        return true;
+        return;
     }
     match path.get(under.len()) {
         None => *here += 1,
         Some(name) if path.len() == under.len() + 1 => children.add(name, 1, 0),
         Some(name) => children.add(name, 0, 1),
     }
-    true
 }
 
 pub fn directories(
@@ -82,6 +80,7 @@ pub fn directories(
         tallies,
         tidy,
         untidy,
+        unreadable,
     } = rows::placed(tx, folder_id, &prefix, reach.as_ref())?;
     let (mut here, mut children, mut total) = (0, Children::default(), tidy);
     for tally in tallies {
@@ -91,7 +90,8 @@ pub fn directories(
         }
     }
     for path in untidy {
-        total += i64::from(count_by_name(&path, under, &mut here, &mut children));
+        total += 1;
+        count_by_name(&path, under, &mut here, &mut children);
     }
     let directories = children
         .0
@@ -106,6 +106,7 @@ pub fn directories(
     Ok(Tree {
         direct_files: here,
         total_files: total,
+        unreadable_placements: unreadable,
         directories,
     })
 }

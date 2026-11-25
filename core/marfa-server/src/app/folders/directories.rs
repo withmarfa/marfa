@@ -39,6 +39,7 @@ pub async fn read(
             "under": under.join("/"),
             "direct_files": tree.direct_files,
             "total_files": tree.total_files,
+            "unreadable_placements": tree.unreadable_placements,
             "directories": directories,
         })
         .to_string())

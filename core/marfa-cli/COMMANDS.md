@@ -5022,9 +5022,9 @@ marfa folders inventory [OPTIONS]
 
 List a folder's immediate directories and their file counts.
 
-Start at the top level or pass a listed path to `--under`. Each directory has a count of files directly inside it and a count that includes its subdirectories. The result also counts files at the requested level and in the whole folder. A key needs read access to `system.folder` and `in-folder`. Counts include only files the caller can read.
+Start at the top level or pass a listed path to `--under`. Each directory has a count of files directly inside it and a count that includes its subdirectories. The result also counts files at the requested level and in the whole folder. A key needs read access to `system.folder` and `in-folder`. Counts include only files the caller can read. A placement whose stored path no write would accept is left out of every count and reported as `unreadable_placements`.
 
-With `--json`, the result has `folder_id`, `under`, `direct_files`, `total_files` and `directories`. Each directory has `path`, `direct_files`, `all_files` and `has_directories`.
+With `--json`, the result has `folder_id`, `under`, `direct_files`, `total_files`, `unreadable_placements` and `directories`. Each directory has `path`, `direct_files`, `all_files` and `has_directories`.
 
 ```text
 marfa folders directories [OPTIONS] <ID>

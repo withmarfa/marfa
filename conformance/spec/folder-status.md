@@ -336,7 +336,7 @@ When an unauthenticated caller asks for `GET /folders`, the server MUST answer `
 
 ### `folder-status/directories`
 
-When a caller that reads `system.folder` and the `in-folder` edge type asks for `GET /folders/{id}/directories`, the server MUST answer `200` with `folder_id`, `under`, `direct_files`, `total_files` and `directories`, where each directory holds `path`, `direct_files`, `all_files` and `has_directories`.
+When a caller that reads `system.folder` and the `in-folder` edge type asks for `GET /folders/{id}/directories`, the server MUST answer `200` with `folder_id`, `under`, `direct_files`, `total_files`, `unreadable_placements` and `directories`, where each directory holds `path`, `direct_files`, `all_files` and `has_directories`.
 
 **Reason:** a client shows a folder's directories and how many files each holds without reading every placed file. The answer names directories only, never a file.
 
@@ -460,11 +460,19 @@ When `GET /folders/{id}/directories` counts a placed file, the server MUST read 
 
 ### `folder-status/directories-stored-path-text`
 
-If the `path` of an `in-folder` edge is not a string, or is a string that holds no name once its empty and `.` names are dropped, then the server MUST NOT count that edge in any number `GET /folders/{id}/directories` answers.
+If the `path` of an `in-folder` edge is not a string, or is a string that a write of the edge would refuse, then the server MUST leave that edge out of `direct_files`, `total_files` and every directory it lists.
 
-**Reason:** a write refuses such a path, so a stored one is damaged and places no file. The read leaves it out and does not report it, and no other placement is lost.
+**Reason:** a write refuses a `path` that holds no name once its empty and `.` names are dropped, starts with `/`, holds a backslash or NUL, holds a `..` name, starts with a drive letter and a colon, or is over 1024 characters. A stored one is damaged and places no file. Were it listed, a client could be given a path, such as `..`, that `folder-status/directories-expand` and `folder-status/directories-leaves` refuse, and no other placement is lost by leaving it out.
 
-**Tests:** `compliance/folder-directories.test.ts › leaves out a stored path that is not a string or names no file`.
+**Tests:** `compliance/folder-directories.test.ts › leaves out a stored path that a write would refuse, and reports how many`.
+
+### `folder-status/directories-unreadable`
+
+When `GET /folders/{id}/directories` is answered, the server MUST answer in `unreadable_placements` the number of `in-folder` edges that `folder-status/directories-stored-path-text` leaves out, whose placed item the caller can read and is not in the bin, whatever `under` is, and `0` when there is none.
+
+**Reason:** a caller learns that some files are not counted, so it need not trust a total that is quietly short. The number names no file or path, and it counts no placement of an item the caller cannot read, so it tells the caller nothing hidden.
+
+**Tests:** `compliance/folder-directories.test.ts › leaves out a stored path that a write would refuse, and reports how many`, `› reports only the damaged placements the credential may read and leaves out those in the bin`.
 
 ### `folder-status/directories-credential`
 
