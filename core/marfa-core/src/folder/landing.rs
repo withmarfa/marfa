@@ -792,9 +792,9 @@ pub(crate) enum Settled {
     },
     /// Changed after its removal, and back at its empty path.
     Restored,
-    /// Changed, and kept beside its path, or under its reserved name where it
-    /// cannot go there, and reported.
-    Beside,
+    /// Changed, and kept beside its path under the name answered, or under
+    /// its reserved name where it cannot go there, and reported.
+    Beside(PathBuf),
     /// Unchanged, and kept, with what this look found.
     Kept(Retained),
 }
@@ -850,8 +850,23 @@ pub(crate) fn settle_retained(
         // A write that keeps the length on a volume with coarse times shows
         // only in the bytes.
         if !stated || proved.unchanged()? {
-            discard(guard.aside, name)?;
-            return Ok(Settled::Discarded);
+            match discard_checked(guard.aside, name, Some(at), |_| proved.unchanged())? {
+                Discard::Removed => return Ok(Settled::Discarded),
+                Discard::Absent => return Ok(Settled::Gone),
+                Discard::Stranded(left) => {
+                    guard.ledger.kept(
+                        &left,
+                        true,
+                        format!(
+                            "it is {} as Marfa set it aside, and it changed as Marfa discarded it; check it, and delete it when it is not needed",
+                            retained.target
+                        ),
+                    );
+                    return Ok(Settled::Gone);
+                }
+                // Back under its reserved name, and put back as any change is.
+                Discard::Changed => {}
+            }
         }
     }
     let target = Path::new(&retained.target);
@@ -893,7 +908,50 @@ pub(crate) fn settle_retained(
             Err(error) => return Err(error),
         }
     }
-    keep_beside(dir, guard, target, name).map(|_| Settled::Beside)
+    keep_beside(dir, guard, target, name).map(Settled::Beside)
+}
+
+/// What [`discard_checked`] did with a kept file.
+pub(crate) enum Discard {
+    Removed,
+    /// Nothing was at its name.
+    Absent,
+    /// It was no longer the file proved, and is back at its name.
+    Changed,
+    /// It was no longer the file proved, and another file took its name, so
+    /// it stays under this private name.
+    Stranded(PathBuf),
+}
+
+/// Deletes the kept file at `name` in `dir` only while it is the file
+/// `still` proves at the private name it is given, with the identity `at` where given. It moves to a
+/// private reserved name first, so no save at `name` meets the check, and
+/// goes back where it is no longer that file.
+pub(crate) fn discard_checked(
+    dir: &Directory,
+    name: &Path,
+    at: Option<(u64, u64)>,
+    still: impl FnOnce(&Path) -> io::Result<bool>,
+) -> io::Result<Discard> {
+    write_before_discard(dir, name);
+    let private = reserved(&uuid::Uuid::now_v7().simple().to_string());
+    match rename_new_at(dir, name, dir, &private) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Discard::Absent),
+        Err(error) => return Err(error),
+    }
+    let same = at.is_none_or(|at| dir.entry_identity(&private).ok() == Some(at));
+    if same && still(&private)? {
+        discard(dir, &private)?;
+        return Ok(Discard::Removed);
+    }
+    match rename_new_at(dir, &private, dir, name) {
+        Ok(()) => Ok(Discard::Changed),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            Ok(Discard::Stranded(private))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn exchange_at(from_dir: &Directory, from: &Path, to_dir: &Directory, to: &Path) -> io::Result<()> {
@@ -1588,6 +1646,16 @@ fn save_after_last_look(dir: &Directory, target: &Path) {
 /// Another save made the same way, as a file moved out by mistake goes back.
 fn save_during_put_back(dir: &Directory, target: &Path) {
     save_over(dir, target, "save-during-put-back", b"saved again\n");
+}
+
+/// A program's write into a kept file, after the look that found it
+/// unchanged and before it is discarded.
+pub(crate) fn write_before_discard(dir: &Directory, name: &Path) {
+    if asked_for(dir, name, "write-before-discard") {
+        let _ = dir
+            .open_file(name, OFlags::WRONLY | OFlags::APPEND, Mode::empty())
+            .and_then(|mut file| file.write_all(b"written before the discard\n"));
+    }
 }
 
 /// A person's write into the file in place, after the folder's last look.
@@ -2785,7 +2853,7 @@ mod tests {
         std::fs::write(place.root.join("note.md"), b"saved by the person").unwrap();
         let settled = place.ledger.settle(&place.dir, place.guard(), now());
         assert!(
-            matches!(settled.as_slice(), [Settled::Beside]),
+            matches!(settled.as_slice(), [Settled::Beside(_)]),
             "{settled:?}"
         );
         let beside = place.ledger.kept.borrow()[0].0.clone();

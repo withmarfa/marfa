@@ -202,9 +202,12 @@ fn settle_retained_row(
             state::clear_retained(conn, &retained.id)?;
             Ok(RowSettled::Discarded)
         }
-        landing::Settled::Beside => {
+        landing::Settled::Beside(at) => {
             state::clear_retained(conn, &retained.id)?;
-            Ok(RowSettled::Beside)
+            if landing::is_reserved(&at) {
+                return Ok(RowSettled::Stayed);
+            }
+            Ok(RowSettled::Beside(joined(&row.dir, &at.to_string_lossy())))
         }
         landing::Settled::Gone => {
             state::clear_retained(conn, &retained.id)?;
@@ -279,8 +282,11 @@ enum RowSettled {
     Discarded,
     /// Back at its path.
     Back,
-    /// Kept beside its path, which holds a newer save.
-    Beside,
+    /// Kept beside its path, which holds a newer save, at this path.
+    Beside(String),
+    /// Changed, and left under its reserved name, which no pass settles, as
+    /// it could not go back to or beside its path.
+    Stayed,
     /// No longer under its reserved name.
     Gone,
 }
@@ -344,11 +350,20 @@ impl Folder {
         for (row, settled) in self.settle_retained_as(true)? {
             match settled {
                 RowSettled::Discarded => done.discarded.push(row.path),
-                RowSettled::Back | RowSettled::Beside => done.put_back.push(row.from),
+                RowSettled::Back => done.put_back.push(row.from),
+                RowSettled::Beside(at) => done.put_back.push(at),
+                RowSettled::Stayed => done.kept.push(KeptFile {
+                    reason: format!(
+                        "a program wrote to it, and Marfa could not put it back at or beside {}, so it stays under this name; move it back yourself",
+                        row.from
+                    ),
+                    ..row
+                }),
                 RowSettled::Gone | RowSettled::Kept => {}
             }
         }
-        done.kept = self.kept_files()?;
+        done.kept.extend(self.kept_files()?);
+        done.kept.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(done)
     }
 
@@ -410,7 +425,10 @@ impl Folder {
                     match settled {
                         RowSettled::Kept => waiting |= writers == writers::Writers::Open,
                         RowSettled::Back => back = true,
-                        RowSettled::Discarded | RowSettled::Beside | RowSettled::Gone => {}
+                        RowSettled::Discarded
+                        | RowSettled::Beside(_)
+                        | RowSettled::Stayed
+                        | RowSettled::Gone => {}
                     }
                     looked.push((kept_file(row), settled));
                 }
@@ -457,12 +475,28 @@ impl Folder {
         if !unchanged {
             return Ok(RowSettled::Kept);
         }
-        let removed = aside.unlink(Path::new(&row.kept));
-        let settled = match removed {
-            Ok(()) => RowSettled::Discarded,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => RowSettled::Gone,
-            // Listed still, for another try.
-            Err(_) => return Ok(RowSettled::Kept),
+        let name = Path::new(&row.kept);
+        let still = |private: &Path| {
+            Ok(aside
+                .read(private)
+                .is_ok_and(|bytes| row.hash.as_deref() == Some(state::hash(&bytes).as_str())))
+        };
+        let settled = match landing::discard_checked(&aside, name, None, still) {
+            Ok(landing::Discard::Removed) => RowSettled::Discarded,
+            Ok(landing::Discard::Absent) => RowSettled::Gone,
+            Ok(landing::Discard::Stranded(left)) => {
+                state::put_kept(
+                    conn,
+                    &joined(&row.aside, &left.to_string_lossy()),
+                    &format!(
+                        "it is {} as Marfa set it aside, and it changed as Marfa discarded it; check it, and delete it when it is not needed",
+                        row.from
+                    ),
+                )?;
+                RowSettled::Gone
+            }
+            // Listed still, for the owner to look at or another try.
+            Ok(landing::Discard::Changed) | Err(_) => return Ok(RowSettled::Kept),
         };
         state::clear_retained(conn, &row.id)?;
         Ok(settled)
@@ -760,5 +794,83 @@ mod tests {
                 "discard {discard}: what the program wrote goes on the version it read"
             );
         }
+    }
+
+    /// Whether a file in `Notes`, kept or not, holds `text`.
+    #[cfg(debug_assertions)]
+    fn kept_somewhere(root: &Path, text: &str) -> bool {
+        std::fs::read_dir(root.join("Notes")).unwrap().any(|entry| {
+            std::fs::read_to_string(entry.unwrap().path()).is_ok_and(|held| held.contains(text))
+        })
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_kept_file_written_to_as_the_owner_discards_it_is_not_deleted() {
+        for unread in [false, true] {
+            let (dir, folder) = scanned_folder();
+            let root = dir.path().canonicalize().unwrap();
+            changed_on_the_server(&root, &folder);
+            {
+                let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+                folder.pull().unwrap();
+            }
+            assert_eq!(reserved_in(&root.join("Notes")).len(), 1);
+            if unread {
+                folder
+                    .core
+                    .conn()
+                    .unwrap()
+                    .execute(
+                        "UPDATE meta SET value = json_set(value, '$.retained.since', 'soon') WHERE key LIKE 'folder_retained:%'",
+                        [],
+                    )
+                    .unwrap();
+            }
+
+            let done = {
+                let _write = crate::fault::fail_on_this_thread("write-before-discard");
+                folder.discard_kept().unwrap()
+            };
+
+            assert!(done.discarded.is_empty(), "unread {unread}: {done:?}");
+            assert!(
+                kept_somewhere(&root, "written before the discard"),
+                "unread {unread}: the write was deleted"
+            );
+            if unread {
+                assert_eq!(done.kept.len(), 1, "{done:?}");
+                assert_eq!(reserved_in(&root.join("Notes")).len(), 1);
+            }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_kept_file_put_back_beside_an_edited_path_is_reported_where_it_went() {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        changed_on_the_server(&root, &folder);
+        {
+            let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+            folder.pull().unwrap();
+        }
+        let reserved = reserved_in(&root.join("Notes"));
+        assert_eq!(reserved.len(), 1);
+        let mut program = std::fs::OpenOptions::new()
+            .append(true)
+            .open(root.join("Notes").join(&reserved[0]))
+            .unwrap();
+        program.write_all(b"what the program wrote\n").unwrap();
+        drop(program);
+        std::fs::write(root.join("Notes/Plan.md"), "the person's edit\n").unwrap();
+
+        let done = folder.discard_kept().unwrap();
+
+        assert_eq!(done.put_back.len(), 1, "{done:?}");
+        assert_ne!(done.put_back[0], "Notes/Plan.md", "{done:?}");
+        let went = std::fs::read_to_string(root.join(&done.put_back[0])).unwrap();
+        assert!(went.contains("what the program wrote"), "{done:?}");
+        assert!(holds(&root, "the person's edit"));
     }
 }
