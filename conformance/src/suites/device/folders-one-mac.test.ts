@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -2783,6 +2784,361 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       "a file of an item this folder no longer holds, moved to the folder that does, was read as that folder's own and trashed",
     ).toBe(0);
     expect(swept.value.scan.moved_away).toBe(1);
+  });
+
+  /**
+   * The folder a file left scans, unless it has seen the file gone already,
+   * waits out the grace and scans again, and sends no delete of the moved
+   * file's item. `Gone.md`, deleted for real, is the witness that the same
+   * sweep still sends one.
+   */
+  async function sweptAfterMove(
+    a: FolderHarness,
+    moved: string,
+    gone: string,
+    seen = false,
+  ): Promise<void> {
+    if (!seen) expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    expect(deletesOf(a.server, gone)).toBe(1);
+    expect(swept.value.scan.trashed).toContain("Gone.md");
+    expect(
+      deletesOf(a.server, moved),
+      "a file moved to another folder was read as a delete once that folder let it go, and its item trashed",
+    ).toBe(0);
+  }
+
+  /** Archives `item` on the server and tells the folders. */
+  function archive(
+    door: FolderDoor,
+    edges: EdgeDoor,
+    item: WireItemOptions,
+    tags: string[],
+  ): void {
+    door.transition(item.id, "archived");
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "item.updated",
+        wireItem({ ...item, version: 2, state: "archived" }),
+        { tags },
+      ),
+    );
+  }
+
+  it("sends no delete for a file moved to another folder that takes it away when its item is archived", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-0000000045a1",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const gone = {
+      id: "01a00000-0000-7000-8000-0000000045a2",
+      properties: { title: "Gone", body: "deleted for real\n" },
+    };
+    const { a, b, door, edges } = await onOneMac(
+      "moved-then-archived",
+      { query: { types: ["core.note"] } },
+      {
+        query: {
+          types: ["core.note"],
+          filter: 'tags contains "b"',
+          state: ["active"],
+        },
+      },
+      { "core.note": [{ item: plan, tags: ["b"] }, { item: gone }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    renameSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
+    rmSync(join(a.dir, "Gone.md"));
+    expect((await b.folder.push()).ok).toBe(true);
+    expect(idIn(b, "Plan.md")).toBe(plan.id);
+    expect(edges.placements(b.settings.id).get(plan.id)).toBe("Plan.md");
+    // The folder it left sees it gone before the item is archived.
+    expect((await a.folder.push()).ok).toBe(true);
+
+    archive(door, edges, plan, ["b"]);
+    const dropped = await b.folder.push();
+    expect(dropped.ok, JSON.stringify(dropped)).toBe(true);
+    expect(dropped.ok && dropped.value.pull?.removed).toBe(1);
+    expect(existsSync(join(b.dir, "Plan.md"))).toBe(false);
+
+    await sweptAfterMove(a, plan.id, gone.id, true);
+    expect(door.rows.get(plan.id)?.state).toBe("archived");
+  });
+
+  it("sends no delete for a file moved to another folder whose unmatched files are then removed", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-0000000045b1",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const gone = {
+      id: "01a00000-0000-7000-8000-0000000045b2",
+      properties: { title: "Gone", body: "deleted for real\n" },
+    };
+    const { a, b, door } = await onOneMac(
+      "moved-then-unmatched-removed",
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { "core.note": [{ item: plan }, { item: gone }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    renameSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
+    rmSync(join(a.dir, "Gone.md"));
+    const kept = await b.folder.push();
+    expect(kept.ok && kept.value.pull?.unmatched).toBe(1);
+    const removed = await b.folder.removeUnmatched({ yes: true });
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    expect(existsSync(join(b.dir, "Plan.md"))).toBe(false);
+
+    await sweptAfterMove(a, plan.id, gone.id);
+    expect(idIn(a, "Plan.md")).toBe(plan.id);
+    expect(door.rows.get(plan.id)?.properties.body).toBe("the plan\n");
+  });
+
+  it("sends no delete for a file moved to another folder that is then removed from the Mac", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-0000000045c1",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const gone = {
+      id: "01a00000-0000-7000-8000-0000000045c2",
+      properties: { title: "Gone", body: "deleted for real\n" },
+    };
+    const { a, b } = await onOneMac(
+      "moved-then-folder-removed",
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+      {
+        "core.note": [
+          { item: plan, tags: ["a"] },
+          { item: gone, tags: ["a"] },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    renameSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
+    rmSync(join(a.dir, "Gone.md"));
+    const kept = await b.folder.push();
+    expect(kept.ok && kept.value.pull?.unmatched).toBe(1);
+    // The folder it left sees it gone while the other folder is listed.
+    expect((await a.folder.push()).ok).toBe(true);
+    const removed = await b.folder.remove();
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    expect(idIn(b, "Plan.md")).toBe(plan.id);
+
+    await sweptAfterMove(a, plan.id, gone.id, true);
+  });
+
+  it("sends no delete for a file item moved to another folder that then saves new bytes over it", async () => {
+    const photo = "01a00000-0000-7000-8000-0000000045d1";
+    const gone = "01a00000-0000-7000-8000-0000000045d2";
+    const bytesOf = (name: string) => Buffer.from(`the bytes of ${name}\n`);
+    const { a, b, edges } = await onOneMac(
+      "moved-then-rewritten",
+      { query: { types: ["core.file"] } },
+      { query: { types: ["core.file"], filter: 'tags contains "b"' } },
+      {
+        "core.file": [
+          [photo, "photo.bin"],
+          [gone, "Gone.md"],
+        ].map(([id, name]) => ({
+          item: {
+            id,
+            type: "core.file",
+            properties: { title: name, blob_ref: hashOf(bytesOf(name)) },
+          },
+        })),
+      },
+    );
+    for (const name of ["photo.bin", "Gone.md"]) {
+      scriptBlob(a.server, bytesOf(name));
+    }
+    acceptUploads(a.server);
+    expect((await a.folder.pull()).ok).toBe(true);
+    renameSync(join(a.dir, "photo.bin"), join(b.dir, "photo.bin"));
+    rmSync(join(a.dir, "Gone.md"));
+    expect((await b.folder.push()).ok).toBe(true);
+    expect(edges.placements(b.settings.id).get(photo)).toBe("photo.bin");
+    expect((await a.folder.push()).ok).toBe(true);
+    // An editor there replaces it, and that folder sends the new bytes.
+    saveAtomically(b, "photo.bin", Buffer.from("edited photo bytes\n"));
+    const sent = await b.folder.push();
+    expect(sent.ok, JSON.stringify(sent)).toBe(true);
+    expect(edges.placements(b.settings.id).get(photo)).toBe("photo.bin");
+
+    await sweptAfterMove(a, photo, gone, true);
+  });
+
+  it("sends no delete for a note moved to another folder by copy and delete when that folder's query comes to hold it", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-0000000045e1",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const gone = {
+      id: "01a00000-0000-7000-8000-0000000045e2",
+      properties: { title: "Gone", body: "deleted for real\n" },
+    };
+    const { a, b, edges } = await onOneMac(
+      "copied-then-widened",
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { "core.note": [{ item: plan }, { item: gone }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    copyFileSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
+    rmSync(join(a.dir, "Plan.md"));
+    rmSync(join(a.dir, "Gone.md"));
+    const kept = await b.folder.push();
+    expect(kept.ok && kept.value.pull?.unmatched).toBe(1);
+    b.settings.settings = { query: { types: ["core.note"] } };
+    b.settings.version += 1;
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "item.updated",
+        folderItem(b.settings),
+      ),
+    );
+    const widened = await b.folder.push();
+    expect(widened.ok, JSON.stringify(widened)).toBe(true);
+    expect(idIn(b, "Plan.md")).toBe(plan.id);
+
+    await sweptAfterMove(a, plan.id, gone.id);
+  });
+
+  it("sends no delete for a file an earlier release took into another folder that then takes it away when its item is archived", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-0000000045f1",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const gone = {
+      id: "01a00000-0000-7000-8000-0000000045f2",
+      properties: { title: "Gone", body: "deleted for real\n" },
+    };
+    const { a, b, door, edges } = await onOneMac(
+      "taken-in-then-archived",
+      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+      {
+        query: {
+          types: ["core.note"],
+          filter: 'tags contains "b"',
+          state: ["active"],
+        },
+      },
+      {
+        "core.note": [
+          { item: plan, tags: ["a"] },
+          { item: gone, tags: ["a"] },
+        ],
+      },
+    );
+    expect((await a.folder.push()).ok).toBe(true);
+    expect((await b.folder.push()).ok).toBe(true);
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "metadata.changed",
+        wireItem(plan),
+        { tags: ["b"] },
+      ),
+    );
+    const left = await a.folder.push();
+    expect(left.ok && left.value.pull?.unmatched).toBe(1);
+    // That release moved the file the folder kept into the folder that came
+    // to hold its item, bound it there as written by that folder, and kept
+    // nothing of where it came from.
+    renameSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
+    rmSync(join(a.dir, "Gone.md"));
+    expect((await b.folder.push()).ok).toBe(true);
+    expect(idIn(b, "Plan.md")).toBe(plan.id);
+    const store = new DatabaseSync(join(b.dir, ".marfa", "core.sqlite"));
+    try {
+      store.exec(
+        "UPDATE folder_files SET written_hash = content_hash; DELETE FROM meta WHERE key LIKE 'folder_trail:%'",
+      );
+    } finally {
+      store.close();
+    }
+
+    archive(door, edges, plan, ["b"]);
+    const dropped = await b.folder.push();
+    expect(dropped.ok, JSON.stringify(dropped)).toBe(true);
+    expect(dropped.ok && dropped.value.pull?.removed).toBe(1);
+    expect(existsSync(join(b.dir, "Plan.md"))).toBe(false);
+
+    await sweptAfterMove(a, plan.id, gone.id);
+    expect(door.rows.get(plan.id)?.state).toBe("archived");
+  });
+
+  it("trashes the item of a file deleted for real after a file of it moved to another folder that let it go", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-000000004601",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const { a, b } = await onOneMac(
+      "moved-let-go-then-deleted",
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { "core.note": [{ item: plan }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    renameSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
+    const kept = await b.folder.push();
+    expect(kept.ok && kept.value.pull?.unmatched).toBe(1);
+    expect((await b.folder.removeUnmatched({ yes: true })).ok).toBe(true);
+    // The folder it left keeps the item, and writes its own file again.
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(deletesOf(a.server, plan.id)).toBe(0);
+    expect(idIn(a, "Plan.md")).toBe(plan.id);
+
+    // That file is no file that moved: deleted, its item goes to the bin.
+    rmSync(join(a.dir, "Plan.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    expect(
+      deletesOf(a.server, plan.id),
+      "a file deleted for real was kept as moved because an earlier file of its item once moved",
+    ).toBe(1);
+  });
+
+  it("trashes the item of a file deleted for real after it moved to another folder and back", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-000000004602",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const { a, b } = await onOneMac(
+      "moved-back-then-deleted",
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { "core.note": [{ item: plan }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    renameSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
+    const kept = await b.folder.push();
+    expect(kept.ok && kept.value.pull?.unmatched).toBe(1);
+    renameSync(join(b.dir, "Plan.md"), join(a.dir, "Plan.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    expect((await b.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    expect((await b.folder.push()).ok).toBe(true);
+    expect(deletesOf(b.server, plan.id)).toBe(0);
+
+    rmSync(join(a.dir, "Plan.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    expect(
+      deletesOf(a.server, plan.id),
+      "a file deleted for real was kept as moved because it once moved to another folder and back",
+    ).toBe(1);
   });
 
   it("holds a delete where several files in another folder have its bytes", async () => {
