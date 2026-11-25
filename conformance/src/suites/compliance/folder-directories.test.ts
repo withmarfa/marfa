@@ -374,6 +374,12 @@ describe("GET /folders/{id}/directories", () => {
     for (const path of ["a/task.md", "c/task.md"]) {
       await placeItem(await item("core.task"), dir, path);
     }
+    const allTypes = await tree(dir);
+    expect(rows(allTypes)).toEqual([
+      ["a", 2, 3, true],
+      ["c", 1, 1, false],
+    ]);
+    expect(allTypes.total_files).toBe(5);
     const notesOnly = await key({
       "system.folder": "read",
       "core.note": "read",
@@ -382,7 +388,6 @@ describe("GET /folders/{id}/directories", () => {
     expect(rows(typed)).toEqual([["a", 1, 2, true]]);
     expect(typed.direct_files).toBe(1);
     expect(typed.total_files).toBe(3);
-    expect((await tree(dir)).total_files).toBe(5);
 
     const shownSource = "folder-directories-shown";
     const shown = await key(
@@ -401,6 +406,12 @@ describe("GET /folders/{id}/directories", () => {
     await placeItem(await item("core.note", shown), sourceDir, "a/b/shown.md");
     await placeItem(await item("core.note", hidden), sourceDir, "a/hidden.md");
     await placeItem(await item("core.note", hidden), sourceDir, "h/hidden.md");
+    const allSources = await tree(sourceDir);
+    expect(rows(allSources)).toEqual([
+      ["a", 2, 3, true],
+      ["h", 1, 1, false],
+    ]);
+    expect(allSources.total_files).toBe(4);
     const filtered = await key(
       { "*": "read" },
       {
@@ -412,7 +423,6 @@ describe("GET /folders/{id}/directories", () => {
     const read = await tree(sourceDir, "", filtered);
     expect(rows(read)).toEqual([["a", 1, 2, true]]);
     expect(read.total_files).toBe(2);
-    expect((await tree(sourceDir)).total_files).toBe(4);
   });
 
   it("refuses a key that cannot read the in-folder edge type", async () => {
@@ -438,6 +448,28 @@ describe("GET /folders/{id}/directories", () => {
     expect(
       (await call("GET", `/folders/${dir}/status`, undefined, blind)).status,
     ).toBe(200);
+    const noFolderOrEdge = await key(
+      { "core.note": "read" },
+      { edge_permissions: {} },
+    );
+    for (const target of [dir, NO_SUCH_ID]) {
+      const path = `/folders/${target}`;
+      const status = await call(
+        "GET",
+        `${path}/status`,
+        undefined,
+        noFolderOrEdge,
+      );
+      const tree = await call(
+        "GET",
+        `${path}/directories`,
+        undefined,
+        noFolderOrEdge,
+      );
+      expect(status.status).toBe(404);
+      expect(tree.status).toBe(404);
+      expect(await tree.json()).toEqual(await status.json());
+    }
   });
 
   it("refuses as the status read refuses", async () => {

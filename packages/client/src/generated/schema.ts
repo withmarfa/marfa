@@ -1757,7 +1757,7 @@ export interface paths {
         };
         /**
          * Get folder directories
-         * @description Returns the directories directly under a path in a folder, each with the placed files it holds, and the files placed at that path and in the whole folder. A placed file is an item with an `in-folder` edge to the folder, out of the bin.
+         * @description Returns one level of a folder's directory tree with file counts. Counts include items you can list with an `in-folder` edge to the folder, including archived items. Items in the trash are excluded.
          */
         get: operations["getFolderDirectories"];
         put?: never;
@@ -10742,11 +10742,11 @@ export interface components {
              */
             direct_files: number;
             /**
-             * @description How many placed files the folder holds in all, whatever `under` is.
+             * @description How many placed files you can list in the entire folder, regardless of `under`.
              * @example 8
              */
             total_files: number;
-            /** @description The directories directly under `under`, in order of path. Empty where no placed file lies beneath `under`. */
+            /** @description The immediate subdirectories that contain a placed file you can list, sorted by the UTF-8 bytes of their paths. */
             directories: components["schemas"]["FolderDirectory"][];
         };
     };
@@ -32565,7 +32565,7 @@ export interface operations {
     getFolderDirectories: {
         parameters: {
             query?: {
-                /** @description The root-relative path of the directory whose subdirectories to list, such as `notes/2026`. Leave it out for the folder's top level. A path with no placed file under it answers no directories. */
+                /** @description The directory path from the folder's root, such as `notes/2026`. Omit it for the top level. Empty and `.` path components are ignored. A path with no visible placements returns an empty list. */
                 under?: string;
             };
             header?: never;
@@ -32606,7 +32606,7 @@ export interface operations {
             };
             /**
              * @description - `invalid_id`: the folder ID is malformed.
-             *     - `validation_error`: `under` leaves the folder (a leading slash, a `..` name, a backslash, or a drive) or is over 1024 characters, or the query names another parameter.
+             *     - `validation_error`: `under` starts with a slash or drive prefix, contains a backslash, NUL, or `..` component, exceeds 1024 characters, or appears more than once. An unknown query parameter also causes this error unless its name starts with `_`.
              */
             400: {
                 headers: {

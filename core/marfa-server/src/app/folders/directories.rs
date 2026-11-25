@@ -10,7 +10,7 @@ use crate::app::refusal::Result;
 
 const PLACEMENT: &str = "in-folder";
 
-/// Read as `GET /folders/{id}/status` is, and then only the placements the caller may read.
+/// Check the folder first so an edge refusal cannot reveal a hidden folder.
 pub async fn read(
     app: &crate::app::App,
     caller: &Caller,

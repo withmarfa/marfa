@@ -30,7 +30,6 @@ fn names(path: &str) -> impl Iterator<Item = &str> {
         .filter(|name| !name.is_empty() && *name != ".")
 }
 
-/// The names of a directory path read as a placement path is, or `None` where it leaves the folder.
 pub fn under_names(text: &str) -> Option<Vec<String>> {
     if text.chars().count() > MOST_CHARACTERS
         || marfa_rules::edges::depth_inside_folder(text).is_none()
@@ -51,7 +50,6 @@ impl Children {
     }
 }
 
-/// Counts each placed file read by name where it sits: a file in `under`, or in a directory under it.
 fn count_by_name(
     path: &str,
     under: &[String],
@@ -73,7 +71,6 @@ fn count_by_name(
     Ok(())
 }
 
-/// The directories directly under `under`, and the files placed there and in the whole folder.
 pub fn directories(
     tx: &Transaction<'_>,
     caller: &Caller,

@@ -400,7 +400,7 @@ When `GET /folders/{id}/directories` names an `under` that no placed file lies a
 
 When `GET /folders/{id}/directories` matches a name, the server MUST match it as the placement stores it, with no Unicode normalization and no change of letter case.
 
-**Reason:** a placement path is stored as sent (`folder-files/placement-path`), and a device finds its file by the same name.
+**Reason:** the server can distinguish the names recorded on two placements even when a device's file system treats them as the same name.
 
 **Tests:** `compliance/folder-directories.test.ts › matches names as stored, so Unicode forms and letter cases stay apart`.
 
@@ -408,7 +408,7 @@ When `GET /folders/{id}/directories` matches a name, the server MUST match it as
 
 When `GET /folders/{id}/directories` counts placed files, the server MUST count a file whose item is `archived`.
 
-**Reason:** a copy of the folder places the files that are not in the bin, archived ones included, and the counts are for what a copy places.
+**Reason:** archiving an item can leave its placement in the folder. A device also applies the folder's query when deciding which files to write.
 
 **Tests:** `compliance/folder-directories.test.ts › counts an archived item and leaves out an item in the bin`.
 

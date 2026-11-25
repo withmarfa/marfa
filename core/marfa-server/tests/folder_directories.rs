@@ -526,7 +526,7 @@ async fn a_stored_path_with_empty_or_dot_names_counts_where_a_device_places_it()
 async fn an_archived_item_counts_and_an_item_in_the_bin_does_not() {
     let instance = Instance::start().await;
     let folder = instance.folder().await;
-    let kept = instance.place(&folder, "docs/kept.md").await;
+    instance.place(&folder, "docs/kept.md").await;
     let archived = instance.place(&folder, "docs/archived.md").await;
     let binned = instance.place(&folder, "docs/binned.md").await;
     let top_binned = instance.place(&folder, "binned-top.md").await;
@@ -544,7 +544,6 @@ async fn an_archived_item_counts_and_an_item_in_the_bin_does_not() {
     let restored = instance.tree(&folder, "").await;
     assert_eq!(restored.directories(), vec![row("docs", 3, 4, true)]);
     assert_eq!(restored.numbers(), (1, 5));
-    let _ = kept;
 }
 
 #[tokio::test]

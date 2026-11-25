@@ -175,11 +175,10 @@ pub(super) fn kinds_at(
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// A placement path the tally reads in SQL only when it holds no empty or `.` name.
+/// Untidy paths need component-wise counting to match the device.
 const UNTIDY: &str =
     "p IS NULL OR instr('/' || p || '/', '//') > 0 OR instr('/' || p || '/', '/./') > 0";
 
-/// The files directly in one directory under a prefix, and in the directories beneath it.
 pub(super) struct Tally {
     /// The directory's name, or `None` for the files that sit directly under the prefix.
     pub name: Option<String>,
@@ -195,8 +194,7 @@ pub(super) struct Placed {
     pub untidy: Vec<Option<String>>,
 }
 
-/// The live `in-folder` edges of a folder from items in reach and out of the bin, grouped by the
-/// directory of their `path` under `prefix`, which is empty or ends in `/`.
+/// A nonempty prefix ends in `/` so it matches a complete directory name.
 pub(super) fn placed(
     tx: &Transaction<'_>,
     folder: &str,
