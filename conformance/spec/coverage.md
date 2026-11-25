@@ -59,10 +59,11 @@ Fixture paths are under `src/suites/`.
 
 ## Folder sync reports
 
-| Operation                  | Status  | Fixture                                                                        | Notes                                                                                   |
-| -------------------------- | ------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| `PUT /folders/{id}/status` | covered | `compliance/folder-status.test.ts`, `compliance/folder-status-archive.test.ts` | Own sign-in, read reach, strict privacy, monotonic sequences, and receipt preservation. |
-| `GET /folders/{id}/status` | covered | `compliance/folder-status.test.ts`                                             | Current and historical copies, receipt ages, and bounded current totals.                |
+| Operation                       | Status  | Fixture                                                                        | Notes                                                                                   |
+| ------------------------------- | ------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `PUT /folders/{id}/status`      | covered | `compliance/folder-status.test.ts`, `compliance/folder-status-archive.test.ts` | Own sign-in, read reach, strict privacy, monotonic sequences, and receipt preservation. |
+| `GET /folders/{id}/status`      | covered | `compliance/folder-status.test.ts`                                             | Current and historical copies, receipt ages, and bounded current totals.                |
+| `GET /folders/{id}/directories` | covered | `compliance/folder-directories.test.ts`                                        | One level of a folder's directories with their placed-file counts.                      |
 
 ## Edges
 
