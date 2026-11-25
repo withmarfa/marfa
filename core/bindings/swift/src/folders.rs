@@ -507,7 +507,8 @@ guarded! {
     #[uniffi::export]
     impl Folders {
         /// `url` and `key` go together; without them only `list`, `status`,
-        /// `confirm_first_sync`, `confirm`, `restore` and `remove` work.
+        /// `confirm_first_sync`, `confirm`, `restore`, `remove`,
+        /// `remove_unmatched`, `kept` and `discard_kept` work.
         /// `renewer` renews `key` when the server refuses it, for every folder
         /// these calls and watches work, as `CredentialRenewer` describes; it needs
         /// `url` and `key`.
@@ -1511,6 +1512,18 @@ mod tests {
                 let (folders, path) = (folders.clone(), path.clone());
                 Box::new(move || folders.sync(path.clone()).map(drop))
             }),
+            ("remove_unmatched", {
+                let (folders, path) = (folders.clone(), path.clone());
+                Box::new(move || {
+                    folders
+                        .remove_unmatched(path.clone(), vec!["none.md".into()])
+                        .map(drop)
+                })
+            }),
+            ("discard_kept", {
+                let (folders, path) = (folders.clone(), path.clone());
+                Box::new(move || folders.discard_kept(path.clone()).map(drop))
+            }),
         ];
         for (name, call) in calls {
             let started = Instant::now();
@@ -1921,12 +1934,14 @@ mod tests {
             for id in &ids {
                 let mut properties = serde_json::Map::new();
                 properties.insert("body".into(), "changed elsewhere".into());
+                let version = folder.core().get(id).unwrap().unwrap().version;
                 folder
                     .core()
                     .update_item(
                         id,
                         &marfa_core::Edit {
                             properties,
+                            base_version: Some(version),
                             ..Default::default()
                         },
                     )
