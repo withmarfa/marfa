@@ -1757,7 +1757,7 @@ export interface paths {
         };
         /**
          * Get folder directories
-         * @description Returns one level of a folder's directory tree with file counts. Counts include items you can list with an `in-folder` edge to the folder, including archived items. Items in the trash are excluded, and so is a placement whose stored `path` is damaged: `unreadable_placements` counts those.
+         * @description Returns one level of a folder's directory tree with file counts. Counts include items you can list with an `in-folder` edge, archived ones too, and leave out the trash. `unreadable_placements` counts placements left out for a damaged path.
          */
         get: operations["getFolderDirectories"];
         put?: never;
