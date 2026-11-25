@@ -15,6 +15,7 @@ import {
   trackView,
   cleanup,
   getOwnerClient,
+  newRunId,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { generateId } from "../../generators/items.js";
@@ -411,44 +412,39 @@ describe("the view's items door", () => {
   });
 
   it("sorts by each item's source code in binary order in either direction, the owner's own items among them, with ascending ids breaking ties across pages", async () => {
-    const tag = `by-source-${ctx.runId}`;
-    const sources = [
-      await freshSource(),
-      await freshSource(),
-      await freshSource(),
-    ];
+    const tag = `by-source-${newRunId()}`;
+    const live = await freshSource();
     const made: { id: string; source: string }[] = [];
-    const add = async (source: string, writer: MarfaClient) => {
-      const r = await writer.createItem({
+    const created = await writers.get(live)!.createItem({
+      type: "core.note",
+      source: live,
+      properties: { title: "By source", batch: tag },
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackItem(ctx, created.data.item.id);
+    made.push({ id: created.data.item.id, source: live });
+    // An archive stores any source code, so these differ under case folding and from their byte order
+    // by their suffix alone; "unknown" is what an item no source was named for holds.
+    const stem = `${ctx.source}-code`;
+    const codes = [
+      stem,
+      ...["Z", "+", "/", "%", "?", "é", "a"].map((end) => `${stem}${end}`),
+      "unknown",
+    ];
+    const rows = codes.flatMap((source) =>
+      [0, 1, 2].map(() => ({
+        id: generateId(),
         type: "core.note",
         source,
         properties: { title: "By source", batch: tag },
-      });
-      expect(r.status, JSON.stringify(r.error)).toBe(201);
-      trackItem(ctx, r.data.item.id);
-      made.push({ id: r.data.item.id, source });
-    };
-    // Marfa stores an item no source was named for under "unknown"; an archive puts one back.
-    const own = [generateId(), generateId()];
-    const restored = await getOwnerClient().restoreArchive(
-      itemsArchive(
-        own.map((id) => ({
-          id,
-          type: "core.note",
-          source: "unknown",
-          properties: { title: "By source", batch: tag },
-        })),
-      ),
+      })),
     );
+    const restored = await getOwnerClient().restoreArchive(itemsArchive(rows));
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
-    for (const id of own) {
-      trackItem(ctx, id);
-      made.push({ id, source: "unknown" });
+    for (const row of rows) {
+      trackItem(ctx, row.id);
+      made.push({ id: row.id, source: row.source });
     }
-    for (const source of [sources[1], sources[0], sources[1], sources[2]]) {
-      await add(source, writers.get(source)!);
-    }
-    await add(sources[0], writers.get(sources[0])!);
 
     const bytes = (text: string) => Buffer.from(text, "utf8");
     const expected = (direction: "asc" | "desc") =>
@@ -461,7 +457,7 @@ describe("the view's items door", () => {
         )
         .map((item) => item.id);
     for (const direction of ["asc", "desc"] as const) {
-      const id = await viewOf(sources[0], {
+      const id = await viewOf(live, {
         query: { filter: `properties.batch eq "${tag}"` },
         sort: [{ by: "source", direction }],
       });
