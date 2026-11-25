@@ -176,6 +176,11 @@ stays because that thing is what it checks.
   held across a catch-up, and lists or finds it only where its exact type is
   named", removes a pin row from the device's store. A copy an earlier release made holds a hidden item
   that no door of this release leaves unpinned and held.
+- `device/folders-one-mac.test.ts`, "sends no delete for a file an earlier
+  release took into another folder that then takes it away when its item is
+  archived", marks a folder's binding as written by that folder and removes
+  the folder's records of files it took in. An earlier release moved a file
+  between folders that way, and no command of this release does.
 - `compliance/hidden-types-saved-view.test.ts` rewrites the stored query of a
   view to name an app type while the server is stopped. A view door refuses a
   query that names a hidden type, so only a view saved by an earlier release

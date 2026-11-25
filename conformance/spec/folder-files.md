@@ -2076,6 +2076,14 @@ When a missing file is found in another registered directory as the same file by
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
 
+### `folder-files/moved-file-kept-after-let-go`
+
+When a missing file was found in another registered directory when its folder first journaled it, or another registered directory keeps a record that it bound the file from this folder's binding or let the same file go, a device MUST NOT queue deletion of its item, whatever that directory has done with the file since.
+
+**Reason:** the directory a file moved to can remove, rewrite or stop following it before the folder it left sweeps, as when the item is archived, its unmatched files are removed or the directory is removed, and the file is then found nowhere. A record is the same file by its identity, or by the bytes this folder bound where either has no identity. A directory keeps a record for 90 days, at most 8 for one item and records for at most 2,048 items, and lets go of an item's records once its file moves on, so a file that moved back and was then deleted is trashed.
+
+**Tests:** `device/folders-one-mac.test.ts › sends no delete for a file moved to another folder that takes it away when its item is archived`, `device/folders-one-mac.test.ts › sends no delete for a file moved to another folder whose unmatched files are then removed`, `device/folders-one-mac.test.ts › sends no delete for a file moved to another folder that is then removed from the Mac`, `device/folders-one-mac.test.ts › sends no delete for a file item moved to another folder that then saves new bytes over it`, `device/folders-one-mac.test.ts › sends no delete for a note moved to another folder by copy and delete when that folder's query comes to hold it`, `device/folders-one-mac.test.ts › sends no delete for a file an earlier release took into another folder that then takes it away when its item is archived`, `device/folders-one-mac.test.ts › trashes the item of a file deleted for real after a file of it moved to another folder that let it go`, `device/folders-one-mac.test.ts › trashes the item of a file deleted for real after it moved to another folder and back`.
+
 ### `folder-files/moved-file-count`
 
 When a scan releases a missing file’s binding because it found the file in another registered directory, a device MUST count the file as `moved_away`.
@@ -2104,7 +2112,7 @@ When two folder queries both hold an item and each directory has its own bound f
 
 ### `folder-files/missing-file-trashed`
 
-When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item or, under a name other than the missing file's name followed by a suffix, carries the missing file's identity or its item's ID, and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
+When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item or, under a name other than the missing file's name followed by a suffix, carries the missing file's identity or its item's ID, `folder-files/moved-file-kept-after-let-go` does not keep it, and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
 
 **Reason:** the files of one sweep are decided before any of them is trashed, so files deleted together are all trashed, whichever the sweep reaches first and whether they link one another. A link line in a file shows the note it names by title, and a note already trashed by the same sweep would otherwise read as a change made elsewhere.
 
@@ -2416,7 +2424,7 @@ When a person moves a folder's file into another registered directory whose quer
 
 When a person moves a folder's file into another registered directory whose query does not hold the item, that directory has bound the file with the bytes the folder the file left last agreed with the server, and the rename grace has passed, a device MUST write the item's file again in the directory the file left while that folder's query holds the item.
 
-**Reason:** the item still belongs in the folder the file left, and with no file there it would show in no directory whose query holds it. A moved file whose bytes changed in the other directory is one the scan of the folder it left cannot yet tell from a deletion, which #3570 covers.
+**Reason:** the item still belongs in the folder the file left, and with no file there it would show in no directory whose query holds it. A moved file whose bytes changed in the other directory keeps its item under `folder-files/moved-file-kept-after-let-go`.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file moved to a folder that does not hold its item there, unmatched, and the folder it left writes its file again and keeps its placement`, `cli/folder.test.ts › keeps a note's file in the folder it was moved into when that folder's query leaves the note out by %s, and the folder it left writes its file again`.
 
@@ -2442,6 +2450,6 @@ When two folder queries hold one item, a device MUST keep each directory’s bou
 
 ### `folder-files/item-in-folders-delete`
 
-When the person deletes either of two files whose folders both hold the item, a device MUST trash the item after the deletion grace rather than treat the other directory’s file as a move.
+When the person deletes either of two files whose folders both hold the item, and `folder-files/moved-file-kept-after-let-go` does not keep it, a device MUST trash the item after the deletion grace rather than treat the other directory’s file as a move.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps two folders' files for one item editable`, `device/folders-one-mac.test.ts › trashes a file item deleted where both folders hold it`.

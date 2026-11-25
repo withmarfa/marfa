@@ -1932,6 +1932,17 @@ impl Folder {
         let ended = self.end_placement(&row.item_id, &row.path)?;
         let conn = self.core.conn()?;
         context.check(&conn)?;
+        // Kept before the file goes, so the folder a file moved here from can
+        // tell its file moved rather than was deleted.
+        if row.identity.is_some() {
+            let step = super::trail::Step {
+                from: None,
+                identity: row.identity.clone(),
+                hash: row.content_hash.clone(),
+                at: crate::store::millis_at(crate::clock::system_time()),
+            };
+            super::trail::record(&conn, &row.item_id, step)?;
+        }
         let path = self.root.join(&row.path);
         if plainly_inside(&self.root_dir, &row.path) {
             let still =

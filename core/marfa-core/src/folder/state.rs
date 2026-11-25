@@ -913,9 +913,9 @@ pub fn copy_moment(conn: &Connection) -> Result<String, CoreError> {
 }
 
 /// `OR IGNORE` keeps the first sighting, so a folder scanning every second
-/// still reaches the grace.
-pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
-    conn.execute_cached(
+/// still reaches the grace. Whether this is the first sighting.
+pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<bool, CoreError> {
+    let added = conn.execute_cached(
         "INSERT OR IGNORE INTO folder_journal (path, item_id, missing_since)
          VALUES (?1, ?2, ?3)",
         params![
@@ -924,20 +924,43 @@ pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(
             crate::store::iso_at(crate::clock::system_time())
         ],
     )?;
-    Ok(())
+    Ok(added > 0)
+}
+
+const MOVED_MARK: &str = "folder_moved:";
+
+/// Records that, when first missed, the file at `path` was found in another
+/// folder on the device, which shows it moved whatever that folder does next.
+pub fn journal_mark_moved(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
+    crate::store::meta_set(conn, &format!("{MOVED_MARK}{path}"), item_id)
+}
+
+pub fn journal_marked_moved(
+    conn: &Connection,
+    path: &str,
+    item_id: &str,
+) -> Result<bool, CoreError> {
+    Ok(crate::store::meta_get(conn, &format!("{MOVED_MARK}{path}"))?.as_deref() == Some(item_id))
+}
+
+fn journal_unmark(conn: &Connection, path: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{MOVED_MARK}{path}"))
 }
 
 /// A row that outlives its question becomes a delete nobody asked for.
 pub fn journal_clear(conn: &Connection, path: &str) -> Result<(), CoreError> {
     conn.execute_cached("DELETE FROM folder_journal WHERE path = ?1", [path])?;
-    Ok(())
+    journal_unmark(conn, path)
 }
 
 pub fn journal_clear_for(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
-    conn.execute_cached(
+    let cleared = conn.execute_cached(
         "DELETE FROM folder_journal WHERE path = ?1 AND item_id = ?2",
         [path, item_id],
     )?;
+    if cleared > 0 {
+        journal_unmark(conn, path)?;
+    }
     Ok(())
 }
 
@@ -981,7 +1004,7 @@ pub fn journal_carried(
 }
 
 /// Journals as missing from now a file no other file carries any longer.
-pub fn journal_uncarried(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
+pub fn journal_uncarried(conn: &Connection, path: &str, item_id: &str) -> Result<bool, CoreError> {
     conn.execute_cached(
         "DELETE FROM folder_journal WHERE path = ?1 AND kept = 'carried'",
         [path],

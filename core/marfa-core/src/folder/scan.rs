@@ -373,6 +373,7 @@ impl Folder {
         self.refresh_catalog(&mut scan)?;
         let peers = Peers::of(self, scan.doubt.take());
         let (claims, waiting) = self.claim_scanned(&mut scan, &peers)?;
+        self.note_arrivals(&scan.snapshot, &claims, &peers)?;
         self.follow_embeds_of_documents(&mut scan, &claims)?;
         let work = match self.queue_scanned(&mut scan, claims, waiting)? {
             ControlFlow::Break(()) => return Ok(scan.report),
@@ -1111,6 +1112,39 @@ impl Folder {
         Ok((claims, waiting))
     }
 
+    /// Keeps, for each file claimed for an item this folder bound no file
+    /// of, the other folders' bindings of the item whose files are gone from
+    /// them: the file came from one of those, which can show it moved once
+    /// this folder lets it go.
+    fn note_arrivals(
+        &self,
+        snapshot: &[state::Bound],
+        claims: &[Option<Claim>],
+        peers: &Peers<'_>,
+    ) -> Result<()> {
+        let bound: HashSet<&str> = snapshot
+            .iter()
+            .map(|bound| bound.item_id.as_str())
+            .collect();
+        let mut noted = HashSet::new();
+        let at = crate::store::millis_at(crate::clock::system_time());
+        for claim in claims.iter().flatten() {
+            if bound.contains(claim.item_id.as_str()) || !noted.insert(claim.item_id.as_str()) {
+                continue;
+            }
+            for (from, left) in peers.left_with(&claim.item_id) {
+                let step = super::trail::Step {
+                    from,
+                    identity: left.identity,
+                    hash: left.content_hash,
+                    at,
+                };
+                super::trail::record(&*self.core.conn()?, &claim.item_id, step)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Each binding whose path a read file with another identity stands at,
     /// or that the journal records another file carrying, while a file the
     /// pass holds or skips carries it, by path. A quick pass, which walks
@@ -1711,6 +1745,7 @@ impl Folder {
             (&scan.seen, &scan.lists, &scan.walked, &scan.settings);
         let (mut incomplete, report) = (scan.incomplete, &mut scan.report);
         let quick = scan.scope.is_some();
+        let first_looks = Sweep::default();
         let mut carriers: Option<Carriers> = None;
         // Journaled rather than deleted: the first half of a rename looks
         // exactly like a delete.
@@ -1827,10 +1862,14 @@ impl Folder {
                 scan.walk_again = true;
                 continue;
             }
-            if was_carried {
-                state::journal_uncarried(&conn, &path, &item_id)?;
+            let first = if was_carried {
+                state::journal_uncarried(&conn, &path, &item_id)?
             } else {
-                state::journal_missing(&conn, &path, &item_id)?;
+                state::journal_missing(&conn, &path, &item_id)?
+            };
+            drop(conn);
+            if first {
+                self.look_on_first_miss(&path, &item_id, settings, peers, &first_looks)?;
             }
             report.missing += 1;
         }
@@ -3072,6 +3111,38 @@ impl Folder {
         Ok(())
     }
 
+    /// Looks in the other folders for a file missed for the first time, and
+    /// marks it moved where one holds it: what that folder does with it
+    /// before the grace ends cannot make the move a delete.
+    fn look_on_first_miss(
+        &self,
+        path: &str,
+        item_id: &str,
+        settings: &Settings,
+        peers: &Peers<'_>,
+        sweep: &Sweep,
+    ) -> Result<()> {
+        let (held, bound) = {
+            let conn = self.core.conn()?;
+            (
+                crate::store::items_by_ids(&conn, &[item_id.to_string()])?.pop(),
+                state::bound_at(&conn, path)?.filter(|bound| bound.item_id == item_id),
+            )
+        };
+        let (Some(item), Some(bound)) = (held, bound) else {
+            return Ok(());
+        };
+        let holds = self.holds(item_id, settings, &sweep.members);
+        let catalog = crate::catalog::load(&*self.core.conn()?)?;
+        if matches!(
+            peers.moved_to(&bound, holds, bytes_of(&item, &catalog).is_some()),
+            Look::Moved | Look::Arriving
+        ) {
+            state::journal_mark_moved(&*self.core.conn()?, path, item_id)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn let_go_missing(
         &self,
         path: &str,
@@ -3106,6 +3177,9 @@ impl Folder {
                 // A folder that still holds the item writes its file again.
                 Look::Moved => {
                     leaves = !holds;
+                    // What came here moved on, and the folder it went to
+                    // keeps the move.
+                    super::trail::forget(&*self.core.conn()?, item_id)?;
                     Missing::Moved
                 }
                 // That folder knows the file as the item only by this

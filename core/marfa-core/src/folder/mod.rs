@@ -46,6 +46,7 @@ mod status;
 mod storage;
 mod sync;
 mod taking_back;
+mod trail;
 mod watch;
 mod watch_record;
 mod watched;

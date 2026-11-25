@@ -592,6 +592,67 @@ impl<'a> Peers<'a> {
         (same_bytes.len() == 1).then(|| same_bytes.remove(0))
     }
 
+    /// Each other folder's binding of the item whose file is gone from it,
+    /// with that folder's store.
+    pub(super) fn left_with(&self, item_id: &str) -> Vec<(Option<String>, state::Bound)> {
+        let mut left = Vec::new();
+        for peer in self.all() {
+            let Some(folder) = &peer.folder else {
+                continue;
+            };
+            let Some((store, bound)) = folder.core.conn().ok().map(|conn| {
+                (
+                    store::meta_get(&conn, META_STORE).ok().flatten(),
+                    state::every_bound_to_item(&conn, item_id).unwrap_or_default(),
+                )
+            }) else {
+                continue;
+            };
+            left.extend(
+                bound
+                    .into_iter()
+                    .filter(|bound| !peer.present(&bound.path))
+                    .map(|bound| (store.clone(), bound)),
+            );
+        }
+        left
+    }
+
+    /// Whether what this folder or another kept shows the lost file moved:
+    /// marked so when first missed, or a step another folder keeps of it.
+    fn shown_moved(&self, lost: &state::Bound) -> bool {
+        let (marked, own) = match self.of.core.conn() {
+            Ok(conn) => (
+                state::journal_marked_moved(&conn, &lost.path, &lost.item_id).unwrap_or(false),
+                store::meta_get(&conn, META_STORE).ok().flatten(),
+            ),
+            Err(_) => (false, None),
+        };
+        if marked {
+            return true;
+        }
+        let now = store::millis_at(crate::clock::system_time());
+        self.all().iter().any(|peer| {
+            peer.folder.as_ref().is_some_and(|folder| {
+                folder
+                    .core
+                    .conn()
+                    .ok()
+                    .and_then(|conn| super::trail::steps(&conn, &lost.item_id, now).ok())
+                    .is_some_and(|steps| super::trail::shows(&steps, lost, own.as_deref()))
+            })
+        })
+    }
+
+    /// Nowhere now, unless what was kept shows it moved.
+    fn nowhere(&self, lost: &state::Bound) -> Look {
+        if self.shown_moved(lost) {
+            Look::Moved
+        } else {
+            Look::Nowhere
+        }
+    }
+
     /// `file_item` is whether this folder's copy holds the lost file's item
     /// as bytes: a note's Markdown file is followed by its id line, and a
     /// file item's file by its bytes whatever its name.
@@ -637,7 +698,11 @@ impl<'a> Peers<'a> {
                     .iter()
                     .any(|file| file.id.as_deref() == Some(item) && !theirs(peer, file))
             });
-            return if found { Look::Moved } else { Look::Nowhere };
+            return if found {
+                Look::Moved
+            } else {
+                self.nowhere(lost)
+            };
         }
         let mut matches = 0;
         let mut last = None;
@@ -678,7 +743,7 @@ impl<'a> Peers<'a> {
         }
         match (matches, last) {
             (1, Some((peer, file))) => arrival(peer, file),
-            (0, _) => Look::Nowhere,
+            (0, _) => self.nowhere(lost),
             _ => Look::Unsure(format!(
                 "{} files in other folders have its bytes, and which it became cannot be told",
                 matches
