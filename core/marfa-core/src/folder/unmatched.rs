@@ -520,12 +520,15 @@ mod tests {
             if point != "crash-before-take-away" {
                 assert!(!root.join("new.md").exists(), "{point}");
             }
-            assert!(
-                state::taken(&folder.core.conn().unwrap())
-                    .unwrap()
-                    .is_empty(),
+            let held = point == "crash-before-take-away" && !births_kept(&root, "new.md");
+            assert_eq!(
+                state::taken(&folder.core.conn().unwrap()).unwrap().len(),
+                usize::from(held),
                 "{point}"
             );
+            if held {
+                assert!(held_in_status(&folder, "new.md"));
+            }
         }
     }
 
@@ -557,31 +560,54 @@ mod tests {
         }
     }
 
-    /// Where the file system keeps no birth time, a file that stayed cannot be
-    /// told from the next file given its inode, so it is held, not settled.
     #[cfg(debug_assertions)]
-    fn births_kept(folder: &Folder, path: &str) -> bool {
-        folder.born_at(path).is_some()
+    fn births_kept(root: &Path, path: &str) -> bool {
+        std::fs::metadata(root.join(path))
+            .unwrap()
+            .created()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .is_some_and(|age| !age.is_zero())
     }
 
     /// Held, with its record, and no delete once the person removes it.
     #[cfg(debug_assertions)]
     fn held_until_removed(folder: &Folder, root: &Path, path: &str) {
         assert_eq!(state::taken(&folder.core.conn().unwrap()).unwrap().len(), 1);
+        let conn = folder.core.conn().unwrap();
+        let bound = state::bound_at(&conn, path).unwrap().unwrap();
+        let records = state::taken(&conn).unwrap();
+        assert!(records.iter().any(|(name, record)| {
+            name == path
+                && record
+                    .as_ref()
+                    .is_some_and(|taken| taken.item_id == bound.item_id)
+        }));
+        drop(conn);
         assert!(held_in_status(folder, path));
+        assert!(folder.core.queue().unwrap().iter().all(|write| !matches!(
+            write.kind,
+            crate::model::WriteKind::UpdateItem | crate::model::WriteKind::DeleteItem
+        )));
         std::fs::remove_file(root.join(path)).unwrap();
         scanned_past_the_grace(folder, path);
-        assert!(deletes_queued(folder).is_empty());
+        assert!(folder.core.queue().unwrap().iter().all(|write| !matches!(
+            write.kind,
+            crate::model::WriteKind::UpdateItem | crate::model::WriteKind::DeleteItem
+        )));
+        let conn = folder.core.conn().unwrap();
+        assert!(state::bound_at(&conn, path).unwrap().is_none());
+        assert!(state::taken(&conn).unwrap().is_empty());
     }
 
     #[cfg(debug_assertions)]
     fn held_in_status(folder: &Folder, path: &str) -> bool {
-        folder
-            .status()
-            .unwrap()
-            .files
-            .iter()
-            .any(|file| file.path == path && file.status == "held" && file.reason.is_some())
+        folder.status().unwrap().files.iter().any(|file| {
+            file.path == path
+                && file.status == "held"
+                && file.flag == Some(super::super::pull::REMOVING)
+                && file.reason.is_some()
+        })
     }
 
     #[cfg(debug_assertions)]
@@ -607,13 +633,13 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn a_removal_stopped_before_the_move_aside_whose_file_stays_lets_a_later_delete_through() {
+    fn a_later_delete_of_a_file_that_stayed_requires_a_confirmed_identity() {
         let (dir, folder, _) = removable();
         let root = dir.path().to_path_buf();
         let folder = stopped_at(folder, &root, "new.md", "crash-before-take-away");
 
         folder.scan().unwrap();
-        if !births_kept(&folder, "new.md") {
+        if !births_kept(&root, "new.md") {
             return held_until_removed(&folder, &root, "new.md");
         }
         assert!(
@@ -634,8 +660,7 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn a_removal_stopped_after_the_move_aside_whose_file_the_owner_restores_lets_a_later_delete_through()
-     {
+    fn a_later_delete_of_a_restored_file_requires_a_confirmed_identity() {
         let (dir, folder, _) = removable();
         let root = dir.path().to_path_buf();
         let folder = stopped_at(folder, &root, "new.md", "crash-after-withdraw");
@@ -655,7 +680,7 @@ mod tests {
         std::fs::rename(&aside[0], root.join("new.md")).unwrap();
 
         folder.scan().unwrap();
-        if !births_kept(&folder, "new.md") {
+        if !births_kept(&root, "new.md") {
             return held_until_removed(&folder, &root, "new.md");
         }
         {
@@ -685,6 +710,25 @@ mod tests {
         let conn = folder.core.conn().unwrap();
         assert!(state::bound_at(&conn, "new.md").unwrap().is_none());
         assert!(state::taken(&conn).unwrap().is_empty());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn matching_bytes_without_a_recorded_birth_stay_held_until_the_path_is_empty() {
+        for born in [None, Some(0)] {
+            let (dir, folder, _) = removable();
+            let root = dir.path();
+            let folder = stopped_at(folder, root, "new.md", "crash-before-take-away");
+            let conn = folder.core.conn().unwrap();
+            let mut records = state::taken(&conn).unwrap();
+            let (path, record) = records.pop().unwrap();
+            let mut record = record.unwrap();
+            record.born = born;
+            state::set_taken(&conn, &path, &record).unwrap();
+            drop(conn);
+            folder.scan().unwrap();
+            held_until_removed(&folder, root, &path);
+        }
     }
 
     #[cfg(debug_assertions)]
@@ -740,13 +784,14 @@ mod tests {
         assert!(held_in_status(&folder, "sub/new.md"));
         assert!(elsewhere.path().join("sub/new.md").is_file());
 
-        // The witness: with the directory back, the file settles as present.
         std::fs::remove_file(root.join("sub")).unwrap();
         std::fs::rename(elsewhere.path().join("sub"), root.join("sub")).unwrap();
         folder.scan().unwrap();
+        if !births_kept(&root, "sub/new.md") {
+            return held_until_removed(&folder, &root, "sub/new.md");
+        }
         let conn = folder.core.conn().unwrap();
-        let settled = births_kept(&folder, "sub/new.md");
-        assert_eq!(state::taken(&conn).unwrap().is_empty(), settled);
+        assert!(state::taken(&conn).unwrap().is_empty());
         assert!(state::bound_at(&conn, "sub/new.md").unwrap().is_some());
     }
 }

@@ -274,14 +274,36 @@ pub struct Line {
     pub other: String,
 }
 
-pub fn hash(bytes: &[u8]) -> String {
-    // FNV-1a, 64-bit: not a security boundary.
-    let mut sum: u64 = 0xcbf2_9ce4_8422_2325;
+const HASH_START: u64 = 0xcbf2_9ce4_8422_2325;
+
+fn hash_chunk(mut sum: u64, bytes: &[u8]) -> u64 {
     for byte in bytes {
         sum ^= u64::from(*byte);
         sum = sum.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    format!("{sum:016x}")
+    sum
+}
+
+pub fn hash(bytes: &[u8]) -> String {
+    format!("{:016x}", hash_chunk(HASH_START, bytes))
+}
+
+pub(super) fn hash_reader(reader: impl std::io::Read) -> std::io::Result<String> {
+    use std::io::BufRead;
+    let mut reader = std::io::BufReader::new(reader);
+    let mut sum = HASH_START;
+    loop {
+        let bytes = match reader.fill_buf() {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
+        if bytes.is_empty() {
+            return Ok(format!("{sum:016x}"));
+        }
+        sum = hash_chunk(sum, bytes);
+        let consumed = bytes.len();
+        reader.consume(consumed);
+    }
 }
 
 /// A content hash no bytes have, for a save set aside in a conflicted copy
@@ -401,11 +423,9 @@ pub(crate) struct Taken {
     pub(crate) item_id: String,
     /// The file's device and inode as the removal found it.
     pub(crate) at: (u64, u64),
-    /// Where the file system keeps one, since an inode can be given to the
-    /// next file made.
+    /// Nonzero creation time in nanoseconds since the epoch, when available.
     pub(crate) born: Option<u128>,
-    /// The bytes the removal would take away, so a reused inode holding
-    /// others is never taken for the file.
+    /// Hash of the bytes the binding expected to remove.
     pub(crate) hash: Option<String>,
 }
 
