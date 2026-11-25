@@ -5044,8 +5044,6 @@ marfa folders directories [OPTIONS] <ID>
 
 Make a directory stop following its folder: its own state under `.marfa` goes, and its files stay as plain files. Empty administrative directories remain. Refused while writes wait, except for a first sync still waiting to be confirmed, which this cancels, and except where another Marfa instance answers at the folder's server, which none of them can reach: the command then names each file holding a change the folder could not send, and how to send the changes there. Follows no symbolic link, and takes a path through one only where it is the path `folders list` shows. Where that path is gone, passes through a link, or holds state the registry does not show to be the directory's own, the directory is only taken off the list and nothing is deleted.
 
-If no folder is listed at the directory but listed folders remember a folder at that exact path, the command shows those folders and asks before they forget it. It then changes only what they remember: no file, nothing at the path and no registry entry, whatever stands there. Their next sync can send a deletion held because a missing file might have moved to that directory. A folder that cannot be opened is named as not changed, and the command fails.
-
 ```text
 marfa folders remove [OPTIONS] <DIR>
 ```
@@ -5053,10 +5051,6 @@ marfa folders remove [OPTIONS] <DIR>
 | Argument | Description |
 | --- | --- |
 | `<DIR>` | The directory. |
-
-| Option | Description |
-| --- | --- |
-| `--yes` | Forget a remembered directory without prompting. Required with `--json` or without a terminal when forgetting a directory. |
 
 ### marfa folders status
 

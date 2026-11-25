@@ -1160,52 +1160,6 @@ When a removal takes a registry entry off without deleting folder state, the CLI
 
 **Tests:** `cli/folder.test.ts › removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to`, `cli/folder.test.ts › takes a listed folder off the list without removing a folder moved into its place`.
 
-### `folder-setup/remove-remembered-forgets`
-
-When `folders remove` is confirmed for a directory that the machine’s folder registry does not list and that a listed folder found in an earlier pass, a device MUST stop deferring missing files' deletions for that directory in each listed folder it showed and could open.
-
-**Reason:** a folder that the registry no longer lists cannot be told gone from one on a volume that is not mounted (`folder-files/unlisted-missing-deferred`), so the person decides.
-
-**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone, until folders remove forgets it`.
-
-### `folder-setup/remove-remembered-exact-path`
-
-When `folders remove` looks for the listed folders that found a directory the machine’s folder registry does not list, the CLI MUST match only a directory found at the exact path given, with no symbolic link resolved.
-
-**Reason:** two paths that reach one directory can each name a different folder that was found there, and the person names one.
-
-**Tests:** `device/folders-one-mac.test.ts › forgets a remembered directory only by the exact path named`.
-
-### `folder-setup/remove-remembered-only-forgets`
-
-When `folders remove` forgets a directory that the machine’s folder registry does not list, the CLI MUST NOT delete any folder's state or take any entry off the registry, whatever stands at that path.
-
-**Reason:** what stands at the path now can be another folder, or a copy of a listed folder's state.
-
-**Tests:** `device/folders-one-mac.test.ts › holds a delete for a folder no longer listed while another folder's state or none stands at its directory`.
-
-### `folder-setup/remove-remembered-confirmed`
-
-If `folders remove` is not given `--yes` for a directory that the machine’s folder registry does not list and that a listed folder found in an earlier pass, and no person at a terminal confirms it, then the CLI MUST change nothing, the registry included.
-
-**Reason:** forgetting the directory can let a later sync send a deletion that was on hold, and the look-up and the question come before any decision.
-
-**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone, until folders remove forgets it`.
-
-### `folder-setup/remove-remembered-reported`
-
-When `folders remove` forgets a directory that listed folders found in an earlier pass, the CLI MUST report `removed` as `false` and list in `forgotten_by` the directory of each folder that forgot it.
-
-**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone, until folders remove forgets it`.
-
-### `folder-setup/remove-remembered-partial`
-
-If `folders remove` cannot open a listed folder that found the directory it forgets, then the CLI MUST exit with an error that lists that folder's directory in `not_changed` and the directory of each folder that forgot it in `forgotten_by`.
-
-**Reason:** the command succeeds only for the folders it changed, and the folder it could not open still holds its deletions.
-
-**Tests:** `device/folders-one-mac.test.ts › names a folder that could not be opened as not changed, and forgets the directory in the others`.
-
 ### `folder-setup/remove-unlisted-names-other`
 
 When a removal takes a listed entry off without deleting folder state because the state at the entry's directory has the store identity that the machine’s folder registry lists for another entry, the CLI MUST name that other entry's listed path in the reason.
