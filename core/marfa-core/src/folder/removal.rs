@@ -260,27 +260,29 @@ impl Folder {
             .pop() else {
                 continue;
             };
-            if item.state == ItemState::Trashed {
-                #[cfg(debug_assertions)]
-                crate::fault::hold(|| format!("folder-restore-decided:{}", item.id));
-                self.core.restore_item(&item.id)?;
-                restored += 1;
-            } else if let Some(state) = [ItemState::Active, ItemState::Archived]
+            if settings.holds_state(item.state) {
+                continue;
+            }
+            let state = if item.state == ItemState::Trashed {
+                ItemState::Active
+            } else if let Some(held) = [ItemState::Active, ItemState::Archived]
                 .into_iter()
-                .find(|state| *state != item.state && settings.holds_state(*state))
-                && !settings.holds_state(item.state)
+                .find(|state| settings.holds_state(*state))
             {
-                #[cfg(debug_assertions)]
-                crate::fault::hold(|| format!("folder-restore-decided:{}", item.id));
-                match self
-                    .core
-                    .transition_item_from(&item.id, state, Some(item.state))
-                {
-                    Err(error) if state_conflict(&error) => {}
-                    other => {
-                        other?;
-                        restored += 1;
-                    }
+                held
+            } else {
+                continue;
+            };
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| format!("folder-restore-decided:{}", item.id));
+            match self
+                .core
+                .transition_item_from(&item.id, state, Some(item.state))
+            {
+                Err(error) if state_conflict(&error) => {}
+                other => {
+                    other?;
+                    restored += 1;
                 }
             }
         }

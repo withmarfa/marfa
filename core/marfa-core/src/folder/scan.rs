@@ -1323,6 +1323,42 @@ impl Folder {
                     item_id,
                     bound: Some(bound),
                 }) if self.core.get(&item_id)?.is_none() => {
+                    if let Some(refused) = bound
+                        .writes
+                        .refused
+                        .iter()
+                        .find(|refused| matches!(refused.change, state::Change::State(_)))
+                    {
+                        report.flagged.push(Flagged {
+                            path: file.key.clone(),
+                            flag: "refused",
+                            reason: refused.reason.clone(),
+                            item: Some(item_id.clone()),
+                        });
+                        if bound.path != file.key || bound.identity != file.mark {
+                            let mut conn = self.core.conn()?;
+                            let tx = conn.transaction()?;
+                            state::bind(
+                                &tx,
+                                &state::Bound {
+                                    path: file.key.clone(),
+                                    identity: file.mark.clone(),
+                                    ..bound.clone()
+                                },
+                            )?;
+                            if bound.path != file.key {
+                                if state::bound_at(&tx, &bound.path)?
+                                    .is_some_and(|row| row.item_id == item_id)
+                                {
+                                    state::unbind(&tx, &bound.path)?;
+                                    state::journal_clear(&tx, &bound.path)?;
+                                }
+                                report.renamed += 1;
+                            }
+                            tx.commit()?;
+                        }
+                        continue;
+                    }
                     // The server has answered these bytes already; the file of
                     // an item purged or in the bin, of the folder's own bytes,
                     // is the pull's to take away (35).

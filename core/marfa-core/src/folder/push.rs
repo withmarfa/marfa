@@ -12,6 +12,27 @@ fn named_item(queued: crate::model::QueuedWrite, key: &str) -> Result<String> {
         .ok_or_else(|| CoreError::Invalid(format!("the create queued for {key} names no item")))
 }
 
+fn record_refused_state(
+    file: &Scanned,
+    state: ItemState,
+    error: &CoreError,
+    writes: &mut state::Writes,
+    flagged: &mut Vec<Flagged>,
+) {
+    let reason = local_refusal_reason(error);
+    flagged.push(Flagged {
+        path: file.key.clone(),
+        flag: "refused",
+        reason: reason.clone(),
+        item: None,
+    });
+    writes.keep_refused(state::Refused {
+        change: state::Change::State(state),
+        save: writes.save,
+        reason,
+    });
+}
+
 #[derive(Debug, Default)]
 struct OwnChanges {
     r#type: Option<String>,
@@ -377,10 +398,28 @@ impl Folder {
         if read.lines.state == Some(ItemState::Archived) {
             #[cfg(debug_assertions)]
             crate::fault::hold(|| format!("folder-initial-archive:{}", file.key));
-            let id = self
-                .core
-                .transition_item_from(&item_id, ItemState::Archived, Some(ItemState::Active))?
-                .id;
+            let archive = self.core.transition_item_from(
+                &item_id,
+                ItemState::Archived,
+                Some(ItemState::Active),
+            );
+            let id = match archive {
+                Err(error) if state_conflict(&error) => {
+                    record_refused_state(file, ItemState::Archived, &error, &mut writes, flagged);
+                    self.bind_scanned(
+                        file,
+                        &item_id,
+                        Default::default(),
+                        Vec::new(),
+                        Kept {
+                            writes,
+                            ..Kept::default()
+                        },
+                    )?;
+                    return Ok(true);
+                }
+                other => other?.id,
+            };
             writes.queued.push(state::Queued {
                 id,
                 save: 1,
@@ -792,22 +831,7 @@ impl Folder {
                     .transition_item_from(item_id, state, Some(held.state))
                 {
                     Err(error) if state_conflict(&error) => {
-                        let reason = local_refusal_reason(&error);
-                        flagged.push(Flagged {
-                            path: file.key.clone(),
-                            flag: "refused",
-                            reason: reason.clone(),
-                            item: None,
-                        });
-                        let change = state::Change::State(state);
-                        writes
-                            .refused
-                            .retain(|refused| !change.supersedes(&refused.change));
-                        writes.refused.push(state::Refused {
-                            change,
-                            save,
-                            reason,
-                        });
+                        record_refused_state(file, state, &error, &mut writes, flagged);
                     }
                     other => queued.push((other?.id, None)),
                 }
