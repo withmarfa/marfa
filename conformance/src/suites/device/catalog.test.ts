@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, afterEach } from "vitest";
 import { startHarness, scriptHydration, type Harness } from "./harness.js";
 import {
@@ -592,6 +593,38 @@ describe("The type catalog a working copy holds", () => {
           : { origin: "plugin", plugin: step.plugin },
       );
     }
+  });
+
+  it("keeps the catalog version where it was when a copy that held a type's creator catches up against the same catalog", async () => {
+    harness = await startHarness("catalog-creator");
+    const { server, device } = harness;
+    const types = () => typeCatalog([wireType("acme.own")]);
+    scriptHydration(server, {
+      head: "1",
+      catalog: types(),
+      edgeTypes: () => edgeTypeCatalog([]),
+    });
+    server.copyAnswer("GET", "/types", () => types());
+    server.copyAnswer("GET", "/events", copyLiveReplay("1", []));
+    value(await device.hydrate(["core.note"], "library"), "the hydration");
+    const held = value(await device.status(), "the state report");
+    // A copy made before the device left the creator out holds it in every row.
+    const store = new DatabaseSync(device.store);
+    try {
+      store.exec(
+        `UPDATE types SET json = json_set(json, '$.provenance.created_by',
+           json('{"kind":"key","id":"fixture-key"}'))
+         WHERE id = 'acme.own'`,
+      );
+    } finally {
+      store.close();
+    }
+    value(await device.catchUp(), "a catch-up against the same catalog");
+    const now = value(await device.status(), "the state report");
+    expect(
+      now.catalog_version,
+      "a creator the copy never answers moved the catalog version",
+    ).toBe(held.catalog_version);
   });
 
   it("keeps the catalogs and the version it held when a refresh fails after the item types", async () => {

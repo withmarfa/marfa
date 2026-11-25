@@ -1253,6 +1253,35 @@ mod tests {
     }
 
     #[test]
+    fn a_held_row_still_carrying_its_creator_is_the_catalog_the_server_sends_again() {
+        let conn = store::open_in_memory().unwrap();
+        let catalog: marfa_rules::wire::WireCatalog = marfa_rules::wire::WireCatalog {
+            types: serde_json::from_value(serde_json::json!([
+                { "id": "acme.base", "fields": {},
+                  "provenance": { "origin": "registered", "plugin": null,
+                                  "created_by": { "kind": "key", "id": "a" } } }
+            ]))
+            .unwrap(),
+            edge_types: Vec::new(),
+        };
+        store::replace_catalog(&conn, &catalog).unwrap();
+        // A copy written before the creator was left out holds it.
+        conn.execute(
+            "UPDATE types SET json = json_set(json, '$.provenance.created_by',
+                 json('{\"kind\":\"key\",\"id\":\"a\"}'))",
+            [],
+        )
+        .unwrap();
+        let held = store::catalog_version(&conn).unwrap();
+        assert_eq!(
+            store::replace_catalog(&conn, &catalog).unwrap(),
+            store::CatalogChange::Unchanged,
+            "a creator the copy never answers made the same catalog a change"
+        );
+        assert_eq!(store::catalog_version(&conn).unwrap(), held);
+    }
+
+    #[test]
     fn a_type_whose_parents_loop_is_refused_rather_than_resolved() {
         let conn = held(
             serde_json::json!([
