@@ -7,6 +7,7 @@ import {
   trackEdge,
   trackEdgeType,
   cleanup,
+  newRunId,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
 
@@ -183,7 +184,7 @@ async function stored(id: string) {
 describe("the edges of an archived item", () => {
   it("take POST /edges, PATCH /edges/{id} and DELETE /edges/{id} with the archived item at either end, as they do with an active item", async () => {
     // A one-to-one type, whose edge can move an end, since the end that stays holds only it.
-    const movable = `mock.archived-move.${ctx.runId}`;
+    const movable = `mock.archived-move.${newRunId()}`;
     const registered = await client.registerEdgeType({
       label: "Test edge type",
       id: movable,
@@ -260,7 +261,7 @@ describe("the edges of an archived item", () => {
     }
   });
 
-  it("take an entry of POST /edges/bulk that creates or changes an edge with the archived item at either end, as they do with an active item", async () => {
+  it("take an entry of POST /edges/bulk that creates, changes or replays an edge under create_only with the archived item at either end, as they do with an active item", async () => {
     for (const held of HELD) {
       for (const end of ENDS) {
         const label = `${held} at the ${end} end`;
@@ -324,6 +325,45 @@ describe("the edges of an archived item", () => {
         });
         expect((await stored(held_edge.id)).properties, label).toEqual({
           since: "autumn",
+        });
+
+        // A create_only entry creates an edge no item holds and skips its replay.
+        const fifth = await note("active");
+        const entry = {
+          ...ordered(end, mine.id, fifth.id),
+          edge_type: "references",
+        };
+        const only = await client.bulkEdges({
+          edges: [entry],
+          mode: "create_only",
+        });
+        expect(only.status, `${label}: ${JSON.stringify(only.error)}`).toBe(
+          200,
+        );
+        expect(only.data.counts, label).toMatchObject({
+          created: 1,
+          errored: 0,
+          skipped: 0,
+        });
+        const onlyId = only.data.results[0]!.id ?? "";
+        trackEdge(ctx, onlyId);
+        const replayed = await client.bulkEdges({
+          edges: [entry],
+          mode: "create_only",
+        });
+        expect(
+          replayed.status,
+          `${label}: ${JSON.stringify(replayed.error)}`,
+        ).toBe(200);
+        expect(replayed.data.counts, label).toMatchObject({
+          created: 0,
+          skipped: 1,
+          errored: 0,
+        });
+        expect(replayed.data.results[0], label).toMatchObject({
+          outcome: "skipped",
+          reason: "duplicate_edge",
+          id: onlyId,
         });
         expect(await stateOf(mine.id), label).toBe(held);
       }
@@ -397,7 +437,7 @@ describe("the edges of an archived item", () => {
 
 describe("archiving an item", () => {
   it("changes the state of no other item, whatever edges the item holds", async () => {
-    const custom = `mock.archive-cascade.${ctx.runId}`;
+    const custom = `mock.archive-cascade.${newRunId()}`;
     const registered = await client.registerEdgeType({
       label: "Test edge type",
       id: custom,
@@ -447,7 +487,7 @@ describe("archiving an item", () => {
 
   it("changes the state of no other item on a bulk transition to archived", async () => {
     async function bulkTransition(state: "archived" | "trashed") {
-      const tag = `archive-bulk-${state}-${ctx.runId}`;
+      const tag = `archive-bulk-${state}-${newRunId()}`;
       const host = await note("active", { tags: [tag] });
       const child = await note();
       await edgeBetween(host.id, child.id);

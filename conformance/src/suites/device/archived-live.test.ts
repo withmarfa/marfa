@@ -8,6 +8,7 @@ import type { DrainReport, Outcome } from "../../device/protocol.js";
 import {
   cleanup,
   createTestContext,
+  newRunId,
   trackEdgeType,
   trackItem,
 } from "../../utils/setup.js";
@@ -127,7 +128,7 @@ it("queues and sends an edit, tags and an extension for an archived item as for 
 
 it("queues and sends the creation, change, move and removal of an edge with an archived item at either end, as for an active one", async () => {
   // A one-to-one type, whose edge can move an end, since the end that stays holds only it.
-  const movable = `mock.archived-move.${ctx.runId}`;
+  const movable = `mock.archived-move.${newRunId()}`;
   const registered = await client.registerEdgeType({
     label: "Test edge type",
     id: movable,
@@ -221,7 +222,7 @@ it("queues and sends the creation, change, move and removal of an edge with an a
 });
 
 it("moves no other item the copy holds when it archives an item holding parent-of children", async () => {
-  async function drained(state: "archived" | "trashed", label: string) {
+  async function moved(state: "archived" | "trashed", label: string) {
     const host = await note("active", `host-${label}`);
     const child = await note("active", `child-${label}`);
     const grandchild = await note("active", `grandchild-${label}`);
@@ -238,22 +239,31 @@ it("moves no other item the copy holds when it archives an item holding parent-o
     }
     const device = await deviceHolding(`archived-no-cascade-${label}`);
     const move = value(await device.transitionItem(host, state));
-    accepted(value(await device.drain()), [move.id]);
-    return { device, host, child, grandchild };
+    return { device, host, child, grandchild, move };
   }
 
-  // The witness: the same move into the bin, read at the same point, takes the children.
-  const control = await drained("trashed", "bin");
-  expect((await client.getItem(control.host)).status).toBe(404);
-  for (const id of [control.child, control.grandchild]) {
+  // The witness: the same move into the bin, read at the same points, takes the children from the server and, after catch-up, from the copy.
+  const control = await moved("trashed", "bin");
+  accepted(value(await control.device.drain()), [control.move.id]);
+  value(await control.device.catchUp());
+  for (const id of [control.host, control.child, control.grandchild]) {
     expect((await client.getItem(id)).status, id).toBe(404);
+    const held = await control.device.get(id);
+    expect(held.ok, `the copy still held ${id} after catch-up`).toBe(false);
   }
 
-  const archive = await drained("archived", "archive");
+  const archive = await moved("archived", "archive");
+  const { device } = archive;
+  expect(value(await device.get(archive.host)).state).toBe("archived");
+  for (const id of [archive.child, archive.grandchild]) {
+    expect(value(await device.get(id)).state, id).toBe("active");
+  }
+  accepted(value(await device.drain()), [archive.move.id]);
+  value(await device.catchUp());
   expect((await client.getItem(archive.host)).data.item.state).toBe("archived");
-  expect(value(await archive.device.get(archive.host)).state).toBe("archived");
+  expect(value(await device.get(archive.host)).state).toBe("archived");
   for (const id of [archive.child, archive.grandchild]) {
     expect((await client.getItem(id)).data.item.state, id).toBe("active");
-    expect(value(await archive.device.get(id)).state, id).toBe("active");
+    expect(value(await device.get(id)).state, id).toBe("active");
   }
 });
