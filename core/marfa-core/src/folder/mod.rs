@@ -7426,7 +7426,7 @@ mod tests {
 
     /// A new file `new.md` made in a folder of active notes, whose line says
     /// `state`, created and answered, with the pulls that follow.
-    fn new_file_in_active_folder(state_line: &str) -> (ScannedDir, Folder, String) {
+    pub(super) fn new_file_in_active_folder(state_line: &str) -> (ScannedDir, Folder, String) {
         let (dir, folder) = scanned_folder_with(
             serde_json::json!({ "query": { "state": ["active"] } }),
             None,
@@ -7448,7 +7448,7 @@ mod tests {
         (dir, folder, id)
     }
 
-    fn set_item_state(folder: &Folder, id: &str, state: &str) {
+    pub(super) fn set_item_state(folder: &Folder, id: &str, state: &str) {
         folder
             .core
             .conn()
@@ -8115,7 +8115,7 @@ mod tests {
         assert_eq!(folder.scan().unwrap().paused_additions, 0);
     }
 
-    fn write_note(dir: &Path, name: &str, lines: &str) {
+    pub(super) fn write_note(dir: &Path, name: &str, lines: &str) {
         std::fs::write(
             dir.join(name),
             format!("---\ntitle: {name}\n{lines}---\nbody\n"),

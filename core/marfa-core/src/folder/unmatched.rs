@@ -83,7 +83,8 @@ impl Folder {
     /// unmatched, still the bytes the folder wrote, and has no edit waiting
     /// to be sent. Ends the folder's placement of each item first; the item
     /// itself is not changed. A file that cannot go is kept and reported, and
-    /// the rest go on.
+    /// the rest go on. A path named twice is taken once, and one that is not
+    /// plainly inside the folder, or names no unmatched file, is kept.
     pub fn remove_unmatched(&self, paths: &[String]) -> Result<UnmatchedRemoved> {
         self.refuse_if_gone()?;
         self.refuse_while_paused()?;
@@ -98,14 +99,30 @@ impl Folder {
         let mut context = crate::reach::Context::capture(&*self.core.conn()?)?;
         let mut unmatched: Vec<String> = state::unmatched(&*self.core.conn()?)?;
         let recorded = state::new_outside_state(&*self.core.conn()?)?;
+        let held = state::held_outside(&*self.core.conn()?)?;
+        let mut named = HashSet::new();
         for path in paths {
+            if !named.insert(path.as_str()) {
+                continue;
+            }
+            let unbound = |why: &str| Unmatched {
+                path: path.clone(),
+                item_id: None,
+                kept: Some(why.into()),
+                held: None,
+            };
+            if !plainly_inside(&self.root_dir, path) {
+                done.kept.push(unbound("it is not inside the folder"));
+                continue;
+            }
+            if held.contains(path) {
+                done.kept.push(unbound(
+                    "it is held outside the query with no item, which removing unmatched files never takes away",
+                ));
+                continue;
+            }
             let Some(row) = state::bound_at(&*self.core.conn()?, path)? else {
-                done.kept.push(Unmatched {
-                    path: path.clone(),
-                    item_id: None,
-                    kept: Some("it is no longer a file of the folder".into()),
-                    held: None,
-                });
+                done.kept.push(unbound("it is not a file of the folder"));
                 continue;
             };
             let row = as_removable(row, &recorded);
@@ -231,5 +248,134 @@ fn held_entry(path: String) -> Unmatched {
         item_id: None,
         kept: None,
         held: Some(HELD_OUTSIDE_REASON.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::super::tests::{
+        folder_with, landed, new_file_in_active_folder, set_item_state, write_note,
+    };
+    use super::super::{Folder, registry, state};
+
+    /// A folder whose `new.md` is unmatched and may be removed, with its item's id.
+    fn removable() -> (
+        impl std::ops::Deref<Target = tempfile::TempDir>,
+        Folder,
+        String,
+    ) {
+        let (dir, folder, id) = new_file_in_active_folder("state: archived\n");
+        set_item_state(&folder, &id, "archived");
+        assert_eq!(folder.pull().unwrap().unmatched, 1);
+        let conn = folder.core.conn().unwrap();
+        let mut row = state::bound_at(&conn, "new.md").unwrap().unwrap();
+        row.writes.queued.clear();
+        state::bind(&conn, &row).unwrap();
+        drop(conn);
+        (dir, folder, id)
+    }
+
+    fn kept_reasons(done: &super::UnmatchedRemoved) -> Vec<(&str, &str)> {
+        done.kept
+            .iter()
+            .map(|file| (file.path.as_str(), file.kept.as_deref().unwrap_or("")))
+            .collect()
+    }
+
+    #[test]
+    fn removing_unmatched_keeps_each_path_it_may_not_take_once_and_touches_nothing_outside() {
+        let (dir, folder, id) = removable();
+        let bytes = std::fs::read(dir.path().join("new.md")).unwrap();
+        let outside = tempfile::tempdir_in(dir.path().parent().unwrap()).unwrap();
+        std::fs::write(outside.path().join("new.md"), &bytes).unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).unwrap();
+        let sibling = outside.path().file_name().unwrap().to_str().unwrap();
+        let escape = format!("../{sibling}/new.md");
+        let absolute = outside.path().join("new.md").display().to_string();
+        let paths: Vec<String> = [
+            "new.md",
+            "new.md",
+            &escape,
+            &absolute,
+            "link/new.md",
+            "",
+            "./new.md",
+            "missing.md",
+        ]
+        .map(str::to_string)
+        .to_vec();
+
+        let done = folder.remove_unmatched(&paths).unwrap();
+
+        let removed: Vec<&str> = done.removed.iter().map(|file| file.path.as_str()).collect();
+        assert_eq!(removed, ["new.md"], "{done:?}");
+        let outside_reason = "it is not inside the folder";
+        assert_eq!(
+            kept_reasons(&done),
+            [
+                (escape.as_str(), outside_reason),
+                (absolute.as_str(), outside_reason),
+                ("link/new.md", outside_reason),
+                ("", outside_reason),
+                ("./new.md", outside_reason),
+                ("missing.md", "it is not a file of the folder"),
+            ],
+            "{done:?}"
+        );
+        assert!(!dir.path().join("new.md").exists());
+        assert_eq!(std::fs::read(outside.path().join("new.md")).unwrap(), bytes);
+        assert!(dir.path().join("link").is_symlink());
+        assert!(folder.core.get(&id).unwrap().is_some(), "the item went");
+    }
+
+    #[test]
+    fn removing_unmatched_keeps_a_file_replaced_by_a_link_and_leaves_what_it_names() {
+        let (dir, folder, _) = removable();
+        let bytes = std::fs::read(dir.path().join("new.md")).unwrap();
+        let outside = tempfile::tempdir_in(dir.path().parent().unwrap()).unwrap();
+        let target = outside.path().join("new.md");
+        std::fs::write(&target, &bytes).unwrap();
+        std::fs::remove_file(dir.path().join("new.md")).unwrap();
+        std::os::unix::fs::symlink(&target, dir.path().join("new.md")).unwrap();
+
+        let done = folder.remove_unmatched(&["new.md".into()]).unwrap();
+
+        assert!(done.removed.is_empty(), "{done:?}");
+        assert_eq!(done.kept.len(), 1, "{done:?}");
+        assert!(done.kept[0].kept.is_some(), "{done:?}");
+        assert!(dir.path().join("new.md").is_symlink());
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+    }
+
+    #[test]
+    fn removing_unmatched_keeps_a_file_held_outside_the_query_and_says_so() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000b0f1",
+            serde_json::json!({ "query": { "state": ["active"] }, "outside_query": "hold" }),
+            None,
+        );
+        write_note(dir.path(), "in.md", "");
+        write_note(dir.path(), "out.md", "state: archived\n");
+        assert_eq!(folder.scan().unwrap().held_outside, 1);
+        landed(&folder, "in.md");
+
+        let done = folder
+            .remove_unmatched(&["out.md".into(), "out.md".into()])
+            .unwrap();
+
+        assert!(done.removed.is_empty(), "{done:?}");
+        assert_eq!(done.kept.len(), 1, "{done:?}");
+        assert_eq!(done.kept[0].path, "out.md");
+        assert!(
+            done.kept[0]
+                .kept
+                .as_deref()
+                .is_some_and(|reason| reason.contains("held")),
+            "{done:?}"
+        );
+        assert!(Path::new(&dir.path().join("out.md")).is_file());
     }
 }
