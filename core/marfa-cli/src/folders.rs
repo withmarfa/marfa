@@ -56,20 +56,23 @@ pub enum FoldersCommand {
         #[command(flatten)]
         page: crate::commands::PageArgs,
     },
-    /// List one level of a folder's directories, each with the placed files it
-    /// holds, and the files placed at the level itself. Without `--under`, the
-    /// level is the folder's top. A directory exists only while a placed file
-    /// lies in or beneath it. Counts only the files whose type and source the
-    /// credential reads, and needs read on `system.folder` and on the
-    /// `in-folder` edge type. With --json, the answer has `folder_id`, `under`,
-    /// `direct_files`, `total_files` and `directories`, each with `path`,
-    /// `direct_files`, `all_files` and `has_directories`; a `path` is accepted
-    /// as `--under` to open that directory.
+    /// List a folder's immediate directories and their file counts.
+    ///
+    /// Start at the top level or pass a listed path to `--under`. Each directory
+    /// has a count of files directly inside it and a count that includes its
+    /// subdirectories. The result also counts files at the requested level and
+    /// in the whole folder. A key needs read access to `system.folder` and
+    /// `in-folder`. Counts include only files the caller can read.
+    ///
+    /// With `--json`, the result has `folder_id`, `under`, `direct_files`,
+    /// `total_files` and `directories`. Each directory has `path`,
+    /// `direct_files`, `all_files` and `has_directories`.
     Directories {
-        /// The folder's `system.folder` id.
+        /// The folder's `system.folder` ID.
         id: String,
-        /// A path below the folder's root, such as `notes/2026`. No leading
-        /// slash, no `..` name and at most 1024 characters.
+        /// A directory path from the folder's root, such as `notes/2026`.
+        /// Use up to 1024 characters. A leading slash, backslash, NUL or
+        /// `..` component is invalid.
         #[arg(long, value_name = "PATH")]
         under: Option<String>,
     },

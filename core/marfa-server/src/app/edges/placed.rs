@@ -50,7 +50,6 @@ impl Children {
     }
 }
 
-/// False where the path names no file, which places none.
 fn count_by_name(path: &str, under: &[String], here: &mut i64, children: &mut Children) -> bool {
     let mut path: Vec<&str> = names(path).collect();
     if path.pop().is_none() {

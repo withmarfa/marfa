@@ -32606,7 +32606,7 @@ export interface operations {
             };
             /**
              * @description - `invalid_id`: the folder ID is malformed.
-             *     - `validation_error`: `under` starts with a slash or drive prefix, contains a backslash, NUL, or `..` component, exceeds 1024 characters, or appears more than once. An unknown query parameter also causes this error unless its name starts with `_`.
+             *     - `validation_error`: `under` starts with a slash, contains a backslash, NUL, or `..` component, exceeds 1024 characters, or appears more than once. An unknown query parameter also causes this error unless its name starts with `_`.
              */
             400: {
                 headers: {

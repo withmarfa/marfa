@@ -562,7 +562,6 @@ fn usage(
 
 /// What `--socket` refuses before anything is sent: commands that have no
 /// use for it, including folder commands that resolve their own server.
-/// Folder inventory and folder directories are the folder commands that use the private socket.
 fn socket_refusal(command: &Command) -> Option<CliError> {
     if matches!(
         command,

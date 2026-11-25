@@ -356,8 +356,7 @@ pub fn depth_inside_folder(path: &str) -> Option<usize> {
     depth_below_root(path)
 }
 
-/// As `depth_inside_folder`, but a first name that reads as a drive is only a name: a stored
-/// `./A:notes/a.md` places a directory called `A:notes`.
+/// A stored `./A:notes/a.md` lists `A:notes` as a directory name.
 pub fn depth_below_root(path: &str) -> Option<usize> {
     if path.starts_with('/') || path.contains(['\\', '\0']) {
         return None;

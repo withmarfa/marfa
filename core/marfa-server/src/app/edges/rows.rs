@@ -189,12 +189,11 @@ pub(super) struct Placed {
     pub tallies: Vec<Tally>,
     /// Every placed file whose path holds no empty or `.` name, under the prefix or not.
     pub tidy: i64,
-    /// The path of each placed file left to read by name.
+    /// Stored paths with empty or `.` components.
     pub untidy: Vec<String>,
 }
 
-/// A nonempty prefix ends in `/` so it matches a complete directory name. An edge whose `path` is
-/// not text places no file and is left out.
+/// A nonempty prefix ends in `/` so it matches a complete directory name.
 pub(super) fn placed(
     tx: &Transaction<'_>,
     folder: &str,

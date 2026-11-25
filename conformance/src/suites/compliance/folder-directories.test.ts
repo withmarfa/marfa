@@ -45,7 +45,7 @@ beforeAll(async () => {
   ).json()) as OpenApiDocument;
 }, FRESH_SERVER_TIMEOUT_MS);
 afterAll(async () => {
-  await server.stop();
+  await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
 async function expectMatchesSchema(
@@ -375,6 +375,12 @@ describe("GET /folders/{id}/directories", () => {
       "a/empty.md",
     ];
     await placeAll(dir, paths);
+    const before = await tree(dir);
+    expect(rows(before)).toEqual([
+      ["a", 6, 6, false],
+      ["b", 1, 1, false],
+    ]);
+    expect(before.total_files).toBe(7);
     await server.restart(() => {
       const db = new DatabaseSync(server.sqlitePath);
       try {
