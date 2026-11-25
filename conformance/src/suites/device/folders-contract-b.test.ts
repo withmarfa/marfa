@@ -183,14 +183,17 @@ it.each(["trashed", "archived"] as const)(
     const restored = await harness.folder.restore();
     expect(restored.ok && restored.value.restored).toBe(3);
     const queued = await harness.folder.device().queue();
-    expect(
-      queued.ok &&
-        queued.value.filter(
-          (r) =>
-            r.kind ===
-            (state === "trashed" ? "restore_item" : "transition_item"),
-        ),
-    ).toHaveLength(3);
+    const transitions =
+      queued.ok && queued.value.filter((r) => r.kind === "transition_item");
+    expect(transitions).toHaveLength(3);
+    for (const n of [0, 1, 2]) {
+      expect(transitions).toContainEqual(
+        expect.objectContaining({
+          item_id: row(n).item.id,
+          body: { state: "active", from: state },
+        }),
+      );
+    }
     const status = await harness.folder.status();
     expect(status.ok && status.value.paused).toEqual({
       disk: 0,
