@@ -37,7 +37,7 @@ export interface paths {
         };
         /**
          * Get an item
-         * @description Returns an item with its metadata and outbound edges. Use `include` to add its inbound edges, the items at the other end of its edges, or its version history in the same call. Use `state` to read an item in the trash.
+         * @description Returns an item with its metadata, outbound edges and any extras you ask for. Use `state` to read an item in the trash.
          */
         get: operations["getItem"];
         put?: never;
@@ -3242,6 +3242,24 @@ export interface components {
             /** @description The edge's version. It goes up by one on every update, including one that changes nothing. */
             version: number;
         };
+        /** @description A sign-in recorded as the one that wrote a version of an item or first installed a plugin, named as it was then. */
+        Writer: {
+            /**
+             * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
+             * @enum {string}
+             */
+            kind: "browser" | "app" | "key" | "local";
+            /**
+             * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
+             * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
+             */
+            id: string;
+            /**
+             * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
+             * @example Safari on macOS
+             */
+            name: string;
+        };
         /** @description An item is one record in Marfa. */
         Item: {
             /**
@@ -3325,6 +3343,8 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+            /** @description The sign-in that wrote the item's current version, named as it was then, even after it ends. `null` if no sign-in wrote it, such as when Marfa reads a file's text. Present only where `include` names `writer`. */
+            writer?: components["schemas"]["Writer"] | null;
         };
         /** @description A page of edges. */
         EdgePage: {
@@ -3423,23 +3443,7 @@ export interface components {
              */
             source_id: string | null;
             /** @description The sign-in that wrote this version, named as it was then, even after it ends. Whoever can read the snapshot sees it, such as another app's name or a key's label. `null` if no sign-in wrote it, such as when Marfa reads a file's text. */
-            writer: {
-                /**
-                 * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
-                 * @enum {string}
-                 */
-                kind: "browser" | "app" | "key" | "local";
-                /**
-                 * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
-                 * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
-                 */
-                id: string;
-                /**
-                 * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
-                 * @example Safari on macOS
-                 */
-                name: string;
-            } | null;
+            writer: components["schemas"]["Writer"] | null;
             /**
              * @description When Marfa recorded the snapshot, in UTC.
              * @example 2026-10-03T09:30:00.000Z
@@ -9417,7 +9421,7 @@ export interface components {
              */
             installed_at: string;
             /** @description The sign-in that first installed the plugin, or `null` when it is not known. */
-            installed_by: components["schemas"]["PluginInstaller"] | null;
+            installed_by: components["schemas"]["Writer"] | null;
             /**
              * Format: date-time
              * @description When the installed version last changed.
@@ -9485,7 +9489,7 @@ export interface components {
              */
             installed_at: string;
             /** @description The sign-in that first installed the plugin, or `null` when it is not known. */
-            installed_by: components["schemas"]["PluginInstaller"] | null;
+            installed_by: components["schemas"]["Writer"] | null;
             /**
              * Format: date-time
              * @description When the installed version last changed.
@@ -9609,24 +9613,6 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
-        };
-        /** @description The sign-in that first installed a plugin. */
-        PluginInstaller: {
-            /**
-             * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
-             * @enum {string}
-             */
-            kind: "browser" | "app" | "key" | "local";
-            /**
-             * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
-             * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
-             */
-            id: string;
-            /**
-             * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
-             * @example Safari on macOS
-             */
-            name: string;
         };
         /** @description A page holding every installed plugin. */
         PluginPage: {
@@ -11301,7 +11287,7 @@ export interface operations {
     getItem: {
         parameters: {
             query?: {
-                /** @description Comma-separated extras: `backrefs` adds inbound edges, `neighbors` adds the items at the other end of the edges returned, and `versions` adds the first page of version snapshots you can read, oldest first. */
+                /** @description Comma-separated extras. `backrefs` adds inbound edges. `neighbors` adds the items at the other end of the returned edges. `versions` adds the first page of readable snapshots, oldest first. `writer` adds the current version's writer. */
                 include?: string;
                 /** @description Read the item only if it is in one of these lifecycle states: one state or a comma-separated list, such as `active,trashed`. Send `any` on its own for every state, the trash included. Without it, you get an item in any state but `trashed`. */
                 state?: string;
@@ -11367,7 +11353,7 @@ export interface operations {
             };
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
-             *     - `validation_error`: the query has a parameter this endpoint doesn't take, or `state` is empty, names a state that doesn't exist, or puts `any` beside another state.
+             *     - `validation_error`: the query has an unknown parameter, `include` names an unknown extra, or `state` is empty, names a state that doesn't exist, or puts `any` beside another state.
              */
             400: {
                 headers: {
@@ -13744,8 +13730,8 @@ export interface operations {
                 "application/json": {
                     /** @description The IDs of the items to read, at most 100. */
                     ids: string[];
-                    /** @description `edges`, `metadata` and `extensions` add that data to each item. `hidden` also returns `system.*` and `app.*` items, which are left out by default. */
-                    include?: ("edges" | "metadata" | "extensions" | "hidden")[];
+                    /** @description `edges`, `metadata` and `extensions` add that data to each item. `writer` adds the sign-in that wrote each item's current version. `hidden` also returns `system.*` and `app.*` items, which are left out by default. */
+                    include?: ("edges" | "metadata" | "extensions" | "writer" | "hidden")[];
                 };
             };
         };
@@ -13835,7 +13821,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `ids` is missing.
-             *     - `validation_error`: `ids` is not a list or has more than 100 IDs, or the body has a field this endpoint doesn't take.
+             *     - `validation_error`: `ids` isn't a list or has more than 100 IDs, `include` names an unknown extra, or the body has a field this endpoint doesn't take.
              *     - `invalid_id`: an ID in `ids` is not a valid item ID.
              */
             400: {

@@ -812,6 +812,26 @@ When `POST /items/bulk-get` names `metadata` in `include`, the server MUST answe
 
 **Tests:** `compliance/bulk-get.test.ts › hydrates metadata when include carries metadata`.
 
+### `items/bulk-get-writer`
+
+When `POST /items/bulk-get` names `writer` in `include`, the server MUST answer each item's `writer` as `versions/writer-current-bulk` states.
+
+**Tests:** `compliance/version-writers.test.ts › answers the key that wrote the current version, from version 1 on, on both doors`.
+
+### `items/bulk-get-include-unknown`
+
+If `POST /items/bulk-get` names in `include` a value other than `edges`, `metadata`, `extensions`, `writer` or `hidden`, then the server MUST answer `400 validation_error`.
+
+**Reason:** a misspelled value would otherwise be dropped, and the answer would leave out what the caller asked for without saying so.
+
+**Tests:** `compliance/version-writers.test.ts › refuses an include value it does not know beside writer, on both doors`.
+
+### `items/get-include-unknown`
+
+If `GET /items/{id}` names in `include` a value other than `metadata`, `edges`, `backrefs`, `neighbors`, `versions` or `writer`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/version-writers.test.ts › refuses an include value it does not know beside writer, on both doors`.
+
 ### `items/bulk-get-system`
 
 If `POST /items/bulk-get` names a hidden item and its `include` does not hold `hidden`, then the server MUST leave the item out of the answer.
