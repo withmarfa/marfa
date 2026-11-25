@@ -371,6 +371,35 @@ describe("starting on a database an earlier release wrote", () => {
   );
 
   it(
+    "answers no state writer for an item v0.0.90 wrote, and names the sign-in that moves it after the upgrade",
+    async () => {
+      await startedOn(async ({ url, client }) => {
+        const stateWriter = async (id: string) => {
+          const answer = await fetch(`${url}/items/${id}?include=writer`, {
+            headers: { authorization: `Bearer ${WORKING_KEY}` },
+          });
+          expect(answer.status).toBe(200);
+          return (
+            (await answer.json()) as {
+              item: { state_writer?: unknown };
+            }
+          ).item.state_writer;
+        };
+        const id = ITEM_IDS[0];
+        expect(await stateWriter(id)).toBeNull();
+        const moved = await client.transitionItem(id, "archived");
+        expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+        expect(await stateWriter(id)).toEqual({
+          kind: "key",
+          id: expect.any(String),
+          name: expect.any(String),
+        });
+      });
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "upgrades the database v0.0.90 wrote to the schema version this build makes, and answers its type as before but for the origin v0.0.91 renamed",
     async () => {
       // The version a database this build makes from nothing has.

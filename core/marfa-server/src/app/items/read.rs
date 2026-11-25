@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use super::plan::{self, Act, Asked, Gate};
 use super::{
-    Door, Item, Keys, check_links, extension_documents_text, extension_text, extensions_text,
-    metadata_for, name_of, not_found, rows, summary_of, with_blocks,
+    Door, Item, Keys, Writer, check_links, extension_documents_text, extension_text,
+    extensions_text, metadata_for, name_of, not_found, rows, summary_of, with_blocks,
 };
 use crate::app::App;
 use crate::app::access::reach::Demand;
@@ -189,12 +189,18 @@ impl<'a, 'c> Reader<'a, 'c> {
             return Ok(text);
         }
         let writer = rows::current_writer(self.tx, row.seq)?;
-        let printed = marfa_rules::number::to_vec(&writer)
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .ok_or_else(|| Refusal::internal("a writer did not print"))?;
+        let printed = |writer: &Option<Writer>| {
+            marfa_rules::number::to_vec(writer)
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .ok_or_else(|| Refusal::internal("a writer did not print"))
+        };
         text.pop();
-        text.push_str(&format!(",\"writer\":{printed}}}"));
+        text.push_str(&format!(
+            ",\"writer\":{},\"state_writer\":{}}}",
+            printed(&writer)?,
+            printed(&row.state_writer)?
+        ));
         Ok(text)
     }
 

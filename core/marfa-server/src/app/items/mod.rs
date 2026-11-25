@@ -97,6 +97,7 @@ pub struct Item {
     pub capture_longitude: Option<f64>,
     link: Option<String>,
     trashed_by: Option<Writer>,
+    state_writer: Option<Writer>,
     mark: Option<Mark>,
 }
 

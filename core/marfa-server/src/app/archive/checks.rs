@@ -323,7 +323,7 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
             ));
         }
     };
-    for field in ["writer", "trashed_by"] {
+    for field in ["writer", "trashed_by", "state_writer"] {
         if let Some(fault) = line.get(field).and_then(writer_fault) {
             return Err(at.invalid(&writer_field(field, fault), "a writer or null"));
         }

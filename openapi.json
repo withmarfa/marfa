@@ -442,7 +442,7 @@
           "id",
           "name"
         ],
-        "description": "A sign-in recorded as the one that wrote a version of an item or first installed a plugin, named as it was then."
+        "description": "The sign-in that wrote an item version, first installed a plugin, or last changed an item's lifecycle state, named as it was then."
       },
       "Item": {
         "type": "object",
@@ -587,6 +587,17 @@
               }
             ],
             "description": "The sign-in that wrote the item's current version, named as it was then, even after it ends. `null` if no sign-in wrote it, such as when Marfa reads a file's text. Present only where `include` names `writer`."
+          },
+          "state_writer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Writer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The sign-in that last changed the item's lifecycle state, named as it was then. `null` if the item has never moved, a server job moved it, or its last move predates this field. Present only where `include` names `writer`."
           }
         },
         "required": [
@@ -18004,10 +18015,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Comma-separated extras. `backrefs` adds inbound edges. `neighbors` adds the items at the other end of the returned edges. `versions` adds the first page of readable snapshots, oldest first. `writer` adds the current version's writer."
+              "description": "Comma-separated extras. `backrefs` adds inbound edges. `neighbors` adds items at the other end of returned edges. `versions` adds the first page of readable snapshots, oldest first. `writer` adds the current version's `writer` and `state_writer`."
             },
             "required": false,
-            "description": "Comma-separated extras. `backrefs` adds inbound edges. `neighbors` adds the items at the other end of the returned edges. `versions` adds the first page of readable snapshots, oldest first. `writer` adds the current version's writer.",
+            "description": "Comma-separated extras. `backrefs` adds inbound edges. `neighbors` adds items at the other end of returned edges. `versions` adds the first page of readable snapshots, oldest first. `writer` adds the current version's `writer` and `state_writer`.",
             "name": "include",
             "in": "query"
           },
@@ -22337,7 +22348,7 @@
                         "hidden"
                       ]
                     },
-                    "description": "`edges`, `metadata` and `extensions` add that data to each item. `writer` adds the sign-in that wrote each item's current version. `hidden` also returns `system.*` and `app.*` items, which are left out by default."
+                    "description": "`edges`, `metadata` and `extensions` add that data to each item. `writer` adds each item's current version `writer` and `state_writer`. `hidden` also returns `system.*` and `app.*` items, which are left out by default."
                   }
                 },
                 "required": [

@@ -119,6 +119,14 @@ pub const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0016_table_row_keys.sql"),
         done: None,
     },
+    Migration {
+        version: 17,
+        sql: include_str!("migrations/0017_item_state_writer.sql"),
+        done: Some(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('items') \
+             WHERE name = 'state_writer_kind')",
+        ),
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \
