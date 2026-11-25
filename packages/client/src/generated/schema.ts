@@ -3345,7 +3345,7 @@ export interface components {
             };
             /** @description The sign-in that wrote the item's current version, named as it was then, even after it ends. `null` if no sign-in wrote it, such as when Marfa reads a file's text. Present only where `include` names `writer`. */
             writer?: components["schemas"]["Writer"] | null;
-            /** @description The sign-in that last moved the item between active, archived and the bin, named as it was then, even after it ends. `null` if the item has not moved, a server job moved it, or it moved before Marfa recorded this. Present only where `include` names `writer`. */
+            /** @description The sign-in that last moved the item between active, archived and the bin, named as it was then. `null` if the item has not moved, a server job moved it, or it moved before Marfa recorded this. Present only where `include` names `writer`. */
             state_writer?: components["schemas"]["Writer"] | null;
         };
         /** @description A page of edges. */
@@ -11289,7 +11289,7 @@ export interface operations {
     getItem: {
         parameters: {
             query?: {
-                /** @description Comma-separated extras. `backrefs` adds inbound edges. `neighbors` adds the items at the other end of the returned edges. `versions` adds the first page of readable snapshots, oldest first. `writer` adds the current version's writer and, as `state_writer`, who last moved the item between active, archived and the bin. */
+                /** @description Comma-separated extras. `backrefs`: inbound edges. `neighbors`: the items those edges reach. `versions`: the first page of readable snapshots, oldest first. `writer`: who wrote the current version and, as `state_writer`, who last moved its state. */
                 include?: string;
                 /** @description Read the item only if it is in one of these lifecycle states: one state or a comma-separated list, such as `active,trashed`. Send `any` on its own for every state, the trash included. Without it, you get an item in any state but `trashed`. */
                 state?: string;
