@@ -926,6 +926,18 @@ While a refused document remains unchanged, a device MUST NOT send the same chan
 
 **Tests:** `device/folders-frontmatter.test.ts › flags a refused retype and keeps the file`.
 
+### `folder-documents/refused-state-binding`
+
+While an item is in the bin and its file holds a refused state change, a device MUST keep the file's refused binding to that item through a rename or edit.
+
+**Tests:** `device/binding-folders-refused-state.test.ts › keeps a renamed and edited file bound to the item whose state change was refused`.
+
+### `folder-documents/refused-initial-archive`
+
+When a new document requests an archive and the device refuses that transition with `state_conflict`, a device MUST flag the file bound to the newly created item as `refused`.
+
+**Tests:** `device/binding-folders-refused-state.test.ts › binds a new file whose initial archive is refused and creates its item only once`.
+
 ### `folder-documents/refused-edit-replaced`
 
 When a later save lands an edit replacing a refused edit, a device MUST release the file's refusal hold.
