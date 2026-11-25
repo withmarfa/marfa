@@ -41,12 +41,7 @@ async function seed(sourceId: string, tags?: string[]) {
 async function upsert(
   door: Door,
   sourceId: string,
-  fields: {
-    body: string;
-    state?: string;
-    tags?: string[];
-    edges?: Record<string, string[]>;
-  },
+  fields: { body: string; state?: string; tags?: string[] },
 ): Promise<{ id: string; updated: boolean }> {
   const entry = {
     type: "core.note",
@@ -55,7 +50,6 @@ async function upsert(
     properties: { body: fields.body },
     ...(fields.state === undefined ? {} : { state: fields.state }),
     ...(fields.tags === undefined ? {} : { tags: fields.tags }),
-    ...(fields.edges === undefined ? {} : { edges: fields.edges }),
   };
   if (door === "POST /items") {
     const sent = await client.createItem(entry);

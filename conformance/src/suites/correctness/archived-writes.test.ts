@@ -327,7 +327,6 @@ describe("the edges of an archived item", () => {
           since: "autumn",
         });
 
-        // A create_only entry creates an edge no item holds and skips its replay.
         const fifth = await note("active");
         const entry = {
           ...ordered(end, mine.id, fifth.id),

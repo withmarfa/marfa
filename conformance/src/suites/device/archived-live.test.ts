@@ -242,7 +242,7 @@ it("moves no other item the copy holds when it archives an item holding parent-o
     return { device, host, child, grandchild, move };
   }
 
-  // The witness: the same move into the bin, read at the same points, takes the children from the server and, after catch-up, from the copy.
+  // The bin move witnesses the server cascade and its arrival in the copy.
   const control = await moved("trashed", "bin");
   accepted(value(await control.device.drain()), [control.move.id]);
   value(await control.device.catchUp());
