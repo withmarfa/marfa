@@ -1028,7 +1028,8 @@ fn queue_state(tx: &Connection, server: &Item, state: ItemState) -> Result<Strin
         }
         _ => (
             WriteKind::TransitionItem,
-            serde_json::json!({ "state": state.as_str() }).to_string(),
+            serde_json::json!({ "state": state.as_str(), "from": server.state.as_str() })
+                .to_string(),
             None,
         ),
     };
