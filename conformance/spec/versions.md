@@ -360,13 +360,63 @@ When `GET /export?format=archive` carries an item, the server MUST carry the `wr
 
 **Tests:** `compliance/version-writers-archive.test.ts › carries each writer through an archive, the current version's too, and keeps them on restore`.
 
+### `versions/writer-current`
+
+When a credential sends `GET /items/{id}` with `include=writer` for an item it may read, the server MUST carry in `item` a `writer` holding the `kind`, `id` and `name` of the sign-in that wrote the item's current version, or `null` when no sign-in wrote it.
+
+**Reason:** the history holds only the versions an item has left, so it never names who wrote the current one, and a client that shows who last changed an item needs it.
+
+**Tests:** `compliance/version-writers.test.ts › answers the key that wrote the current version, from version 1 on, on both doors`, `› answers the app, the owner's browser and the local command that wrote an app's record`, `› answers null for a current version the enrichment sweep wrote`, `› answers the sign-in whose write merged, and the one whose write lost as the copy's writer`.
+
+### `versions/writer-current-bulk`
+
+When a key sends `POST /items/bulk-get` with `writer` in `include`, the server MUST carry in each item of `data` a `writer` holding the `kind`, `id` and `name` of the sign-in that wrote that item's current version, or `null` when no sign-in wrote it.
+
+**Tests:** `compliance/version-writers.test.ts › answers the key that wrote the current version, from version 1 on, on both doors`, `› answers the app, the owner's browser and the local command that wrote an app's record`, `› answers null for a current version the enrichment sweep wrote`.
+
+### `versions/writer-current-first`
+
+While an item is at version 1, the server MUST name as the writer of its current version the sign-in that created it, though the item has no snapshot.
+
+**Tests:** `compliance/version-writers.test.ts › answers the key that wrote the current version, from version 1 on, on both doors`.
+
+### `versions/writer-current-opt-in`
+
+When `GET /items/{id}` or `POST /items/bulk-get` does not name `writer` in `include`, the server MUST NOT carry a `writer` in the item.
+
+**Reason:** a writer's name shows the owner's other sign-ins to every credential that may read it (`versions/writer-field`), so an ordinary read of an item does not widen who sees them.
+
+**Tests:** `compliance/version-writers.test.ts › leaves the writer off an item read that does not name it, and off every other member`.
+
+### `versions/writer-current-kept`
+
+When the sign-in that wrote an item's current version has ended, the server MUST still name it as that version's writer with the `id` and `name` it had when it wrote.
+
+**Tests:** `compliance/version-writers.test.ts › answers the writer a revoked key had, with the name it had when it wrote`.
+
+### `versions/writer-current-state`
+
+When `GET /items/{id}` with `include=writer` reads an item in the state `archived`, or in the bin with a `state` that names `trashed`, the server MUST name the writer of the item's current version, which the move between states leaves as it was.
+
+**Reason:** a move between states writes no version (`versions/state-keeps-history`).
+
+**Tests:** `compliance/version-writers.test.ts › answers the current writer of an archived item, and of one in the bin where the read names the state`.
+
+### `versions/writer-current-reach`
+
+If a credential may not read the type of an item, then the server MUST NOT name the writer of the item's current version to it on `GET /items/{id}` or `POST /items/bulk-get`.
+
+**Reason:** a credential reads the writer of a version under the reach that decides whether it reads that version (`versions/reach-left-out`), and an item whose type it may not read is answered as one that does not exist (`items/get-missing`, `items/bulk-get-omits`).
+
+**Tests:** `compliance/version-writers.test.ts › gives a key that may not read the item's type no writer, and no refusal other than the item's`.
+
 ### `versions/writer-restore`
 
 When `POST /restore` writes an archived item, the server MUST keep as writers the ones the archive names for each snapshot and for the current version, and `null` where it names none.
 
 **Reason:** a restore puts back a history that others wrote, so the sign-in that restores it wrote none of it. Only a person restores, from an app they signed in to within fifteen minutes or with the local command (`keys-and-oauth/step-up-key-refused`), and the server checks an archived writer's form, not that the sign-in it names wrote the version.
 
-**Tests:** `compliance/version-writers-archive.test.ts › carries each writer through an archive, the current version's too, and keeps them on restore`, `› restores an archive that names no writer with none`.
+**Tests:** `compliance/version-writers-archive.test.ts › carries each writer through an archive, the current version's too, and keeps them on restore`, `› restores an archive that names no writer with none`, `› answers a restored item's current writer as the archive named it, and none where it names none`.
 
 ### `versions/writer-restore-invalid`
 

@@ -549,6 +549,7 @@ fn detail_of(uri: &Uri) -> Result<Detail> {
                 "versions" => detail.versions = true,
                 "backrefs" => detail.backrefs = true,
                 "neighbors" => detail.neighbors = true,
+                "writer" => detail.writer = true,
                 other => {
                     return Err(invalid_field(
                         "include",
@@ -624,6 +625,7 @@ fn many_of(sent: &Map<String, Value>) -> Result<Many> {
             "extensions" => many.extensions = true,
             "edges" => many.edges = true,
             "hidden" => many.hidden = true,
+            "writer" => many.writer = true,
             other => {
                 return Err(invalid_field(
                     "include",
