@@ -262,9 +262,9 @@ Where a view sorts by `title`, the server MUST order each item by the field its 
 
 ### `views/items-order-source`
 
-Where a view sorts by `source`, the server MUST order each item by its source code in binary lexical order of its UTF-8 bytes, in either direction, with the items of one source in ascending item ID order, and an item no key named a source for, which holds the code `unknown`, among them.
+Where a view sorts by `source`, the server MUST compare the stored source codes in binary lexical order of their UTF-8 bytes, in either direction.
 
-**Reason:** a source's name and mark belong to the server, so the code is the one order a working copy can reproduce (`device/view-sort-own`). An item made with no source named is stored under the code `unknown`, so it sorts as that text and never first or last for want of one.
+**Reason:** a source's name and mark belong to the server, so the code is the one order a working copy can reproduce (`device/view-sort-own`). `unknown` is an ordinary stored code, the one an item made with no source named is given, so it compares as that text and never first or last for want of one. Items of one source tie as `views/items-order-ties` says.
 
 **Tests:** `compliance/views-items.test.ts › sorts by each item's source code in binary order in either direction, the owner's own items among them, with ascending ids breaking ties across pages`.
 
