@@ -506,9 +506,8 @@ fn sending(
 guarded! {
     #[uniffi::export]
     impl Folders {
-        /// `url` and `key` go together; without them only `list`, `status`,
-        /// `confirm_first_sync`, `confirm`, `restore`, `remove`,
-        /// `remove_unmatched`, `kept` and `discard_kept` work.
+        /// Supply both `url` and `key` for calls that contact the server.
+        /// Listing, removing unmatched files and discarding kept files work offline.
         /// `renewer` renews `key` when the server refuses it, for every folder
         /// these calls and watches work, as `CredentialRenewer` describes; it needs
         /// `url` and `key`.
@@ -1083,7 +1082,7 @@ pub struct UnmatchedRemoved {
 pub enum KeptWriters {
     /// A program holds it open for writing.
     Open,
-    /// Marfa cannot tell, so it deletes the file on `until` if unchanged.
+    /// Marfa cannot tell. When set, `until` gives its discard date.
     Unknown,
     /// Marfa has not looked since it set the file aside.
     NotLooked,
@@ -1098,8 +1097,7 @@ pub struct KeptFile {
     /// The path Marfa replaced or removed it at.
     pub from: String,
     pub writers: KeptWriters,
-    /// The day, in UTC and written `YYYY-MM-DD`, Marfa deletes it if still
-    /// unchanged, where `writers` is `Unknown`.
+    /// The UTC discard date for an unchanged file, when set, as `YYYY-MM-DD`.
     pub until: Option<String>,
     pub reason: String,
 }
@@ -1112,7 +1110,7 @@ pub struct KeptDiscarded {
     /// The paths a kept file a program wrote to went back to, or was kept
     /// beside, in place of being deleted. The next sync sends it.
     pub put_back: Vec<String>,
-    /// The files still kept, where Marfa could not reach them.
+    /// The files whose records remain after the discard.
     pub kept: Vec<KeptFile>,
 }
 
@@ -1156,9 +1154,7 @@ guarded! {
             })
         }
 
-        /// The directory's kept files, in path order, as `folders kept`
-        /// lists them, read from the folder's store beside a watch that
-        /// holds the folder. `status` does not list them.
+        /// Lists kept-file records in path order, even while a watch holds the folder.
         pub fn kept(&self, dir: String) -> Result<Vec<KeptFile>, MarfaError> {
             marfa_core::Folder::kept_of(&dir)?
                 .into_iter()
@@ -1896,13 +1892,9 @@ mod tests {
         // The placement's end goes at the next sync, and the item stays.
         folders.sync(path.clone()).unwrap();
         let (url, key) = booted();
+        let copy = tempfile::tempdir().unwrap();
         let core = crate::Core::open(
-            tempfile::tempdir()
-                .unwrap()
-                .keep()
-                .join("copy.db")
-                .display()
-                .to_string(),
+            copy.path().join("copy.db").display().to_string(),
             Some(url),
             Some(key),
             None,
