@@ -622,14 +622,31 @@ mod tests {
                 "{confirmed:?}"
             );
             assert!(deletes_queued(folder).is_empty(), "a delete was queued");
+            assert_eq!(
+                held_as(folder, "sub/gone.md"),
+                Some(("held", Some("unsure"))),
+                "a confirmed removal under a directory that cannot be read reads as unreached"
+            );
+            let unread = folder.scan().unwrap();
+            assert!(unread.trashed.is_empty(), "{unread:?}");
+            assert_eq!(
+                held_as(folder, "sub/gone.md"),
+                Some(("held", Some("unsure"))),
+                "a scan that could not read the directory let go of the confirmed hold"
+            );
+            assert_eq!(held_files(folder), Some(2));
+            assert!(deletes_queued(folder).is_empty(), "a delete was queued");
         }
         assert_eq!(
             held_as(folder, "sub/gone.md"),
-            Some(("held", Some("unsure"))),
-            "a removal held while its own directory could not be read reads as a delete waiting to be sent"
+            Some(("held", Some("unsure")))
         );
         assert_eq!(held_files(folder), Some(1));
         assert!(deletes_queued(folder).is_empty(), "a delete was queued");
+        // The witness: read whole, the missing file is a removal to confirm.
+        assert_eq!(folder.scan().unwrap().paused, 1);
+        assert_eq!(folder.confirm().unwrap().deleted, 1);
+        assert_eq!(deletes_queued(folder).len(), 1);
     }
 
     fn keeps_case_apart(dir: &std::path::Path) -> bool {
