@@ -225,7 +225,6 @@ describe("a copy no server has been named for", () => {
       }
     }
     expect(value(await device.declaredTypes())).toEqual([]);
-    // The witness: the same type without it is taken and reads as registered.
     value(await device.declareTypes([RECIPE]));
     expect(
       value(await device.itemType("app.recipe.entry")),

@@ -1293,7 +1293,6 @@ mod tests {
             .unwrap(),
             edge_types: Vec::new(),
         };
-        // The same members and values, the creator first, between and last.
         let held_as = [
             r#"{"created_by":null,"origin":"plugin","plugin":{"name":"tickets","version":"1.0.0"}}"#,
             r#"{"origin":"plugin","created_by":null,"plugin":{"name":"tickets","version":"1.0.0"}}"#,

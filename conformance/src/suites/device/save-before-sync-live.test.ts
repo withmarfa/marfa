@@ -6,6 +6,7 @@ import type { Outcome } from "../../device/protocol.js";
 import {
   cleanup,
   createTestContext,
+  newRunId,
   trackItem,
   trackType,
 } from "../../utils/setup.js";
@@ -109,10 +110,10 @@ it("sends what it saved with no server once it has joined, after registering the
 });
 
 it("refuses a declaration naming provenance as the server refuses it, then registers and reads the type once declared without it", async () => {
-  const type = `app.live.provenance_${ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
-  const key = await appKey("provenance", true, type);
+  const attempt = newRunId().replaceAll("-", "");
+  const type = `app.live.provenance_${attempt}`;
+  const key = await appKey(attempt, true, type);
   const definition = { id: type, fields: { title: { type: "string" } } };
-  // The server refuses the registration, so the declaration is refused first.
   const direct = await client.registerType({
     ...definition,
     provenance: { origin: "plugin", plugin: { name: "t", version: "1" } },
@@ -133,10 +134,10 @@ it("refuses a declaration naming provenance as the server refuses it, then regis
   expect(refused.ok ? "declared" : refused.refusal.code).toBe("invalid");
   value(await offline.declareTypes([definition]));
   const joined = offline.reopen({ url: apiUrl, key });
+  trackType(ctx, type, client);
   const report = value(await joined.hydrate([type], "library"));
   expect(report.registered_types).toEqual([type]);
   expect(report.unregistered_types).toEqual([]);
-  trackType(ctx, type, client);
   expect(
     (await client.getType(type)).data.provenance?.origin,
     "the server did not record the type as registered",

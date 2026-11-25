@@ -127,8 +127,7 @@ fn local_catalog(conn: &Connection) -> Result<(Vec<WireType>, Vec<Value>), CoreE
         let mut declared = marfa_rules::catalog::normalized_type(
             &serde_json::from_str(&json).map_err(unreadable)?,
         )?;
-        // A declaration is a registration, which the server records as
-        // registered; a declaration cannot name provenance itself.
+        // The server records an app's declaration as a registered type.
         if let Value::Object(row) = &mut declared {
             row.insert(
                 "provenance".into(),
@@ -314,9 +313,7 @@ fn held_type_rows(conn: &Connection) -> Result<Vec<TypeRow>, CoreError> {
     Ok(rows)
 }
 
-/// The creator identifies a sign-in and is outside the device catalog.
-/// Whether it was there. The members that remain keep their order, so a row
-/// compares equal to the one the catalog writes.
+/// Catalog versions ignore the sign-in that created a type but depend on member order.
 fn without_creator(json: &mut Map<String, Value>) -> bool {
     match json.get_mut("provenance") {
         Some(Value::Object(provenance)) => provenance.shift_remove("created_by").is_some(),

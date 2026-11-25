@@ -298,8 +298,7 @@ pub fn declaration(
             issue.message()
         )));
     }
-    // The server refuses a registration naming `provenance` as an unread key
-    // and records where a type came from itself.
+    // Only the server assigns provenance when it registers a type.
     if let Some(issue) = crate::schema::unread_keys(row)
         .into_iter()
         .find(|issue| issue.field == "provenance")
