@@ -3911,6 +3911,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(whole.ok && whole.value.scan.paused).toBe(3);
     const again = await a.folder.confirm();
     expect(again.ok && again.value.deleted).toBe(3);
+    expect((await a.folder.push()).ok).toBe(true);
     expect(ids.map((id) => deletesOf(a.server, id))).toEqual([
       1, 1, 0, 0, 1, 0,
     ]);
