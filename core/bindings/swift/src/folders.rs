@@ -1397,6 +1397,64 @@ mod tests {
         );
     }
 
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn a_folder_is_added_untracked_where_git_does_not_answer() {
+        use std::os::unix::fs::PermissionsExt;
+        let (url, key) = booted();
+        let folders = Folders::new(Some(url), Some(key), None).unwrap();
+        let folder = seeded_folder("binding git stalls");
+        let directory = scratch_directory();
+        let (bin, pids) = (scratch_directory(), scratch_directory());
+        let program = bin.path().join("git");
+        std::fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\necho $$ > {pids}/git\nexec /bin/sleep 30\n",
+                pids = pids.path().display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // SAFETY: nextest runs each test in a process of its own, and nothing
+        // else in this one reads the environment while it is set.
+        unsafe { std::env::set_var("PATH", bin.path()) };
+        let started = std::time::Instant::now();
+        let added = folders
+            .add(directory.path().display().to_string(), folder)
+            .unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        assert!(!added.git_tracked);
+        assert!(
+            folders
+                .list()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.dir == added.dir)
+        );
+        // No git is left running.
+        let pid: i32 = std::fs::read_to_string(pids.path().join("git"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let alive = |pid: i32| {
+            std::process::Command::new("/bin/kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        for _ in 0..200 {
+            if !alive(pid) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!alive(pid));
+    }
+
     fn registry() {
         static NAMED: std::sync::Once = std::sync::Once::new();
         NAMED.call_once(|| {
