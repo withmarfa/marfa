@@ -2398,9 +2398,9 @@ When a folder's query holds an item without a file and another registered direct
 
 ### `folder-files/moved-out-of-query-kept`
 
-When a person moves a folder's file into another registered directory whose query does not hold the item, a device MUST leave the file in that directory, kept as `unmatched` under `folder-files/unmatched-file-kept`.
+When a person moves a folder's file into another registered directory whose query does not hold the item, a device MUST leave the file in that directory.
 
-**Reason:** the person put the file there, so it stays where they put it. The directory it left still holds the item and writes its file again (`folder-files/moved-out-of-query-written-again`), and the person removes the file they moved with `marfa folders unmatched --remove` if they do not want it.
+**Reason:** the person put the file there, so it stays where they put it. Where the query leaves the item out other than by its state, the file is also counted as `unmatched` under `folder-files/unmatched-file-kept`. The directory it left still holds the item and writes its file again (`folder-files/moved-out-of-query-written-again`), and the person removes the file they moved with `marfa folders unmatched --remove` if they do not want it.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file moved to a folder that does not hold its item there, unmatched, and the folder it left writes its file again and keeps its placement`, `cli/folder.test.ts › keeps a note's file in the folder it was moved into when that folder's query leaves the note out by %s, and the folder it left writes its file again`.
 
