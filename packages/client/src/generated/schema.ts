@@ -8774,6 +8774,34 @@ export interface components {
                 };
             };
         };
+        /** @description An error response. */
+        StateConflictRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "state_conflict";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    /**
+                     * @description The state `from` named.
+                     * @enum {string}
+                     */
+                    expected: "active" | "archived" | "trashed";
+                    /**
+                     * @description The state the item is in now.
+                     * @enum {string}
+                     */
+                    actual: "active" | "archived" | "trashed" | "revoked";
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /** @description A batch a table's change log holds. */
         RowBatchEntry: {
             /**
@@ -12972,6 +13000,11 @@ export interface operations {
                      * @enum {string}
                      */
                     state: "active" | "archived" | "trashed";
+                    /**
+                     * @description The state you read the item in. If the item is in another state now, nothing moves and Marfa returns `409 state_conflict`. Leave it out to move the item from whichever state it is in.
+                     * @enum {string}
+                     */
+                    from?: "active" | "archived" | "trashed";
                 };
             };
         };
@@ -13021,7 +13054,7 @@ export interface operations {
             /**
              * @description - `invalid_transition`: the type's lifecycle doesn't allow the move, such as `trashed` to `archived`. Restore first.
              *     - `edge_constraint_violation`: a `block` edge holds an item that a move to `trashed` would take.
-             *     - `validation_error`: `state` is invalid, or the body has a field this endpoint doesn't take.
+             *     - `validation_error`: `state` or `from` is invalid, or the body has a field it doesn't take.
              *     - `missing_required_field`: `state` is missing.
              *     - `invalid_id`: the ID is not valid.
              */
@@ -13089,7 +13122,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTimeoutRefusal"];
                 };
             };
-            /** @description `version_conflict`: `version` differs from the item. `current` is the item now; nothing moved. */
+            /**
+             * @description - `version_conflict`: `version` differs from the item. `current` is the item now; nothing moved.
+             *     - `state_conflict`: the item is no longer in the state `from` names. `details.actual` is its state now; nothing moved.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13099,7 +13135,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["StateConflictRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */

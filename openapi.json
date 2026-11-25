@@ -12757,6 +12757,66 @@
         ],
         "description": "An error response."
       },
+      "StateConflictRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "state_conflict"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details.",
+                "properties": {
+                  "expected": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "archived",
+                      "trashed"
+                    ],
+                    "description": "The state `from` named."
+                  },
+                  "actual": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "archived",
+                      "trashed",
+                      "revoked"
+                    ],
+                    "description": "The state the item is in now."
+                  }
+                },
+                "required": [
+                  "expected",
+                  "actual"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
       "RowBatchEntry": {
         "type": "object",
         "description": "A batch a table's change log holds.",
@@ -20973,6 +21033,15 @@
                       "trashed"
                     ],
                     "description": "The state to move the item to."
+                  },
+                  "from": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "archived",
+                      "trashed"
+                    ],
+                    "description": "The state you read the item in. If the item is in another state now, nothing moves and Marfa returns `409 state_conflict`. Leave it out to move the item from whichever state it is in."
                   }
                 },
                 "required": [
@@ -21034,7 +21103,7 @@
             }
           },
           "400": {
-            "description": "- `invalid_transition`: the type's lifecycle doesn't allow the move, such as `trashed` to `archived`. Restore first.\n- `edge_constraint_violation`: a `block` edge holds an item that a move to `trashed` would take.\n- `validation_error`: `state` is invalid, or the body has a field this endpoint doesn't take.\n- `missing_required_field`: `state` is missing.\n- `invalid_id`: the ID is not valid.",
+            "description": "- `invalid_transition`: the type's lifecycle doesn't allow the move, such as `trashed` to `archived`. Restore first.\n- `edge_constraint_violation`: a `block` edge holds an item that a move to `trashed` would take.\n- `validation_error`: `state` or `from` is invalid, or the body has a field it doesn't take.\n- `missing_required_field`: `state` is missing.\n- `invalid_id`: the ID is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21145,13 +21214,16 @@
             }
           },
           "409": {
-            "description": "`version_conflict`: `version` differs from the item. `current` is the item now; nothing moved.",
+            "description": "- `version_conflict`: `version` differs from the item. `current` is the item now; nothing moved.\n- `state_conflict`: the item is no longer in the state `from` names. `details.actual` is its state now; nothing moved.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
                     {
                       "$ref": "#/components/schemas/ItemStaleVersion"
+                    },
+                    {
+                      "$ref": "#/components/schemas/StateConflictRefusal"
                     },
                     {
                       "$ref": "#/components/schemas/InstanceChangedRefusal"
