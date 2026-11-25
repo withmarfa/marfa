@@ -733,8 +733,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       ).toContain("the plan\n");
       expect(idIn(a, "Plan.md")).toBe(plan.id);
 
-      // Changed elsewhere, the item reaches the file of the folder that
-      // holds it.
       edges.events.push(
         copyItemEvent(
           String(edges.events.length + 2),
@@ -752,8 +750,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       expect(read(b, "Plan.md")).toContain("changed elsewhere\n");
       expect(edges.placements(b.settings.id).get(plan.id)).toBe("Plan.md");
 
-      // The witness: a file the person deletes in the folder it left, of an
-      // item no folder on the Mac holds a file of, is sent as a delete.
+      // Gone.md exercises the same deletion sweep.
       rmSync(join(a.dir, "Gone.md"));
       expect((await a.folder.push()).ok).toBe(true);
       await pastTheGrace();
@@ -913,8 +910,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       ]),
     );
 
-    // The person moves the file to the folder holding the item: the folder
-    // it left still has the file until then, and so its placement.
     retag(plan);
     expect((await a.folder.push()).ok).toBe(true);
     expect(
@@ -1065,8 +1060,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   it("writes its own file, and leaves the other directory of the folder its file, when a widened query brings an item back", async () => {
     const { a, b, left, query } = await sameFolderTwice("same-folder-widened");
     query('tags contains "vkeep"');
-    // The first directory is shut while the second pushes, so the second
-    // keeps its file whatever the first holds.
     chmodSync(a.dir, 0o000);
     try {
       await keptUnmatched(b, "the directory took the file away");
@@ -1189,8 +1182,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect((await b.folder.push()).ok).toBe(true);
     const moved = read(a, "Plan.md");
     renameSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
-    // The witness: a file the person deletes, found in no folder on the Mac,
-    // is sent as a delete.
+    // Gone.md exercises the same deletion sweep.
     rmSync(join(a.dir, "Gone.md"));
     const kept = await b.folder.push();
     expect(kept.ok && kept.value.pull?.unmatched).toBe(1);
@@ -1260,8 +1252,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect((await a.folder.push()).ok).toBe(true);
     expect(edges.placements(a.settings.id).get(photo.id)).toBe("photo.png");
 
-    // Retagged elsewhere: the other folder writes its own file, and the
-    // person removes the one the first folder keeps unmatched.
     edges.events.push(
       copyItemEvent(
         String(edges.events.length + 2),
@@ -1276,8 +1266,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       1,
     );
     rmSync(join(a.dir, "photo.png"));
-    // The first folder finds its file gone, past the grace, the item's file
-    // in the other folder, and lets its binding go.
     expect((await a.folder.push()).ok).toBe(true);
     await pastTheGrace();
     const swept = await a.folder.push();
@@ -1288,8 +1276,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     ).toBe(false);
     const creates = sentCreates(a).length;
 
-    // A copy put back where the file sat in the first folder is a new item:
-    // one item is never edited from two places.
     copyFileSync(join(b.dir, "photo.png"), join(a.dir, "photo.png"));
     const copied = await a.folder.push();
     expect(copied.ok, JSON.stringify(copied)).toBe(true);
@@ -1420,8 +1406,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       expect(idIn(b, "Plan.md")).toBe(plan.id);
       expect((await a.folder.push()).ok).toBe(true);
       await pastTheGrace();
-      // The folder the note left keeps the note's file unmatched, and the
-      // attachment beside it as the note's.
       for (const pass of ["first", "second"]) {
         const left = await a.folder.push();
         expect(left.ok, JSON.stringify(left)).toBe(true);
@@ -2865,8 +2849,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       expect(wrote.ok && wrote.value.pull?.written).toBe(1);
       expect(idIn(b, "Plan.md")).toBe(plan.id);
 
-      // Then it leaves the second folder too: archived, which the second
-      // folder's query leaves out, or by another tag.
       if (byState) {
         door.transition(plan.id, "archived");
         edges.events.push(
@@ -2895,8 +2877,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         caught.value.pull?.unmatched,
       ]).toEqual(byState ? [1, 0] : [0, 1]);
 
-      // The witness: a file the person deletes in the first folder, found in
-      // no folder on the Mac, is sent as a delete past the grace.
+      // Gone.md exercises the same deletion sweep.
       rmSync(join(a.dir, "Gone.md"));
       expect((await a.folder.push()).ok).toBe(true);
       await pastTheGrace();

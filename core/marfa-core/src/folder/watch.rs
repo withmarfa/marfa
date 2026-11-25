@@ -1361,9 +1361,7 @@ impl Folder {
         Ok(mark)
     }
 
-    /// Whether a pull changed nothing and left nothing that the next pull of
-    /// the same copy and record would read anew: a write it failed or held
-    /// back, or a file another folder may yet bind.
+    /// Pending work can change the next pull even if the working copy stays the same.
     fn left_nothing(&self, pull: &PullReport) -> bool {
         pull.written
             + pull.rewritten

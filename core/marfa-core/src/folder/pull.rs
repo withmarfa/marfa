@@ -629,8 +629,7 @@ impl Folder {
             }) {
                 continue;
             }
-            // Gone from the disk, an unmatched file is the scan's to journal,
-            // not the pull's to write back.
+            // The scan journals a missing unmatched file.
             if *unmatched
                 && bound
                     .as_ref()
@@ -638,9 +637,7 @@ impl Folder {
             {
                 continue;
             }
-            // A missing file the sweep kept bound is another folder's to bind,
-            // or a full pass's to tell; written anew it would read there as a
-            // copy. A file at a carried item's path is another, held file.
+            // Recreating the file before the receiving scan can turn a move into a copy.
             if let Some(bound) = &bound
                 && let Some((kept_for, why)) = kept.get(&bound.path)
                 && *kept_for == item.id
@@ -661,8 +658,7 @@ impl Folder {
                 }
                 continue;
             }
-            // Moved to another folder here and not yet bound there, written
-            // anew it would make the moved file read as a copy.
+            // Let the receiving directory bind the moved file first.
             if bound.is_none() && peers.arriving(&item.id) {
                 report.elsewhere += 1;
                 continue;

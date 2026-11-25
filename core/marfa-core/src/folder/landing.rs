@@ -323,8 +323,7 @@ fn land_flushed(
         }
         save_after_last_look(dir, target);
         write_after_last_look(dir, target);
-        crash_if_asked(target);
-        crash_if_named(target, "crash-before-copy-publish");
+        crash_if_named(target, "crash-before-rename");
         appear_at(dir, target, "create-before-rename")?;
         match (&read, guard) {
             (None, _) => {
@@ -1468,11 +1467,6 @@ pub(crate) fn withdraw_at(
     .map_err(RemoveError::Remove)?;
     guard.ledger.clear(&displacement);
     Ok(withdrawn)
-}
-
-/// A crash between a write's record and its rename, where a fixture asks.
-pub(crate) fn crash_if_asked(target: &Path) {
-    crash_if_named(target, "crash-before-rename");
 }
 
 pub(crate) fn crash_if_named(target: &Path, fault: &str) {

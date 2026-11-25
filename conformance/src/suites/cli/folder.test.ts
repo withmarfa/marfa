@@ -1925,8 +1925,7 @@ describe("a folder round trip", () => {
           join(left.folder, "Wander.md"),
           join(reached.folder, "Wander.md"),
         );
-        // The witness: a file the person deletes, found in no folder on the
-        // machine, is trashed past the grace.
+        // Gone.md exercises the same deletion sweep.
         rmSync(join(left.folder, "Gone.md"));
         await sync(reached.folder);
         expect(existsSync(join(reached.folder, "Wander.md"))).toBe(true);
@@ -1945,8 +1944,6 @@ describe("a folder round trip", () => {
           readFileSync(join(reached.folder, "Wander.md"), "utf8"),
           "the file the person moved was moved back, changed or removed",
         ).toBe(moved);
-        // Left out by a tag, the file is listed as unmatched; left out by
-        // its state, it is kept as a file of an item that left by its state.
         const again = await sync(reached.folder);
         expect(
           byState ? again.pull.kept : again.pull.unmatched,

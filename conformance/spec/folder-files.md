@@ -1650,7 +1650,7 @@ When an item leaves a folder’s query for a reason other than its state or purg
 
 When an item leaves a folder's query for a reason other than its state or purge and another registered directory that follows the same `system.folder` holds a file of the item, a device MUST retain the bound file.
 
-**Reason:** A directory that follows the same folder is a second copy of it, with the same query, which it may not have read yet, so its file of the item is not the file taken by another folder (`folder-files/unmatched-file-kept`). Taking the kept file away is the person's to confirm (`folder-guards/unmatched-remove-file`). A directory whose store cannot be read is not known to follow another folder, so the file stays.
+**Reason:** Directories that follow the same folder can read a query change at different times.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file as unmatched in both directories of one folder when its query narrows`, `› keeps a file as unmatched when its query narrows while the other directory of the folder cannot be read, and once it can`.
 
@@ -2400,7 +2400,7 @@ When a folder's query holds an item without a file and another registered direct
 
 When a person moves a folder's file into another registered directory whose query does not hold the item, a device MUST leave the file in that directory.
 
-**Reason:** the person put the file there, so it stays where they put it. Where the query leaves the item out other than by its state, the file is also counted as `unmatched` under `folder-files/unmatched-file-kept`. The directory it left still holds the item and writes its file again (`folder-files/moved-out-of-query-written-again`), and the person removes the file they moved with `marfa folders unmatched --remove` if they do not want it.
+**Reason:** Moving the file changes where the person keeps it without changing which queries hold its item.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file moved to a folder that does not hold its item there, unmatched, and the folder it left writes its file again and keeps its placement`, `cli/folder.test.ts › keeps a note's file in the folder it was moved into when that folder's query leaves the note out by %s, and the folder it left writes its file again`.
 
