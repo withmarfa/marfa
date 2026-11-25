@@ -188,6 +188,7 @@ pub fn restore(
         });
     let writer = writer_of(line.get("writer"));
     let trashed_by = writer_of(line.get("trashed_by"));
+    let state_writer = writer_of(line.get("state_writer"));
     let mark = mark_of(tx, item, archived_types)?;
     let key = title_key(&catalog.rules, type_id, &properties);
     let row = rows::insert_restored(
@@ -220,6 +221,7 @@ pub fn restore(
             last_activity_at: &last_activity_at,
             restored_at: restored_at.as_deref(),
             mark: mark.as_ref(),
+            state_writer: state_writer.as_ref(),
         },
     )?;
     references::archived(&properties, &lent).apply(tx, Row::Item(row.seq))?;

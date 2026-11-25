@@ -1762,6 +1762,96 @@ If `POST /items/{id}/purge` names a query parameter it does not declare, then th
 
 **Tests:** `compliance/purge-preconditions.test.ts › refuses a query parameter the purge operation does not declare, and purges nothing`.
 
+### `items/state-writer-field`
+
+When a credential sends `GET /items/{id}` with `include=writer` for an item it may read, the server MUST carry in `item` a `state_writer` holding the `kind`, `id` and `name` of the sign-in whose request last moved the item between active, archived and the bin, or `null` where no sign-in did.
+
+**Reason:** `writer` names who wrote the item's content (`versions/writer-current`), and a move between states writes no version (`versions/state-keeps-history`), so a client that shows who archived, trashed or restored an item needs its own answer.
+
+**Tests:** `compliance/state-writers.test.ts › answers the key that archived an item to another credential, and the one that brought it back`, `› answers the app that moved an item to the bin by the id and name its sign-in has`, `› answers the local command that restored an item from the bin`.
+
+### `items/state-writer-bulk`
+
+When a key sends `POST /items/bulk-get` with `writer` in `include`, the server MUST carry in each item of `data` a `state_writer` as `items/state-writer-field` states.
+
+**Tests:** `compliance/state-writers.test.ts › answers the key that archived an item to another credential, and the one that brought it back`, `› names the requester of a bulk trash, a bulk action and a restore that a bulk action runs`.
+
+### `items/state-writer-none`
+
+While an item has never moved between states, or a server job moved it last, the server MUST answer its `state_writer` as `null`.
+
+**Reason:** a server job, such as the feed's expiry, moves an item with no sign-in's request, so no sign-in is named for it.
+
+**Tests:** `compliance/state-writers.test.ts › answers null for an item that was created and has not moved, in any state it was created in`, `› answers null for an item the feed-expiry job moved to the bin, and the requester once it is restored`, `compliance/upgrade-from-release.test.ts › answers no state writer for an item v0.0.90 wrote, and names the sign-in that moves it after the upgrade`.
+
+### `items/state-writer-recorded`
+
+When a request moves an item between active, archived and the bin, the server MUST record the sign-in that sent the request as the item's `state_writer`, whichever operation moved it.
+
+**Reason:** the transition, the delete, the restore, a bulk write, a bulk action and the restore a bulk action runs each move state, and a door that recorded nothing would leave the previous mover named.
+
+**Tests:** `compliance/state-writers.test.ts › answers the key that archived an item to another credential, and the one that brought it back`, `› answers the app that moved an item to the bin by the id and name its sign-in has`, `› answers the local command that restored an item from the bin`, `› names the requester of a bulk trash, a bulk action and a restore that a bulk action runs`.
+
+### `items/state-writer-cascade`
+
+When a request moves an item into the bin or out of it together with other items, the server MUST record the sign-in that sent the request as the `state_writer` of each item the move takes.
+
+**Tests:** `compliance/state-writers.test.ts › names the requester for each item a move to the bin takes along, and for each a restore brings back`.
+
+### `items/state-writer-kept`
+
+When a write leaves an item's state as it is, whether an update, a patch, an upsert that names a state or a transition to the state the item is in, the server MUST leave the item's `state_writer` as it was.
+
+**Reason:** only a move between states makes a sign-in the one that last moved the item.
+
+**Tests:** `compliance/state-writers.test.ts › leaves it as it was for an update, a patch and an upsert that names a state, and for a transition to the state the item is in`.
+
+### `items/state-writer-opt-in`
+
+When `GET /items/{id}` or `POST /items/bulk-get` does not name `writer` in `include`, the server MUST NOT carry a `state_writer` in the item.
+
+**Reason:** the name of a sign-in shows the owner's other sign-ins to every credential that may read it (`versions/writer-field`), so an ordinary read does not widen who sees them.
+
+**Tests:** `compliance/state-writers.test.ts › leaves it off an item read that does not name writer, and off every other member`.
+
+### `items/state-writer-reach`
+
+If a credential may not read the type of an item, then the server MUST NOT name the item's `state_writer` to it on `GET /items/{id}` or `POST /items/bulk-get`.
+
+**Reason:** the credential reads it under the reach that decides whether it reads the item's `writer` (`versions/writer-current-reach`).
+
+**Tests:** `compliance/state-writers.test.ts › gives a key that may not read the item's type no state writer, and no refusal other than the item's`.
+
+### `items/state-writer-archive`
+
+When `GET /export?format=archive` carries an item, the server MUST carry the item's `state_writer` on the item's line, or `null` where it has none.
+
+**Tests:** `compliance/state-writers-archive.test.ts › carries the state writer on each item's line, null where the item never moved, and keeps it on restore`.
+
+### `items/state-writer-restore`
+
+When `POST /restore` writes an item whose line names a `state_writer`, the server MUST keep it as the item's `state_writer`.
+
+**Reason:** a restore puts back a history that others wrote, so the sign-in that restores it moved none of the items (`versions/writer-restore`).
+
+**Tests:** `compliance/state-writers-archive.test.ts › carries the state writer on each item's line, null where the item never moved, and keeps it on restore`.
+
+### `items/state-writer-restore-none`
+
+When `POST /restore` reads an item line that names no `state_writer`, the server MUST write the item with a `state_writer` of `null`.
+
+**Reason:** an archive an earlier release wrote names none, and a restore never refuses one for that.
+
+**Tests:** `compliance/state-writers-archive.test.ts › restores an archive that names no state writer with none, without refusing it`.
+
+### `items/state-writer-restore-bad`
+
+If an item line of an archive names a `state_writer` that is not `null` or a writer with a `kind` of `browser`, `app`, `key` or `local` and a non-empty `id` and `name`, then the server MUST answer `400 validation_error` naming the field and write nothing.
+
+**Reason:** the server checks an archived `state_writer` as it checks an archived `writer` (`versions/writer-restore`).
+
+**Tests:** `compliance/state-writers-archive.test.ts › refuses an archive that names a malformed state writer`.
+
 ## Bulk writes
 
 `POST /items/bulk` writes a page of entries. Under `atomic: true`, the default, a refused entry rolls the whole page back; under `atomic: false` a refused entry leaves the others. Either way the page is one transaction, which commits once. A refused entry is an entry `errored` on a best-effort page and the page's rollback on an atomic one.
