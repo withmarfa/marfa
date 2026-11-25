@@ -27,10 +27,7 @@ pub enum CliError {
     BinPartlyEmptied { purged: u64, error: Box<CliError> },
     /// Named by the first folder left unchanged; the lists say which folders
     /// forgot a remembered directory and which did not.
-    #[error(
-        "{}",
-        partly_forgotten(forgotten, unchanged)
-    )]
+    #[error("{}", partly_forgotten(forgotten, unchanged))]
     FoldersPartlyForgotten {
         forgotten: Vec<std::path::PathBuf>,
         unchanged: Vec<(std::path::PathBuf, String)>,
@@ -480,9 +477,7 @@ impl CliError {
             },
             CliError::CatchUp { error, .. }
             | CliError::BinPartlyEmptied { error, .. }
-            | CliError::FoldersPartlyForgotten { error, .. } => {
-                error.exit()
-            }
+            | CliError::FoldersPartlyForgotten { error, .. } => error.exit(),
             CliError::Core(core) => match core {
                 CoreError::RenewalFailed(cause) => CliError::from(*cause.clone()).exit(),
                 CoreError::Redirected { .. }
