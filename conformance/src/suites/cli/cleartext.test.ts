@@ -2,9 +2,10 @@ import { createServer } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { networkInterfaces } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ChildProcess } from "node:child_process";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { cleanup } from "../../utils/setup.js";
@@ -25,6 +26,17 @@ import { tempFolder } from "../../utils/temp-folder.js";
  * command is still waiting when the scenario reads what it has said, which
  * is how "before it sends" is seen.
  */
+
+const OLDEST = /OLDEST_SERVER: &str = "(\d+\.\d+\.\d+)"/.exec(
+  readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../../../core/marfa-rules/src/release.rs",
+    ),
+    "utf8",
+  ),
+)?.[1];
+if (OLDEST === undefined) throw new Error("the core names no oldest server");
 
 let c: CliContext;
 let dir: string;
@@ -97,7 +109,7 @@ class Listener {
           "x-marfa-contract": "0",
         });
         response.end(
-          JSON.stringify({ instance_id: randomUUID(), version: "0.0.91" }),
+          JSON.stringify({ instance_id: randomUUID(), version: OLDEST }),
         );
         return;
       }
