@@ -11,3 +11,12 @@
 # The macOS runner had no go, which the release needs to read the Go modules of
 # the bundled tunnel connector, so the macOS build failed. Nothing was published.
 0.0.91
+
+# A new contract fixture (table-rows-kept-sort) expected a key fill to key every
+# row, and its retry inherited an armed fault, so CI on the tagged commit failed
+# and the release refused it. Nothing was published. Fixed by #3555.
+0.0.106
+
+# Tagged at #3555's commit while 0.0.106 was still unreleased, so "Read the
+# version" refused it. Nothing was published.
+0.0.107
