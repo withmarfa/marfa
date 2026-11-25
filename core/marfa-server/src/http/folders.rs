@@ -9,11 +9,12 @@ use serde_json::{Map, Value};
 
 use super::answer::{Answer, text_answer};
 use super::body::{Bag, JsonBody, ReadBody};
-use super::items::{Named, Sent, check_item_id, keyed, version_of};
+use super::items::{Named, Sent, check_item_id, invalid_field, keyed, version_of};
 use super::listing::{Params, whole_limit};
 use super::query;
 use crate::app::App;
 use crate::app::access::{Caller, Level, unauthorized};
+use crate::app::edges;
 use crate::app::folders::{self, FOLDER_TYPE, Page, Report, SETTINGS, refuse_null, undeclared};
 use crate::app::items::write::{self, Change, FolderChange, ruled};
 use crate::app::refusal::{Refusal, Result};
@@ -161,6 +162,26 @@ pub async fn status(
     query::only(&uri, &[])?;
     check_item_id(&id)?;
     let answer = folders::read(&app, &caller, id).await?;
+    Ok(text_answer(StatusCode::OK, answer))
+}
+
+pub async fn directories(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Named(id): Named<String>,
+    uri: Uri,
+) -> Answer {
+    caller.require_reach()?;
+    let params = Params::read(&uri, &["under"], false)?;
+    check_item_id(&id)?;
+    let under = params.one("under")?.unwrap_or_default();
+    let under = edges::under_names(under).ok_or_else(|| {
+        invalid_field(
+            "under",
+            "under is a path below the folder's root: no leading slash, no .. name and at most 1024 characters.",
+        )
+    })?;
+    let answer = folders::directories(&app, &caller, id, under).await?;
     Ok(text_answer(StatusCode::OK, answer))
 }
 

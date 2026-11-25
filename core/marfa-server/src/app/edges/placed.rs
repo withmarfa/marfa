@@ -1,0 +1,121 @@
+//! A folder's placed files counted by directory, from the `path` of each `in-folder` edge.
+
+use std::collections::BTreeMap;
+
+use rusqlite::Transaction;
+
+use super::read::from_reach;
+use super::rows::{self, Placed};
+use crate::app::access::Caller;
+use crate::app::catalog::Catalog;
+use crate::app::refusal::{Refusal, Result};
+
+const MOST_CHARACTERS: usize = 1024;
+
+pub struct Directory {
+    pub path: String,
+    pub direct_files: i64,
+    pub all_files: i64,
+    pub has_directories: bool,
+}
+
+pub struct Tree {
+    pub direct_files: i64,
+    pub total_files: i64,
+    pub directories: Vec<Directory>,
+}
+
+fn names(path: &str) -> impl Iterator<Item = &str> {
+    path.split('/')
+        .filter(|name| !name.is_empty() && *name != ".")
+}
+
+/// The names of a directory path read as a placement path is, or `None` where it leaves the folder.
+pub fn under_names(text: &str) -> Option<Vec<String>> {
+    if text.chars().count() > MOST_CHARACTERS
+        || marfa_rules::edges::depth_inside_folder(text).is_none()
+    {
+        return None;
+    }
+    Some(names(text).map(str::to_string).collect())
+}
+
+#[derive(Default)]
+struct Children(BTreeMap<String, (i64, i64)>);
+
+impl Children {
+    fn add(&mut self, name: &str, direct: i64, deeper: i64) {
+        let held = self.0.entry(name.to_string()).or_default();
+        held.0 += direct;
+        held.1 += deeper;
+    }
+}
+
+/// Counts each placed file read by name where it sits: a file in `under`, or in a directory under it.
+fn count_by_name(
+    path: &str,
+    under: &[String],
+    here: &mut i64,
+    children: &mut Children,
+) -> Result<()> {
+    let mut path: Vec<&str> = names(path).collect();
+    if path.pop().is_none() {
+        return Err(Refusal::internal("a stored placement names no file"));
+    }
+    if path.len() < under.len() || path.iter().zip(under).any(|(name, held)| name != held) {
+        return Ok(());
+    }
+    match path.get(under.len()) {
+        None => *here += 1,
+        Some(name) if path.len() == under.len() + 1 => children.add(name, 1, 0),
+        Some(name) => children.add(name, 0, 1),
+    }
+    Ok(())
+}
+
+/// The directories directly under `under`, and the files placed there and in the whole folder.
+pub fn directories(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    catalog: &Catalog,
+    folder_id: &str,
+    under: &[String],
+) -> Result<Tree> {
+    let reach = from_reach(tx, caller, catalog)?;
+    let mut prefix = under.join("/");
+    if !prefix.is_empty() {
+        prefix.push('/');
+    }
+    let Placed {
+        tallies,
+        tidy,
+        untidy,
+    } = rows::placed(tx, folder_id, &prefix, reach.as_ref())?;
+    let (mut here, mut children, mut total) = (0, Children::default(), tidy);
+    for tally in tallies {
+        match tally.name {
+            Some(name) => children.add(&name, tally.direct, tally.deeper),
+            None => here += tally.direct,
+        }
+    }
+    for path in untidy {
+        let path = path.ok_or_else(|| Refusal::internal("a stored placement has no path"))?;
+        count_by_name(&path, under, &mut here, &mut children)?;
+        total += 1;
+    }
+    let directories = children
+        .0
+        .into_iter()
+        .map(|(name, (direct, deeper))| Directory {
+            path: format!("{prefix}{name}"),
+            direct_files: direct,
+            all_files: direct + deeper,
+            has_directories: deeper > 0,
+        })
+        .collect();
+    Ok(Tree {
+        direct_files: here,
+        total_files: total,
+        directories,
+    })
+}

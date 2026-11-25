@@ -1748,6 +1748,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/folders/{id}/directories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get folder directories
+         * @description Returns the directories directly under a path in a folder, each with the placed files it holds, and the files placed at that path and in the whole folder. A placed file is an item with an `in-folder` edge to the folder, out of the bin.
+         */
+        get: operations["getFolderDirectories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/views": {
         parameters: {
             query?: never;
@@ -10680,6 +10700,54 @@ export interface components {
             removed_types: number;
             /** @description How many items of the namespace are left. Call again until it is `0`. */
             remaining_items: number;
+        };
+        /** @description A directory below a folder's root, with how many placed files it holds. */
+        FolderDirectory: {
+            /**
+             * @description The directory's path from the folder's root, with `/` between names.
+             * @example notes/2026
+             */
+            path: string;
+            /**
+             * @description How many placed files sit directly in the directory.
+             * @example 1
+             */
+            direct_files: number;
+            /**
+             * @description How many placed files sit in the directory and in every directory beneath it.
+             * @example 3
+             */
+            all_files: number;
+            /**
+             * @description `true` if a placed file sits in a directory beneath this one.
+             * @example true
+             */
+            has_directories: boolean;
+        };
+        /** @description The directories directly under a path in a folder, with counts of placed files. */
+        FolderDirectories: {
+            /**
+             * @description The ID of the folder.
+             * @example 01920000-0000-7000-8000-000000000002
+             */
+            folder_id: string;
+            /**
+             * @description The path the answer is for, tidied: empty for the top level, otherwise names joined by `/`.
+             * @example notes
+             */
+            under: string;
+            /**
+             * @description How many placed files sit directly at `under`.
+             * @example 2
+             */
+            direct_files: number;
+            /**
+             * @description How many placed files the folder holds in all, whatever `under` is.
+             * @example 8
+             */
+            total_files: number;
+            /** @description The directories directly under `under`, in order of path. Empty where no placed file lies beneath `under`. */
+            directories: components["schemas"]["FolderDirectory"][];
         };
     };
     responses: never;
@@ -32440,6 +32508,166 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    getFolderDirectories: {
+        parameters: {
+            query?: {
+                /** @description The root-relative path of the directory whose subdirectories to list, such as `notes/2026`. Leave it out for the folder's top level. A path with no placed file under it answers no directories. */
+                under?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The ID of the folder. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the directories under the path, with the file counts. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "folder_id": "01920000-0000-7000-8000-000000000002",
+                     *       "under": "notes",
+                     *       "direct_files": 2,
+                     *       "total_files": 8,
+                     *       "directories": [
+                     *         {
+                     *           "path": "notes/2026",
+                     *           "direct_files": 1,
+                     *           "all_files": 3,
+                     *           "has_directories": true
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["FolderDirectories"];
+                };
+            };
+            /**
+             * @description - `invalid_id`: the folder ID is malformed.
+             *     - `validation_error`: `under` leaves the folder (a leading slash, a `..` name, a backslash, or a drive) or is over 1024 characters, or the query names another parameter.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /**
+             * @description - `type_not_permitted`: your credential reads no type.
+             *     - `edge_type_not_permitted`: you can't read the `in-folder` edge type.
+             */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
+                };
+            };
+            /** @description - `item_not_found`: the folder does not exist or you cannot read it. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemNotFoundRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */

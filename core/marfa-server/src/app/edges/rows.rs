@@ -175,6 +175,91 @@ pub(super) fn kinds_at(
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
+/// A placement path the tally reads in SQL only when it holds no empty or `.` name.
+const UNTIDY: &str = "p IS NULL OR instr(p, '//') > 0 OR instr(p, '/./') > 0 \
+     OR p GLOB './*' OR p GLOB '*/.' OR p GLOB '*/' OR p = '.'";
+
+/// The files directly in one directory under a prefix, and in the directories beneath it.
+pub(super) struct Tally {
+    /// The directory's name, or `None` for the files that sit directly under the prefix.
+    pub name: Option<String>,
+    pub direct: i64,
+    pub deeper: i64,
+}
+
+pub(super) struct Placed {
+    pub tallies: Vec<Tally>,
+    /// Every placed file whose path holds no empty or `.` name, under the prefix or not.
+    pub tidy: i64,
+    /// The path of each placed file left to read by name, `None` where an edge holds none.
+    pub untidy: Vec<Option<String>>,
+}
+
+/// The live `in-folder` edges of a folder from items in reach and out of the bin, grouped by the
+/// directory of their `path` under `prefix`, which is empty or ends in `/`.
+pub(super) fn placed(
+    tx: &Transaction<'_>,
+    folder: &str,
+    prefix: &str,
+    from: Option<&Reach>,
+) -> Result<Placed> {
+    let mut sql = Sql::new(
+        "WITH placed(p) AS MATERIALIZED (SELECT json_extract(e.properties, '$.path') \
+         FROM edges e JOIN items f ON f.id = e.from_id WHERE e.to_id = ",
+    );
+    sql.bind(folder.to_string());
+    sql.push(" AND e.edge_type = 'in-folder' AND f.state <> 'trashed'");
+    if let Some(reach) = from {
+        sql.push(" AND ");
+        reach.clause(&mut sql, "f", false);
+    }
+    let kept = prefix.chars().count();
+    sql.push(&format!(
+        "), tidy AS (SELECT p FROM placed WHERE NOT ({UNTIDY})), \
+         cut AS (SELECT r, instr(r, '/') AS s FROM (SELECT substr(p, {}) AS r FROM tidy",
+        kept + 1
+    ));
+    if !prefix.is_empty() {
+        sql.push(&format!(" WHERE substr(p, 1, {kept}) = "));
+        sql.bind(prefix.to_string());
+    }
+    sql.push(
+        ")) SELECT 0, CASE WHEN s > 0 THEN substr(r, 1, s - 1) END, \
+         SUM(s > 0 AND instr(substr(r, s + 1), '/') = 0), \
+         SUM(s > 0 AND instr(substr(r, s + 1), '/') > 0), SUM(s = 0) FROM cut \
+         GROUP BY 2 \
+         UNION ALL SELECT 1, NULL, COUNT(*), 0, 0 FROM tidy \
+         UNION ALL SELECT 2, p, 0, 0, 0 FROM placed WHERE ",
+    );
+    sql.push(UNTIDY);
+    let mut statement = tx.prepare_cached(&sql.text)?;
+    let mut found = statement.query(params_from_iter(&sql.values))?;
+    let mut placed = Placed {
+        tallies: Vec::new(),
+        tidy: 0,
+        untidy: Vec::new(),
+    };
+    while let Some(row) = found.next()? {
+        match row.get::<_, i64>(0)? {
+            0 => {
+                let name: Option<String> = row.get(1)?;
+                let direct = match name {
+                    Some(_) => row.get(2)?,
+                    None => row.get(4)?,
+                };
+                placed.tallies.push(Tally {
+                    deeper: row.get(3)?,
+                    name,
+                    direct,
+                });
+            }
+            1 => placed.tidy = row.get(2)?,
+            _ => placed.untidy.push(row.get(1)?),
+        }
+    }
+    Ok(placed)
+}
+
 pub(super) type Position = (String, String);
 
 #[derive(Clone, Copy)]

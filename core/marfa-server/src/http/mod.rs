@@ -320,6 +320,7 @@ fn folder_status_doors(app: Arc<App>) -> Routes {
             "/folders/{id}/status",
             put(folders::report).get(folders::status),
         )
+        .route("/folders/{id}/directories", get(folders::directories))
         .admitting(app, Admission::Presented)
 }
 

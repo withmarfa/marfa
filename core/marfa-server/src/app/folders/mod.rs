@@ -1,10 +1,12 @@
 //! Folder settings and per-copy sync reports.
 
+mod directories;
 mod inventory;
 mod report;
 mod settings;
 mod status;
 
+pub use directories::read as directories;
 pub use inventory::{Page, list};
 pub use report::Report;
 pub use settings::{
