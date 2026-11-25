@@ -3047,9 +3047,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     );
     const left = await a.folder.push();
     expect(left.ok && left.value.pull?.unmatched).toBe(1);
-    // That release moved the file the folder kept into the folder that came
-    // to hold its item, bound it there as written by that folder, and kept
-    // nothing of where it came from.
+    // A same-volume take-in preserved the source file's identity.
     renameSync(join(a.dir, "Plan.md"), join(b.dir, "Plan.md"));
     rmSync(join(a.dir, "Gone.md"));
     expect((await b.folder.push()).ok).toBe(true);
