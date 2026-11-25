@@ -113,6 +113,55 @@ fn a_displacement_a_stopped_run_left_is_settled_by_the_next_scan() {
 }
 
 #[test]
+fn a_displacement_in_another_folders_directory_puts_the_persons_save_back() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    let other = tempfile::tempdir_in(root.join("..")).unwrap();
+    let other = other.path().canonicalize().unwrap();
+    let target = other.join("Recovery.md");
+    std::fs::write(&target, "as the server has it\n").unwrap();
+    let read = object_of(&target);
+    // A removal of the other folder's file, recorded here by its absolute
+    // directory, stopped after the move aside; the person saved after its
+    // last look.
+    let kept = other.join(".marfa-kept-00000000000000000000000000000004.tmp");
+    std::fs::rename(&target, &kept).unwrap();
+    std::fs::write(&kept, "as the server has it\nthe person's edit\n").unwrap();
+    let place = other.to_string_lossy().into_owned();
+    state::set_displaced(
+        &folder.core.conn().unwrap(),
+        &state::Displaced {
+            dir: place.clone(),
+            dir_at: at(&other),
+            aside: place,
+            aside_at: at(&other),
+            displacement: Displacement {
+                id: "4".into(),
+                kind: Kind::Withdraw,
+                target: "Recovery.md".into(),
+                kept: kept.file_name().unwrap().to_string_lossy().into_owned(),
+                ours: None,
+                read,
+            },
+        },
+    )
+    .unwrap();
+
+    let report = folder.scan().unwrap();
+    assert_eq!(
+        std::fs::read(&target).unwrap(),
+        b"as the server has it\nthe person's edit\n"
+    );
+    assert!(!kept.exists());
+    assert!(kept_flags(&report).is_empty(), "{:?}", report.flagged);
+    assert!(
+        state::displaced(&folder.core.conn().unwrap())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn a_save_kept_beside_its_path_after_a_stopped_run_is_reported_once() {
     let (dir, folder) = scanned_folder();
     let root = dir.path().canonicalize().unwrap();

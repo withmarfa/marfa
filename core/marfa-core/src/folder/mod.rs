@@ -1467,7 +1467,8 @@ fn settle_row(
         dir_at: row.dir_at,
         aside: aside_place.to_string(),
         aside_at: row.aside_at,
-        follow: (dir_place != row.dir).then(|| Follow {
+        // An absolute `dir` is another folder's, with no binding here to follow.
+        follow: (dir_place != row.dir && !Path::new(&row.dir).is_absolute()).then(|| Follow {
             from: joined(&row.dir, &row.displacement.target),
             dir,
             name: target,
@@ -1617,8 +1618,7 @@ impl Folder {
         })
     }
 
-    /// The directory a displacement row names, relative to the root or in
-    /// the folder's state, where it is still the directory `at` names. Another directory at that path answers as not found.
+    /// A replacement at the recorded path counts as a missing directory.
     fn displaced_dir(&self, place: &str, at: (u64, u64)) -> std::io::Result<Directory> {
         let directory = self.place_dir(place)?;
         if !same_directory(
@@ -1634,10 +1634,14 @@ impl Folder {
         Ok(directory)
     }
 
-    /// The directory a row names by `place`, whatever directory has that name.
+    /// The directory a row names by `place`, whatever directory has that
+    /// name. An absolute `place` is another folder's directory, where a
+    /// displacement recorded here moved that folder's file aside.
     fn place_dir(&self, place: &str) -> std::io::Result<Directory> {
         let place = Path::new(place);
-        Ok(if place.as_os_str().is_empty() {
+        Ok(if place.is_absolute() {
+            Directory::open(place)?
+        } else if place.as_os_str().is_empty() {
             self.root_dir.clone()
         } else if let Ok(below) = place.strip_prefix(STATE_DIR) {
             if below.as_os_str().is_empty() {
@@ -1665,7 +1669,7 @@ impl Folder {
         Ok(state::displaced(&*self.core.conn()?)?
             .into_iter()
             .flatten()
-            .filter(|row| self.displaced_away(row))
+            .filter(|row| !Path::new(&row.dir).is_absolute() && self.displaced_away(row))
             .map(|row| joined(&row.dir, &row.displacement.target))
             .collect())
     }
