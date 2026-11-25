@@ -1172,21 +1172,13 @@ When a folder is registered, a device MUST record the identity of the directory 
 
 **Reason:** The path alone cannot say whether the directory standing there is the one the folder was admitted at. The identity is an opaque value in each `folders list --json` entry, as `root`, which a program compares for equality and does not parse.
 
-**Tests:** `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and keeps one that records none until it is removed`.
+**Tests:** `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and drops one that records none once its state is removed`.
 
 ### `folder-setup/registry-removed-state`
 
-When a registry read finds that the directory at a listed folder’s path holds no folder state and is the directory the folder's entry records it was admitted at, a device MUST remove that directory’s registry entry.
+When a registry read finds that the directory at a listed folder’s path holds no folder state and is not known to differ from the directory the folder was admitted at, a device MUST remove that directory’s registry entry.
 
-**Tests:** `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`, `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and keeps one that records none until it is removed`.
-
-### `folder-setup/registry-rootless-kept`
-
-When a registry read finds that a listed folder’s entry records no identity of the directory the folder was admitted at, a device MUST retain the entry, whatever the directory at its path holds.
-
-**Reason:** an empty directory at the path, such as the mount point of a volume that is not mounted, cannot be told from the folder's directory with its state removed. `folders remove` takes the entry off.
-
-**Tests:** `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and keeps one that records none until it is removed`.
+**Tests:** `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`, `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and drops one that records none once its state is removed`.
 
 ### `folder-setup/registry-replaced-kept`
 

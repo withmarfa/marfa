@@ -787,29 +787,25 @@ mod tests {
     }
 
     #[test]
-    fn a_remembered_peer_is_dropped_only_where_its_admitted_directory_holds_no_state() {
+    fn a_remembered_peer_with_no_identity_whose_state_was_removed_is_dropped() {
         let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let make = |dir: &Path, folder: &str| {
             std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
             let core = Core::open(dir.join(STATE_DIR).join("core.sqlite"), None).unwrap();
             super::super::settings_file::bind(&core, folder).unwrap();
         };
-        let identity = |dir: &Path| {
-            Directory::open(dir)
-                .unwrap()
-                .metadata()
-                .ok()
-                .and_then(|metadata| identity::of(&metadata))
-                .map(|identity| identity.key())
-        };
         let own = temp.path().join("own");
-        let rootless = temp.path().join("rootless");
         let removed = temp.path().join("removed");
         let replaced = temp.path().join("replaced");
         make(&own, "01a00000-0000-7000-8000-0000000000a1");
-        make(&rootless, "01a00000-0000-7000-8000-0000000000a2");
-        make(&removed, "01a00000-0000-7000-8000-0000000000a3");
-        make(&replaced, "01a00000-0000-7000-8000-0000000000a4");
+        make(&removed, "01a00000-0000-7000-8000-0000000000a2");
+        make(&replaced, "01a00000-0000-7000-8000-0000000000a3");
+        let identity = Directory::open(&replaced)
+            .unwrap()
+            .metadata()
+            .ok()
+            .and_then(|metadata| identity::of(&metadata))
+            .map(|identity| identity.key());
         let remembered = |dir: &Path, folder: &str, root: Option<String>| Registered {
             dir: dir.to_path_buf(),
             folder: folder.to_string(),
@@ -817,12 +813,9 @@ mod tests {
             root,
         };
         let known = vec![
-            remembered(&rootless, "rootless", None),
-            remembered(&removed, "removed", identity(&removed)),
-            remembered(&replaced, "replaced", identity(&replaced)),
+            remembered(&removed, "removed", None),
+            remembered(&replaced, "replaced", identity),
         ];
-        // As an unmounted volume's empty mount point looks.
-        std::fs::remove_dir_all(rootless.join(STATE_DIR)).unwrap();
         std::fs::remove_dir_all(removed.join(STATE_DIR)).unwrap();
         std::fs::rename(&replaced, temp.path().join("replaced-away")).unwrap();
         std::fs::create_dir(&replaced).unwrap();
@@ -837,16 +830,12 @@ mod tests {
         let peers = Peers::of(&folder, None);
         let remaining: Vec<&Path> = peers.all().iter().map(|peer| peer.root.as_path()).collect();
         assert!(
-            remaining.contains(&rootless.as_path()),
-            "a remembered folder with no identity whose path holds no state was dropped"
+            !remaining.contains(&removed.as_path()),
+            "a remembered folder with no identity whose state was removed stayed a peer"
         );
         assert!(
             remaining.contains(&replaced.as_path()),
             "a remembered folder whose directory was replaced by an empty one was dropped"
-        );
-        assert!(
-            !remaining.contains(&removed.as_path()),
-            "a remembered folder whose own directory holds no state stayed a peer"
         );
     }
 

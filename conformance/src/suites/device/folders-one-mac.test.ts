@@ -3267,15 +3267,11 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
 
     // A hand-written duplicate reads once, however its directory is spelled.
     const written = JSON.parse(readFileSync(harness.registry, "utf8")) as {
-      folders: Array<{ dir: string; folder: string; root?: string }>;
+      folders: Array<{ dir: string; folder: string }>;
     };
     const [entry] = written.folders;
     if (entry === undefined) throw new Error("the registry lists nothing");
-    written.folders.push(entry, {
-      dir: harness.dir,
-      folder: entry.folder,
-      root: entry.root,
-    });
+    written.folders.push(entry, { dir: harness.dir, folder: entry.folder });
     writeFileSync(harness.registry, JSON.stringify(written));
     const once = await harness.folder.list();
     expect(once.ok && once.value.length, "an entry was listed twice").toBe(1);
@@ -3526,7 +3522,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     }
   });
 
-  it("lists each folder with the identity of the directory it opened, and keeps one that records none until it is removed", async () => {
+  it("lists each folder with the identity of the directory it opened, and drops one that records none once its state is removed", async () => {
     const { a, b } = await onOneMac(
       "root-recorded",
       { query: { types: ["core.note"] } },
@@ -3551,8 +3547,9 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       "folders list does not show the identity of each directory",
     ).toEqual([...roots].sort());
 
-    // An entry without one stays while its path holds no state, as an
-    // unmounted volume's empty mount point does, until `folders remove`.
+    // An entry without one is judged by what its path holds: its folder
+    // stays while the state is there and goes once the state is removed, so
+    // it is not listed forever, and does not hold up the other folders.
     const written = JSON.parse(readFileSync(a.registry, "utf8")) as {
       folders: Array<{ dir: string; folder: string; root?: string }>;
     };
@@ -3565,19 +3562,11 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     ).toEqual([a.settings.id, b.settings.id].sort());
     writeFileSync(a.registry, JSON.stringify(written));
     rmSync(join(a.dir, ".marfa"), { recursive: true, force: true });
-    const kept = await b.folder.list();
-    expect(kept.ok, JSON.stringify(kept)).toBe(true);
-    expect(
-      kept.ok && kept.value.map((entry) => entry.folder).sort(),
-      "an entry that records no directory was taken off the list for a path that holds no state",
-    ).toEqual([a.settings.id, b.settings.id].sort());
-    const unlisted = await a.folder.remove();
-    expect(unlisted.ok, JSON.stringify(unlisted)).toBe(true);
-    expect(unlisted.ok && unlisted.value.removed).toBe(false);
     const dropped = await b.folder.list();
+    expect(dropped.ok, JSON.stringify(dropped)).toBe(true);
     expect(
       dropped.ok && dropped.value.map((entry) => entry.folder),
-      "folders remove left an entry that records no directory listed",
+      "an entry that records no directory stayed listed after its state was removed",
     ).toEqual([b.settings.id]);
 
     // A pass records the identity, and a directory that then replaces the
@@ -3952,6 +3941,108 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     }
     const swept = await a.folder.push();
     expect(swept.ok && swept.value.scan.trashed).toEqual(["Gone.md"]);
+  });
+
+  it("holds a delete as unsure while another directory of the folder cannot be read", async () => {
+    const gone = "01a00000-0000-7000-8000-0000000040f2";
+    const { a } = await onOneMac(
+      "partial-own-walk",
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          { item: { id: gone, properties: { title: "Gone", body: "g\n" } } },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    const shut = join(a.dir, "Shut");
+    mkdirSync(shut);
+    chmodSync(shut, 0o000);
+    try {
+      rmSync(join(a.dir, "Gone.md"));
+      expect((await a.folder.push()).ok).toBe(true);
+      await pastTheGrace();
+      expect((await a.folder.push()).ok).toBe(true);
+      const status = await a.folder.status();
+      expect(status.ok, JSON.stringify(status)).toBe(true);
+      if (!status.ok) return;
+      const file = status.value.files.find((entry) => entry.path === "Gone.md");
+      expect(
+        [file?.status, file?.flag],
+        "a delete deferred while a directory of the folder cannot be read was shown waiting to be sent",
+      ).toEqual(["held", "unsure"]);
+      expect(lastReport(a).problems).toContainEqual({
+        code: "held_file",
+        count: 1,
+      });
+      expect(deletesOf(a.server, gone)).toBe(0);
+    } finally {
+      chmodSync(shut, 0o755);
+    }
+    // The witness: read whole, the delete is sent once the grace runs out.
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok && swept.value.scan.trashed).toEqual(["Gone.md"]);
+    expect(deletesOf(a.server, gone)).toBe(1);
+  });
+
+  it("starts the grace of a held delete again after a pass that could not read its directory", async () => {
+    const gone = "01a00000-0000-7000-8000-0000000040f3";
+    const { a, b } = await onOneMac(
+      "unread-grace",
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          { item: { id: gone, properties: { title: "Gone", body: "g\n" } } },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    const sub = join(a.dir, "sub");
+    mkdirSync(sub);
+    const file = join(sub, "Gone.md");
+    renameSync(join(a.dir, "Gone.md"), file);
+    expect((await a.folder.scan()).ok).toBe(true);
+    const bytes = readFileSync(file);
+    const shut = join(b.dir, "Shut");
+    mkdirSync(shut);
+    chmodSync(shut, 0o000);
+    try {
+      rmSync(file);
+      expect((await a.folder.push()).ok).toBe(true);
+      await pastTheGrace();
+      const held = await a.folder.push();
+      expect(held.ok && held.value.scan.unsure.map((it) => it.path)).toEqual([
+        "sub/Gone.md",
+      ]);
+      // Back while its directory cannot be read, and the grace runs out.
+      writeFileSync(file, bytes);
+      chmodSync(sub, 0o000);
+      try {
+        const unread = await a.folder.push();
+        expect(unread.ok && unread.value.scan.swept).toBe(false);
+        await pastTheGrace();
+      } finally {
+        chmodSync(sub, 0o755);
+      }
+    } finally {
+      chmodSync(shut, 0o755);
+    }
+    rmSync(file);
+    const again = await a.folder.push();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(
+      deletesOf(a.server, gone),
+      "a delete was sent at once for a file a pass could not see come back and go again",
+    ).toBe(0);
+    // The witness: once the grace runs out again, the delete is sent.
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok && swept.value.scan.trashed).toEqual(["sub/Gone.md"]);
+    expect(deletesOf(a.server, gone)).toBe(1);
   });
 
   it("keeps two folders' files for one item editable", async () => {

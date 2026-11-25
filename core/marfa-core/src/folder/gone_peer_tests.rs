@@ -277,3 +277,47 @@ fn a_pass_that_cannot_read_a_held_files_directory_restarts_its_grace() {
     let swept = a.scan().unwrap();
     assert_eq!(swept.trashed, ["sub/held.txt"], "{swept:?}");
 }
+
+/// The delete a pass defers while another directory of the folder cannot be
+/// read is held, and is no delete waiting to be sent.
+#[test]
+fn a_missing_file_reads_as_held_while_another_directory_of_the_folder_cannot_be_read() {
+    let (_, _guard) = registry::tests::own_registry();
+    let (dir, folder) = folder_with(
+        "01a00000-0000-7000-8000-0000000035b6",
+        json!({ "query": {} }),
+        None,
+    );
+    std::fs::create_dir(dir.path().join("sub")).unwrap();
+    for name in ["gone.txt", "sub/kept.txt"] {
+        std::fs::write(dir.path().join(name), name).unwrap();
+    }
+    assert_eq!(folder.scan().unwrap().created, 2);
+    for name in ["gone.txt", "sub/kept.txt"] {
+        landed(&folder, name);
+    }
+    std::fs::remove_file(dir.path().join("gone.txt")).unwrap();
+    {
+        let _sealed = crate::test_folders::locked(dir.path().join("sub"), 0o000);
+        let unread = folder.scan().unwrap();
+        assert!(!unread.swept && unread.missing == 0, "{unread:?}");
+        let status = folder.status().unwrap();
+        assert_eq!(
+            held(&status, "gone.txt"),
+            Some(("held", Some("unsure"))),
+            "a delete deferred while a directory cannot be read reads as waiting to be sent"
+        );
+        folder.health_observe(true, false, None, None, false);
+        let observed = folder.observed_health().unwrap();
+        assert!(
+            observed.problems.contains(&Problem {
+                code: Code::HeldFile,
+                count: 1
+            }),
+            "{observed:?}"
+        );
+    }
+    // The witness: read whole, the delete waits to be sent.
+    let status = folder.status().unwrap();
+    assert_eq!(held(&status, "gone.txt"), Some(("waiting", None)));
+}

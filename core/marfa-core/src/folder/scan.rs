@@ -1751,6 +1751,7 @@ impl Folder {
                 state::journal_clear_for(&*self.core.conn()?, path, item_id)?;
             }
         }
+        let unread_held = state::journal_unread_held(&*self.core.conn()?)?;
         for (path, item_id) in bound {
             let row = journaled.get(&(path.clone(), item_id.clone()));
             let held = row.is_some();
@@ -1791,13 +1792,14 @@ impl Folder {
             // taking, or one the walk could not read or passed over, is not trashed.
             let reached = self.reaches(lists, &path);
             if !reached || walked.passed_over(&path) {
-                // A pass that could not read the folder whole decides nothing
-                // about a delete already held as unsure.
+                // A delete held as unsure stays in view, and its grace starts
+                // again at the next pass that reads the whole folder.
                 let unsure =
                     reached && incomplete && matches!(row, Some(Some(state::Kept::Unsure(_))));
-                if held && !unsure {
-                    let conn = self.core.conn()?;
-                    state::journal_clear(&conn, &path)?;
+                if unsure {
+                    state::journal_unread_hold(&*self.core.conn()?)?;
+                } else if held {
+                    state::journal_clear(&*self.core.conn()?, &path)?;
                 }
                 report.unreached += 1;
                 continue;
@@ -1865,6 +1867,9 @@ impl Folder {
             } else {
                 state::journal_missing(&conn, &path, &item_id)?;
             }
+            if unread_held && matches!(row, Some(Some(state::Kept::Unsure(_)))) {
+                state::journal_restart(&conn, &path, &item_id)?;
+            }
             report.missing += 1;
         }
         if scan.walk_again {
@@ -1872,6 +1877,9 @@ impl Folder {
         }
         if !incomplete && self.root_gone().is_none() {
             report.swept = true;
+            if unread_held {
+                state::journal_read_whole(&*self.core.conn()?)?;
+            }
             if scan.journal == Journal::Sweep {
                 self.sweep_journal(settings, peers, scan.full, report)?;
             }

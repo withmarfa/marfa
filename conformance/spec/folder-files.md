@@ -2224,11 +2224,11 @@ When a missing file could be in unreadable registered directories or several fil
 
 ### `folder-files/uncertain-move-held-status`
 
-While a device defers a missing file's deletion because it cannot tell where the file went, a device MUST list that file in the folder's status as `held` with the flag `unsure`.
+While a device defers a missing file's deletion because it cannot tell where the file went, other than because a file's bytes could not be read, a device MUST list that file in the folder's status as `held` with the flag `unsure`.
 
-**Reason:** no delete waits to be sent until the device can tell, so the file is one the person may have to act on, and a report counts it under `held_file` (`folder-sync/report-held-files`). This holds also for a removal that `folders confirm` cannot decide, as when the file's own directory cannot be read.
+**Reason:** no delete waits to be sent until the device can tell, so the file is one the person may have to act on, and a report counts it under `held_file` (`folder-sync/report-held-files`). This holds for a delete held because another folder cannot be searched, because a directory of this folder cannot be read, and for a removal that `folders confirm` cannot decide, as when the file's own directory cannot be read. Status reads the folder's directories, but cannot tell whether the last pass could read every file's bytes.
 
-**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone`, `device/folders-one-mac.test.ts › keeps a confirmed removal held as unsure while the file's own directory cannot be read`.
+**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone`, `device/folders-one-mac.test.ts › holds a delete as unsure while another directory of the folder cannot be read`, `device/folders-one-mac.test.ts › keeps a confirmed removal held as unsure while the file's own directory cannot be read`.
 
 ### `folder-files/uncertain-move-held-unread-pass`
 
@@ -2238,11 +2238,19 @@ When a pass cannot read the whole folder, a device MUST keep deferring, and list
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a confirmed removal held as unsure while the file's own directory cannot be read`.
 
+### `folder-files/uncertain-move-unread-grace-restarts`
+
+When a pass that reads the whole folder follows a pass that could not read a missing file whose deletion the device held because it could not tell where the file went, a device MUST start that file's rename grace again.
+
+**Reason:** a pass that cannot read the file cannot see it come back and go again, so it is no proof that the file stayed gone, and a delete sent at once could be of a file the person had only just moved.
+
+**Tests:** `device/folders-one-mac.test.ts › starts the grace of a held delete again after a pass that could not read its directory`.
+
 ### `folder-files/unlisted-missing-deferred`
 
-While a directory that the machine's folder registry no longer lists, which a device found in an earlier pass, is not shown to be the folder's own directory with no folder state, and the registry lists that folder's store at no other directory, a device MUST defer a missing file's deletion for that directory.
+While a directory that the machine's folder registry no longer lists, which a device found in an earlier pass, cannot be searched for the missing file, and the registry lists that folder's store at no other directory, a device MUST defer a missing file's deletion.
 
-**Reason:** a missing registry entry can hide a move into another folder. A missing or unreadable directory, a directory that is not the one the folder was admitted at, a directory holding another folder's state and an entry that records no admitted directory each show only what stands at the path now: an unmounted volume and another volume mounted at the same path look like that. The hold ends when the folder's own directory holds no folder state, or the registry lists the same store at another directory (`folder-files/unlisted-listed-elsewhere-not-deferred`).
+**Reason:** a missing registry entry can hide a move into another folder. The directory cannot be searched when it is missing or cannot be read whole, when it is not the directory the folder was admitted at, or when the state it holds is not that folder's: an unmounted volume and another volume mounted at the same path look like that. A remembered folder that can be read at its directory is searched like a listed one, and a missing file found in neither is deleted. The device forgets the directory, and the hold ends, once the directory the folder was admitted at holds no folder state (for an entry that records no admitted directory, once its path holds none), or once the registry lists the same store at another directory (`folder-files/unlisted-listed-elsewhere-not-deferred`).
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone`, `device/folders-one-mac.test.ts › holds a delete for a folder no longer listed while another folder's state stands at its directory, and sends it once its directory holds no state`.
 

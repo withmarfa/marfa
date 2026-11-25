@@ -163,6 +163,7 @@ impl Folder {
             let conn = self.core.conn()?;
             state::journal_missing(&conn, path, item_id)?;
             state::journal_keep(&conn, path, item_id, Some(&kept))?;
+            state::journal_unread_hold(&conn)?;
             drop(conn);
             confirmed.unsure.push(Unsure {
                 path: path.clone(),

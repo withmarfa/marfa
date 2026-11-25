@@ -827,12 +827,19 @@ fn root_identity(root: &Directory) -> Option<String> {
     super::identity::of(&root.metadata().ok()?).map(|identity| identity.key())
 }
 
-/// An empty mount point cannot prove the admitted folder was removed.
+/// Whether the folder was removed from the directory it was admitted at. A
+/// missing or unreadable root is kept, since a disconnected volume cannot
+/// establish that the admitted folder was removed. So is a root that is not
+/// the admitted directory, such as an empty mount point or a recreated
+/// directory standing at the path, whatever it holds. An entry that records
+/// no admitted directory is judged by what its path holds.
 pub(super) fn gone(entry: &Registered) -> bool {
-    let (Ok(root), Some(admitted)) = (Directory::open(&entry.dir), entry.root.as_deref()) else {
+    let Ok(root) = Directory::open(&entry.dir) else {
         return false;
     };
-    if root_identity(&root).as_deref() != Some(admitted) {
+    if let Some(admitted) = entry.root.as_deref()
+        && root_identity(&root).as_deref() != Some(admitted)
+    {
         return false;
     }
     matches!(
@@ -982,7 +989,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_entry_that_records_no_admitted_directory_stays_listed_until_a_pass_records_it() {
+    fn an_entry_that_records_no_admitted_directory_is_judged_by_what_its_path_holds() {
         let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let base = temp.path();
         let registry = Registry::at(base.join(FILE_NAME));
@@ -999,7 +1006,6 @@ pub(crate) mod tests {
             .to_string(),
         )
         .unwrap();
-        // As an unmounted volume's empty mount point looks.
         std::fs::remove_dir_all(removed.join(STATE_DIR)).unwrap();
         let dirs = |registry: &Registry| -> Vec<PathBuf> {
             registry
@@ -1011,10 +1017,9 @@ pub(crate) mod tests {
         };
         assert_eq!(
             dirs(&registry),
-            vec![kept.clone(), removed.clone()],
-            "an entry with no identity whose path holds no state was taken for removed"
+            vec![kept.clone()],
+            "an entry with no identity whose state was removed stayed listed"
         );
-        assert!(registry.unregister(&removed, None).unwrap());
 
         // A pass that opens the folder records the identity, and from then
         // on a directory replacing it is not taken for it.
