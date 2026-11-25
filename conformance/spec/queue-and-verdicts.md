@@ -612,6 +612,36 @@ When a caller releases an `undo_rows` write `blocked` `key_spent`, `conflict_unr
 
 An update names the version it was made against, and a delete names the version it removes, so the server can tell whether the item has moved since (`versions.md`).
 
+### `queue-and-verdicts/transition-names-from`
+
+When a caller queues a transition of an item the copy holds, a device MUST carry in the write, as `from`, the state the copy showed the item in when the write was queued, this device's own earlier writes to it included, so that every send of the write names it.
+
+**Reason:** a transition names no version, so without `from` a write queued offline would overwrite any state another writer set since, and an undo of an archive would take an item back out of the bin another device moved it to. The server refuses a transition whose `from` the item has left (`items/transition-from`). The body is part of what the server fingerprints a key by, so every send under a key names the same state.
+
+**Tests:** `device/transition-from-live.test.ts › refuses a queued unarchive once another device has trashed the item, and leaves it and what its trash took in the bin`, `› refuses a queued undo to active once another device has restored and archived the item, which stays archived`.
+
+### `queue-and-verdicts/transition-from-refused`
+
+When the server answers a transition `409 state_conflict`, a device MUST give the write the verdict `refused` with the reason `state_conflict`.
+
+**Tests:** `device/transition-from-live.test.ts › refuses a queued unarchive once another device has trashed the item, and leaves it and what its trash took in the bin`, `› refuses a queued undo to active once another device has restored and archived the item, which stays archived`.
+
+### `queue-and-verdicts/transition-from-shows-server`
+
+When the server answers a transition `409 state_conflict`, a device MUST show the item in the state the server holds it in.
+
+**Reason:** the copy showed the move while the write waited, and a copy that kept showing it would offer the person an item the server holds elsewhere, such as one in the bin.
+
+**Tests:** `device/transition-from-live.test.ts › refuses a queued unarchive once another device has trashed the item, and leaves it and what its trash took in the bin`, `› refuses a queued undo to active once another device has restored and archived the item, which stays archived`.
+
+### `queue-and-verdicts/transition-from-held`
+
+If a caller queues a transition naming a `from` other than the state the copy shows the item in, then a device MUST refuse it `state_conflict`, queueing nothing.
+
+**Reason:** a caller names the state the person saw, and a copy that has heard of a change since must not move the item on a decision made about a state it has left.
+
+**Tests:** `device/transition-from-live.test.ts › refuses, queueing nothing, a transition whose expected state the copy does not show`.
+
 ### `queue-and-verdicts/replace-tags-names-read`
 
 When a caller queues a tag replace of an item the copy holds, a device MUST carry in the write, as `read_tags`, the tags the copy held for the item when the write was queued, this device's own earlier tag writes included, so that every send of the write names them.
@@ -2223,6 +2253,14 @@ When a caller releases a dead write whose effects were superseded, a device MUST
 **Reason:** explicit release renews the caller's intent without changing the original recoverable body (`queue-and-verdicts/release-lays-over` and `queue-and-verdicts/queue-shows-body`).
 
 **Tests:** `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `› preserves accepted %s membership when projecting dead metadata intent`.
+
+### `queue-and-verdicts/laid-transition-from`
+
+When a device lays a waiting transition over an item that, as laid so far, is in a state other than the write's `from`, a device MUST NOT move the item.
+
+**Reason:** the server will refuse the write (`items/transition-from`), so a copy that showed the move would show a state the server never takes.
+
+**Tests:** `device/transition-from-live.test.ts › shows the server's state beneath a waiting transition whose from the item has left`.
 
 ### `queue-and-verdicts/waiting-over-hydration`
 

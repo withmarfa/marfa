@@ -1366,6 +1366,46 @@ If `POST /items/{id}/transition` carries a top-level body key the operation does
 
 **Tests:** `compliance/undeclared-body-keys.test.ts › refuses %j as undeclared, naming each key, and writes nothing`.
 
+### `items/transition-from`
+
+If `POST /items/{id}/transition` names a `from` other than the state the item is in, then the server MUST answer `409 state_conflict`.
+
+**Reason:** a writer that decided on the item in one state, such as a device that queued an undo while offline, never overwrites a state another writer set since, such as a move to the bin that took other items with it.
+
+**Tests:** `correctness/lifecycle-transitions.test.ts › refuses 409 state_conflict a transition whose from the item has left, naming both states, and moves nothing`.
+
+### `items/transition-from-details`
+
+When the server answers a transition `409 state_conflict`, the server MUST name the state `from` named in `details.expected` and the state the item is in in `details.actual`.
+
+**Tests:** `correctness/lifecycle-transitions.test.ts › refuses 409 state_conflict a transition whose from the item has left, naming both states, and moves nothing`.
+
+### `items/transition-from-matches`
+
+When `POST /items/{id}/transition` names as `from` the state the item is in, the server MUST move the item as `items/transition` says.
+
+**Tests:** `correctness/lifecycle-transitions.test.ts › moves an item that is in the state from names`.
+
+### `items/transition-from-absent`
+
+Where `POST /items/{id}/transition` names no `from`, the server MUST move the item from whichever state it is in that the graph of `items/transition` leaves.
+
+**Tests:** `correctness/lifecycle-transitions.test.ts › moves an item in any state the graph leaves when the transition names no from`.
+
+### `items/transition-from-unknown-state`
+
+If `POST /items/{id}/transition` names a `from` other than `active`, `archived` or `trashed`, then the server MUST answer `400 validation_error` naming `from`.
+
+**Tests:** `correctness/lifecycle-transitions.test.ts › refuses a from that is not a state 400 validation_error naming from`.
+
+### `items/transition-from-before-graph`
+
+If `POST /items/{id}/transition` names a `from` other than the state the item is in and a move the graph does not hold, then the server MUST answer `409 state_conflict`, not `400 invalid_transition`.
+
+**Reason:** the writer read a state the item has left, so the graph's verdict on that state would tell it nothing it can act on.
+
+**Tests:** `correctness/lifecycle-transitions.test.ts › answers state_conflict rather than invalid_transition when from is wrong and the graph holds no such move`.
+
 ### `items/transition-announced`
 
 When a transition moves the item it names to another state, the server MUST announce `item.state_changed` for that item.
