@@ -1,6 +1,3 @@
-//! A directory the registry no longer lists, which a folder found in an
-//! earlier pass: when its loss holds a delete, and how the hold shows.
-
 use serde_json::json;
 
 use super::health::{Code, Problem};
@@ -39,8 +36,6 @@ fn a_delete_waits_while_a_remembered_folder_cannot_be_read_and_is_sent_once_it_i
     drop(b);
     assert!(Folder::forget(other.path()).unwrap());
 
-    // The witness: while the remembered directory stands but cannot be read,
-    // the delete is held, and the hold is a problem, not a file in step.
     std::fs::remove_file(from.path().join("held.txt")).unwrap();
     assert_eq!(a.scan().unwrap().missing, 1);
     past_the_grace(&a, "held.txt");

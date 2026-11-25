@@ -2234,7 +2234,7 @@ While a device defers a missing file's deletion because it cannot tell where the
 
 If a directory that the machine's folder registry no longer lists, which a device found in an earlier pass, no longer exists and the nearest directory above its path is on the volume that directory was on, then a device MUST NOT defer a missing file's deletion for that directory.
 
-**Reason:** the device keeps such a directory so that a registry that loses it does not hide a move into it. A volume that is not mounted leaves the nearest directory above the path on another volume, and that directory is then held as unreadable (`folder-files/uncertain-move-deferred`).
+**Reason:** a missing registry entry can hide a move into another folder. A file in that folder is still there when its volume is unmounted (`folder-files/uncertain-move-deferred`).
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read, and sends it once that folder's directory is gone`.
 

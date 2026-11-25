@@ -848,11 +848,6 @@ pub(super) fn gone(entry: &Registered) -> bool {
     )
 }
 
-/// Whether the folder's directory is gone from a volume that is mounted: its
-/// path does not exist, and the nearest directory above it that does is on
-/// the device the admitted directory was on. An unmounted volume leaves that
-/// directory on another device, and an entry that records no admitted
-/// directory, or a path that cannot be read, cannot tell, so they are kept.
 #[cfg(unix)]
 pub(super) fn gone_from_its_volume(entry: &Registered) -> bool {
     use std::io::ErrorKind::{NotADirectory, NotFound};
@@ -896,7 +891,6 @@ pub(crate) mod tests {
         };
         let device = super::super::identity::device_in(&admitted).unwrap();
         let elsewhere = admitted.replacen(&device.to_string(), &(device ^ 1).to_string(), 1);
-        // The witness: present, it is not gone.
         let present = Registered {
             dir: dir.clone(),
             ..entry(Some(admitted.clone()))
@@ -935,7 +929,6 @@ pub(crate) mod tests {
             root: admitted,
         };
         std::fs::remove_dir_all(&dir).unwrap();
-        // The witness: readable, the parent shows the directory removed.
         assert!(gone_from_its_volume(&entry));
         let _sealed = crate::test_folders::locked(&parent, 0o000);
         assert!(

@@ -258,7 +258,7 @@ impl Peer {
                 }
             } else if self.remembered {
                 Some(format!(
-                    "the folder {}, which the folder registry no longer lists, cannot be reached; mount the volume it is on, make it readable, or move aside a directory that stands in its place",
+                    "the registry no longer lists {}, and Marfa cannot open it. Check that its volume is mounted and the directory is readable. If another directory occupies its path, move that directory aside",
                     self.root.display()
                 ))
             } else {

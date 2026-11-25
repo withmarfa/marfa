@@ -232,10 +232,7 @@ impl Folder {
                 )
                 .collect(),
         };
-        // Each bound path the last sweep found another file carrying, with
-        // its item and that file.
         let journaled = state::journaled(&*self.core.conn()?)?;
-        // Each bound path the last sweep could not tell a move of, and why.
         let unsure: HashMap<&str, &str> = journaled
             .iter()
             .filter_map(|row| match &row.kept {
@@ -249,6 +246,7 @@ impl Folder {
                 _ => None,
             })
             .collect();
+        // A file at another path can carry the bound file's identity or item ID.
         let carried: HashMap<String, (String, String)> = journaled
             .iter()
             .cloned()
@@ -405,10 +403,7 @@ impl Folder {
                     "is gone, and its item is already in the bin or no longer held, so no delete is sent: a scan past the grace lets the file go",
                 )
             } else if let Some(reason) = unsure.get(bound.path.as_str()) {
-                FileStatus::new(&bound.path, at, "held").because(
-                    "unsure",
-                    format!("is missing and its item is not trashed, since where it went cannot be told: {reason}"),
-                )
+                FileStatus::new(&bound.path, at, "held").because("unsure", *reason)
             } else {
                 FileStatus {
                     waits: vec!["delete"],
