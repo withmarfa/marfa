@@ -3810,7 +3810,7 @@ If a drain meets a refusal that names no contract, then a device MUST end the pa
 
 ## The oldest server a device works with
 
-A device works with servers from one release on. The oldest is a constant in the core, and a change that makes the core depend on a server change raises it. The oldest is release 0.0.109, the first that takes the state a transition expects (`items/transition-from`); a server older than that refuses every transition a device queues, which names that state (`queue-and-verdicts/transition-names-from`). The release a server runs is the `version` its root answers (`instance/root-version`).
+A device works with servers from one release on. The oldest is a constant in the core, and a change that makes the core depend on a server change raises it. The oldest is release 0.0.110, the first that takes the state a transition expects (`items/transition-from`); a server older than that refuses every transition a device queues, which names that state (`queue-and-verdicts/transition-names-from`). The release a server runs is the `version` its root answers (`instance/root-version`).
 
 ### `device/server-too-old`
 
