@@ -460,7 +460,7 @@ When `GET /folders/{id}/directories` counts a placed file, the server MUST read 
 
 ### `folder-status/directories-stored-path-text`
 
-If the `path` of an `in-folder` edge is not a string, or is a string that holds no name once its empty and `.` names are dropped, then `GET /folders/{id}/directories` MUST NOT count that edge in any number it answers.
+If the `path` of an `in-folder` edge is not a string, or is a string that holds no name once its empty and `.` names are dropped, then the server MUST NOT count that edge in any number `GET /folders/{id}/directories` answers.
 
 **Reason:** a write refuses such a path, so a stored one is damaged and places no file. The read leaves it out and does not report it, and no other placement is lost.
 
