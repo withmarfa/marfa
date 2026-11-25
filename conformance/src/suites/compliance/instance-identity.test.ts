@@ -63,7 +63,7 @@ describe("the instance's identity", () => {
     // The witness. Without it a reader that silently returned the wrong
     // member, or an empty one, would satisfy the identity assertion below
     // for the wrong reason.
-    expect(manifest.version).toBe(4);
+    expect(manifest.version).toBe(5);
     expect(manifest.format).toBe("marfa-archive");
     expect(manifest.written_by).toMatch(/^marfa-server \S+$/);
     expect(manifest.instance_id).toBe(root.instance_id);
