@@ -1015,7 +1015,7 @@ fn queue_tags(
 }
 
 /// Moves the row the server holds as `server` to `state`, as `delete_item`,
-/// `restore_item` and `transition_item` do.
+/// `restore_item` and `transition_item_from` do.
 fn queue_state(tx: &Connection, server: &Item, state: ItemState) -> Result<String> {
     let (kind, payload, base_version) = match (server.state, state) {
         (_, ItemState::Trashed) => (
@@ -1028,7 +1028,8 @@ fn queue_state(tx: &Connection, server: &Item, state: ItemState) -> Result<Strin
         }
         _ => (
             WriteKind::TransitionItem,
-            serde_json::json!({ "state": state.as_str() }).to_string(),
+            serde_json::json!({ "state": state.as_str(), "from": server.state.as_str() })
+                .to_string(),
             None,
         ),
     };

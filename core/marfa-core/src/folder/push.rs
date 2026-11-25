@@ -2,8 +2,8 @@ use super::{
     BoundFiles, Catalog, CoreError, Draft, EdgeTypes, EdgeWork, Edit, FILE_TYPE, Flagged, Folder,
     HashSet, Item, ItemState, Kept, LOCAL_ADMISSION_REFUSAL, Map, Names, Path, Resolver, Result,
     Retitle, Scanned, Settings, Value, blank, bytes_of, bytes_type, carries_frontmatter, document,
-    executable, fields, identity, local_admission_refusal, local_properties_refusal, name_of,
-    names, placement, pull, state, title_of,
+    executable, fields, identity, local_admission_refusal, local_properties_refusal,
+    local_refusal_reason, name_of, names, placement, pull, state, state_conflict, title_of,
 };
 
 fn named_item(queued: crate::model::QueuedWrite, key: &str) -> Result<String> {
@@ -375,7 +375,10 @@ impl Folder {
             settings,
         )?;
         if read.lines.state == Some(ItemState::Archived) {
-            let id = self.core.transition_item(&item_id, ItemState::Archived)?.id;
+            let id = self
+                .core
+                .transition_item_from(&item_id, ItemState::Archived, Some(ItemState::Active))?
+                .id;
             writes.queued.push(state::Queued {
                 id,
                 save: 1,
@@ -780,7 +783,32 @@ impl Folder {
                 queued.push((self.core.add_tag(item_id, tag)?.id, None));
             }
             if let Some(state) = changes.state {
-                queued.push((self.core.transition_item(item_id, state)?.id, None));
+                #[cfg(debug_assertions)]
+                crate::fault::hold(|| format!("folder-state-decided:{item_id}"));
+                match self
+                    .core
+                    .transition_item_from(item_id, state, Some(held.state))
+                {
+                    Err(error) if state_conflict(&error) => {
+                        let reason = local_refusal_reason(&error);
+                        flagged.push(Flagged {
+                            path: file.key.clone(),
+                            flag: "refused",
+                            reason: reason.clone(),
+                            item: None,
+                        });
+                        let change = state::Change::State(state);
+                        writes
+                            .refused
+                            .retain(|refused| !change.supersedes(&refused.change));
+                        writes.refused.push(state::Refused {
+                            change,
+                            save,
+                            reason,
+                        });
+                    }
+                    other => queued.push((other?.id, None)),
+                }
             }
         } else if let Some(retitle) = retitle {
             // Bytes already answered send nothing of their own, so the new

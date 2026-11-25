@@ -1834,7 +1834,8 @@ mod tests {
         assert_eq!(deferred_after(|_, _| {}), (edges, 0));
         assert_eq!(
             deferred_after(|core, parent| {
-                core.transition_item(parent, ItemState::Archived).unwrap();
+                core.transition_item_from(parent, ItemState::Archived, None)
+                    .unwrap();
             }),
             (edges, 0)
         );
@@ -1846,7 +1847,8 @@ mod tests {
         );
         assert_eq!(
             deferred_after(|core, parent| {
-                core.transition_item(parent, ItemState::Trashed).unwrap();
+                core.transition_item_from(parent, ItemState::Trashed, None)
+                    .unwrap();
             }),
             (0, edges)
         );

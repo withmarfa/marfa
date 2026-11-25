@@ -198,7 +198,7 @@ If the read of `queue-and-verdicts/resend-read-first` finds a create by natural 
 
 When a device sends again, after the read of `queue-and-verdicts/resend-read-first` found its subject, a tag write that adds or removes one tag, a lifecycle move, a restore, or a create by natural key on an item it held when it first sent the create, a device MUST name the version of the subject it held when it first sent the write, on that send and every later send under the same key.
 
-**Reason:** under the new credential the server runs the write afresh, so without a version it would act on an item changed in a way the copy had not read when it first sent the write; named, the server answers `409 version_conflict` and the write is blocked `conflict_unresolved` (`queue-and-verdicts/conflict-blocks`). The server's fingerprint of a key covers the query and body, so every send under the key names the same version. A version moves with an item's properties and type, never with its tags or state, so another device's tag or lifecycle change is not caught, and an extension write, whose operation takes no version, can land over newer work of its own kind unless it names the revision it read (`queue-and-verdicts/extension-names-read-revision`). A tag write that replaces every tag names the tags it read instead (`queue-and-verdicts/replace-tags-names-read`).
+**Reason:** under the new credential the server runs the write afresh, so without a version it would act on an item changed in a way the copy had not read when it first sent the write; named, the server answers `409 version_conflict` and the write is blocked `conflict_unresolved` (`queue-and-verdicts/conflict-blocks`). The server's fingerprint of a key covers the query and body, so every send under the key names the same version. An item's version tracks its properties and type. A transition checks the state it read (`queue-and-verdicts/transition-names-from`), and an extension write can check the revision it read (`queue-and-verdicts/extension-names-read-revision`). A tag write that replaces every tag names the tags it read instead (`queue-and-verdicts/replace-tags-names-read`).
 
 **Tests:** `device/resend-credential-live.test.ts › sends a tag the server never received again naming the version it was sent at, and blocks it as a conflict once the item has moved`.
 
@@ -611,6 +611,36 @@ When a caller releases an `undo_rows` write `blocked` `key_spent`, `conflict_unr
 ## The version a write carries
 
 An update names the version it was made against, and a delete names the version it removes, so the server can tell whether the item has moved since (`versions.md`).
+
+### `queue-and-verdicts/transition-names-from`
+
+When a caller queues a transition of an item the copy holds, a device MUST carry in the write, as `from`, the state the copy showed the item in when the write was queued, this device's own earlier writes to it included, so that every send of the write names it.
+
+**Reason:** a state change leaves the item's version unchanged. An offline Unarchive must still name `archived` when it reaches the server, so it leaves an item in the bin if another device trashed it (`items/transition-from`).
+
+**Tests:** `device/transition-from-live.test.ts › refuses a queued unarchive once another device has trashed the item, and leaves it and what its trash took in the bin`, `› refuses a queued undo to active once another device has restored and archived the item, which stays archived`.
+
+### `queue-and-verdicts/transition-from-refused`
+
+When the server answers a transition `409 state_conflict`, a device MUST give the write the verdict `refused` with the reason `state_conflict`.
+
+**Tests:** `device/transition-from-live.test.ts › refuses a queued unarchive once another device has trashed the item, and leaves it and what its trash took in the bin`, `› refuses a queued undo to active once another device has restored and archived the item, which stays archived`.
+
+### `queue-and-verdicts/transition-from-shows-server`
+
+When the server answers a transition `409 state_conflict` and a read-back of the item succeeds, a device MUST show the item in the state that read-back holds.
+
+**Reason:** the copy showed the move while the write waited, and a copy that kept showing it would offer the person an item the server holds elsewhere, such as one in the bin. A refusal produces no event, so only a read-back tells the copy the server's state. Until one succeeds, the copy keeps the state it showed (`queue-and-verdicts/refused-read-fails`), and a later drain reads the item again.
+
+**Tests:** `device/transition-from-live.test.ts › refuses a queued unarchive once another device has trashed the item, and leaves it and what its trash took in the bin`, `› refuses a queued undo to active once another device has restored and archived the item, which stays archived`, `device/verdicts.test.ts › refused: keeps the copy's state after a transition refused state_conflict until a read-back succeeds`.
+
+### `queue-and-verdicts/transition-from-held`
+
+If a caller queues a transition naming a `from` other than the state the copy shows the item in, then a device MUST refuse it `state_conflict`, queueing nothing.
+
+**Reason:** a caller names the state the person saw, and a copy that has heard of a change since must not move the item on a decision made about a state it has left.
+
+**Tests:** `device/transition-from-live.test.ts › refuses, queueing nothing, a transition whose expected state the copy does not show`.
 
 ### `queue-and-verdicts/replace-tags-names-read`
 
@@ -1166,7 +1196,7 @@ If the read after a refusal meets an environmental failure, then a device MUST k
 
 **Reason:** the refusal is recorded before the read, so a read that fails never sends the write again, and the copy changes only on a read the server answered (`device/read-back-keeps-verdict`).
 
-**Tests:** `device/verdicts.test.ts › refused: preserves the local item until a fresh read succeeds at the next drain`.
+**Tests:** `device/verdicts.test.ts › refused: preserves the local item until a fresh read succeeds at the next drain`, `› refused: keeps the copy's state after a transition refused state_conflict until a read-back succeeds`.
 
 ### `queue-and-verdicts/refused-item-absent`
 
@@ -2223,6 +2253,14 @@ When a caller releases a dead write whose effects were superseded, a device MUST
 **Reason:** explicit release renews the caller's intent without changing the original recoverable body (`queue-and-verdicts/release-lays-over` and `queue-and-verdicts/queue-shows-body`).
 
 **Tests:** `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `› preserves accepted %s membership when projecting dead metadata intent`.
+
+### `queue-and-verdicts/laid-transition-from`
+
+When a device lays a waiting transition over an item that, as laid so far, is in a state other than the write's `from`, a device MUST NOT move the item.
+
+**Reason:** the server will refuse the write (`items/transition-from`), so a copy that showed the move would show a state the server never takes.
+
+**Tests:** `device/transition-from-live.test.ts › shows the server's state beneath a waiting transition whose from the item has left`.
 
 ### `queue-and-verdicts/waiting-over-hydration`
 

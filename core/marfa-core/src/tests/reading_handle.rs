@@ -129,9 +129,9 @@ fn a_reading_handle_is_refused_at_every_write_door() {
                 .unwrap_err(),
         ),
         (
-            "transition_item",
+            "transition_item_from",
             reader
-                .transition_item("x", ItemState::Archived)
+                .transition_item_from("x", ItemState::Archived, None)
                 .unwrap_err(),
         ),
         (

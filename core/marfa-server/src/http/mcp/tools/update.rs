@@ -383,6 +383,7 @@ pub async fn run(
             let change = Change::Transition {
                 id: id.clone(),
                 state: "active".to_string(),
+                from: None,
                 version: Some(version),
             };
             let done = write::run(app, caller, None, change)
@@ -497,6 +498,7 @@ pub async fn run(
         let change = Change::Transition {
             id: id.clone(),
             state: wanted.clone(),
+            from: None,
             version: Some(version),
         };
         let done = write::run(app, caller, None, change)

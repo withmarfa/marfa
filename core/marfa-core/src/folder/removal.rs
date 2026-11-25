@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
-use super::{Departing, Flagged, Folder, Missing, PullReport, Sweep, Unsure, state};
+use super::{
+    Departing, Flagged, Folder, Missing, PullReport, Sweep, Unsure, state, state_conflict,
+};
 use crate::Result;
 use crate::model::ItemState;
 
@@ -266,8 +268,18 @@ impl Folder {
                 .find(|state| *state != item.state && settings.holds_state(*state))
                 && !settings.holds_state(item.state)
             {
-                self.core.transition_item(&item.id, state)?;
-                restored += 1;
+                #[cfg(debug_assertions)]
+                crate::fault::hold(|| format!("folder-restore-decided:{}", item.id));
+                match self
+                    .core
+                    .transition_item_from(&item.id, state, Some(item.state))
+                {
+                    Err(error) if state_conflict(&error) => {}
+                    other => {
+                        other?;
+                        restored += 1;
+                    }
+                }
             }
         }
         {
@@ -352,6 +364,8 @@ fn flagged_for(flagged: &[Flagged], item_id: &str, path: &str) -> Option<Flagged
 mod tests {
     use super::super::registry;
     use super::super::tests::{deletes_queued, folder_with, landed, past_the_grace, settled_under};
+    #[cfg(debug_assertions)]
+    use super::super::tests::{state_held, transitions_queued, trashed_elsewhere};
     use super::*;
 
     struct Paused {
@@ -1348,6 +1362,84 @@ mod tests {
             state::paused_additions(&conn).unwrap(),
             queued,
         )
+    }
+
+    /// Change the item between the restore's read and its queue admission.
+    #[cfg(debug_assertions)]
+    fn restore_while_changed(
+        folder_id: &str,
+        change: impl Fn(&Folder, &str) + Sync,
+    ) -> (tempfile::TempDir, Folder, String, Restored) {
+        let (dir, folder) = folder_with(
+            folder_id,
+            serde_json::json!({
+                "query": { "state": ["active"] },
+                "removal_threshold": { "files": 0, "fraction": 0.0, "ceiling": 0 }
+            }),
+            None,
+        );
+        std::fs::write(dir.path().join("note.md"), "the person's words\n").unwrap();
+        assert_eq!(folder.scan().unwrap().created, 1);
+        let id = landed(&folder, "note.md");
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        folder.pull().unwrap();
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("UPDATE items SET state = 'archived' WHERE id = ?1", [&id])
+            .unwrap();
+        assert_eq!(folder.pull().unwrap().paused, 1);
+
+        let point = &format!("folder-restore-decided:{id}");
+        crate::fault::arm(point);
+        let restored = std::thread::scope(|scope| {
+            let following = scope.spawn(|| {
+                let waited = std::time::Instant::now();
+                while crate::fault::waiting(point) == 0 {
+                    if waited.elapsed() > std::time::Duration::from_secs(10) {
+                        crate::fault::release(point);
+                        panic!("the restore never decided");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                change(&folder, &id);
+                crate::fault::release(point);
+            });
+            let restored = folder.restore();
+            following.join().unwrap();
+            restored
+        })
+        .unwrap();
+        (dir, folder, id, restored)
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_restore_of_a_paused_removal_brings_back_no_item_trashed_elsewhere_while_it_decides() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (_dir, folder, id, restored) =
+            restore_while_changed("01a00000-0000-7000-8000-00000000e7b1", |_, _| {});
+        assert_eq!(restored.restored, 1, "{restored:?}");
+        assert_eq!(
+            transitions_queued(&folder, &id),
+            [serde_json::json!({ "state": "active", "from": "archived" })]
+        );
+
+        let (_dir, folder, id, restored) =
+            restore_while_changed("01a00000-0000-7000-8000-00000000e7b2", trashed_elsewhere);
+        assert_eq!(
+            transitions_queued(&folder, &id),
+            Vec::<serde_json::Value>::new(),
+            "a move out of the bin was queued over a trash the restore never saw: {restored:?}"
+        );
+        assert_eq!(restored.restored, 0, "{restored:?}");
+        assert_eq!(state_held(&folder, &id), ItemState::Trashed);
     }
 
     #[test]

@@ -122,7 +122,8 @@ fn remove(core: &Core) -> QueuedWrite {
 }
 
 fn trash(core: &Core) -> QueuedWrite {
-    core.transition_item(EDITED, ItemState::Trashed).unwrap()
+    core.transition_item_from(EDITED, ItemState::Trashed, None)
+        .unwrap()
 }
 
 fn restore(core: &Core) -> QueuedWrite {

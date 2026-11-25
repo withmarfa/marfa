@@ -3049,9 +3049,17 @@ guarded! {
             queued(self.inner.restore_item(&id)?)
         }
 
-        /// Moves an item to another lifecycle state.
-        pub fn transition_item(&self, id: String, state: ItemState) -> Result<QueuedWrite, MarfaError> {
-            queued(self.inner.transition_item(&id, state.into())?)
+        /// Moves an item to another lifecycle state. With `from`, the state
+        /// the person saw it in, throws `state_conflict` and queues nothing
+        /// where the copy shows another.
+        #[uniffi::method(default(from = None))]
+        pub fn transition_item(
+            &self,
+            id: String,
+            state: ItemState,
+            from: Option<ItemState>,
+        ) -> Result<QueuedWrite, MarfaError> {
+            queued(self.inner.transition_item_from(&id, state.into(), from.map(Into::into))?)
         }
 
         /// Throws the error `create_edge` would throw for `draft` now, and

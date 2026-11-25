@@ -17,7 +17,9 @@ fn a_refusal_puts_back_what_was_beneath_the_write_and_keeps_what_still_waits() {
             },
         )
         .unwrap();
-    let archived = core.transition_item("row", ItemState::Archived).unwrap();
+    let archived = core
+        .transition_item_from("row", ItemState::Archived, None)
+        .unwrap();
     let unlinked = core.delete_edge("link").unwrap();
     let held = || core.get("row").unwrap().unwrap();
     assert_eq!(held().properties["title"], "mine");

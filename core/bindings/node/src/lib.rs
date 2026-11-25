@@ -3153,13 +3153,21 @@ impl MarfaCore {
         )
     }
 
-    /// Moves an item to another lifecycle state.
+    /// Moves an item to another lifecycle state. With `from`, the state the
+    /// person saw it in, throws `state_conflict` and queues nothing where the
+    /// copy shows another.
     #[napi]
-    pub fn transition_item(&self, env: Env, id: String, state: ItemState) -> Result<QueuedWrite> {
+    pub fn transition_item(
+        &self,
+        env: Env,
+        id: String,
+        state: ItemState,
+        from: Option<ItemState>,
+    ) -> Result<QueuedWrite> {
         queued(
             env,
             self.inner
-                .transition_item(&id, state.into())
+                .transition_item_from(&id, state.into(), from.map(Into::into))
                 .map_err(|error| failure(env, error))?,
         )
     }

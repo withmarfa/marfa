@@ -831,7 +831,7 @@ impl Core {
 
     /// Not a purge: the row stays in the copy, trashed.
     pub fn delete_item(&self, id: &str) -> Result<QueuedWrite> {
-        self.transition_locally(id, WriteKind::DeleteItem, ItemState::Trashed, "{}")
+        self.transition_locally(id, WriteKind::DeleteItem, ItemState::Trashed, None, "{}")
     }
 
     /// An item and the edges at it as the copy holds them, for a decision
@@ -859,6 +859,7 @@ impl Core {
                     now.item,
                     WriteKind::DeleteItem,
                     ItemState::Trashed,
+                    None,
                     "{}",
                 )
                 .map(Some),
@@ -880,7 +881,13 @@ impl Core {
         if !store::items_by_ids(&tx, &[id.to_string()])?.is_empty() {
             drop(tx);
             drop(conn);
-            return self.transition_locally(id, WriteKind::RestoreItem, ItemState::Active, "{}");
+            return self.transition_locally(
+                id,
+                WriteKind::RestoreItem,
+                ItemState::Active,
+                None,
+                "{}",
+            );
         }
         store::refuse_unless_held(completeness)?;
         if store::waiting_writes_for_item(&tx, id)?
@@ -910,8 +917,16 @@ impl Core {
         Ok(queued)
     }
 
-    /// Only the server can move an item to `revoked`.
-    pub fn transition_item(&self, id: &str, state: ItemState) -> Result<QueuedWrite> {
+    /// Only the server can move an item to `revoked`. With `from`, queued only
+    /// while the copy shows the item in that state
+    /// (`queue-and-verdicts/transition-from-held`), so a caller deciding on a
+    /// state it read earlier never moves a row that has moved on since.
+    pub fn transition_item_from(
+        &self,
+        id: &str,
+        state: ItemState,
+        from: Option<ItemState>,
+    ) -> Result<QueuedWrite> {
         if state == ItemState::Revoked {
             return Err(CoreError::Validation {
                 server: None,
@@ -922,8 +937,7 @@ impl Core {
                 details: None,
             });
         }
-        let payload = serde_json::to_string(&serde_json::json!({ "state": state.as_str() }))?;
-        self.transition_locally(id, WriteKind::TransitionItem, state, &payload)
+        self.transition_locally(id, WriteKind::TransitionItem, state, from, "{}")
     }
 
     fn transition_locally(
@@ -931,6 +945,7 @@ impl Core {
         id: &str,
         kind: WriteKind,
         state: ItemState,
+        from: Option<ItemState>,
         payload: &str,
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
@@ -944,28 +959,45 @@ impl Core {
                 message: format!("{id} is not a row this copy holds"),
             });
         };
-        self.transition_held(conn, held, kind, state, payload)
+        self.transition_held(conn, held, kind, state, from, payload)
     }
 
     /// Under the lock `conn` holds since `held` was read, so the write is
-    /// queued against the row as read.
+    /// queued against the row as read, and a transition names as `from` the
+    /// state that row shows (`queue-and-verdicts/transition-names-from`).
     fn transition_held(
         &self,
         mut conn: MutexGuard<'_, Connection>,
         held: Item,
         kind: WriteKind,
         state: ItemState,
+        from: Option<ItemState>,
         payload: &str,
     ) -> Result<QueuedWrite> {
         let id = held.id.as_str();
         refuse_system_type(&held.r#type)?;
+        if let Some(from) = from.filter(|from| *from != held.state) {
+            return Err(CoreError::Validation {
+                server: None,
+                code: "state_conflict".into(),
+                message: format!("{id} is {}, not {}", held.state.as_str(), from.as_str()),
+                details: Some(Box::new(serde_json::json!({
+                    "expected": from.as_str(),
+                    "actual": held.state.as_str(),
+                }))),
+            });
+        }
         let deleting = kind == WriteKind::DeleteItem;
-        let versioned = serde_json::json!({ "version": held.version }).to_string();
-        let payload = if deleting {
-            versioned.as_str()
-        } else {
-            payload
+        let carried = match kind {
+            WriteKind::DeleteItem => serde_json::json!({ "version": held.version }).to_string(),
+            WriteKind::TransitionItem => serde_json::json!({
+                "state": state.as_str(),
+                "from": held.state.as_str(),
+            })
+            .to_string(),
+            _ => payload.to_string(),
         };
+        let payload = carried.as_str();
         // Only the create, for the reason `queue_update` gives.
         let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;

@@ -309,8 +309,13 @@ fn lay_write(
                 item.occurred_at = marfa_rules::time::projected(occurred_at);
             }
         }
+        // A transition the server will refuse for the state it names as
+        // `from` shows nothing (`queue-and-verdicts/laid-transition-from`).
         WriteKind::TransitionItem => {
-            if let Some(state) = payload.get("state").and_then(Value::as_str) {
+            let from = payload.get("from").and_then(Value::as_str);
+            if let Some(state) = payload.get("state").and_then(Value::as_str)
+                && from.is_none_or(|from| from == item.state.as_str())
+            {
                 item.move_to(state.parse()?, &row.queued_at);
             }
         }

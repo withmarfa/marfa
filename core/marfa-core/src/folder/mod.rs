@@ -2778,6 +2778,10 @@ fn local_admission_refusal(error: &CoreError) -> bool {
         || matches!(error, CoreError::UnknownType { .. })
 }
 
+fn state_conflict(error: &CoreError) -> bool {
+    matches!(error, CoreError::Validation { code, server: None, .. } if code == "state_conflict")
+}
+
 fn local_properties_refusal(bound: &state::Bound) -> bool {
     bound
         .held
@@ -7721,6 +7725,119 @@ mod tests {
                 .unwrap()
                 .contains("changed elsewhere")
         );
+    }
+
+    /// A trash heard during catch-up leaves the item's version unchanged.
+    #[cfg(debug_assertions)]
+    pub(super) fn trashed_elsewhere(folder: &Folder, item_id: &str) {
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE items SET state = 'trashed', trashed_at = '2026-01-02T00:00:00Z'
+                 WHERE id = ?1",
+                [item_id],
+            )
+            .unwrap();
+    }
+
+    #[cfg(debug_assertions)]
+    pub(super) fn transitions_queued(folder: &Folder, item_id: &str) -> Vec<Value> {
+        let conn = folder.core.conn().unwrap();
+        let mut statement = conn
+            .prepare("SELECT payload FROM queue WHERE kind = 'transition_item' AND item_id = ?1")
+            .unwrap();
+        statement
+            .query_map([item_id], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(|payload| serde_json::from_str(&payload.unwrap()).unwrap())
+            .collect()
+    }
+
+    #[cfg(debug_assertions)]
+    pub(super) fn state_held(folder: &Folder, item_id: &str) -> ItemState {
+        crate::store::items_by_ids(&folder.core.conn().unwrap(), &[item_id.to_string()])
+            .unwrap()
+            .pop()
+            .unwrap()
+            .state
+    }
+
+    /// Change the item between the scan's read and its queue admission.
+    #[cfg(debug_assertions)]
+    fn unarchive_while_changed(
+        folder_id: &str,
+        change: impl Fn(&Folder, &str) + Sync,
+    ) -> (tempfile::TempDir, Folder, String, ScanReport) {
+        let (dir, folder) = folder_with(folder_id, serde_json::json!({ "query": {} }), None);
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, "---\nstate: archived\n---\nthe person's words\n").unwrap();
+        assert_eq!(folder.scan().unwrap().created, 1);
+        let id = landed(&folder, "note.md");
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        folder.pull().unwrap();
+        assert_eq!(state_held(&folder, &id), ItemState::Archived);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("state: archived\n"), "{text}");
+        std::fs::write(&path, text.replace("state: archived\n", "state: active\n")).unwrap();
+
+        let point = &format!("folder-state-decided:{id}");
+        crate::fault::arm(point);
+        let scanned = std::thread::scope(|scope| {
+            let following = scope.spawn(|| {
+                let waited = std::time::Instant::now();
+                while crate::fault::waiting(point) == 0 {
+                    if waited.elapsed() > Duration::from_secs(10) {
+                        crate::fault::release(point);
+                        panic!("the scan never decided the state");
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                change(&folder, &id);
+                crate::fault::release(point);
+            });
+            let scanned = folder.scan();
+            following.join().unwrap();
+            scanned
+        })
+        .unwrap();
+        (dir, folder, id, scanned)
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_scan_queues_no_unarchive_of_an_item_trashed_elsewhere_while_it_decides() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (_dir, folder, id, _) =
+            unarchive_while_changed("01a00000-0000-7000-8000-00000000e7a1", |_, _| {});
+        assert_eq!(
+            transitions_queued(&folder, &id),
+            [serde_json::json!({ "state": "active", "from": "archived" })]
+        );
+
+        let (_dir, folder, id, scanned) =
+            unarchive_while_changed("01a00000-0000-7000-8000-00000000e7a2", trashed_elsewhere);
+        assert_eq!(
+            transitions_queued(&folder, &id),
+            Vec::<Value>::new(),
+            "an unarchive was queued over a trash the scan never saw: {scanned:?}"
+        );
+        assert_eq!(state_held(&folder, &id), ItemState::Trashed);
+        assert!(
+            scanned.flagged.iter().any(|file| file.path == "note.md"
+                && file.flag == "refused"
+                && file.reason.contains("state_conflict")),
+            "{scanned:?}"
+        );
+        folder.scan().unwrap();
+        assert_eq!(transitions_queued(&folder, &id), Vec::<Value>::new());
+        assert_eq!(state_held(&folder, &id), ItemState::Trashed);
     }
 
     #[cfg(debug_assertions)]
