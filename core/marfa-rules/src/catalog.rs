@@ -140,6 +140,8 @@ pub struct ItemType {
     pub icon: Option<String>,
     pub link_field: Option<String>,
     pub roles: Vec<String>,
+    /// Days a feed item stays in the feed: the nearest type in the chain that names `retention_policy.feed_days`. `None` where that type names `null` or none names it.
+    pub feed_days: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -771,6 +773,10 @@ pub fn resolve_item_type(
         icon: hints.icon(id).map(str::to_string),
         link_field: text(own, "link_field"),
         roles: texts(own, "roles"),
+        feed_days: chain
+            .iter()
+            .find_map(|(_, row)| row.get("retention_policy")?.as_object()?.get("feed_days"))
+            .and_then(Value::as_i64),
     }))
 }
 

@@ -707,6 +707,8 @@ pub struct ItemType {
     pub icon: Option<String>,
     pub link_field: Option<String>,
     pub roles: Vec<String>,
+    /// Days a feed item stays in the feed, from the nearest type that names a window; none where it names `null` or no type names one.
+    pub feed_days: Option<i64>,
 }
 
 /// One end of an edge.
@@ -792,6 +794,7 @@ impl From<marfa_core::ItemType> for ItemType {
             icon: held.icon,
             link_field: held.link_field,
             roles: held.roles,
+            feed_days: held.feed_days,
         }
     }
 }

@@ -359,6 +359,9 @@ export interface ItemType {
   icon: string | null;
   link_field: string | null;
   roles: string[];
+  /** Days a feed item stays in the feed, from the nearest type that names
+   *  a window; null where it names null or none does. */
+  feed_days: number | null;
 }
 
 /** An edge type as the copy holds it. */

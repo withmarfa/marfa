@@ -1104,6 +1104,54 @@ mod tests {
     }
 
     #[test]
+    fn a_type_reads_the_feed_window_its_nearest_naming_type_gives() {
+        let conn = held(
+            serde_json::json!([
+                { "id": "acme.base", "fields": {}, "retention_policy": { "feed_days": 30 } },
+                { "id": "acme.silent", "parent": "acme.base", "fields": {} },
+                { "id": "acme.empty", "parent": "acme.base", "fields": {}, "retention_policy": {} },
+                { "id": "acme.keeps", "parent": "acme.base", "fields": {},
+                  "retention_policy": { "feed_days": null } },
+                { "id": "acme.keeps-below", "parent": "acme.keeps", "fields": {} },
+                { "id": "acme.shorter", "parent": "acme.keeps", "fields": {},
+                  "retention_policy": { "feed_days": 7 } },
+                { "id": "acme.none", "fields": {} },
+                { "id": "acme.orphan", "parent": "acme.unheld", "fields": {} }
+            ]),
+            serde_json::json!([]),
+        );
+        let window = |id: &str| item_type(&conn, id).unwrap().feed_days;
+        assert_eq!(window("acme.base"), Some(30));
+        assert_eq!(
+            window("acme.silent"),
+            Some(30),
+            "a type naming nothing lost its parent's window"
+        );
+        assert_eq!(
+            window("acme.empty"),
+            Some(30),
+            "an empty policy hid its parent's window"
+        );
+        assert_eq!(
+            window("acme.keeps"),
+            None,
+            "a child naming null took its parent's number"
+        );
+        assert_eq!(
+            window("acme.keeps-below"),
+            None,
+            "a null was passed over for the number above it"
+        );
+        assert_eq!(window("acme.shorter"), Some(7));
+        assert_eq!(window("acme.none"), None);
+        assert_eq!(
+            window("acme.orphan"),
+            None,
+            "a parent the copy lacks was an error"
+        );
+    }
+
+    #[test]
     fn a_type_whose_parents_loop_is_refused_rather_than_resolved() {
         let conn = held(
             serde_json::json!([
@@ -1173,6 +1221,29 @@ mod tests {
             (mentor.label.as_str(), mentor.reverse_label.as_str()),
             ("Mentees", "Mentors")
         );
+    }
+
+    #[test]
+    fn the_version_moves_when_only_a_types_feed_window_changes() {
+        let conn = store::open_in_memory().unwrap();
+        let catalog = |retention: serde_json::Value| marfa_rules::wire::WireCatalog {
+            types: serde_json::from_value(serde_json::json!([
+                { "id": "acme.base", "fields": {}, "retention_policy": retention }
+            ]))
+            .unwrap(),
+            edge_types: Vec::new(),
+        };
+        store::replace_catalog(&conn, &catalog(json!({ "feed_days": 30 }))).unwrap();
+        let first = store::catalog_version(&conn).unwrap();
+        store::replace_catalog(&conn, &catalog(json!({ "feed_days": 30 }))).unwrap();
+        assert_eq!(store::catalog_version(&conn).unwrap(), first);
+        store::replace_catalog(&conn, &catalog(json!({ "feed_days": 7 }))).unwrap();
+        assert_ne!(store::catalog_version(&conn).unwrap(), first);
+        assert_eq!(item_type(&conn, "acme.base").unwrap().feed_days, Some(7));
+        let second = store::catalog_version(&conn).unwrap();
+        store::replace_catalog(&conn, &catalog(json!({ "feed_days": null }))).unwrap();
+        assert_ne!(store::catalog_version(&conn).unwrap(), second);
+        assert_eq!(item_type(&conn, "acme.base").unwrap().feed_days, None);
     }
 
     #[test]
