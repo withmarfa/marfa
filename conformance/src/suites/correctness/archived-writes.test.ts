@@ -164,102 +164,233 @@ describe("the extensions of an archived item", () => {
   });
 });
 
+type End = "from" | "to";
+const ENDS: End[] = ["from", "to"];
+
+/** The archived (or active) item `mine` and `other`, ordered as the edge's ends. */
+function ordered(end: End, mine: string, other: string) {
+  return end === "from"
+    ? { from_id: mine, to_id: other }
+    : { from_id: other, to_id: mine };
+}
+
+async function stored(id: string) {
+  const got = await client.getEdge(id);
+  expect(got.status, JSON.stringify(got.error)).toBe(200);
+  return got.data.edge;
+}
+
 describe("the edges of an archived item", () => {
   it("take POST /edges, PATCH /edges/{id} and DELETE /edges/{id} with the archived item at either end, as they do with an active item", async () => {
+    // A one-to-one type, whose edge can move an end, since the end that stays holds only it.
+    const movable = `mock.archived-move.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      label: "Test edge type",
+      id: movable,
+      cardinality: "one-to-one",
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    trackEdgeType(ctx, movable);
+
     for (const held of HELD) {
-      const mine = await note(held);
-      const other = await note("active");
+      for (const end of ENDS) {
+        const label = `${held} at the ${end} end`;
+        const mine = await note(held);
+        const other = await note("active");
+        const third = await note("active");
 
-      const outbound = await edgeBetween(mine.id, other.id);
-      const inbound = await edgeBetween(other.id, mine.id, "references", {
-        since: "spring",
-      });
-      const listed = await client.listItemEdges(mine.id);
-      expect(listed.data.data.map((edge) => edge.id)).toEqual([outbound.id]);
-      expect((await client.getEdge(inbound.id)).data.edge.to_id).toBe(mine.id);
+        const made = await edgeBetween(
+          ordered(end, mine.id, other.id).from_id,
+          ordered(end, mine.id, other.id).to_id,
+          "references",
+          { since: "spring" },
+        );
+        expect(await stored(made.id), label).toMatchObject(
+          ordered(end, mine.id, other.id),
+        );
 
-      const patched = await client.updateEdge(inbound.id, {
-        properties: { note: held },
-        version: inbound.version,
-      });
-      expect(patched.status, `${held}: ${JSON.stringify(patched.error)}`).toBe(
-        200,
-      );
-      expect(patched.data.edge.properties).toEqual({
-        since: "spring",
-        note: held,
-      });
-
-      for (const id of [outbound.id, inbound.id]) {
-        const deleted = await client.deleteEdge(id);
+        const patched = await client.updateEdge(made.id, {
+          properties: { note: held },
+          version: made.version,
+        });
         expect(
-          deleted.status,
-          `${held}: ${JSON.stringify(deleted.error)}`,
+          patched.status,
+          `${label}: ${JSON.stringify(patched.error)}`,
         ).toBe(200);
-        expect((await client.getEdge(id)).status).toBe(404);
+        expect((await stored(made.id)).properties, label).toEqual({
+          since: "spring",
+          note: held,
+        });
+
+        // An endpoint moved onto the item, then off it, on an edge between two others.
+        const loose = await edgeBetween(other.id, third.id, movable);
+        const onto = await client.updateEdge(loose.id, {
+          ...(end === "from" ? { from_id: mine.id } : { to_id: mine.id }),
+          version: loose.version,
+        });
+        expect(onto.status, `${label}: ${JSON.stringify(onto.error)}`).toBe(
+          200,
+        );
+        expect(await stored(loose.id), label).toMatchObject(
+          end === "from"
+            ? { from_id: mine.id, to_id: third.id }
+            : { from_id: other.id, to_id: mine.id },
+        );
+        const off = await client.updateEdge(loose.id, {
+          ...(end === "from" ? { from_id: other.id } : { to_id: third.id }),
+          version: onto.data.edge.version,
+        });
+        expect(off.status, `${label}: ${JSON.stringify(off.error)}`).toBe(200);
+        expect(await stored(loose.id), label).toMatchObject({
+          from_id: other.id,
+          to_id: third.id,
+        });
+
+        for (const id of [made.id, loose.id]) {
+          const deleted = await client.deleteEdge(id);
+          expect(
+            deleted.status,
+            `${label}: ${JSON.stringify(deleted.error)}`,
+          ).toBe(200);
+          expect((await client.getEdge(id)).status, label).toBe(404);
+        }
+        expect(await stateOf(mine.id), label).toBe(held);
+        expect(await stateOf(other.id), label).toBe("active");
       }
-      expect(await stateOf(mine.id)).toBe(held);
-      expect(await stateOf(other.id)).toBe("active");
     }
   });
 
-  it("take an entry of POST /edges/bulk with the archived item at either end, as they do with an active item", async () => {
+  it("take an entry of POST /edges/bulk that creates or changes an edge with the archived item at either end, as they do with an active item", async () => {
     for (const held of HELD) {
-      const mine = await note(held);
-      const other = await note("active");
-      const bulk = await client.bulkEdges({
-        edges: [
-          { from_id: mine.id, to_id: other.id, edge_type: "parent-of" },
-          { from_id: other.id, to_id: mine.id, edge_type: "references" },
-        ],
-      });
-      expect(bulk.status, `${held}: ${JSON.stringify(bulk.error)}`).toBe(200);
-      expect(bulk.data.counts, held).toMatchObject({
-        created: 2,
-        errored: 0,
-        skipped: 0,
-      });
-      for (const result of bulk.data.results) {
-        expect(result.outcome).toBe("created");
-        trackEdge(ctx, result.id ?? "");
+      for (const end of ENDS) {
+        const label = `${held} at the ${end} end`;
+        const mine = await note(held);
+        const other = await note("active");
+        const fourth = await note("active");
+        const held_edge = await edgeBetween(other.id, fourth.id, "references", {
+          since: "spring",
+        });
+
+        const created = await client.bulkEdges({
+          edges: [
+            { ...ordered(end, mine.id, other.id), edge_type: "references" },
+          ],
+        });
+        expect(
+          created.status,
+          `${label}: ${JSON.stringify(created.error)}`,
+        ).toBe(200);
+        expect(created.data.counts, label).toMatchObject({
+          created: 1,
+          errored: 0,
+          skipped: 0,
+        });
+        const createdId = created.data.results[0]!.id ?? "";
+        trackEdge(ctx, createdId);
+        expect(await stored(createdId), label).toMatchObject(
+          ordered(end, mine.id, other.id),
+        );
+
+        const changed = await client.bulkEdges({
+          edges: [
+            {
+              id: createdId,
+              ...ordered(end, mine.id, other.id),
+              edge_type: "references",
+              properties: { note: held },
+              version: (await stored(createdId)).version,
+            },
+            {
+              id: held_edge.id,
+              from_id: other.id,
+              to_id: fourth.id,
+              edge_type: "references",
+              properties: { since: "autumn" },
+              version: held_edge.version,
+            },
+          ],
+        });
+        expect(
+          changed.status,
+          `${label}: ${JSON.stringify(changed.error)}`,
+        ).toBe(200);
+        expect(changed.data.counts, label).toMatchObject({
+          updated: 2,
+          errored: 0,
+          skipped: 0,
+        });
+        expect((await stored(createdId)).properties, label).toEqual({
+          note: held,
+        });
+        expect((await stored(held_edge.id)).properties, label).toEqual({
+          since: "autumn",
+        });
+        expect(await stateOf(mine.id), label).toBe(held);
       }
-      expect(await stateOf(mine.id)).toBe(held);
     }
   });
 
-  it("take the edges of POST /items and of PATCH /items/{id}, with the archived item the one the edge names or the one that is written, as they do with an active item", async () => {
-    for (const held of HELD) {
-      const target = await note(held);
-      const created = await client.createItem(
-        createNote({
-          source: ctx.source,
-          properties: { body: `inline-${held}` },
+  it("take the edges of POST /items and of PATCH /items/{id}, with the archived item the one that is written or the one the edge names, as they do with an active item", async () => {
+    for (const written of HELD) {
+      for (const named of HELD) {
+        const label = `written ${written}, named ${named}`;
+        const target = await note(named);
+
+        const created = await client.createItem(
+          createNote({
+            source: ctx.source,
+            properties: { body: `inline-${label}` },
+            ...(written === "archived" ? { state: "archived" } : {}),
+            edges: { references: [target.id] },
+          }),
+        );
+        expect(
+          created.status,
+          `${label}: ${JSON.stringify(created.error)}`,
+        ).toBe(201);
+        trackItem(ctx, created.data.item.id);
+        expect(await stateOf(created.data.item.id), label).toBe(written);
+        const first = await client.listItemEdges(created.data.item.id, {
+          edge_type: "references",
+        });
+        expect(
+          first.data.data.map((edge) => edge.to_id),
+          label,
+        ).toEqual([target.id]);
+
+        const writer = await note(written);
+        const patched = await client.updateItem(writer.id, {
           edges: { references: [target.id] },
-        }),
-      );
-      expect(created.status, `${held}: ${JSON.stringify(created.error)}`).toBe(
-        201,
-      );
-      trackItem(ctx, created.data.item.id);
-      const first = await client.listItemEdges(created.data.item.id, {
-        edge_type: "references",
-      });
-      expect(first.data.data.map((edge) => edge.to_id)).toEqual([target.id]);
+          version: writer.version,
+        });
+        expect(
+          patched.status,
+          `${label}: ${JSON.stringify(patched.error)}`,
+        ).toBe(200);
+        const second = await client.listItemEdges(writer.id, {
+          edge_type: "references",
+        });
+        expect(
+          second.data.data.map((edge) => edge.to_id),
+          label,
+        ).toEqual([target.id]);
+        expect(await stateOf(writer.id), label).toBe(written);
+        expect(await stateOf(target.id), label).toBe(named);
 
-      const writer = await note(held);
-      const patched = await client.updateItem(writer.id, {
-        edges: { references: [target.id] },
-        version: writer.version,
-      });
-      expect(patched.status, `${held}: ${JSON.stringify(patched.error)}`).toBe(
-        200,
-      );
-      const second = await client.listItemEdges(writer.id, {
-        edge_type: "references",
-      });
-      expect(second.data.data.map((edge) => edge.to_id)).toEqual([target.id]);
-      expect(await stateOf(writer.id)).toBe(held);
-      expect(await stateOf(target.id)).toBe(held);
+        const emptied = await client.updateItem(writer.id, {
+          edges: { references: [] },
+          version: patched.data.item.version,
+        });
+        expect(
+          emptied.status,
+          `${label}: ${JSON.stringify(emptied.error)}`,
+        ).toBe(200);
+        expect(
+          (await client.listItemEdges(writer.id, { edge_type: "references" }))
+            .data.data,
+          label,
+        ).toEqual([]);
+      }
     }
   });
 });
@@ -276,59 +407,70 @@ describe("archiving an item", () => {
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
     trackEdgeType(ctx, custom);
 
-    const grandparent = await note();
-    const host = await note();
-    const child = await note();
-    const grandchild = await note();
-    const sibling = await note();
-    const bound = await note();
-    const part = await note();
-    await edgeBetween(grandparent.id, host.id);
-    await edgeBetween(host.id, child.id);
-    await edgeBetween(child.id, grandchild.id);
-    await edgeBetween(grandparent.id, sibling.id);
-    await edgeBetween(host.id, bound.id, custom);
-    await edgeBetween(part.id, host.id, "comments-on");
-
-    const moved = await client.transitionItem(host.id, "archived");
-    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
-    expect(moved.data.item.state).toBe("archived");
-
-    for (const other of [
-      grandparent,
-      child,
-      grandchild,
-      sibling,
-      bound,
-      part,
-    ]) {
-      expect(await stateOf(other.id), other.id).toBe("active");
+    async function family() {
+      const grandparent = await note();
+      const host = await note();
+      const child = await note();
+      const grandchild = await note();
+      const sibling = await note();
+      const bound = await note();
+      const part = await note();
+      await edgeBetween(grandparent.id, host.id);
+      await edgeBetween(host.id, child.id);
+      await edgeBetween(child.id, grandchild.id);
+      await edgeBetween(grandparent.id, sibling.id);
+      await edgeBetween(host.id, bound.id, custom);
+      await edgeBetween(part.id, host.id, "comments-on");
+      return {
+        host,
+        reached: [child, grandchild, bound],
+        others: [grandparent, sibling, part],
+      };
     }
 
-    const second = await note();
-    const secondChild = await note();
-    await edgeBetween(second.id, secondChild.id);
-    expect((await client.deleteItem(second.id)).status).toBe(200);
-    expect((await client.getItem(secondChild.id)).status).toBe(404);
+    // The witness: the same transition into the bin takes what the host reaches.
+    const control = await family();
+    const trashed = await client.transitionItem(control.host.id, "trashed");
+    expect(trashed.status, JSON.stringify(trashed.error)).toBe(200);
+    for (const gone of control.reached) {
+      expect((await client.getItem(gone.id)).status, gone.id).toBe(404);
+    }
+
+    const archive = await family();
+    const moved = await client.transitionItem(archive.host.id, "archived");
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.state).toBe("archived");
+    for (const other of [...archive.reached, ...archive.others]) {
+      expect(await stateOf(other.id), other.id).toBe("active");
+    }
   });
 
   it("changes the state of no other item on a bulk transition to archived", async () => {
-    const tag = `archive-bulk-${ctx.runId}`;
-    const host = await note("active", { tags: [tag] });
-    const child = await note();
-    await edgeBetween(host.id, child.id);
+    async function bulkTransition(state: "archived" | "trashed") {
+      const tag = `archive-bulk-${state}-${ctx.runId}`;
+      const host = await note("active", { tags: [tag] });
+      const child = await note();
+      await edgeBetween(host.id, child.id);
+      const queued = await client.bulkAction({
+        action: "transition",
+        state,
+        filter: { tags: [tag] },
+      });
+      expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+      const job = await client.pollBulkActionToTerminal(
+        (queued.data as { id: string }).id,
+      );
+      expect(job.result?.succeeded).toBe(1);
+      return { host, child };
+    }
 
-    const queued = await client.bulkAction({
-      action: "transition",
-      state: "archived",
-      filter: { tags: [tag] },
-    });
-    expect(queued.status, JSON.stringify(queued.error)).toBe(202);
-    const job = await client.pollBulkActionToTerminal(
-      (queued.data as { id: string }).id,
-    );
-    expect(job.result?.succeeded).toBe(1);
-    expect(await stateOf(host.id)).toBe("archived");
-    expect(await stateOf(child.id)).toBe("active");
+    // The witness: a bulk transition into the bin takes the host's child.
+    const control = await bulkTransition("trashed");
+    expect((await client.getItem(control.host.id)).status).toBe(404);
+    expect((await client.getItem(control.child.id)).status).toBe(404);
+
+    const archive = await bulkTransition("archived");
+    expect(await stateOf(archive.host.id)).toBe("archived");
+    expect(await stateOf(archive.child.id)).toBe("active");
   });
 });
