@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { createTestContext, cleanup } from "../../utils/setup.js";
-import { readEntry } from "../../utils/archive.js";
+import { readEntry, WRITTEN_ARCHIVE_VERSION } from "../../utils/archive.js";
 
 /** The shape `generateId` mints, which is what the identity is. */
 const UUID_V7 =
@@ -63,7 +63,7 @@ describe("the instance's identity", () => {
     // The witness. Without it a reader that silently returned the wrong
     // member, or an empty one, would satisfy the identity assertion below
     // for the wrong reason.
-    expect(manifest.version).toBe(5);
+    expect(manifest.version).toBe(WRITTEN_ARCHIVE_VERSION);
     expect(manifest.format).toBe("marfa-archive");
     expect(manifest.written_by).toMatch(/^marfa-server \S+$/);
     expect(manifest.instance_id).toBe(root.instance_id);
