@@ -3266,11 +3266,15 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
 
     // A hand-written duplicate reads once, however its directory is spelled.
     const written = JSON.parse(readFileSync(harness.registry, "utf8")) as {
-      folders: Array<{ dir: string; folder: string }>;
+      folders: Array<{ dir: string; folder: string; root?: string }>;
     };
     const [entry] = written.folders;
     if (entry === undefined) throw new Error("the registry lists nothing");
-    written.folders.push(entry, { dir: harness.dir, folder: entry.folder });
+    written.folders.push(entry, {
+      dir: harness.dir,
+      folder: entry.folder,
+      root: entry.root,
+    });
     writeFileSync(harness.registry, JSON.stringify(written));
     const once = await harness.folder.list();
     expect(once.ok && once.value.length, "an entry was listed twice").toBe(1);
