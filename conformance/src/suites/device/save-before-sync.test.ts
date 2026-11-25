@@ -203,23 +203,33 @@ describe("a copy no server has been named for", () => {
     ]);
   });
 
-  it("reads a declared type as registered whatever provenance its declaration submits", async () => {
+  it("refuses a declaration that names provenance as the server refuses a registration, and reads a declared type as registered", async () => {
     const device = await offline("save-declared-provenance");
-    value(
-      await device.declareTypes([
-        {
-          ...RECIPE,
-          provenance: {
-            origin: "plugin",
-            plugin: { name: "tickets", version: "1.0.0" },
-            created_by: { kind: "key", id: "someone" },
-          },
-        } as typeof RECIPE,
-      ]),
-    );
+    for (const provenance of [
+      {
+        origin: "plugin",
+        plugin: { name: "tickets", version: "1.0.0" },
+        created_by: { kind: "key", id: "someone" },
+      },
+      {},
+      null,
+    ]) {
+      const refused = await device.declareTypes([{ ...RECIPE, provenance }]);
+      expect(
+        refused.ok ? "declared" : refused.refusal.code,
+        `a declaration naming ${JSON.stringify(provenance)} as its provenance was declared`,
+      ).toBe("invalid");
+      if (!refused.ok) {
+        expect(refused.refusal.raw).toContain("provenance");
+        expect(refused.refusal.raw).toContain("an unread key");
+      }
+    }
+    expect(value(await device.declaredTypes())).toEqual([]);
+    // The witness: the same type without it is taken and reads as registered.
+    value(await device.declareTypes([RECIPE]));
     expect(
       value(await device.itemType("app.recipe.entry")),
-      "a declaration's own word about where it came from was believed",
+      "a declared type did not read as one registered",
     ).toMatchObject({ origin: "registered", plugin: null });
   });
 

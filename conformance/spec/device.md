@@ -5042,11 +5042,11 @@ A device MUST answer an item type's `origin` and `plugin` as `GET /types/{id}` a
 
 ### `device/catalog-type-provenance-declared`
 
-When reading a declared type from the copy's own catalog, a device MUST answer `registered` with no plugin, whatever provenance the declaration submits.
+When reading a type the app declared from the copy's own catalog, a device MUST answer `registered` with no plugin.
 
-**Reason:** the server ignores a provenance a registration submits and records the type as registered (`types/provenance-read`), so a device that believed a declaration would tell an app that a plugin installed a type no plugin installed.
+**Reason:** a registration is recorded as registered (`types/provenance-read`), and a declaration cannot say otherwise (`device/declaration-provenance-refused`), so a device that answered `unknown` would tell an app that a type it declared has no known origin.
 
-**Tests:** `device/save-before-sync.test.ts › reads a declared type as registered whatever provenance its declaration submits`.
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names provenance as the server refuses a registration, and reads a declared type as registered`, `device/save-before-sync-live.test.ts › refuses a declaration naming provenance as the server refuses it, then registers and reads the type once declared without it`.
 
 ### `device/catalog-type-provenance-version`
 
@@ -5777,6 +5777,14 @@ If an app declares a type whose identifier breaks the type grammar or uses a res
 **Reason:** the server refuses such a status field when the type is registered (`types/status-refused`, `types/status-parent-wordless`), and a status field with no words takes no value. An app declares only `app.*`, its own machinery: an owner's own types go under `user.*` and shared types come from a plugin. This is the client's check, not the access boundary, which the server keeps by what a credential may register and reach (`types/register-reach`).
 
 **Tests:** `device/save-before-sync.test.ts › refuses a declaration that names a type of Marfa's, one it cannot read, a parent it does not know, or one type twice`, `› refuses a declaration of a type outside app.*, saying an app declares only types under it, and declares one under it`, `› refuses a declaration whose status field has no words in its chain, naming the field`, `device/declare-replaces.test.ts › refuses to declare a type outside the app's own namespace or one of Marfa's, and replaces the app's own`.
+
+### `device/declaration-provenance-refused`
+
+If an app declares a type that names `provenance`, then a device MUST refuse the declaration `invalid`, naming the key.
+
+**Reason:** the server refuses a registration that names `provenance` as an unread key (`types/unknown-key`) and records where a type came from itself (`types/provenance-read`), so a declaration the device took would fail its registration when a hydration made it, and a slice naming the type would then fail `unknown_type`.
+
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names provenance as the server refuses a registration, and reads a declared type as registered`, `device/save-before-sync-live.test.ts › refuses a declaration naming provenance as the server refuses it, then registers and reads the type once declared without it`.
 
 ### `device/declaration-field-refused`
 

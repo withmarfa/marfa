@@ -108,6 +108,45 @@ it("sends what it saved with no server once it has joined, after registering the
   );
 });
 
+it("refuses a declaration naming provenance as the server refuses it, then registers and reads the type once declared without it", async () => {
+  const type = `app.live.provenance_${ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
+  const key = await appKey("provenance", true, type);
+  const definition = { id: type, fields: { title: { type: "string" } } };
+  // The server refuses the registration, so the declaration is refused first.
+  const direct = await client.registerType({
+    ...definition,
+    provenance: { origin: "plugin", plugin: { name: "t", version: "1" } },
+  } as never);
+  expect(direct.ok).toBe(false);
+  expect(direct.error?.code).toBe("invalid_schema");
+  const offline = new CliDevice({
+    binary: requireBinary(),
+    store: newStore("save-live-provenance"),
+  });
+  value(await offline.status());
+  const refused = await offline.declareTypes([
+    {
+      ...definition,
+      provenance: { origin: "plugin", plugin: { name: "t", version: "1" } },
+    },
+  ]);
+  expect(refused.ok ? "declared" : refused.refusal.code).toBe("invalid");
+  value(await offline.declareTypes([definition]));
+  const joined = offline.reopen({ url: apiUrl, key });
+  const report = value(await joined.hydrate([type], "library"));
+  expect(report.registered_types).toEqual([type]);
+  expect(report.unregistered_types).toEqual([]);
+  trackType(ctx, type, client);
+  expect(
+    (await client.getType(type)).data.provenance?.origin,
+    "the server did not record the type as registered",
+  ).toBe("registered");
+  expect(value(await joined.itemType(type))).toMatchObject({
+    origin: "registered",
+    plugin: null,
+  });
+});
+
 it("says which declared types the key could not register, and the server refuses the write that names one", async () => {
   const type = `app.live.unregistered_${ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
   const key = await appKey("cannot-register", false, type);

@@ -536,6 +536,13 @@ describe("The type catalog a working copy holds", () => {
         ),
         wireType("acme.odd", { provenance: { origin: "from-the-future" } }),
         wireType("acme.silent", { provenance: {} }),
+        wireType("acme.nameless", { provenance: { origin: "plugin" } }),
+        wireType("acme.unnamed", {
+          provenance: { origin: "plugin", plugin: { version: "1.0.0" } },
+        }),
+        wireType("acme.unversioned", {
+          provenance: { origin: "plugin", plugin: { name: "tickets" } },
+        }),
       ]);
     scriptHydration(server, {
       head: "1",
@@ -563,6 +570,12 @@ describe("The type catalog a working copy holds", () => {
       await read("acme.silent"),
       "a type naming no origin was not read as unknown",
     ).toMatchObject({ origin: "unknown", plugin: null });
+    for (const id of ["acme.nameless", "acme.unnamed", "acme.unversioned"]) {
+      expect(
+        await read(id),
+        `${id} named a plugin origin without both a plugin name and version and was not read as unknown`,
+      ).toMatchObject({ origin: "unknown", plugin: null });
+    }
 
     const steps: Array<Record<string, unknown> | undefined> = [
       {

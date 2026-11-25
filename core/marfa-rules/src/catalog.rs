@@ -298,6 +298,18 @@ pub fn declaration(
             issue.message()
         )));
     }
+    // The server refuses a registration naming `provenance` as an unread key
+    // and records where a type came from itself.
+    if let Some(issue) = crate::schema::unread_keys(row)
+        .into_iter()
+        .find(|issue| issue.field == "provenance")
+    {
+        return Err(invalid(format!(
+            "{id} declares a key a type does not take: {}: {}",
+            issue.field,
+            issue.message()
+        )));
+    }
     let mut row = row.clone();
     match row.get("fields") {
         None => {

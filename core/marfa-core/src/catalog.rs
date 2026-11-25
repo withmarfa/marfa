@@ -1282,6 +1282,42 @@ mod tests {
     }
 
     #[test]
+    fn a_held_creator_in_any_position_leaves_the_same_catalog_unchanged() {
+        let catalog: marfa_rules::wire::WireCatalog = marfa_rules::wire::WireCatalog {
+            types: serde_json::from_value(serde_json::json!([
+                { "id": "acme.base", "fields": {},
+                  "provenance": { "origin": "plugin",
+                                  "plugin": { "name": "tickets", "version": "1.0.0" },
+                                  "created_by": null } }
+            ]))
+            .unwrap(),
+            edge_types: Vec::new(),
+        };
+        // The same members and values, the creator first, between and last.
+        let held_as = [
+            r#"{"created_by":null,"origin":"plugin","plugin":{"name":"tickets","version":"1.0.0"}}"#,
+            r#"{"origin":"plugin","created_by":null,"plugin":{"name":"tickets","version":"1.0.0"}}"#,
+            r#"{"origin":"plugin","plugin":{"name":"tickets","version":"1.0.0"},"created_by":null}"#,
+        ];
+        for held_as in held_as {
+            let conn = store::open_in_memory().unwrap();
+            store::replace_catalog(&conn, &catalog).unwrap();
+            conn.execute(
+                "UPDATE types SET json = json_set(json, '$.provenance', json(?1))",
+                [held_as],
+            )
+            .unwrap();
+            let held = store::catalog_version(&conn).unwrap();
+            assert_eq!(
+                store::replace_catalog(&conn, &catalog).unwrap(),
+                store::CatalogChange::Unchanged,
+                "a creator held as {held_as} made the same catalog a change"
+            );
+            assert_eq!(store::catalog_version(&conn).unwrap(), held);
+        }
+    }
+
+    #[test]
     fn a_type_whose_parents_loop_is_refused_rather_than_resolved() {
         let conn = held(
             serde_json::json!([

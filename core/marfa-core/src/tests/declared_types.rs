@@ -162,6 +162,32 @@ fn a_declaration_refuses_app_names_without_exactly_three_segments() {
 }
 
 #[test]
+fn a_declaration_naming_provenance_is_refused_as_the_server_refuses_a_registration() {
+    let core = Core::open_in_memory(None).unwrap();
+    for provenance in [
+        serde_json::json!({ "origin": "plugin", "plugin": { "name": "tickets", "version": "1" } }),
+        serde_json::json!({}),
+        serde_json::Value::Null,
+    ] {
+        let refused = core
+            .declare_types(&[serde_json::json!({
+                "id": "app.recipe.entry", "fields": {}, "provenance": provenance
+            })])
+            .unwrap_err();
+        let CoreError::Invalid(message) = refused else {
+            panic!("a declaration naming provenance was not refused Invalid");
+        };
+        assert!(
+            message.contains("provenance") && message.contains("an unread key"),
+            "the refusal did not name the key as the server does: {message}"
+        );
+    }
+    assert!(core.declared_types().unwrap().is_empty());
+    core.declare_types(&[serde_json::json!({ "id": "app.recipe.entry", "fields": {} })])
+        .unwrap();
+}
+
+#[test]
 fn a_declaration_refuses_a_list_of_entries_and_a_currency_the_server_refuses() {
     let core = Core::open_in_memory(None).unwrap();
     let entries = |members: serde_json::Value| serde_json::json!({ "type": "array", "items_type": "object", "items_fields": members });
