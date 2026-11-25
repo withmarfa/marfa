@@ -158,8 +158,7 @@ impl Folder {
                 // longer reach, which no scan deletes.
                 Ok(false) => continue,
             };
-            // Saved before the pause is cleared, so status still holds it. The
-            // scan clears the row of a file under a directory it could not read.
+            // Status needs the reason after confirmation clears the pause.
             let kept = state::Kept::Unsure(reason.clone());
             let conn = self.core.conn()?;
             state::journal_missing(&conn, path, item_id)?;

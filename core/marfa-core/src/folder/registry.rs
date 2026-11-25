@@ -827,13 +827,7 @@ fn root_identity(root: &Directory) -> Option<String> {
     super::identity::of(&root.metadata().ok()?).map(|identity| identity.key())
 }
 
-/// Whether the folder was removed from the directory it was admitted at. A
-/// missing or unreadable root is kept, since a disconnected volume cannot
-/// establish that the admitted folder was removed. So is a root that is not
-/// the admitted directory, such as an empty mount point or a recreated
-/// directory standing at the path, whatever it holds, and an entry that
-/// records no admitted directory, which nothing tells from an empty mount
-/// point.
+/// An empty mount point cannot prove the admitted folder was removed.
 pub(super) fn gone(entry: &Registered) -> bool {
     let (Ok(root), Some(admitted)) = (Directory::open(&entry.dir), entry.root.as_deref()) else {
         return false;
