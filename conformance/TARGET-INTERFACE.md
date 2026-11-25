@@ -176,6 +176,10 @@ stays because that thing is what it checks.
   held across a catch-up, and lists or finds it only where its exact type is
   named", removes a pin row from the device's store. A copy an earlier release made holds a hidden item
   that no door of this release leaves unpinned and held.
+- `device/catalog.test.ts`, "keeps the catalog version where it was when a
+  copy that held a type's creator catches up against the same catalog", adds
+  `provenance.created_by` to a held type. A current hydration omits the creator,
+  and no device operation or fault can put it back.
 - `compliance/hidden-types-saved-view.test.ts` rewrites the stored query of a
   view to name an app type while the server is stopped. A view door refuses a
   query that names a hidden type, so only a view saved by an earlier release
