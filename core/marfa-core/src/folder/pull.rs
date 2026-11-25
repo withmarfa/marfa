@@ -5,7 +5,7 @@ use super::{
     Serialize, Settings, SettingsFileReport, Uncarried, Value, beside, bytes_of,
     carries_frontmatter, cleaned, document, executable, fields, identity, is_document, landing,
     line_of, name_of, names, path_of, placement, plainly_inside, read_file, stat_metadata, state,
-    suited, transfer,
+    suited,
 };
 
 /// What a render of an item's file reads besides the item.
@@ -109,13 +109,6 @@ enum PlacementWrite {
     Refused,
 }
 
-enum TakeIn {
-    Inapplicable,
-    Taken,
-    /// Why the file could not be moved here.
-    Refused(String),
-}
-
 struct Placing<'a> {
     item: &'a Item,
     bound: Option<state::Bound>,
@@ -124,7 +117,6 @@ struct Placing<'a> {
     rank: placement::Rank,
     // The order contested names are given out in.
     claim: placement::Rank,
-    taken: Option<(transfer::Entry, state::Bound)>,
 }
 
 /// What a pull would write, counted without writing it.
@@ -165,7 +157,6 @@ pub struct PullReport {
     pub kept: usize,
     pub paused: usize,
     pub unmatched: usize,
-    pub taken: usize,
     pub elsewhere: usize,
     /// Documents whose body the pull rewrote so their links follow an item
     /// retitled since they were written. Each rewrite is queued, not yet
@@ -202,7 +193,6 @@ impl PullReport {
         self.ended += other.ended;
         self.removed += other.removed;
         self.purged += other.purged;
-        self.taken += other.taken;
         self.relinked += other.relinked;
         self.unrelinked += other.unrelinked;
     }
@@ -639,8 +629,7 @@ impl Folder {
             }) {
                 continue;
             }
-            // Gone from the disk it is the scan's to journal; written back,
-            // a file another folder took in would return.
+            // The scan journals a missing unmatched file.
             if *unmatched
                 && bound
                     .as_ref()
@@ -648,9 +637,7 @@ impl Folder {
             {
                 continue;
             }
-            // A missing file the sweep kept bound is another folder's to take,
-            // or a full pass's to tell; written anew it would read there as a
-            // copy. A file at a carried item's path is another, held file.
+            // Recreating the file before the receiving scan can turn a move into a copy.
             if let Some(bound) = &bound
                 && let Some((kept_for, why)) = kept.get(&bound.path)
                 && *kept_for == item.id
@@ -671,16 +658,11 @@ impl Folder {
                 }
                 continue;
             }
-            // Moved to another folder here and not yet taken there, written
-            // anew it would make the moved file read as a copy.
+            // Let the receiving directory bind the moved file first.
             if bound.is_none() && peers.arriving(&item.id) {
                 report.elsewhere += 1;
                 continue;
             }
-            let taken = match &bound {
-                None if !*unmatched => peers.let_go(&item.id, &members),
-                _ => None,
-            };
             let placed = self.placement(&item.id)?;
             // An embedded file goes where its link says, any other attachment
             // beside its document, and its placement follows.
@@ -744,7 +726,6 @@ impl Folder {
                 want,
                 rank,
                 claim,
-                taken,
             });
         }
         if narrow.is_some() && self.wants_a_path_held_elsewhere(&placing)? {
@@ -996,38 +977,18 @@ impl Folder {
         }
         rendering.context.borrow().check(&*self.core.conn()?)?;
         let Placing {
-            item,
-            bound,
-            want,
-            taken,
-            ..
+            item, bound, want, ..
         } = entry;
         let (item, want) = (*item, want.clone());
         let catalog = rendering.catalog;
         // The file the last pull found or left as its item renders, which no
         // change since reaches, renders as it is.
-        if taken.is_none()
-            && let Some(bound) = bound
+        if let Some(bound) = bound
             && bound.path == want
             && rendering.pick.is_some_and(|pick| pick.skips(&item.id))
             && self.exists(self.root.join(&want))
         {
             return self.stay(item, bound, &want, rendering, withheld, report);
-        }
-        if taken.is_some() {
-            match self.take_in(entry, rendering, withheld, report)? {
-                TakeIn::Taken => return Ok(PlacementWrite::Done),
-                TakeIn::Refused(reason) => {
-                    report.not_written(
-                        NotWritten::Unwritten,
-                        &item.id,
-                        &want,
-                        format!("it could not be taken in from another folder: {reason}"),
-                    );
-                    return Ok(PlacementWrite::Refused);
-                }
-                TakeIn::Inapplicable => {}
-            }
         }
         let path = self.root.join(&want);
         let (bytes, wrote, lines) = match bytes_of(item, catalog) {
@@ -1494,8 +1455,7 @@ impl Folder {
         }
         if let Some(pick) = rendering.pick {
             pick.settle(&item.id);
-            if entry.taken.is_none() && entry.bound.as_ref().is_some_and(|bound| bound.path == want)
-            {
+            if entry.bound.as_ref().is_some_and(|bound| bound.path == want) {
                 pick.rewrote(&item.id, &want);
             }
         }
@@ -1647,129 +1607,6 @@ impl Folder {
                 )),
             );
         }
-    }
-
-    /// A failed move has already decided against this destination. It must not
-    /// fall through to writing or adopting a byte-identical competing file.
-    fn take_in(
-        &self,
-        entry: &Placing<'_>,
-        rendering: &Rendering<'_>,
-        withheld: &placement::Withheld,
-        report: &mut PullReport,
-    ) -> Result<TakeIn> {
-        let item = entry.item;
-        let want = entry.want.as_str();
-        let Some((from, theirs)) = &entry.taken else {
-            return Ok(TakeIn::Inapplicable);
-        };
-        let path = self.root.join(want);
-        if self.exists(&path) {
-            return Ok(TakeIn::Inapplicable);
-        }
-        let Ok(source) = transfer::Source::open_at(from, theirs) else {
-            return Ok(TakeIn::Inapplicable);
-        };
-        let binding = |identity: Option<String>| state::Bound {
-            path: want.to_string(),
-            item_id: item.id.clone(),
-            identity,
-            content_hash: theirs.content_hash.clone(),
-            presentation: theirs.presentation.clone(),
-            blob: theirs.blob.clone(),
-            written_hash: Some(theirs.content_hash.clone()),
-            links: theirs.links.clone(),
-            embeds: theirs.embeds.clone(),
-            lines: theirs.lines.clone(),
-            edit_line: None,
-            held: None,
-            own: theirs.own.clone(),
-            writes: state::Writes::default(),
-        };
-        // Kept beside the new binding until the file is here, as a write's is.
-        let conn = self.core.conn()?;
-        rendering.context.borrow().check(&conn)?;
-        refuse_unless_held(&conn, &item.id)?;
-        let before = state::bound_at(&conn, want)?;
-        rendering.bind(
-            &conn,
-            &state::Bound {
-                writes: state::Writes {
-                    landing: Some(state::Landing {
-                        before: before.clone().map(Box::new),
-                    }),
-                    ..state::Writes::default()
-                },
-                ..binding(None)
-            },
-        )?;
-        let moved = self.inside(path.parent()).and_then(|()| {
-            landing::crash_if_asked(&path);
-            let (target_dir, target_name) = self.location(&path, true)?;
-            landing::appear_at(&target_dir, Path::new(&target_name), "create-before-move")?;
-            source.check()?;
-            let renamed = if crate::fault::named("cross-volume-move").is_some() {
-                Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices))
-            } else {
-                landing::rename_new_at(
-                    &from.directory,
-                    &from.name,
-                    &target_dir,
-                    Path::new(&target_name),
-                )
-            };
-            renamed.or_else(|error| {
-                if error.kind() != std::io::ErrorKind::CrossesDevices && !source.protected(&error) {
-                    return Err(error);
-                }
-                self.land(
-                    &conn,
-                    &path,
-                    |file, _| source.fill(file),
-                    |found| found.is_none() && source.check().is_ok(),
-                )
-                .map_err(std::io::Error::from)
-                .map(|_| {
-                    landing::crash_if_named(&path, "crash-after-copy-publish");
-                    if source.check().is_ok() {
-                        let dir = from
-                            .label
-                            .parent()
-                            .map(|parent| parent.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        if let Ok(place) = self.guarded_at(&conn, from, dir) {
-                            let _ = landing::remove_at(
-                                &place.directory,
-                                place.guard(),
-                                &from.name,
-                                |found| {
-                                    source.check().is_ok()
-                                        && state::hash(found) == theirs.content_hash
-                                },
-                            );
-                        }
-                    }
-                })
-            })
-        });
-        if let Err(error) = moved {
-            match &before {
-                Some(before) => rendering.bind(&conn, before)?,
-                None => rendering.unbind(&conn, want)?,
-            }
-            return Ok(TakeIn::Refused(error.to_string()));
-        }
-        rendering.bind(&conn, &binding(None))?;
-        state::journal_clear_for(&conn, want, &item.id)?;
-        if let Ok(metadata) = self.metadata(&path)
-            && let Some(found) = identity::of(&metadata)
-        {
-            rendering.bind(&conn, &binding(Some(found.key())))?;
-        }
-        drop(conn);
-        report.placed += usize::from(self.place(&item.id, want, withheld)?);
-        report.taken += 1;
-        Ok(TakeIn::Taken)
     }
 
     /// Each document of `work`, at the path a pull writes it.
@@ -2863,7 +2700,6 @@ mod tests {
                 want: "fixture.bin".into(),
                 rank: placement::unplaced_rank(true),
                 claim: placement::unplaced_rank(true),
-                taken: None,
             };
             let mut report = PullReport::default();
             let outcome =
@@ -3017,7 +2853,6 @@ mod tests {
                 want: "a.md".into(),
                 rank: placement::unplaced_rank(false),
                 claim: placement::unplaced_rank(false),
-                taken: None,
             };
             let mut report = PullReport::default();
             folder

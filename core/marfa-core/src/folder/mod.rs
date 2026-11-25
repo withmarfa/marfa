@@ -46,7 +46,6 @@ mod status;
 mod storage;
 mod sync;
 mod taking_back;
-mod transfer;
 mod watch;
 mod watch_record;
 mod watched;
@@ -1468,6 +1467,7 @@ fn settle_row(
         dir_at: row.dir_at,
         aside: aside_place.to_string(),
         aside_at: row.aside_at,
+        // An absolute `dir` is another folder's, with no binding here to follow.
         follow: (dir_place != row.dir && !Path::new(&row.dir).is_absolute()).then(|| Follow {
             from: joined(&row.dir, &row.displacement.target),
             dir,
@@ -1618,35 +1618,7 @@ impl Folder {
         })
     }
 
-    /// [`Folder::guarded`] for an entry already open, whose directory the
-    /// row names as `dir`: relative to the root, or absolute for another
-    /// folder's.
-    fn guarded_at<'a>(
-        &'a self,
-        conn: &'a rusqlite::Connection,
-        entry: &transfer::Entry,
-        dir: String,
-    ) -> std::io::Result<Guarded<'a>> {
-        let at = landing::identity(&entry.directory.metadata()?);
-        Ok(Guarded {
-            directory: entry.directory.clone(),
-            name: entry.name.clone().into_os_string(),
-            aside: entry.directory.clone(),
-            writers: &self.writers,
-            rows: Rows {
-                conn,
-                dir: dir.clone(),
-                dir_at: at,
-                aside: dir,
-                aside_at: at,
-                follow: None,
-            },
-        })
-    }
-
-    /// The directory a displacement row names, relative to the root, in the
-    /// folder's state, or absolute, where it is still the directory `at`
-    /// names. Another directory at that path answers as not found.
+    /// A replacement at the recorded path counts as a missing directory.
     fn displaced_dir(&self, place: &str, at: (u64, u64)) -> std::io::Result<Directory> {
         let directory = self.place_dir(place)?;
         if !same_directory(
@@ -1662,7 +1634,7 @@ impl Folder {
         Ok(directory)
     }
 
-    /// The directory a row names by `place`, whatever directory has that name.
+    /// Opens the recorded path without checking the directory's identity.
     fn place_dir(&self, place: &str) -> std::io::Result<Directory> {
         let place = Path::new(place);
         Ok(if place.is_absolute() {

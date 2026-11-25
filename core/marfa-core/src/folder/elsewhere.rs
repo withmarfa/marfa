@@ -174,35 +174,6 @@ impl Peer {
             .map(|members| members.contains(item_id))
     }
 
-    /// Whether the item left this folder by its state or the bin, whose file
-    /// that folder takes away, or pauses, rather than keeps for a take-in.
-    fn left_by_state(&self, item_id: &str) -> bool {
-        let Some(folder) = &self.folder else {
-            return true;
-        };
-        match (folder.settings(), folder.core.get(item_id)) {
-            (Ok(settings), Ok(Some(item))) => !settings.holds_state(item.state),
-            _ => true,
-        }
-    }
-
-    /// Whether the item is attached to a document it has a file of, embedded
-    /// or not, so its own file is that document's attachment; where its copy
-    /// cannot say, it is taken to be. A document moving to `taking`, which
-    /// holds it where this folder does not, takes its attachment along.
-    fn attached_here(&self, item_id: &str, taking: &HashSet<String>) -> bool {
-        let Some(folder) = &self.folder else {
-            return false;
-        };
-        folder.core.edges_from(item_id).map_or(true, |edges| {
-            edges.iter().any(|edge| {
-                edge.edge_type == super::embeds::ATTACHMENT_EDGE
-                    && self.bound_to(&edge.to_id).is_some()
-                    && !(taking.contains(&edge.to_id) && self.holds(&edge.to_id) == Some(false))
-            })
-        })
-    }
-
     /// Whether its copy holds the item as bytes rather than as a document.
     fn file_item(&self, item_id: &str) -> bool {
         let Some(folder) = &self.folder else {
@@ -214,13 +185,6 @@ impl Peer {
         catalog
             .as_ref()
             .is_some_and(|catalog| folder.file_item(item_id, catalog).unwrap_or(false))
-    }
-
-    fn bound_to(&self, item_id: &str) -> Option<state::Bound> {
-        let folder = self.folder.as_ref()?;
-        state::bound_to_item(&*folder.core.conn().ok()?, item_id)
-            .ok()
-            .flatten()
     }
 
     fn bound(&self) -> &HashMap<String, (String, String)> {
@@ -720,47 +684,6 @@ impl<'a> Peers<'a> {
                 matches
             )),
         }
-    }
-
-    /// A file another folder keeps unmatched, holding the bytes it wrote, to
-    /// take in to the folder whose members are `taking`.
-    pub(super) fn let_go(
-        &self,
-        item_id: &str,
-        taking: &HashSet<String>,
-    ) -> Option<(super::transfer::Entry, state::Bound)> {
-        for peer in self.other_folders() {
-            let Some(bound) = peer.bound_to(item_id) else {
-                continue;
-            };
-            if bound.held.is_some()
-                || bound.holds_refusal()
-                || bound.written_hash.as_deref() != Some(bound.content_hash.as_str())
-                || !peer.present(&bound.path)
-                || peer.holds(item_id) != Some(false)
-                || peer.left_by_state(item_id)
-                || peer.attached_here(item_id, taking)
-            {
-                continue;
-            }
-            let path = peer.root.join(&bound.path);
-            let root = peer.root_dir.as_ref()?;
-            let (directory, name) = root.parent(Path::new(&bound.path), false).ok()?;
-            if directory
-                .read(Path::new(&name))
-                .is_ok_and(|bytes| state::hash(&bytes) == bound.content_hash)
-            {
-                return Some((
-                    super::transfer::Entry {
-                        directory,
-                        name: name.into(),
-                        label: path,
-                    },
-                    bound,
-                ));
-            }
-        }
-        None
     }
 }
 

@@ -15,7 +15,6 @@ import {
 import { ScriptedServer, type SseFrame } from "../../device/scripted-server.js";
 import {
   folderHarness,
-  folderItem,
   KEY,
   scriptFolderItem,
   scriptHydration,
@@ -202,35 +201,6 @@ describe("completed effects of a restarted folder pull", () => {
     expect(
       queue.ok && queue.value.filter((write) => write.kind === "delete_edge"),
     ).toHaveLength(1);
-  });
-
-  it("retains the transfer-in count across a restart", async () => {
-    const row = item(1);
-    const { folder, frames, settings } = await setup([row]);
-    const otherSettings = scriptFolderItem(server!, {
-      query: { types: ["core.note"] },
-    });
-    const other = await folderHarness("contract-c-transfer", {
-      sharing: { server: server!, key: KEY },
-      folder: otherSettings,
-      registry: folder.registry,
-    });
-    folders.push(other);
-    settings.settings.query = {
-      types: ["core.note"],
-      filter: 'tags contains "a"',
-    };
-    settings.version = 2;
-    frames.push(copyItemEvent("2", "item.updated", folderItem(settings)));
-    expect((await folder.folder.device().catchUp()).ok).toBe(true);
-    const arrived = await retried(other);
-    expect([arrived.taken, arrived.unchanged], JSON.stringify(arrived)).toEqual(
-      [1, 1],
-    );
-    expect(readFileSync(join(other.dir, "Note1.md"), "utf8")).toContain(
-      "original",
-    );
-    expect(existsSync(join(folder.dir, "Note1.md"))).toBe(false);
   });
 
   it("ends the placement of a missing file already trashed on another device", async () => {

@@ -2254,13 +2254,7 @@ impl Folder {
                 waiting.insert(at, carried_path_waits(&held.carrier));
             }
         }
-        // A file that carries no id and that no record here names, the
-        // folder added again over its own files say, is the item this folder
-        // carries that is placed where it sits and whose bytes it holds: one
-        // its query holds, or one attached to a document its query holds
-        // whose file here embeds the file at that path. An item the folder no
-        // longer carries, one another folder took in or one that left by
-        // state, has a file elsewhere or none, and a copy of it is new.
+        // A directory added again can recognize its own ID-less files by placement and bytes.
         let mut placed: Option<HashMap<String, Vec<crate::model::Edge>>> = None;
         // Each path a Markdown file here embeds, with the items those files are.
         let mut embedders: Option<HashMap<String, HashSet<String>>> = None;
