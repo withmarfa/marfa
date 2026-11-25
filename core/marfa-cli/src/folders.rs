@@ -90,10 +90,13 @@ pub enum FoldersCommand {
     /// or holds state the registry does not show to be the directory's own, the
     /// directory is only taken off the list and nothing is deleted.
     ///
-    /// If the directory is unlisted and has no folder state, other folders
-    /// may still remember it. The command asks before forgetting it and
-    /// reports which folders forgot it. Their next sync can send a deletion
-    /// held because a missing file might have moved to that directory.
+    /// If no folder is listed at the directory but listed folders remember a
+    /// folder at that exact path, the command shows those folders and asks
+    /// before they forget it. It then changes only what they remember: no
+    /// file, nothing at the path and no registry entry, whatever stands there.
+    /// Their next sync can send a deletion held because a missing file might
+    /// have moved to that directory. A folder that cannot be opened is named
+    /// as not changed, and the command fails.
     Remove {
         /// The directory.
         dir: PathBuf,
@@ -430,9 +433,9 @@ pub fn run(
             })
         }
         FoldersCommand::Remove { dir, yes } => {
-            let remembering = Folder::remembered_by(&dir)?;
-            if !remembering.is_empty() {
-                forget_remembered(&dir, &remembering, yes, json)
+            let remembering = Folder::remembering(&dir)?;
+            if let Some(found) = remembering.filter(|found| !found.holders.is_empty()) {
+                forget_remembered(found, yes, json)
             } else {
                 match Folder::remove_at_asking(&dir).map_err(asked(&dir))? {
                     Removal::Deleted {
@@ -834,39 +837,61 @@ fn from_key_file(path: &Path, dir: Option<&Path>, named: &Named) -> Result<Named
     })
 }
 
+/// Forgets a directory no folder is listed at in the folders that remember
+/// it by that exact path, and does nothing else whatever stands there.
 fn forget_remembered(
-    dir: &Path,
-    remembering: &[PathBuf],
+    found: marfa_core::folder::Remembering,
     yes: bool,
     json: bool,
 ) -> Result<(), CliError> {
+    let dir = found.dir.clone();
     let at_terminal =
         !json && std::io::stdin().is_terminal() && crate::output::stderr_is_terminal();
     if !yes && !at_terminal {
         return Err(CliError::Usage(format!(
             "{} is not listed, but {} folder(s) on this machine remember it; `folders remove` forgets it in them only after a confirmation at a terminal and without --json, and otherwise changes nothing; pass --yes to confirm it",
             dir.display(),
-            remembering.len()
+            found.holders.len()
         )));
     }
-    let agreed = yes || asks_to_forget(dir, remembering)?;
-    let forgotten = if agreed {
-        Folder::forget_remembered(dir).map_err(asked(dir))?
-    } else {
-        Vec::new()
-    };
+    let agreed = yes || asks_to_forget(&found)?;
+    if !agreed {
+        return output::report(
+            &serde_json::json!({
+                "dir": dir,
+                "removed": false,
+                "forgotten_by": [],
+                "declined": true,
+            }),
+            json,
+            || "nothing was forgotten".to_string(),
+        );
+    }
+    let done = Folder::forget_remembered(&found);
+    let mut unchanged = Vec::new();
+    let mut first = None;
+    for (holder, error) in done.unchanged {
+        let error = asked(&holder)(error);
+        unchanged.push((holder, error.to_string()));
+        first.get_or_insert(error);
+    }
+    if let Some(error) = first {
+        return Err(CliError::FoldersPartlyForgotten {
+            forgotten: done.forgotten,
+            unchanged,
+            error: Box::new(error),
+        });
+    }
+    let forgotten = done.forgotten;
     output::report(
         &serde_json::json!({
             "dir": dir,
             "removed": false,
             "forgotten_by": forgotten,
-            "declined": !agreed,
+            "declined": false,
         }),
         json,
         || {
-            if !agreed {
-                return "nothing was forgotten".to_string();
-            }
             let mut lines = vec![format!(
                 "{} is forgotten in {} folder(s); their next pass decides the files they held for it:",
                 dir.display(),
@@ -879,17 +904,42 @@ fn forget_remembered(
 }
 
 /// Asks at a terminal; the caller has already made sure there is one.
-fn asks_to_forget(dir: &Path, remembering: &[PathBuf]) -> Result<bool, CliError> {
+fn asks_to_forget(found: &marfa_core::folder::Remembering) -> Result<bool, CliError> {
     use std::io::{BufRead, Write};
     let mut question = crate::output::stderr();
     writeln!(
         question,
         "{} is not listed, but these folders remember it, and hold each file deleted by hand while it cannot be read:",
-        dir.display()
+        found.dir.display()
     )?;
-    for root in remembering {
-        writeln!(question, "  {}", root.display())?;
+    for holder in &found.holders {
+        writeln!(question, "  {}", holder.dir.display())?;
+        for entry in &holder.entries {
+            writeln!(
+                question,
+                "    remembers the folder {}{}",
+                entry.folder,
+                entry
+                    .store
+                    .as_deref()
+                    .map(|store| format!(" (store {store})"))
+                    .unwrap_or_default()
+            )?;
+        }
     }
+    if !found.unread.is_empty() {
+        writeln!(
+            question,
+            "These folders could not be read, so whether they remember it is not known:"
+        )?;
+        for (dir, reason) in &found.unread {
+            writeln!(question, "  {} ({})", dir.display(), printable(reason))?;
+        }
+    }
+    writeln!(
+        question,
+        "Forgetting changes only what these folders remember: no file, nothing at that path and no registry entry."
+    )?;
     write!(
         question,
         "Forget this directory? The next sync can send held deletions to the server. [y/N] "

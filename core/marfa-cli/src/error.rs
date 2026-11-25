@@ -25,6 +25,17 @@ pub enum CliError {
         "{purged} items were deleted before this failed, and the failed batch may have deleted more: {error}"
     )]
     BinPartlyEmptied { purged: u64, error: Box<CliError> },
+    /// Named by the first folder left unchanged; the lists say which folders
+    /// forgot a remembered directory and which did not.
+    #[error(
+        "{}",
+        partly_forgotten(forgotten, unchanged)
+    )]
+    FoldersPartlyForgotten {
+        forgotten: Vec<std::path::PathBuf>,
+        unchanged: Vec<(std::path::PathBuf, String)>,
+        error: Box<CliError>,
+    },
     /// The server's refusal of a secret the request sent for it to judge. A `401`
     /// is that secret's refusal and not the credential's, so it is not exit `5`.
     #[error("{error}")]
@@ -375,6 +386,7 @@ macro_rules! own_codes {
                     CliError::Core(core) => core.code(),
                     CliError::CatchUp { error, .. }
                 | CliError::BinPartlyEmptied { error, .. }
+                | CliError::FoldersPartlyForgotten { error, .. }
                 | CliError::SecretRefused { error } => error.code(),
                     CliError::Refused { status, .. } => refused_code(*status),
                     $($pattern => $code,)*
@@ -466,7 +478,9 @@ impl CliError {
                 CliError::Refused { status: 401, .. } => Exit::Refused,
                 other => other.exit(),
             },
-            CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
+            CliError::CatchUp { error, .. }
+            | CliError::BinPartlyEmptied { error, .. }
+            | CliError::FoldersPartlyForgotten { error, .. } => {
                 error.exit()
             }
             CliError::Core(core) => match core {
@@ -560,6 +574,7 @@ impl CliError {
         match self {
             CliError::CatchUp { error, .. }
             | CliError::BinPartlyEmptied { error, .. }
+            | CliError::FoldersPartlyForgotten { error, .. }
             | CliError::SecretRefused { error } => error.server(),
             CliError::Core(core) => core.answer(),
             CliError::Watch(_, answer) => answer.as_deref().cloned(),
@@ -595,6 +610,7 @@ impl CliError {
         match self {
             CliError::CatchUp { error, .. }
             | CliError::BinPartlyEmptied { error, .. }
+            | CliError::FoldersPartlyForgotten { error, .. }
             | CliError::SecretRefused { error } => error.local(),
             CliError::Core(core) => core.local(),
             _ => None,
@@ -605,6 +621,7 @@ impl CliError {
         match self {
             CliError::CatchUp { error, .. }
             | CliError::BinPartlyEmptied { error, .. }
+            | CliError::FoldersPartlyForgotten { error, .. }
             | CliError::SecretRefused { error } => error.retry_after_seconds(),
             CliError::Core(CoreError::RateLimited {
                 retry_after_seconds,
@@ -649,7 +666,43 @@ impl CliError {
         if let CliError::BinPartlyEmptied { purged, .. } = self {
             envelope["purged"] = (*purged).into();
         }
+        if let CliError::FoldersPartlyForgotten {
+            forgotten,
+            unchanged,
+            ..
+        } = self
+        {
+            envelope["forgotten_by"] = serde_json::json!(forgotten);
+            envelope["not_changed"] = unchanged
+                .iter()
+                .map(|(dir, reason)| serde_json::json!({ "dir": dir, "reason": reason }))
+                .collect();
+        }
         envelope
+    }
+}
+
+fn partly_forgotten(
+    forgotten: &[std::path::PathBuf],
+    unchanged: &[(std::path::PathBuf, String)],
+) -> String {
+    let said = |dirs: &mut dyn Iterator<Item = &std::path::PathBuf>| {
+        dirs.map(|dir| dir.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let not_changed = unchanged
+        .iter()
+        .map(|(dir, reason)| format!("{} ({reason})", dir.display()))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if forgotten.is_empty() {
+        format!("no folder forgot the directory; not changed: {not_changed}")
+    } else {
+        format!(
+            "forgotten only in {}; not changed: {not_changed}",
+            said(&mut forgotten.iter())
+        )
     }
 }
 
