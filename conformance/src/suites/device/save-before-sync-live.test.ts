@@ -118,7 +118,7 @@ it("refuses a declaration naming provenance as the server refuses it, then regis
     provenance: { origin: "plugin", plugin: { name: "t", version: "1" } },
   } as never);
   expect(direct.ok).toBe(false);
-  expect(direct.error?.code).toBe("invalid_schema");
+  expect(direct.error?.error.code).toBe("invalid_schema");
   const offline = new CliDevice({
     binary: requireBinary(),
     store: newStore("save-live-provenance"),
