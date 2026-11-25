@@ -1,6 +1,6 @@
 # Archives
 
-An archive is the tar file that `GET /export?format=archive` writes and `POST /restore` reads. The statements on archives describe archive version 4 (`archive/archive-version`), and a restore reads versions 1, 2 and 3 as `archive/restore-version-one`, `archive/restore-version-two` and `archive/restore-version-three` say. An archive that holds a new entry, a new line file or a new field that a restore must read is a later version, because a restore skips an entry, a field or a line kind it does not know (`archive/restore-unread-entry`, `archive/restore-unknown-field`, `archive/restore-unknown-line-kind`) and an older build would restore such an archive without it.
+An archive is the tar file that `GET /export?format=archive` writes and `POST /restore` reads. The statements on archives describe archive version 5 (`archive/archive-version`), and a restore reads versions 1 to 4 as `archive/restore-version-one`, `archive/restore-version-two`, `archive/restore-version-three` and `archive/restore-version-four` say. An archive that holds a new entry, a new line file or a new field that a restore must read is a later version, because a restore skips an entry, a field or a line kind it does not know (`archive/restore-unread-entry`, `archive/restore-unknown-field`, `archive/restore-unknown-line-kind`) and an older build would restore such an archive without it.
 
 ## What an archive is
 
@@ -14,7 +14,7 @@ When a credential that may export sends `GET /export?format=archive`, the server
 
 ### `archive/archive-version`
 
-When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 4.
+When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 5.
 
 **Reason:** the version is the one marker of the archive's layout, and a restore reads every version up to its own build's and refuses a later one (`archive/restore-version`). A field or a line kind added within a version is optional to a reader of that version (`archive/archive-version-additions`): a restore skips a field it does not read and a line kind it does not know, and names the kind (`archive/restore-unknown-field`, `archive/restore-unknown-line-kind`). An archive with a new entry, line file or field that a restore must read is a new version, because an older build would skip what it does not know.
 
@@ -1141,6 +1141,14 @@ When `POST /restore` reads an archive at version 3, the server MUST read each `c
 **Reason:** version 3 carried no type a kind was mapped onto before and no open rewrite request, so a backup taken before version 4 still restores.
 
 **Tests:** `compliance/connector-mapping.test.ts › refuses a version 4 mapping line that leaves out its former targets or rewrites, naming its line, and restores a version 3 line without them`.
+
+### `archive/restore-version-four`
+
+When `POST /restore` inserts an item from an archive at version 4, the server MUST write the item with a `state_writer` of `null`.
+
+**Reason:** version 4 carried no state writer, so a backup taken before version 5 still restores (`items/state-writer-restore-none`).
+
+**Tests:** `compliance/restore-release-archive.test.ts › writes each item a version 4 archive carries with no state writer, a trashed one included`.
 
 ### `archive/restore-type-origin`
 

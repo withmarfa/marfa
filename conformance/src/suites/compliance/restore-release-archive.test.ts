@@ -176,4 +176,24 @@ describe("restoring an archive an earlier release wrote", () => {
     expect(trashed.status, JSON.stringify(trashed.error)).toBe(200);
     expect(trashed.data.item.state).toBe("trashed");
   });
+
+  it("writes each item a version 4 archive carries with no state writer, a trashed one included", async () => {
+    const stateWriterOf = async (id: string) => {
+      const read = await fetch(
+        `${target.apiUrl}/items/${id}?include=writer&state=any`,
+        { headers: { authorization: `Bearer ${target.workingKey}` } },
+      );
+      expect(read.status).toBe(200);
+      const body = (await read.json()) as {
+        item: { state: string; state_writer?: unknown };
+      };
+      return body.item;
+    };
+    // The witness: the trashed note was moved to the bin before the export,
+    // a move a later version would carry a state writer for.
+    const trashed = await stateWriterOf(TRASHED_NOTE);
+    expect(trashed.state).toBe("trashed");
+    expect(trashed).toHaveProperty("state_writer", null);
+    expect(await stateWriterOf(NOTE)).toHaveProperty("state_writer", null);
+  });
 });
