@@ -231,7 +231,7 @@ it.each([
         properties: { title: ["c", "a", "b"][index] },
         state: n === 1 ? "archived" : "active",
         tier: n === 1 ? "library" : "feed",
-        source: n === 1 ? "zeta" : "alpha",
+        source: n === 1 ? "a" : "Z",
       },
       tags: [["c"], ["a"], ["b"]][index],
     })),

@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { MarfaClient } from "../../client/api.js";
+import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { Item, Outcome } from "../../device/protocol.js";
@@ -10,7 +10,6 @@ import {
   createTestContext,
   getOwnerClient,
   trackItem,
-  trackKey,
   trackView,
 } from "../../utils/setup.js";
 import { itemsArchive } from "../../utils/archive.js";
@@ -75,45 +74,27 @@ beforeAll(async () => {
     }
   }
   const batch = `${ctx.source}-by-source`;
-  for (const [name, count] of [
-    ["a", 2],
-    ["b", 3],
-  ] as const) {
-    const key = await client.createKey({
-      label: `source-${name}`,
-      source: `${ctx.source}-${name}`,
-      type_permissions: { "*": "write" },
-    });
-    expect(key.status, JSON.stringify(key.error)).toBe(201);
-    trackKey(ctx, key.data.id);
-    const writer = new MarfaClient({
-      baseUrl: context.apiUrl,
-      apiKey: key.data.key,
-    });
-    for (let n = 0; n < count; n += 1) {
-      const created = await writer.createItem({
-        type: "core.note",
-        source: `${ctx.source}-${name}`,
-        properties: { title: "Source parity", body: "", batch },
-      });
-      expect(created.ok, JSON.stringify(created.error)).toBe(true);
-      trackItem(ctx, created.data.item.id);
-    }
-  }
-  // An item no source was named for is stored under "unknown"; an archive puts some back.
-  const unnamed = [generateId(), generateId()];
+  // An archive stores any source code, so these differ under case folding; "unknown" is what an
+  // item no source was named for holds.
+  const stem = `${ctx.source}-code`;
+  const codes = [
+    stem,
+    ...["Z", "+", "/", "%", "?", "é", "a"].map((end) => `${stem}${end}`),
+    "unknown",
+  ];
+  const sourced = codes.flatMap((source) =>
+    [0, 1, 2].map(() => ({
+      id: generateId(),
+      type: "core.note",
+      source,
+      properties: { title: "Source parity", body: "", batch },
+    })),
+  );
   const restored = await getOwnerClient().restoreArchive(
-    itemsArchive(
-      unnamed.map((id) => ({
-        id,
-        type: "core.note",
-        source: "unknown",
-        properties: { title: "Source parity", body: "", batch },
-      })),
-    ),
+    itemsArchive(sourced),
   );
   expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
-  for (const id of unnamed) trackItem(ctx, id);
+  for (const row of sourced) trackItem(ctx, row.id);
   for (const direction of directions) {
     const saved = await client.createView({
       title: `Sort parity source ${direction}`,
@@ -169,9 +150,9 @@ it("returns the items of a view sorted by source in the order the server does, a
       remote.push(...page.data.data.map((item) => item.id));
       cursor = page.data.next_cursor ?? undefined;
     } while (cursor !== undefined);
-    expect(remote).toHaveLength(7);
+    expect(remote).toHaveLength(27);
     const local: string[] = [];
-    for (let offset = 0; offset < remote.length; offset += 3) {
+    for (let offset = 0; offset < remote.length; offset += 4) {
       const page = value(
         await device.attempt([
           "items",
@@ -179,7 +160,7 @@ it("returns the items of a view sorted by source in the order the server does, a
           "--view",
           id,
           "--limit",
-          "3",
+          "4",
           "--offset",
           String(offset),
         ]),
