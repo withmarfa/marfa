@@ -494,15 +494,18 @@ describe("a folder's unmatched files", () => {
       "unmatched-failed-aside",
       2,
     );
+    // Kept by the removal, so it stays bound for the witness below.
+    appendFileSync(join(made.dir, "Note 2.md"), "changed by hand\n");
     const removed = await withFault("withdraw-look-refused=Note 1.md", () =>
       made.folder.removeUnmatched({ yes: true }),
     );
     expect(removed.ok, JSON.stringify(removed)).toBe(true);
     if (!removed.ok) return;
     expect(
-      removed.value.kept.map((file) => file.path),
+      removed.value.kept.map((file) => file.path).sort(),
       "the removal did not fail where the fault asks, so nothing below is about a failed one",
-    ).toEqual(["Note 1.md"]);
+    ).toEqual(["Note 1.md", "Note 2.md"]);
+    expect(existsSync(join(made.dir, "Note 1.md"))).toBe(false);
     // The witness: the same folder sends a delete for a file a person deleted.
     rmSync(join(made.dir, "Note 2.md"));
     const graceStarted = Date.now();
