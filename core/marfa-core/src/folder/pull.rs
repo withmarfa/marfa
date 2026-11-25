@@ -216,6 +216,16 @@ impl PullReport {
 }
 
 /// What became of a file a pull or a confirmation took away.
+/// Why a file whose path runs through a symbolic link, or no longer
+/// resolves inside the folder, stays where it is.
+pub(super) const NOT_INSIDE: &str = "it is not inside the folder: a directory on its path is a symbolic link or no longer a directory";
+
+/// Whether opening a path failed because a directory on it is a symbolic
+/// link or no directory at all.
+fn beyond_a_link(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotADirectory || super::is_loop(error)
+}
+
 pub(super) enum TakenAway {
     /// The file is gone and its binding ended, with this many placements.
     Ended(usize),
@@ -1920,45 +1930,101 @@ impl Folder {
 
     /// A journal row here is a file put back since its scan, so it asks for
     /// nothing now. Keeps the file bound where it changed since it was found
-    /// to be the folder's own, since the person's edit is theirs, or where
-    /// the volume cannot remove it safely.
+    /// to be the folder's own, since the person's edit is theirs, where the
+    /// volume cannot remove it safely, or where its path is no longer plainly
+    /// inside the folder.
     pub(super) fn take_away(
         &self,
         row: &state::Bound,
         context: &mut crate::reach::Context,
     ) -> Result<TakenAway> {
+        if !plainly_inside(&self.root_dir, &row.path) {
+            return Ok(TakenAway::Refused(NOT_INSIDE.into()));
+        }
         // First: a failure leaves the file and its binding, and the next pass
         // finds no placement left to end and takes the file away.
         let ended = self.end_placement(&row.item_id, &row.path)?;
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-take-away-ended");
         let conn = self.core.conn()?;
         context.check(&conn)?;
         let path = self.root.join(&row.path);
-        if plainly_inside(&self.root_dir, &row.path) {
-            let still =
-                |found: &[u8]| row.written_hash.as_deref() == Some(state::hash(found).as_str());
-            if self.exists(&path) {
-                match self.remove_file(&conn, &path, still) {
-                    Ok(true) => {}
-                    Ok(false) if self.exists(&path) => return Ok(TakenAway::Kept),
-                    Ok(false) => {}
+        let present = self
+            .location(&path, false)
+            .and_then(|(directory, name)| directory.entry_kind(Path::new(&name)));
+        match present {
+            Ok(_) => {
+                state::set_taken(&conn, &row.path, &row.item_id)?;
+                landing::stop_if_asked(&path, "crash-before-take-away");
+                let still =
+                    |found: &[u8]| row.written_hash.as_deref() == Some(state::hash(found).as_str());
+                let kept = match self.remove_file(&conn, &path, still) {
+                    Ok(true) => None,
+                    Ok(false) if self.exists(&path) => Some(TakenAway::Kept),
+                    Ok(false) => None,
                     Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
-                        return Ok(TakenAway::Refused(error.to_string()));
+                        Some(TakenAway::Refused(error.to_string()))
                     }
                     Err(error) if landing::is_busy(&error) => {
-                        return Ok(TakenAway::Busy(error.to_string()));
+                        Some(TakenAway::Busy(error.to_string()))
+                    }
+                    Err(error) if beyond_a_link(&error) => {
+                        Some(TakenAway::Refused(NOT_INSIDE.into()))
                     }
                     Err(error) => {
+                        state::clear_taken(&conn, &row.path)?;
                         return Err(CoreError::Store(format!(
                             "cannot remove {}: {error}",
                             path.display()
                         )));
                     }
+                };
+                if let Some(kept) = kept {
+                    state::clear_taken(&conn, &row.path)?;
+                    return Ok(kept);
                 }
+                landing::stop_if_asked(&path, "crash-after-take-away");
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if beyond_a_link(&error) => {
+                return Ok(TakenAway::Refused(NOT_INSIDE.into()));
+            }
+            Err(error) => {
+                return Err(CoreError::Store(format!(
+                    "cannot look at {}: {error}",
+                    path.display()
+                )));
             }
         }
-        context.change_pins(&conn, || state::unbind(&conn, &row.path))?;
-        state::journal_clear(&conn, &row.path)?;
+        let tx = conn.unchecked_transaction()?;
+        context.change_pins(&tx, || state::unbind(&tx, &row.path))?;
+        state::journal_clear(&tx, &row.path)?;
+        state::clear_taken(&tx, &row.path)?;
+        tx.commit()?;
         Ok(TakenAway::Ended(ended))
+    }
+
+    /// Ends the binding of each file a removal stopped after it set out to
+    /// take it away, where the file is gone, and lets one still there stay
+    /// bound, so neither reads as the person's delete or a new file.
+    pub(super) fn settle_taken(&self) -> Result<()> {
+        let taken = state::taken(&*self.core.conn()?)?;
+        for (path, item_id) in taken {
+            let gone = match self.file_at(&self.root.join(&path)) {
+                Ok(present) => !present,
+                // Looked at again by the next pass.
+                Err(_) => continue,
+            };
+            let conn = self.core.conn()?;
+            let tx = conn.unchecked_transaction()?;
+            if gone && state::bound_at(&tx, &path)?.is_some_and(|bound| bound.item_id == item_id) {
+                state::unbind(&tx, &path)?;
+                state::journal_clear(&tx, &path)?;
+            }
+            state::clear_taken(&tx, &path)?;
+            tx.commit()?;
+        }
+        Ok(())
     }
 
     /// Whether another device changed a missing file's item in what the file

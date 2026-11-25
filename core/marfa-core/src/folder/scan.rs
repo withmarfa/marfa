@@ -1707,6 +1707,7 @@ impl Folder {
     /// Journals the bound files the walk did not find, rather than deleting
     /// them, and sweeps the journal where the pass saw the whole folder.
     fn sweep(&self, scan: &mut ScanState, peers: &Peers<'_>) -> Result<ControlFlow<()>> {
+        self.settle_taken()?;
         let (seen, lists, walked, settings) =
             (&scan.seen, &scan.lists, &scan.walked, &scan.settings);
         let (mut incomplete, report) = (scan.incomplete, &mut scan.report);

@@ -915,7 +915,7 @@ fn exchange_at(from_dir: &Directory, from: &Path, to_dir: &Directory, to: &Path)
 
 /// A run stopping at `point`: the process, where a device fixture names the
 /// target, or the thread, where a unit test asks.
-fn stop_if_asked(target: &Path, point: &str) {
+pub(crate) fn stop_if_asked(target: &Path, point: &str) {
     crash_if_named(target, point);
     if failing_here(point) {
         panic!("stopped at {point} as the test asks");

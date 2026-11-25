@@ -112,7 +112,11 @@ impl Folder {
                 held: None,
             };
             if !plainly_inside(&self.root_dir, path) {
-                done.kept.push(unbound("it is not inside the folder"));
+                let reason = "it is not inside the folder";
+                match state::bound_at(&*self.core.conn()?, path)? {
+                    Some(row) => done.kept.push(entry(&row, Some(reason.into()))),
+                    None => done.kept.push(unbound(reason)),
+                }
                 continue;
             }
             if held.contains(path) {
@@ -256,7 +260,8 @@ mod tests {
     use std::path::Path;
 
     use super::super::tests::{
-        folder_with, landed, new_file_in_active_folder, set_item_state, write_note,
+        deletes_queued, folder_with, landed, past_the_grace, scanned_folder_with, set_item_state,
+        write_note,
     };
     use super::super::{Folder, registry, state};
 
@@ -266,15 +271,46 @@ mod tests {
         Folder,
         String,
     ) {
-        let (dir, folder, id) = new_file_in_active_folder("state: archived\n");
+        removable_at("new.md")
+    }
+
+    /// A folder whose file at `path` is unmatched and may be removed, with
+    /// its item's id.
+    fn removable_at(
+        path: &str,
+    ) -> (
+        impl std::ops::Deref<Target = tempfile::TempDir>,
+        Folder,
+        String,
+    ) {
+        let (dir, folder) = scanned_folder_with(
+            serde_json::json!({ "query": { "state": ["active"] } }),
+            None,
+        );
+        let file = dir.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "---\ntitle: new\nstate: archived\n---\nbody\n").unwrap();
+        assert_eq!(folder.scan().unwrap().created, 1);
+        folder.scan().unwrap();
+        let id = landed(&folder, path);
+        let conn = folder.core.conn().unwrap();
+        conn.execute("DELETE FROM queue", []).unwrap();
+        drop(conn);
         set_item_state(&folder, &id, "archived");
         assert_eq!(folder.pull().unwrap().unmatched, 1);
         let conn = folder.core.conn().unwrap();
-        let mut row = state::bound_at(&conn, "new.md").unwrap().unwrap();
+        let mut row = state::bound_at(&conn, path).unwrap().unwrap();
         row.writes.queued.clear();
         state::bind(&conn, &row).unwrap();
         drop(conn);
         (dir, folder, id)
+    }
+
+    /// Moves the directory `sub` of `dir` into `elsewhere` and leaves a
+    /// symbolic link to it in its place.
+    fn sub_made_a_link(dir: &Path, elsewhere: &Path) {
+        std::fs::rename(dir.join("sub"), elsewhere.join("sub")).unwrap();
+        std::os::unix::fs::symlink(elsewhere.join("sub"), dir.join("sub")).unwrap();
     }
 
     fn kept_reasons(done: &super::UnmatchedRemoved) -> Vec<(&str, &str)> {
@@ -377,5 +413,112 @@ mod tests {
             "{done:?}"
         );
         assert!(Path::new(&dir.path().join("out.md")).is_file());
+    }
+
+    #[test]
+    fn removing_unmatched_names_the_item_of_a_bound_file_behind_a_link() {
+        let (dir, folder, id) = removable_at("sub/new.md");
+        let elsewhere = tempfile::tempdir_in(dir.path().parent().unwrap()).unwrap();
+        sub_made_a_link(dir.path(), elsewhere.path());
+
+        let done = folder.remove_unmatched(&["sub/new.md".into()]).unwrap();
+
+        assert!(done.removed.is_empty(), "{done:?}");
+        assert_eq!(done.kept.len(), 1, "{done:?}");
+        assert_eq!(
+            done.kept[0].item_id.as_deref(),
+            Some(id.as_str()),
+            "{done:?}"
+        );
+        assert!(elsewhere.path().join("sub/new.md").is_file());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn removing_unmatched_keeps_a_file_whose_directory_becomes_a_link_as_it_goes() {
+        const POINT: &str = "folder-take-away-ended";
+        let (dir, folder, id) = removable_at("sub/new.md");
+        let bytes = std::fs::read(dir.path().join("sub/new.md")).unwrap();
+        let elsewhere = tempfile::tempdir_in(dir.path().parent().unwrap()).unwrap();
+        crate::fault::arm(POINT);
+        let swapper = {
+            let (root, elsewhere) = (dir.path().to_path_buf(), elsewhere.path().to_path_buf());
+            std::thread::spawn(move || {
+                while crate::fault::waiting(POINT) == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                sub_made_a_link(&root, &elsewhere);
+                crate::fault::release(POINT);
+            })
+        };
+
+        let done = folder.remove_unmatched(&["sub/new.md".into()]).unwrap();
+        swapper.join().unwrap();
+
+        assert!(done.removed.is_empty(), "{done:?}");
+        assert_eq!(done.kept.len(), 1, "{done:?}");
+        assert_eq!(
+            done.kept[0].item_id.as_deref(),
+            Some(id.as_str()),
+            "{done:?}"
+        );
+        assert!(
+            done.kept[0]
+                .kept
+                .as_deref()
+                .is_some_and(|reason| reason.contains("symbolic link")),
+            "{done:?}"
+        );
+        let conn = folder.core.conn().unwrap();
+        assert!(state::bound_at(&conn, "sub/new.md").unwrap().is_some());
+        assert_eq!(
+            std::fs::read(elsewhere.path().join("sub/new.md")).unwrap(),
+            bytes
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn removing_unmatched_stopped_at_any_step_never_reads_the_gap_as_a_delete() {
+        for point in [
+            "crash-before-take-away",
+            "crash-after-withdraw",
+            "crash-after-take-away",
+        ] {
+            let (dir, folder, id) = removable();
+            let root = dir.path().to_path_buf();
+            {
+                let _stop = crate::fault::fail_on_this_thread(point);
+                let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    folder.remove_unmatched(&["new.md".into()])
+                }));
+                assert!(stopped.is_err(), "{point}: it did not stop");
+            }
+            drop(folder);
+            let folder = Folder::open(&root, None).unwrap();
+            folder.scan().unwrap();
+            let journaled = state::journaled(&folder.core.conn().unwrap())
+                .unwrap()
+                .iter()
+                .any(|row| row.path == "new.md");
+            if journaled {
+                past_the_grace(&folder, "new.md");
+                folder.scan().unwrap();
+            }
+
+            assert!(deletes_queued(&folder).is_empty(), "{point}");
+            let item = folder.core.get(&id).unwrap().unwrap();
+            assert_eq!(item.state, crate::model::ItemState::Archived, "{point}");
+            let bound = state::bound_at(&folder.core.conn().unwrap(), "new.md").unwrap();
+            // Stopped before the file went, it stays bound for a later removal.
+            assert_eq!(
+                bound.is_some(),
+                root.join("new.md").exists(),
+                "{point}: the binding and the file disagree"
+            );
+            if point != "crash-before-take-away" {
+                assert!(!root.join("new.md").exists(), "{point}");
+            }
+        }
     }
 }

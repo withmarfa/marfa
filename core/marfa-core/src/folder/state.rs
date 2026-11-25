@@ -392,6 +392,26 @@ fn under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreE
     Ok(found)
 }
 
+/// One `meta` row per file the folder is taking away itself, naming its
+/// item, written before the file goes and cleared with its binding, so a run
+/// stopped between the two leaves no missing file a sweep reads as the
+/// person's delete.
+const TAKEN: &str = "folder_taken:";
+
+pub(crate) fn set_taken(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
+    crate::store::meta_set(conn, &format!("{TAKEN}{path}"), item_id)
+}
+
+pub(crate) fn clear_taken(conn: &Connection, path: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{TAKEN}{path}"))
+}
+
+/// Each file a removal stopped before it ended the binding, by path, with
+/// its item.
+pub(crate) fn taken(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
+    under(conn, TAKEN)
+}
+
 /// One `meta` row per item a pull last moved, naming the path its file left,
 /// where an editor that did not follow the move may save it again, and the
 /// item's version when it moved. Cleared once the moved file is edited or
