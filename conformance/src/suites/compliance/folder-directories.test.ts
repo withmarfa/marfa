@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -211,6 +212,39 @@ describe("GET /folders/{id}/directories", () => {
     }
   });
 
+  it("expands every returned path as given", async () => {
+    const dir = await folder();
+    await placeAll(dir, [
+      "./A:notes/child/page.md",
+      "./A:notes/top.md",
+      "./C:/drive.md",
+      ".//c:x/y/z.md",
+      "plain/a/b.md",
+    ]);
+    const waiting = [""];
+    const expanded: string[] = [];
+    for (let under = waiting.pop(); under !== undefined; under = waiting.pop()) {
+      const read = await tree(dir, `?under=${encodeURIComponent(under)}`);
+      for (const directory of read.directories) waiting.push(directory.path);
+      expanded.push(under);
+    }
+    expect(expanded.sort()).toEqual([
+      "",
+      "A:notes",
+      "A:notes/child",
+      "C:",
+      "c:x",
+      "c:x/y",
+      "plain",
+      "plain/a",
+    ]);
+    const notes = await tree(dir, "?under=A%3Anotes");
+    expect(rows(notes)).toEqual([["A:notes/child", 1, 1, false]]);
+    expect(notes.direct_files).toBe(1);
+    expect(notes.total_files).toBe(5);
+    expect(await tree(dir, "?under=./A:notes")).toEqual(notes);
+  });
+
   it("refuses an under that leaves the folder or is not a path", async () => {
     const dir = await folder();
     await placeAll(dir, SAMPLE);
@@ -222,27 +256,20 @@ describe("GET /folders/{id}/directories", () => {
       "notes/../projects",
       "%2E%2E",
       "%2Fetc",
-      "C:/notes",
-      "C%3A",
       "notes%5Cone",
       "notes%00",
       "a".repeat(1025),
       "notes&under=projects",
-      "notes&other=1",
     ]) {
       const r = await call(
         "GET",
         `/folders/${dir}/directories?under=${spelling}`,
       );
       expect(r.status, spelling).toBe(400);
-      const refusal = (await r.json()) as { error: { code: string } };
-      expect(refusal.error.code, spelling).toBe("validation_error");
+      expect(await r.json(), spelling).toMatchObject({
+        error: { code: "validation_error", details: { field: "under" } },
+      });
     }
-    const other = await call("GET", `/folders/${dir}/directories?depth=2`);
-    expect(other.status).toBe(400);
-    expect(await other.json()).toMatchObject({
-      error: { code: "validation_error" },
-    });
   });
 
   it("lists the directories in the byte order of their paths", async () => {
@@ -330,6 +357,48 @@ describe("GET /folders/{id}/directories", () => {
     expect(top.total_files).toBe(8);
     expect(rows(await tree(dir, "?under=a"))).toEqual([["a/b", 2, 2, false]]);
     expect(rows(await tree(dir, "?under=g"))).toEqual([["g/h", 1, 1, false]]);
+  });
+
+  it("leaves out a stored path that is not a string or names no file", async () => {
+    const dir = await folder();
+    const paths = [
+      "a/one.md",
+      "a/number.md",
+      "a/float.md",
+      "a/gone.md",
+      "b/null.md",
+      "a/dot.md",
+      "a/empty.md",
+    ];
+    await placeAll(dir, paths);
+    await server.restart(() => {
+      const db = new DatabaseSync(server.sqlitePath);
+      try {
+        const set = (from: string, to: string) =>
+          db
+            .prepare(
+              `UPDATE edges SET properties = jsonb_set(properties, '$.path', ${to}) WHERE json_extract(properties, '$.path') = ?`,
+            )
+            .run(from);
+        set("a/number.md", "7");
+        set("a/float.md", "1.5");
+        set("b/null.md", "jsonb('null')");
+        set("a/dot.md", "'.'");
+        set("a/empty.md", "''");
+        db.prepare(
+          "UPDATE edges SET properties = jsonb_remove(properties, '$.path') WHERE json_extract(properties, '$.path') = 'a/gone.md'",
+        ).run();
+      } finally {
+        db.close();
+      }
+    });
+    const top = await tree(dir);
+    expect(rows(top)).toEqual([["a", 1, 1, false]]);
+    expect(top.direct_files).toBe(0);
+    expect(top.total_files).toBe(1);
+    const under = await tree(dir, "?under=a");
+    expect(rows(under)).toEqual([]);
+    expect(under.direct_files).toBe(1);
   });
 
   it("counts an archived item and leaves out an item in the bin", async () => {
@@ -448,6 +517,16 @@ describe("GET /folders/{id}/directories", () => {
     expect(
       (await call("GET", `/folders/${dir}/status`, undefined, blind)).status,
     ).toBe(200);
+    const absent = await call(
+      "GET",
+      `/folders/${NO_SUCH_ID}/directories`,
+      undefined,
+      blind,
+    );
+    expect(absent.status).toBe(404);
+    expect(await absent.json()).toMatchObject({
+      error: { code: "item_not_found" },
+    });
     const noFolderOrEdge = await key(
       { "core.note": "read" },
       { edge_permissions: {} },
@@ -542,5 +621,46 @@ describe("GET /folders/{id}/directories", () => {
       `/folders/${NO_SUCH_ID}/directories`,
     );
     expect(missing.status).toBe(404);
+  });
+
+  it("applies the instance's source filter to the private local command", async () => {
+    const dir = await folder();
+    const shownSource = "folder-directories-local-shown";
+    const shown = await key(
+      { "*": "write" },
+      { source: shownSource, edge_permissions: { "*": "write" } },
+    );
+    const hidden = await key(
+      { "*": "write" },
+      {
+        source: "folder-directories-local-hidden",
+        edge_permissions: { "*": "write" },
+      },
+    );
+    await placeItem(await item("core.note", shown), dir, "a/shown.md");
+    await placeItem(await item("core.note", hidden), dir, "a/hidden.md");
+    const path = `/folders/${dir}/directories`;
+    const before = await controlRequest(server.controlSocket, path);
+    expect(before.status).toBe(200);
+    expect(before.body).toMatchObject({
+      total_files: 2,
+      directories: [{ path: "a", direct_files: 2 }],
+    });
+    const set = await call("PUT", "/config", {
+      enforcement: {
+        source_filter: { types: ["core.note"], sources: [shownSource] },
+      },
+    });
+    expect(set.status, await set.clone().text()).toBe(200);
+    try {
+      const after = await controlRequest(server.controlSocket, path);
+      expect(after.status).toBe(200);
+      expect(after.body).toMatchObject({
+        total_files: 1,
+        directories: [{ path: "a", direct_files: 1 }],
+      });
+    } finally {
+      expect((await call("PUT", "/config", {})).status).toBe(200);
+    }
   });
 });

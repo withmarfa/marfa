@@ -172,6 +172,10 @@ stays because that thing is what it checks.
   type below another. A build that ships a field, a status word or a thumbnail
   above a registered type leaves it holding what its chain refuses; every door
   refuses that, and no fault ships a build.
+- `compliance/folder-directories.test.ts`, "leaves out a stored path that is not
+  a string or names no file", rewrites the `path` of stored `in-folder` edges
+  while the server is stopped. A write refuses a `path` that is not a string or
+  names no file, so no door stores one.
 - `device/hidden-types-slice.test.ts`, "keeps a hidden item an earlier release
   held across a catch-up, and lists or finds it only where its exact type is
   named", removes a pin row from the device's store. A copy an earlier release made holds a hidden item

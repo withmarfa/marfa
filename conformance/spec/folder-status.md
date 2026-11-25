@@ -350,6 +350,14 @@ When `GET /folders/{id}/directories` names `under`, the server MUST list the dir
 
 **Tests:** `compliance/folder-directories.test.ts › lists the directories directly under a path, and the files placed at the path itself`.
 
+### `folder-status/directories-expand`
+
+When `GET /folders/{id}/directories` lists a directory, the server MUST accept that directory's `path`, as listed, as `under`, and answer for it.
+
+**Reason:** a client opens each directory with the `path` it was given. A stored path such as `./A:notes/a.md` places a directory called `A:notes`, and its name is only a name, not a drive.
+
+**Tests:** `compliance/folder-directories.test.ts › expands every returned path as given`.
+
 ### `folder-status/directories-top`
 
 When `GET /folders/{id}/directories` names no `under`, or an `under` that holds no name, the server MUST answer for the folder's top level, with `under` as the empty string.
@@ -364,9 +372,9 @@ When `GET /folders/{id}/directories` names an `under` with a trailing slash, a r
 
 ### `folder-status/directories-leaves`
 
-If `GET /folders/{id}/directories` names an `under` that has a leading slash, a drive, a backslash, a `..` name or a NUL, that is over 1024 characters, or that is named twice, or if it names any other parameter, then the server MUST answer `400 validation_error` naming `under`.
+If `GET /folders/{id}/directories` names an `under` that has a leading slash, a backslash, a `..` name or a NUL, that is over 1024 characters, or that is named twice, then the server MUST answer `400 validation_error` naming `under`.
 
-**Reason:** `under` is read as a placement path is, and no spelling of it reaches outside the folder.
+**Reason:** no spelling of `under` reaches outside the folder. A first name that reads as a drive, such as `C:`, is a directory name and not refused (`folder-status/directories-expand`). Any other parameter is answered as every read answers it.
 
 **Tests:** `compliance/folder-directories.test.ts › refuses an under that leaves the folder or is not a path`.
 
@@ -436,9 +444,9 @@ When a credential asks for `GET /folders/{id}/directories`, the server MUST coun
 
 ### `folder-status/directories-edge-access`
 
-If a credential that reads `system.folder` cannot read the `in-folder` edge type and asks for `GET /folders/{id}/directories`, then the server MUST answer `403 edge_type_not_permitted` naming `in-folder`.
+If a credential that cannot read the `in-folder` edge type asks for `GET /folders/{id}/directories` on an existing folder it can read, then the server MUST answer `403 edge_type_not_permitted` naming `in-folder`.
 
-**Reason:** the counts come from the folder's `in-folder` edges. `GET /folders/{id}/status` reads no edge and needs no such permission.
+**Reason:** the counts come from the folder's `in-folder` edges. `GET /folders/{id}/status` reads no edge and needs no such permission. The folder is judged first, so the same credential asking for a missing or unreadable folder gets `404 item_not_found` (`folder-status/directories-missing`, `folder-status/directories-hidden`) and learns nothing from the edge refusal.
 
 **Tests:** `compliance/folder-directories.test.ts › refuses a key that cannot read the in-folder edge type`.
 
@@ -449,6 +457,14 @@ When `GET /folders/{id}/directories` counts a placed file, the server MUST read 
 **Reason:** an edge stores the `path` it was sent, such as `a//b.md` or `./c.md`, and a device places each at the tidy path.
 
 **Tests:** `compliance/folder-directories.test.ts › counts a stored path with empty or dot names where a device places it`.
+
+### `folder-status/directories-stored-path-text`
+
+If the `path` of an `in-folder` edge is not a string, or is a string that holds no name once its empty and `.` names are dropped, then `GET /folders/{id}/directories` MUST NOT count that edge in any number it answers.
+
+**Reason:** a write refuses such a path, so a stored one is damaged and places no file. The read leaves it out and does not report it, and no other placement is lost.
+
+**Tests:** `compliance/folder-directories.test.ts › leaves out a stored path that is not a string or names no file`.
 
 ### `folder-status/directories-credential`
 
@@ -484,6 +500,8 @@ When a credential that reads no type asks for `GET /folders/{id}/directories`, t
 
 ### `folder-status/directories-local`
 
-When a private local command asks for `GET /folders/{id}/directories`, the server MUST count every placed file of the folder.
+When a private local command asks for `GET /folders/{id}/directories`, the server MUST count every placed file of the folder that the instance's source filter admits, and apply no credential's type or source limits.
 
-**Tests:** `compliance/folder-directories.test.ts › reads the whole folder for the private local command`.
+**Reason:** the private local command is the owner's, so it reads past any key's limits. The instance's source filter (`enforcement.source_filter`) holds for it as for every read, so a note the filter leaves out is not counted, as `items/owner-trash-source-filter` leaves it out of the bin.
+
+**Tests:** `compliance/folder-directories.test.ts › reads the whole folder for the private local command`, `› applies the instance's source filter to the private local command`.
