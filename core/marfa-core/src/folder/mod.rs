@@ -7932,6 +7932,7 @@ mod tests {
         assert_eq!(first.created, 1);
         assert_refused_state(&folder, "new.md", &id);
         assert_eq!(folder.scan().unwrap().created, 0);
+        assert_eq!(landed(&folder, "new.md"), id);
         folder.pull().unwrap();
         assert_refused_state(&folder, "new.md", &id);
         assert_eq!(std::fs::read_to_string(path).unwrap(), text);
