@@ -3658,7 +3658,7 @@ export interface components {
             message?: string;
         };
         /**
-         * @description A field: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `last_activity_at`, `type`, `state`, `tier`, `tags`, `source`) or `properties.<name>`.
+         * @description Field to sort by. Use an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier`, `tags`, or `source`), `last_activity_at`, or `properties.<name>`.
          * @example properties.status
          */
         ViewField: string;
