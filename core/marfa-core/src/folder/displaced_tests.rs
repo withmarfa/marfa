@@ -121,10 +121,8 @@ fn a_displacement_in_another_folders_directory_puts_the_persons_save_back() {
     let target = other.join("Recovery.md");
     std::fs::write(&target, "as the server has it\n").unwrap();
     let read = object_of(&target);
-    // A removal of the other folder's file, recorded here by its absolute
-    // directory, stopped after the move aside; the person saved after its
-    // last look.
-    let kept = other.join(".marfa-kept-00000000000000000000000000000004.tmp");
+    let id = uuid::Uuid::now_v7().simple().to_string();
+    let kept = other.join(landing::reserved(&id));
     std::fs::rename(&target, &kept).unwrap();
     std::fs::write(&kept, "as the server has it\nthe person's edit\n").unwrap();
     let place = other.to_string_lossy().into_owned();
@@ -136,7 +134,7 @@ fn a_displacement_in_another_folders_directory_puts_the_persons_save_back() {
             aside: place,
             aside_at: at(&other),
             displacement: Displacement {
-                id: "4".into(),
+                id,
                 kind: Kind::Withdraw,
                 target: "Recovery.md".into(),
                 kept: kept.file_name().unwrap().to_string_lossy().into_owned(),

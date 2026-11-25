@@ -1634,9 +1634,7 @@ impl Folder {
         Ok(directory)
     }
 
-    /// The directory a row names by `place`, whatever directory has that
-    /// name. An absolute `place` is another folder's directory, where a
-    /// displacement recorded here moved that folder's file aside.
+    /// Opens the recorded path without checking the directory's identity.
     fn place_dir(&self, place: &str) -> std::io::Result<Directory> {
         let place = Path::new(place);
         Ok(if place.is_absolute() {
