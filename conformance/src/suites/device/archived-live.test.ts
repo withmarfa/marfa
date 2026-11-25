@@ -244,6 +244,9 @@ it("moves no other item the copy holds when it archives an item holding parent-o
 
   // The bin move witnesses the server cascade and its arrival in the copy.
   const control = await moved("trashed", "bin");
+  for (const id of [control.child, control.grandchild]) {
+    expect(value(await control.device.get(id)).state, id).toBe("active");
+  }
   accepted(value(await control.device.drain()), [control.move.id]);
   value(await control.device.catchUp());
   for (const id of [control.host, control.child, control.grandchild]) {

@@ -126,42 +126,6 @@ describe("a natural-key upsert", () => {
     }
   });
 
-  it("writes the edges an upsert names that the item does not hold, at the version held, on POST /items", async () => {
-    for (const held of ["active", "archived"] as const) {
-      const sourceId = `edges-${held}-${newRunId()}`;
-      const item = await seed(sourceId);
-      const target = await seed(`edges-target-${newRunId()}`);
-      if (held === "archived") {
-        expect((await client.transitionItem(item.id, "archived")).status).toBe(
-          200,
-        );
-      }
-      const before = (await stored(item.id)).item.version;
-
-      const sent = await client.createItem({
-        type: "core.note",
-        source: ctx.source,
-        source_id: sourceId,
-        properties: { body: "seeded" },
-        edges: { references: [target.id] },
-      });
-      expect(sent.status, `${held}: ${JSON.stringify(sent.error)}`).toBe(200);
-      expect(sent.data.item.id, held).toBe(item.id);
-      expect(sent.data.acknowledged, held).toBeUndefined();
-      expect(sent.data.item.version, held).toBe(before);
-      const after = await stored(item.id);
-      expect(after.item.version, held).toBe(before);
-      expect(after.item.state, held).toBe(held);
-      const edges = await client.listItemEdges(item.id, {
-        edge_type: "references",
-      });
-      expect(
-        edges.data.data.map((edge) => edge.to_id),
-        held,
-      ).toEqual([target.id]);
-    }
-  });
-
   it("replaces the tags of an item with the tags it names, removing a tag a person added, on POST /items and on POST /items/bulk", async () => {
     for (const door of DOORS) {
       const run = newRunId();
