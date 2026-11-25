@@ -3943,51 +3943,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(swept.ok && swept.value.scan.trashed).toEqual(["Gone.md"]);
   });
 
-  it("holds a delete as unsure while another directory of the folder cannot be read", async () => {
-    const gone = "01a00000-0000-7000-8000-0000000040f2";
-    const { a } = await onOneMac(
-      "partial-own-walk",
-      { query: { types: ["core.note"] } },
-      { query: { types: ["core.bookmark"] } },
-      {
-        "core.note": [
-          { item: { id: gone, properties: { title: "Gone", body: "g\n" } } },
-        ],
-      },
-    );
-    expect((await a.folder.pull()).ok).toBe(true);
-    const shut = join(a.dir, "Shut");
-    mkdirSync(shut);
-    chmodSync(shut, 0o000);
-    try {
-      rmSync(join(a.dir, "Gone.md"));
-      expect((await a.folder.push()).ok).toBe(true);
-      await pastTheGrace();
-      expect((await a.folder.push()).ok).toBe(true);
-      const status = await a.folder.status();
-      expect(status.ok, JSON.stringify(status)).toBe(true);
-      if (!status.ok) return;
-      const file = status.value.files.find((entry) => entry.path === "Gone.md");
-      expect(
-        [file?.status, file?.flag],
-        "a delete deferred while a directory of the folder cannot be read was shown waiting to be sent",
-      ).toEqual(["held", "unsure"]);
-      expect(lastReport(a).problems).toContainEqual({
-        code: "held_file",
-        count: 1,
-      });
-      expect(deletesOf(a.server, gone)).toBe(0);
-    } finally {
-      chmodSync(shut, 0o755);
-    }
-    // The witness: read whole, the delete is sent once the grace runs out.
-    expect((await a.folder.push()).ok).toBe(true);
-    await pastTheGrace();
-    const swept = await a.folder.push();
-    expect(swept.ok && swept.value.scan.trashed).toEqual(["Gone.md"]);
-    expect(deletesOf(a.server, gone)).toBe(1);
-  });
-
   it("starts the grace of a held delete again after a pass that could not read its directory", async () => {
     const gone = "01a00000-0000-7000-8000-0000000040f3";
     const { a, b } = await onOneMac(
@@ -4023,7 +3978,9 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       chmodSync(sub, 0o000);
       try {
         const unread = await a.folder.push();
-        expect(unread.ok && unread.value.scan.swept).toBe(false);
+        expect(
+          unread.ok && unread.value.scan.directories.map((dir) => dir.path),
+        ).toEqual(["sub"]);
         await pastTheGrace();
       } finally {
         chmodSync(sub, 0o755);

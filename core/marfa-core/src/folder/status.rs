@@ -407,20 +407,6 @@ impl Folder {
                     "gone",
                     "is gone, and its item is already in the bin or no longer held, so no delete is sent: a scan past the grace lets the file go",
                 )
-            } else if let Some(dir) = walked
-                .directories
-                .iter()
-                .find(|dir| matches!(dir.flag, "gone" | "unreadable"))
-            {
-                // A pass that cannot read the whole folder journals no delete.
-                FileStatus::new(&bound.path, at, "held").because(
-                    "unsure",
-                    format!(
-                        "{} {}, so the file may be there under another name",
-                        display_dir(&dir.path),
-                        dir.reason
-                    ),
-                )
             } else {
                 FileStatus {
                     waits: vec!["delete"],

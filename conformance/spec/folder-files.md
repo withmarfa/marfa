@@ -2224,11 +2224,11 @@ When a missing file could be in unreadable registered directories or several fil
 
 ### `folder-files/uncertain-move-held-status`
 
-While a device defers a missing file's deletion because it cannot tell where the file went, other than because a file's bytes could not be read, a device MUST list that file in the folder's status as `held` with the flag `unsure`.
+While a device defers a missing file's deletion because a pass that read the whole folder, or `folders confirm`, could not tell where the file went, a device MUST list that file in the folder's status as `held` with the flag `unsure`.
 
-**Reason:** no delete waits to be sent until the device can tell, so the file is one the person may have to act on, and a report counts it under `held_file` (`folder-sync/report-held-files`). This holds for a delete held because another folder cannot be searched, because a directory of this folder cannot be read, and for a removal that `folders confirm` cannot decide, as when the file's own directory cannot be read. Status reads the folder's directories, but cannot tell whether the last pass could read every file's bytes.
+**Reason:** no delete waits to be sent until the device can tell, so the file is one the person may have to act on, and a report counts it under `held_file` (`folder-sync/report-held-files`). This covers a delete held because another folder cannot be searched or several files elsewhere have its bytes, and a removal that `folders confirm` cannot decide, as when the file's own directory cannot be read. A file found missing only by a pass that could not read the whole folder is not covered: that pass journals no deletion, and status lists the file as waiting with `delete`.
 
-**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone`, `device/folders-one-mac.test.ts › holds a delete as unsure while another directory of the folder cannot be read`, `device/folders-one-mac.test.ts › keeps a confirmed removal held as unsure while the file's own directory cannot be read`.
+**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone`, `device/folders-one-mac.test.ts › keeps a confirmed removal held as unsure while the file's own directory cannot be read`.
 
 ### `folder-files/uncertain-move-held-unread-pass`
 
