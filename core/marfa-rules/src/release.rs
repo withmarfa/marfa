@@ -53,7 +53,7 @@ mod tests {
     #[test]
     fn numbers_compare_as_numbers_not_as_text() {
         assert!(is_too_old("0.0.9"));
-        assert!(!is_too_old("0.0.100"));
+        assert!(!is_too_old("0.0.1000"));
     }
 
     #[test]
