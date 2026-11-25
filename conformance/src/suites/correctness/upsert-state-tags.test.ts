@@ -1,7 +1,3 @@
-// What a connector's re-run does to an item it already holds: a natural-key
-// upsert updates an item in place, archived or active, leaves its state as it
-// stands, and replaces its tags where it names them. Each is asserted on
-// `POST /items` and on `POST /items/bulk`.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { MarfaClient } from "../../client/api.js";
@@ -38,8 +34,6 @@ async function seed(sourceId: string, tags?: string[]) {
   return made.data.item;
 }
 
-/** One natural-key upsert through a door, answering the item's id and
- *  whether the door reported an update. */
 async function upsert(
   door: Door,
   sourceId: string,
@@ -77,8 +71,6 @@ describe("a natural-key upsert", () => {
     for (const door of DOORS) {
       const run = randomUUID();
 
-      // The witness: the upsert reaches an active item, names a state the
-      // item could move to, and the state is still what it was.
       const active = await seed(`state-active-${run}`);
       const onActive = await upsert(door, `state-active-${run}`, {
         body: "upserted",
@@ -101,10 +93,10 @@ describe("a natural-key upsert", () => {
       const archivedBack = await stored(archived.id);
       expect(archivedBack.item.state, door).toBe("archived");
 
-      const named = await upsert(door, `state-archived-${run}`, {
+      const withoutState = await upsert(door, `state-archived-${run}`, {
         body: "again",
       });
-      expect(named.id).toBe(archived.id);
+      expect(withoutState.id).toBe(archived.id);
       expect((await stored(archived.id)).item.state, door).toBe("archived");
     }
   });

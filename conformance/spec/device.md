@@ -7388,7 +7388,7 @@ When the read of an item after the server answers or refuses a write to it finds
 
 When a caller edits, tags, writes an extension of or links an item that the working copy holds archived, a device MUST queue the write as it queues it for an active item, and send it as it sends that one.
 
-**Reason:** the server refuses a write only for an item in the bin (`items/write-archived` and `edges/write-archived`), so a device that refused one for an archived item would hold back a write the server takes.
+**Reason:** a device that refuses a write because the item is archived would hold back a write the server takes (`items/write-archived` and `edges/write-archived`).
 
 **Tests:** `device/archived-live.test.ts › queues and sends an edit, tags, an extension and edges for an archived item as for an active one, and leaves its state`.
 

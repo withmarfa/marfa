@@ -276,7 +276,7 @@ When a create applied as a natural-key upsert names no `tags`, the server MUST l
 
 When a create applied as a natural-key upsert names `tags`, on `POST /items` or in an entry of `POST /items/bulk`, the server MUST replace the item's tags with the tags it names.
 
-**Reason:** a tag a person added to an item whose connector names tags is removed at the connector's next run, so an app cannot count on a person's tag surviving a re-sync of such an item (`items/natural-key-tags` for the upsert that names none).
+**Reason:** a connector's next run removes a tag a person added if the connector sends a tag list that omits it. An upsert without a tag list keeps the tags (`items/natural-key-tags`).
 
 **Tests:** `correctness/upsert-state-tags.test.ts › replaces the tags of an item with the tags it names, removing a tag a person added, on POST /items and on POST /items/bulk`, `› replaces the tags of an archived item with the tags it names, as it does for an active one`.
 
@@ -1418,7 +1418,7 @@ If `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/tags`, `POST /ite
 
 When `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/tags`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an archived item, the server MUST apply the write as it applies it to an active item, leaving the item archived except where the write moves it into the bin.
 
-**Reason:** only the bin refuses a write (`items/write-in-bin`), so an app may keep editing, tagging and extending an item a person archived.
+**Reason:** an app can keep editing, tagging, and extending an item a person archived. Moving the item into the bin ends those writes (`items/write-in-bin`).
 
 **Tests:** `correctness/archived-writes.test.ts › takes PATCH /items/{id} as it takes it on an active item, and leaves the state`, `› takes a move to the bin from DELETE /items/{id}, as an active item does`, `› take POST, PUT and DELETE on /items/{id}/tags as they do on an active item, and leave the state`, `› take PUT and DELETE on /items/{id}/extensions/{namespace} as they do on an active item, and leave the state`.
 

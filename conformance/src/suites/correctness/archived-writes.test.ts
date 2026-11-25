@@ -1,8 +1,3 @@
-// An archived item takes every write an active one takes
-// (`items/write-archived`, `edges/write-archived`), and archiving an item
-// changes the state of no other (`items/archive-no-cascade`). Each door runs
-// on an active item first, which is the witness: the same call that an
-// archived item must take as that one does.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { MarfaItem, TestContext } from "../../client/types.js";
@@ -310,8 +305,6 @@ describe("archiving an item", () => {
       expect(await stateOf(other.id), other.id).toBe("active");
     }
 
-    // The witness: a move into the bin takes the same children, so the
-    // edges above are ones that can cascade.
     const second = await note();
     const secondChild = await note();
     await edgeBetween(second.id, secondChild.id);

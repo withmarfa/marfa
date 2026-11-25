@@ -8,13 +8,6 @@ import type { DrainReport, Outcome } from "../../device/protocol.js";
 import { cleanup, createTestContext, trackItem } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
 
-/**
- * A working copy takes every write of an archived item that it takes of an
- * active one (`device/write-archived`), and archiving an item changes the
- * state of no other item the copy holds (`device/archive-no-cascade`),
- * against a real server and the real binary.
- */
-
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
@@ -165,8 +158,6 @@ it("moves no other item the copy holds when it archives an item holding parent-o
   }
   const device = await deviceHolding("archived-no-cascade");
 
-  // The witness: a host a device sends to the bin takes its children there
-  // on the server, so these edges cascade.
   const binned = await note("active", "binned host");
   const binnedChild = await note("active", "binned child");
   expect(
