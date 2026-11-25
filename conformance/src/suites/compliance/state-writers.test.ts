@@ -186,17 +186,24 @@ describe("who made an item's last state move", () => {
   });
 
   it("answers the app that moved an item to the bin by the id and name its sign-in has", async () => {
-    const app = await approvedApp(server, ["core.note:write"]);
-    const author = await mintKey("bin author");
-    const id = await createNote(author.key);
-    const listed = (
+    const signIns = async (): Promise<
+      { id: string; kind: string; name: string }[]
+    > =>
       (await local("GET", "/owner/sign-ins")).body.data as {
         id: string;
         kind: string;
         name: string;
-      }[]
-    ).find((row) => row.kind === "app" && row.name === "conformance");
-    expect(listed, "the device's app is not listed").toBeDefined();
+      }[];
+    const known = new Set((await signIns()).map((row) => row.id));
+    const app = await approvedApp(server, ["core.note:write"]);
+    const author = await mintKey("bin author");
+    const id = await createNote(author.key);
+    // The sign-in this approval created, not an earlier one of the same name.
+    const created = (await signIns()).filter(
+      (row) => row.kind === "app" && !known.has(row.id),
+    );
+    expect(created, "the approval did not add one app sign-in").toHaveLength(1);
+    const listed = created[0];
 
     const trashed = await call(app.token, "DELETE", `/items/${id}`);
     expect(trashed.status, JSON.stringify(trashed.body)).toBe(200);
@@ -204,7 +211,7 @@ describe("who made an item's last state move", () => {
     expect((await read(author.key, id)).state_writer).toEqual({
       kind: "app",
       id: listed!.id,
-      name: "conformance",
+      name: listed!.name,
     });
   });
 
@@ -291,6 +298,21 @@ describe("who made an item's last state move", () => {
     expect(moved.state).toBe("archived");
     expect(moved.state_writer).toEqual(as(archiver));
     expect((await read(trasher.key, a)).state_writer).toEqual(as(trasher));
+
+    const restorer = await mintKey("bulk restorer");
+    const restoreJob = await clientOf(restorer).bulkAction({
+      action: "transition",
+      state: "active",
+      filter: { tags: [tag], state: "trashed" },
+    });
+    expect(restoreJob.status, JSON.stringify(restoreJob.error)).toBe(202);
+    const restored = await clientOf(restorer).pollBulkActionToTerminal(
+      (restoreJob.data as { id: string }).id,
+    );
+    expect(restored.status).toBe("completed");
+    const back = await read(trasher.key, a);
+    expect(back.state).toBe("active");
+    expect(back.state_writer).toEqual(as(restorer));
   });
 
   it("answers null for an item the feed-expiry job moved to the bin, and the requester once it is restored", async () => {
@@ -309,6 +331,11 @@ describe("who made an item's last state move", () => {
     } as Parameters<MarfaClient["createItem"]>[0]);
     expect(created.status, JSON.stringify(created.error)).toBe(201);
     const id = created.data.item.id;
+    const mover = await mintKey("feed mover", { [type]: "write" });
+    const moved = await call(mover.key, "POST", `/items/${id}/transition`, {
+      state: "archived",
+    });
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200);
     const asKey = async () =>
       (
         await call(
@@ -317,6 +344,14 @@ describe("who made an item's last state move", () => {
           `/items/${id}?include=writer&state=any`,
         )
       ).body.item as Answered;
+
+    // The witness: a sign-in moved it last, so the writer is named before the job.
+    expect((await asKey()).state_writer).toEqual(as(mover));
+    const back = await call(mover.key, "POST", `/items/${id}/transition`, {
+      state: "active",
+    });
+    expect(back.status, JSON.stringify(back.body)).toBe(200);
+    expect((await asKey()).state_writer).toEqual(as(mover));
 
     await clock.advance(3 * DAY_MS);
     const run = await runJob(server, "feed-expiry");
@@ -334,7 +369,8 @@ describe("who made an item's last state move", () => {
   it("leaves it as it was for an update, a patch and an upsert that names a state, and for a transition to the state the item is in", async () => {
     const archiver = await mintKey("keeping archiver");
     const editor = await mintKey("keeping editor");
-    const id = await createNote(archiver.key, { source_id: "state-kept-1" });
+    const creator = await mintKey("keeping creator");
+    const id = await createNote(creator.key, { source_id: "state-kept-1" });
     expect(
       (await clientOf(archiver).transitionItem(id, "archived")).status,
     ).toBe(200);
@@ -352,14 +388,18 @@ describe("who made an item's last state move", () => {
     expect(afterPatch.writer).toEqual(as(editor));
     expect(afterPatch.state_writer).toEqual(as(archiver));
 
-    const upserted = await call(editor.key, "POST", "/items", {
+    // The creator's source and natural key, so the write lands on the item.
+    const upserted = await call(creator.key, "POST", "/items", {
       type: "core.note",
       source_id: "state-kept-1",
       state: "active",
       properties: { body: "third" },
     });
-    expect(upserted.status, JSON.stringify(upserted.body)).toBeLessThan(300);
+    expect(upserted.status, JSON.stringify(upserted.body)).toBe(200);
+    expect((upserted.body.item as { id: string }).id).toBe(id);
     const afterUpsert = await read(archiver.key, id);
+    expect(afterUpsert.version).toBe(3);
+    expect(afterUpsert.writer).toEqual(as(creator));
     expect(afterUpsert.state).toBe("archived");
     expect(afterUpsert.state_writer).toEqual(as(archiver));
 
@@ -368,6 +408,23 @@ describe("who made an item's last state move", () => {
     });
     expect(same.status).toBe(400);
     expect((await read(archiver.key, id)).state_writer).toEqual(as(archiver));
+  });
+
+  it("answers the key that revoked a folder", async () => {
+    const owner = await mintKey("folder owner", { "system.folder": "write" });
+    const revoker = await mintKey("folder revoker", {
+      "system.folder": "write",
+    });
+    const created = await clientOf(owner).createFolder({ title: "Revocable" });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    const id = created.data.item.id;
+    expect((await read(owner.key, id)).state_writer).toBeNull();
+
+    const revoked = await clientOf(revoker).revokeFolder(id);
+    expect(revoked.status, JSON.stringify(revoked.error)).toBe(200);
+    const after = await read(owner.key, id);
+    expect(after.state).toBe("revoked");
+    expect(after.state_writer).toEqual(as(revoker));
   });
 
   it("leaves it off an item read that does not name writer, and off every other member", async () => {
