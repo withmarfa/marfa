@@ -158,9 +158,13 @@ impl Folder {
                 // longer reach, which no scan deletes.
                 Ok(false) => continue,
             };
-            // Saved before the pause is cleared, so status still holds it.
+            // Saved before the pause is cleared, so status still holds it. The
+            // scan clears the row of a file under a directory it could not read.
             let kept = state::Kept::Unsure(reason.clone());
-            state::journal_keep(&*self.core.conn()?, path, item_id, Some(&kept))?;
+            let conn = self.core.conn()?;
+            state::journal_missing(&conn, path, item_id)?;
+            state::journal_keep(&conn, path, item_id, Some(&kept))?;
+            drop(conn);
             confirmed.unsure.push(Unsure {
                 path: path.clone(),
                 reason,
@@ -594,6 +598,38 @@ mod tests {
             "{confirmed:?}"
         );
         assert_eq!(held_as(folder, "gone.md"), Some(("held", Some("unsure"))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_confirmed_removal_whose_own_parent_cannot_be_read_stays_a_held_file() {
+        let (_, _registry) = registry::tests::own_registry();
+        let paused = paused_over(
+            "01a00000-0000-7000-8000-00000000c6b4",
+            &["sub/kept.md", "sub/gone.md"],
+        );
+        paused.back("sub/kept.md", "sub/kept.md");
+        let folder = &paused.folder;
+        {
+            let _sealed = crate::test_folders::locked(paused.dir.path().join("sub"), 0o000);
+            let confirmed = folder.confirm().unwrap();
+            assert_eq!(confirmed.deleted, 0, "{confirmed:?}");
+            assert!(
+                confirmed
+                    .unsure
+                    .iter()
+                    .any(|file| file.path == "sub/gone.md"),
+                "{confirmed:?}"
+            );
+            assert!(deletes_queued(folder).is_empty(), "a delete was queued");
+        }
+        assert_eq!(
+            held_as(folder, "sub/gone.md"),
+            Some(("held", Some("unsure"))),
+            "a removal held while its own directory could not be read reads as a delete waiting to be sent"
+        );
+        assert_eq!(held_files(folder), Some(1));
+        assert!(deletes_queued(folder).is_empty(), "a delete was queued");
     }
 
     fn keeps_case_apart(dir: &std::path::Path) -> bool {
