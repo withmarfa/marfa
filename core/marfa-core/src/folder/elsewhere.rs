@@ -159,6 +159,9 @@ impl Folder {
             forgotten: Vec::new(),
             unchanged: Vec::new(),
         };
+        // Lets a fixture change a folder between the question and the write.
+        #[cfg(debug_assertions)]
+        crate::fault::gate("gate-forget-remembered");
         for holder in &shown.holders {
             let forget = || -> Result<()> {
                 let folder = Folder::open_without_listing(
