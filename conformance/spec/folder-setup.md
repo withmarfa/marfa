@@ -948,7 +948,7 @@ When a folder's `query.tier` is `all`, a device MUST write eligible items matchi
 
 ### `folder-setup/query-tier-departure-kept`
 
-When an item's tier or a folder's `query.tier` changes so that the item leaves the query's reach and no other folder takes its file, a device MUST keep its existing file as unmatched.
+When an item's tier or a folder's `query.tier` changes so that the item leaves the query's reach, a device MUST keep its existing file as unmatched.
 
 **Tests:** `device/folders-query.test.ts › keeps files and sends no item write when a query narrows from all to library`, `› keeps a file and sends no item write when its item leaves the query tier`.
 
