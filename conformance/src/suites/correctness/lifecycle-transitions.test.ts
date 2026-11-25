@@ -257,8 +257,7 @@ describe("a transition that names the state it expects", () => {
       expect(refused.status, from).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
       const errors = refused.error?.error.details?.errors as
-        | Array<{ path: string }>
-        | undefined;
+        Array<{ path: string }> | undefined;
       expect(errors?.[0]?.path).toBe("from");
     }
     const number = await client.rawRequest(`/items/${id}/transition`, {

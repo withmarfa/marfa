@@ -36,7 +36,10 @@ function value<T>(result: Outcome<T>): T {
 
 /** A copy of the active library, holding `pinned` in any state
  *  (`device/pin-holds`), since the slice alone lets go of an archived item. */
-async function device(label: string, pinned: string[] = []): Promise<CliDevice> {
+async function device(
+  label: string,
+  pinned: string[] = [],
+): Promise<CliDevice> {
   const made = new CliDevice({
     binary: requireBinary(),
     store: newStore(`transition-from-${label}`),
@@ -74,7 +77,11 @@ async function serverState(id: string): Promise<string | undefined> {
  *  does not answer (`items/get-missing`). */
 async function shown(copy: CliDevice, id: string): Promise<string | undefined> {
   const rows = value(
-    await copy.list({ allStates: true, tier: "library", filter: `id eq "${id}"` }),
+    await copy.list({
+      allStates: true,
+      tier: "library",
+      filter: `id eq "${id}"`,
+    }),
   );
   return rows[0]?.state;
 }
@@ -122,9 +129,9 @@ it("refuses a queued unarchive once another device has trashed the item, and lea
 
   // The refused undo is the person's to discard, as any refused write is.
   expect(value(await a.discard(undo.id))).toBe(true);
-  expect(
-    value(await a.queue()).some((queued) => queued.id === undo.id),
-  ).toBe(false);
+  expect(value(await a.queue()).some((queued) => queued.id === undo.id)).toBe(
+    false,
+  );
   expect(await shown(a, parent)).toBe("trashed");
 
   // The witness: a transition out of the bin that names no state brings the

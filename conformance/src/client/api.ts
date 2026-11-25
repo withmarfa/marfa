@@ -552,7 +552,8 @@ export class MarfaClient {
     return this.request<{ item: MarfaItem }>(`/items/${id}/transition`, {
       method: "POST",
       headers: options?.headers,
-      body: options?.from === undefined ? { state } : { state, from: options.from },
+      body:
+        options?.from === undefined ? { state } : { state, from: options.from },
     });
   }
 
