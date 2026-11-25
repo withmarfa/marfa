@@ -2755,9 +2755,6 @@ describe("the scripted answers match the server's", () => {
         Object.entries(asked).map(([id, { served }]) => [id, served]),
       ),
     );
-    // The witness: the types name a number, inherit one, name null under a
-    // number, and leave none in their chain, so the comparison above can
-    // tell each case from the others.
     expect(
       Object.values(asked).map(({ served }) => served),
       "the types registered did not cover each case, so the comparison proves nothing",

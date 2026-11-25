@@ -513,7 +513,7 @@ pub struct ItemType {
     pub icon: Option<String>,
     pub link_field: Option<String>,
     pub roles: Vec<String>,
-    /// Days a feed item stays in the feed, from the nearest type that names a window; null where it names null or no type names one.
+    /// The resolved feed expiry window in days. Absent when the type has no window.
     pub feed_days: Option<i64>,
 }
 

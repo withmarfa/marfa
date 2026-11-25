@@ -140,7 +140,7 @@ pub struct ItemType {
     pub icon: Option<String>,
     pub link_field: Option<String>,
     pub roles: Vec<String>,
-    /// Days a feed item stays in the feed: the nearest type in the chain that names `retention_policy.feed_days`. `None` where that type names `null` or none names it.
+    /// The resolved feed expiry window in days. An explicit `null` stops inheritance.
     pub feed_days: Option<i64>,
 }
 

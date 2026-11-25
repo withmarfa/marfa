@@ -5028,7 +5028,7 @@ A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`)
 
 A device MUST answer an item type's `feed_days` as `GET /types/{id}` answers `retention_policy.feed_days` (`types/retention-policy-merge`): the type's own value, else the nearest ancestor's that names one, and none where the type names `null` or no type in its chain names a value.
 
-**Reason:** an app tells a person when a feed item will leave the feed from the window alone, and answers it from the copy alone (`device/catalog-offline`); the listing holds only the window each type declares (`types/list-declared-policy`), so a type that names nothing, or names `null` under a parent that names a number, must be told apart from the key's presence, not its value.
+**Reason:** an app uses the window and the item's age to tell when a feed item is old enough to expire (`housekeeping/feed-expiry-arrival`), even offline (`device/catalog-offline`). A missing key inherits from a parent, while an explicit `null` overrides the parent's window (`types/list-declared-policy`).
 
 **Tests:** `device/fidelity.test.ts › reads a type's feed window from a working copy as the server resolves it`, `device/catalog.test.ts › moves the catalog version when only a type's feed window changes, and answers the window from the copy alone`.
 

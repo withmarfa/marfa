@@ -359,8 +359,7 @@ export interface ItemType {
   icon: string | null;
   link_field: string | null;
   roles: string[];
-  /** Days a feed item stays in the feed, from the nearest type that names
-   *  a window; null where it names null or none does. */
+  /** The resolved feed expiry window in days, or null when the type has no window. */
   feed_days: number | null;
 }
 
