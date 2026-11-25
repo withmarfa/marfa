@@ -1497,6 +1497,11 @@ pub(crate) fn withdraw_at(
         };
     }
     stop_if_asked(target, "crash-after-withdraw");
+    if failing_here("withdraw-look-refused") || named_for(target, "withdraw-look-refused") {
+        return Err(RemoveError::Remove(io::Error::from(
+            io::ErrorKind::PermissionDenied,
+        )));
+    }
     let known = Known::Held {
         ours: None,
         read: Some(&read),

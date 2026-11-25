@@ -132,6 +132,9 @@ struct ScanState {
     /// Each path whose file waits while another file carries the item bound
     /// there.
     held_carried: HashMap<String, HeldCarried>,
+    /// Why each path a stopped removal left unsettled is held: nothing is
+    /// sent for its file and nothing deletes its item.
+    removing: HashMap<String, String>,
 }
 
 /// The item bound at a path whose file waits, and the file that carries it.
@@ -685,6 +688,7 @@ impl Folder {
             files: Vec::new(),
             stale: HashMap::new(),
             held_carried: HashMap::new(),
+            removing: HashMap::new(),
         }))
     }
 
@@ -1216,6 +1220,7 @@ impl Folder {
         claims: Vec<Option<Claim>>,
         mut waiting: Waiting,
     ) -> Result<ControlFlow<(), Vec<EdgeWork>>> {
+        scan.removing = self.settle_taken()?;
         let (mode, settle) = (scan.mode, scan.settle);
         let reread_embeds = scan.reread_embeds;
         let held_outside = self.hold_outside(scan, &claims, &waiting)?;
@@ -1248,6 +1253,17 @@ impl Folder {
                     flag: "waiting",
                     reason,
                     item: None,
+                });
+                continue;
+            }
+            if let Some(why) = scan.removing.get(&file.key) {
+                report.flagged.push(Flagged {
+                    path: file.key.clone(),
+                    flag: super::pull::REMOVING,
+                    reason: why.clone(),
+                    item: by_path
+                        .get(file.key.as_str())
+                        .map(|bound| bound.item_id.clone()),
                 });
                 continue;
             }
@@ -1707,7 +1723,7 @@ impl Folder {
     /// Journals the bound files the walk did not find, rather than deleting
     /// them, and sweeps the journal where the pass saw the whole folder.
     fn sweep(&self, scan: &mut ScanState, peers: &Peers<'_>) -> Result<ControlFlow<()>> {
-        self.settle_taken()?;
+        let removing = std::mem::take(&mut scan.removing);
         let (seen, lists, walked, settings) =
             (&scan.seen, &scan.lists, &scan.walked, &scan.settings);
         let (mut incomplete, report) = (scan.incomplete, &mut scan.report);
@@ -1747,6 +1763,18 @@ impl Folder {
             if let Some(gone) = self.root_gone() {
                 report.root_gone = Some(gone);
                 return Ok(ControlFlow::Break(()));
+            }
+            if let Some(why) = removing.get(&path) {
+                if held {
+                    state::journal_clear(&*self.core.conn()?, &path)?;
+                }
+                report.flagged.push(Flagged {
+                    path: path.clone(),
+                    flag: super::pull::REMOVING,
+                    reason: why.clone(),
+                    item: Some(item_id.clone()),
+                });
+                continue;
             }
             if stands {
                 let conn = self.core.conn()?;

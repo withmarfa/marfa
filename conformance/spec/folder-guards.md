@@ -104,11 +104,25 @@ When an unmatched file named for removal is kept, a device MUST report the file 
 
 ### `folder-guards/unmatched-remove-stopped`
 
-If removal of an unmatched file stops before it ends, as when the process is killed, then a device MUST NOT queue the deletion of the file's item.
+If removal of an unmatched file stops or fails before it ends, as when the process is killed or the file system refuses a step, then a device MUST NOT queue the deletion of the file's item.
 
-**Reason:** a removal stopped after the file left the directory leaves the store binding a file that is gone, which a scan would otherwise read as the person deleting it. A device that finds such a file gone at its next scan ends the binding instead.
+**Reason:** a removal that stops or fails after the file left the directory leaves the store binding a file that is gone, which a scan would otherwise read as the person deleting it. A device that finds such a file gone at its next scan ends the binding instead, and one that finds it still there as it was keeps the binding. A person's delete in that gap reads the same way, so the item is kept, which loses nothing.
 
-**Tests:** `device/folders-unmatched.test.ts › never deletes the item of a file whose removal stopped at %s, as it does one deleted by hand`.
+**Tests:** `device/folders-unmatched.test.ts › never deletes the item of a file whose removal stopped at %s, as it does one deleted by hand`, `› never deletes the item of a file whose removal failed after the file left its path, as it does one deleted by hand`.
+
+### `folder-guards/unmatched-remove-stopped-held`
+
+If a device cannot tell at a scan whether the file of a stopped removal is still at its path, as when a directory on the path is a symbolic link or another file is there, then a device MUST report the file as `held` in `folders status`, with the reason.
+
+**Tests:** `device/folders-unmatched.test.ts › holds the binding of a file whose removal stopped where another file took its path, and never deletes its item`.
+
+### `folder-guards/unmatched-remove-stopped-unsent`
+
+While a device cannot tell whether the file of a stopped removal is still at its path, a device MUST NOT send what is at the path or queue the deletion of the file's item.
+
+**Reason:** the file may still exist where the device cannot see it, so sending what is at the path or deleting the item could lose it.
+
+**Tests:** `device/folders-unmatched.test.ts › holds the binding of a file whose removal stopped where another file took its path, and never deletes its item`.
 
 ### `folder-guards/unmatched-remove-gone-kept`
 

@@ -392,19 +392,36 @@ fn under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreE
     Ok(found)
 }
 
-/// The item ID prevents recovery from unbinding another item at the same path.
+/// One `meta` row per bound file a removal is taking away, written before
+/// the file moves and cleared only with the binding's end or once the file
+/// is proved still at its path, so no gap a stop leaves reads as a delete.
 const TAKEN: &str = "folder_taken:";
 
-pub(crate) fn set_taken(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
-    crate::store::meta_set(conn, &format!("{TAKEN}{path}"), item_id)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Taken {
+    /// Keeps recovery from unbinding another item at the same path.
+    pub(crate) item_id: String,
+    /// The file's device and inode as the removal found it.
+    pub(crate) at: (u64, u64),
+}
+
+pub(crate) fn set_taken(conn: &Connection, path: &str, taken: &Taken) -> Result<(), CoreError> {
+    let value =
+        serde_json::to_string(taken).map_err(|error| CoreError::Store(error.to_string()))?;
+    crate::store::meta_set(conn, &format!("{TAKEN}{path}"), &value)
 }
 
 pub(crate) fn clear_taken(conn: &Connection, path: &str) -> Result<(), CoreError> {
     crate::store::meta_delete(conn, &format!("{TAKEN}{path}"))
 }
 
-pub(crate) fn taken(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
-    under(conn, TAKEN)
+/// Every removal not yet settled, by path; `None` where its row does not
+/// read, which recovery cannot settle.
+pub(crate) fn taken(conn: &Connection) -> Result<Vec<(String, Option<Taken>)>, CoreError> {
+    Ok(under(conn, TAKEN)?
+        .into_iter()
+        .map(|(path, value)| (path, serde_json::from_str(&value).ok()))
+        .collect())
 }
 
 /// One `meta` row per item a pull last moved, naming the path its file left,

@@ -398,6 +398,17 @@ impl Folder {
         if let Some(reads) = reads {
             reads.finish(self, &walked);
         }
+        // As the next scan settles a removal a stop left.
+        let removing = self.taken_unsettled()?;
+        files.retain(|file| !matches!(removing.get(&file.path), Some(None)));
+        for file in &mut files {
+            if let Some(Some(why)) = removing.get(&file.path) {
+                file.status = "held";
+                file.waits.clear();
+                file.flag = Some(super::pull::REMOVING);
+                file.reason = Some(why.clone());
+            }
+        }
         files.sort_by(|a, b| a.path.cmp(&b.path));
         let additions = files
             .iter()

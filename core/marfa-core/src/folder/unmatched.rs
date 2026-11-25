@@ -520,6 +520,212 @@ mod tests {
             if point != "crash-before-take-away" {
                 assert!(!root.join("new.md").exists(), "{point}");
             }
+            assert!(
+                state::taken(&folder.core.conn().unwrap())
+                    .unwrap()
+                    .is_empty(),
+                "{point}"
+            );
         }
+    }
+
+    /// Stops a removal of `path` at `point`, and opens the folder again as
+    /// the next process would.
+    #[cfg(debug_assertions)]
+    fn stopped_at(folder: Folder, root: &Path, path: &str, point: &str) -> Folder {
+        {
+            let _stop = crate::fault::fail_on_this_thread(point);
+            let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                folder.remove_unmatched(&[path.into()])
+            }));
+            assert!(stopped.is_err(), "{point}: it did not stop");
+        }
+        drop(folder);
+        Folder::open(root, None).unwrap()
+    }
+
+    /// Scans, and once more past the rename grace where the file is journaled.
+    #[cfg(debug_assertions)]
+    fn scanned_past_the_grace(folder: &Folder, path: &str) {
+        folder.scan().unwrap();
+        let journaled = state::journaled(&folder.core.conn().unwrap())
+            .unwrap()
+            .iter()
+            .any(|row| row.path == path);
+        if journaled {
+            past_the_grace(folder, path);
+            folder.scan().unwrap();
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn held_in_status(folder: &Folder, path: &str) -> bool {
+        folder
+            .status()
+            .unwrap()
+            .files
+            .iter()
+            .any(|file| file.path == path && file.status == "held" && file.reason.is_some())
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn removing_unmatched_refused_after_the_move_aside_never_reads_the_gap_as_a_delete() {
+        let (dir, folder, id) = removable();
+        let done = {
+            let _refused = crate::fault::fail_on_this_thread("withdraw-look-refused");
+            folder.remove_unmatched(&["new.md".into()]).unwrap()
+        };
+        assert!(done.removed.is_empty(), "{done:?}");
+        assert!(!dir.path().join("new.md").exists());
+
+        scanned_past_the_grace(&folder, "new.md");
+
+        assert!(deletes_queued(&folder).is_empty());
+        let item = folder.core.get(&id).unwrap().unwrap();
+        assert_eq!(item.state, crate::model::ItemState::Archived);
+        let conn = folder.core.conn().unwrap();
+        assert!(state::bound_at(&conn, "new.md").unwrap().is_none());
+        assert!(state::taken(&conn).unwrap().is_empty());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_removal_stopped_before_the_move_aside_whose_file_stays_lets_a_later_delete_through() {
+        let (dir, folder, _) = removable();
+        let root = dir.path().to_path_buf();
+        let folder = stopped_at(folder, &root, "new.md", "crash-before-take-away");
+
+        folder.scan().unwrap();
+        assert!(
+            state::taken(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            state::bound_at(&folder.core.conn().unwrap(), "new.md")
+                .unwrap()
+                .is_some()
+        );
+        std::fs::remove_file(root.join("new.md")).unwrap();
+        scanned_past_the_grace(&folder, "new.md");
+
+        assert_eq!(deletes_queued(&folder).len(), 1);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_removal_stopped_after_the_move_aside_whose_file_the_owner_restores_lets_a_later_delete_through()
+     {
+        let (dir, folder, _) = removable();
+        let root = dir.path().to_path_buf();
+        let folder = stopped_at(folder, &root, "new.md", "crash-after-withdraw");
+        fn reserved_below(dir: &Path, found: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if entry.file_type().unwrap().is_dir() {
+                    reserved_below(&path, found);
+                } else if super::super::landing::is_reserved(&path) {
+                    found.push(path);
+                }
+            }
+        }
+        let mut aside = Vec::new();
+        reserved_below(&root, &mut aside);
+        assert_eq!(aside.len(), 1, "{aside:?}");
+        std::fs::rename(&aside[0], root.join("new.md")).unwrap();
+
+        folder.scan().unwrap();
+        {
+            let conn = folder.core.conn().unwrap();
+            assert!(state::taken(&conn).unwrap().is_empty());
+            assert!(state::bound_at(&conn, "new.md").unwrap().is_some());
+        }
+        std::fs::remove_file(root.join("new.md")).unwrap();
+        scanned_past_the_grace(&folder, "new.md");
+
+        assert_eq!(deletes_queued(&folder).len(), 1);
+    }
+
+    /// Accepted: the owner's delete in the gap after a stopped removal reads
+    /// as the removal, so the item is kept and nothing is lost.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_removal_stopped_before_the_move_aside_then_deleted_by_the_owner_keeps_the_item() {
+        let (dir, folder, id) = removable();
+        let root = dir.path().to_path_buf();
+        let folder = stopped_at(folder, &root, "new.md", "crash-before-take-away");
+        std::fs::remove_file(root.join("new.md")).unwrap();
+
+        scanned_past_the_grace(&folder, "new.md");
+
+        assert!(deletes_queued(&folder).is_empty());
+        assert!(folder.core.get(&id).unwrap().is_some());
+        let conn = folder.core.conn().unwrap();
+        assert!(state::bound_at(&conn, "new.md").unwrap().is_none());
+        assert!(state::taken(&conn).unwrap().is_empty());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_removal_stopped_before_the_move_aside_holds_another_file_at_its_path() {
+        let (dir, folder, _) = removable();
+        let root = dir.path().to_path_buf();
+        let folder = stopped_at(folder, &root, "new.md", "crash-before-take-away");
+        let mut bytes = std::fs::read(root.join("new.md")).unwrap();
+        bytes.extend_from_slice(b"\nsaved by another program\n");
+        std::fs::write(root.join("new.md.saved"), &bytes).unwrap();
+        std::fs::rename(root.join("new.md.saved"), root.join("new.md")).unwrap();
+        let queued = folder.core.queue().unwrap().len();
+
+        folder.scan().unwrap();
+
+        assert_eq!(
+            folder.core.queue().unwrap().len(),
+            queued,
+            "it sent the file"
+        );
+        let conn = folder.core.conn().unwrap();
+        assert!(state::bound_at(&conn, "new.md").unwrap().is_some());
+        assert_eq!(state::taken(&conn).unwrap().len(), 1);
+        drop(conn);
+        assert!(held_in_status(&folder, "new.md"));
+        // Once its path is empty, the binding ends as any stopped removal's does.
+        std::fs::remove_file(root.join("new.md")).unwrap();
+        scanned_past_the_grace(&folder, "new.md");
+        assert!(deletes_queued(&folder).is_empty());
+        assert!(
+            state::taken(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_removal_stopped_before_the_move_aside_holds_a_file_behind_a_link_until_it_is_back() {
+        let (dir, folder, _) = removable_at("sub/new.md");
+        let root = dir.path().to_path_buf();
+        let folder = stopped_at(folder, &root, "sub/new.md", "crash-before-take-away");
+        let elsewhere = tempfile::tempdir_in(root.parent().unwrap()).unwrap();
+        sub_made_a_link(&root, elsewhere.path());
+
+        scanned_past_the_grace(&folder, "sub/new.md");
+
+        assert!(deletes_queued(&folder).is_empty());
+        let conn = folder.core.conn().unwrap();
+        assert!(state::bound_at(&conn, "sub/new.md").unwrap().is_some());
+        assert_eq!(state::taken(&conn).unwrap().len(), 1);
+        drop(conn);
+        assert!(held_in_status(&folder, "sub/new.md"));
+        assert!(elsewhere.path().join("sub/new.md").is_file());
+
+        // The witness: with the directory back, the file settles as present.
+        std::fs::remove_file(root.join("sub")).unwrap();
+        std::fs::rename(elsewhere.path().join("sub"), root.join("sub")).unwrap();
+        folder.scan().unwrap();
+        let conn = folder.core.conn().unwrap();
+        assert!(state::taken(&conn).unwrap().is_empty());
+        assert!(state::bound_at(&conn, "sub/new.md").unwrap().is_some());
     }
 }

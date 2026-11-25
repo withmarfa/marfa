@@ -489,6 +489,97 @@ describe("a folder's unmatched files", () => {
     },
   );
 
+  it("never deletes the item of a file whose removal failed after the file left its path, as it does one deleted by hand", async () => {
+    const { harness: made, door } = await unmatchedFolder(
+      "unmatched-failed-aside",
+      2,
+    );
+    const removed = await withFault("withdraw-look-refused=Note 1.md", () =>
+      made.folder.removeUnmatched({ yes: true }),
+    );
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) return;
+    expect(
+      removed.value.kept.map((file) => file.path),
+      "the removal did not fail where the fault asks, so nothing below is about a failed one",
+    ).toEqual(["Note 1.md"]);
+    // The witness: the same folder sends a delete for a file a person deleted.
+    rmSync(join(made.dir, "Note 2.md"));
+    const graceStarted = Date.now();
+    await vi.waitFor(
+      async () => {
+        expect((await made.folder.scan()).ok).toBe(true);
+        const queue = await made.folder.device().queue();
+        expect(queue.ok).toBe(true);
+        if (!queue.ok) return;
+        const deleted = queue.value
+          .filter((row) => row.kind === "delete_item")
+          .map((row) => row.item_id);
+        expect(
+          (Date.now() - graceStarted) / 1000,
+          "the rename grace has not run out, so a missing file would not be a delete yet",
+        ).toBeGreaterThan(6);
+        expect(deleted).toEqual([note(2).id]);
+      },
+      { timeout: 25_000, interval: 1_000 },
+    );
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(door.get(note(1).id)?.version, "the item was changed").toBe(2);
+  });
+
+  it("holds the binding of a file whose removal stopped where another file took its path, and never deletes its item", async () => {
+    const { harness: made, door } = await unmatchedFolder(
+      "unmatched-stopped-replaced",
+      2,
+    );
+    await expect(
+      withFault("crash-before-take-away=Note 1.md", () =>
+        made.folder.removeUnmatched({ yes: true }),
+      ),
+      "the removal did not stop where the fault asks, so nothing below is about a stopped one",
+    ).rejects.toThrow(/crashing at .*Note 1\.md/);
+    rmSync(join(made.dir, "Note 1.md"));
+    writeFileSync(join(made.dir, "Note 1.md"), "another file\n");
+    // The witness: the same folder sends a delete for a file a person deleted.
+    rmSync(join(made.dir, "Note 2.md"));
+    const graceStarted = Date.now();
+    await vi.waitFor(
+      async () => {
+        expect((await made.folder.scan()).ok).toBe(true);
+        const queue = await made.folder.device().queue();
+        expect(queue.ok).toBe(true);
+        if (!queue.ok) return;
+        expect(
+          (Date.now() - graceStarted) / 1000,
+          "the rename grace has not run out, so a missing file would not be a delete yet",
+        ).toBeGreaterThan(6);
+        expect(
+          queue.value
+            .filter((row) => row.kind === "delete_item")
+            .map((row) => row.item_id),
+        ).toEqual([note(2).id]);
+      },
+      { timeout: 25_000, interval: 1_000 },
+    );
+    const status = await made.folder.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    if (!status.ok) return;
+    expect(
+      status.value.files.filter((file) => file.path === "Note 1.md"),
+    ).toEqual([
+      expect.objectContaining({
+        item_id: note(1).id,
+        status: "held",
+        flag: "removing",
+        reason: expect.stringMatching(/another file is at its path/),
+      }),
+    ]);
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(door.get(note(1).id)?.version, "the item was changed").toBe(2);
+  });
+
   it("removes through a binding the unmatched files it may, and keeps the rest and says why", async () => {
     const { harness: made, edges } = await unmatchedFolder("unmatched-binding");
     appendFileSync(join(made.dir, "Note 2.md"), "changed by hand\n");
