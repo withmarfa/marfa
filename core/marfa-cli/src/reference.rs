@@ -165,13 +165,14 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        "List, make, update and revoke folders, and read their sync reports",
+        "List, make, update and revoke folders, read their sync reports, and list their directories",
         &[
             "folders inventory",
             "folders create",
             "folders update",
             "folders revoke",
             "folders health",
+            "folders directories",
         ],
     ),
     (

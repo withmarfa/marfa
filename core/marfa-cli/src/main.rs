@@ -562,12 +562,12 @@ fn usage(
 
 /// What `--socket` refuses before anything is sent: commands that have no
 /// use for it, including folder commands that resolve their own server.
-/// Folder inventory is the one folder command that uses the private socket.
 fn socket_refusal(command: &Command) -> Option<CliError> {
     if matches!(
         command,
         Command::Folders {
             command: folders::FoldersCommand::Inventory { .. }
+                | folders::FoldersCommand::Directories { .. }
         }
     ) {
         return None;
@@ -989,6 +989,7 @@ mod tests {
             &["blobs", "download", "sha256:abc"],
             &["connectors", "list"],
             &["folders", "inventory"],
+            &["folders", "directories", "folder-id"],
         ] {
             assert!(socket_refusal(&command(words)).is_none(), "{words:?}");
         }

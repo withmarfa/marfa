@@ -175,6 +175,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("updateFolder", "folders update"),
     reached("revokeFolder", "folders revoke"),
     reached("getFolderStatus", "folders health"),
+    reached("getFolderDirectories", "folders directories"),
     reached("reportFolderStatus", "folders push"),
     reached("registerOAuthClient", "login"),
     reached("requestDeviceCode", "login"),

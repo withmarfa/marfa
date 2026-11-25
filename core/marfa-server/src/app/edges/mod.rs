@@ -1,6 +1,7 @@
 //! Every write goes through [`write::write`]; only `rows` holds the SQL of the edges table.
 
 pub mod bulk;
+mod placed;
 mod read;
 mod rows;
 pub mod write;
@@ -14,6 +15,7 @@ use super::catalog::Catalog;
 use super::items::with_properties;
 use super::refusal::{Code, Refusal, Result};
 
+pub use placed::{Directory, Tree, directories, under_names};
 pub(crate) use read::hydrate;
 pub use read::{Blocks, ItemListing, Listing, Reach, get, list, of_item};
 pub use rows::End;

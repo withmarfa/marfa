@@ -1,6 +1,7 @@
 //! Nothing outside `edges` reaches this module, so every write to the table goes through `write`.
 
 use marfa_rules::edges::{Graph, Link, OnDelete};
+use rusqlite::functions::FunctionFlags;
 use rusqlite::{OptionalExtension, Row, Transaction, params, params_from_iter};
 
 use super::Edge;
@@ -173,6 +174,110 @@ pub(super) fn kinds_at(
     ))?;
     let found = statement.query_map([id], |row| row.get(0))?;
     Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Untidy paths need component-wise counting to match the device.
+const UNTIDY: &str = "instr('/' || p || '/', '//') > 0 OR instr('/' || p || '/', '/./') > 0";
+
+pub(super) struct Tally {
+    /// The directory's name, or `None` for the files that sit directly under the prefix.
+    pub name: Option<String>,
+    pub direct: i64,
+    pub deeper: i64,
+}
+
+pub(super) struct Placed {
+    pub tallies: Vec<Tally>,
+    /// Every placed file whose path holds no empty or `.` name, under the prefix or not.
+    pub tidy: i64,
+    /// Stored paths with empty or `.` components.
+    pub untidy: Vec<String>,
+    /// Placements the caller may read whose stored path no write would accept.
+    pub unreadable: i64,
+}
+
+const ACCEPTED: &str = "marfa_accepted_folder_path";
+
+/// Lets SQL judge a stored path as the write of an `in-folder` edge does.
+fn serve_accepted(tx: &Transaction<'_>) -> Result<()> {
+    tx.create_scalar_function(
+        ACCEPTED,
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |context| {
+            let path: Option<String> = context.get(0)?;
+            Ok(path.is_some_and(|path| super::write::folder_path_accepted(&path)))
+        },
+    )?;
+    Ok(())
+}
+
+/// A nonempty prefix ends in `/` so it matches a complete directory name.
+pub(super) fn placed(
+    tx: &Transaction<'_>,
+    folder: &str,
+    prefix: &str,
+    from: Option<&Reach>,
+) -> Result<Placed> {
+    serve_accepted(tx)?;
+    let mut sql = Sql::new(&format!(
+        "WITH placed(p, ok, u) AS MATERIALIZED (SELECT p, ok, ok AND ({UNTIDY}) FROM \
+         (SELECT p, {ACCEPTED}(p) AS ok FROM (SELECT CASE WHEN json_type(e.properties, '$.path') = 'text' \
+         THEN json_extract(e.properties, '$.path') END AS p \
+         FROM edges e JOIN items f ON f.id = e.from_id WHERE e.to_id = "
+    ));
+    sql.bind(folder.to_string());
+    sql.push(" AND e.edge_type = 'in-folder' AND f.state <> 'trashed'");
+    if let Some(reach) = from {
+        sql.push(" AND ");
+        reach.clause(&mut sql, "f", false);
+    }
+    let kept = prefix.chars().count();
+    sql.push(&format!(
+        "))), cut AS (SELECT r, instr(r, '/') AS s, length(r) - length(replace(r, '/', '')) AS k \
+         FROM (SELECT substr(p, {}) AS r FROM placed WHERE ok AND NOT u",
+        kept + 1
+    ));
+    if !prefix.is_empty() {
+        sql.push(&format!(" AND substr(p, 1, {kept}) = "));
+        sql.bind(prefix.to_string());
+    }
+    sql.push(
+        ")) SELECT 0, CASE WHEN s > 0 THEN substr(r, 1, s - 1) END, \
+         SUM(k = 1), SUM(k > 1), SUM(k = 0) FROM cut \
+         GROUP BY 2 \
+         UNION ALL SELECT 1, NULL, COUNT(*), 0, 0 FROM placed WHERE ok AND NOT u \
+         UNION ALL SELECT 2, p, 0, 0, 0 FROM placed WHERE u \
+         UNION ALL SELECT 3, NULL, COUNT(*), 0, 0 FROM placed WHERE NOT ok",
+    );
+    let mut statement = tx.prepare_cached(&sql.text)?;
+    let mut found = statement.query(params_from_iter(&sql.values))?;
+    let mut placed = Placed {
+        tallies: Vec::new(),
+        tidy: 0,
+        untidy: Vec::new(),
+        unreadable: 0,
+    };
+    while let Some(row) = found.next()? {
+        match row.get::<_, i64>(0)? {
+            0 => {
+                let name: Option<String> = row.get(1)?;
+                let direct = match name {
+                    Some(_) => row.get(2)?,
+                    None => row.get(4)?,
+                };
+                placed.tallies.push(Tally {
+                    deeper: row.get(3)?,
+                    name,
+                    direct,
+                });
+            }
+            1 => placed.tidy = row.get(2)?,
+            3 => placed.unreadable = row.get(2)?,
+            _ => placed.untidy.push(row.get(1)?),
+        }
+    }
+    Ok(placed)
 }
 
 pub(super) type Position = (String, String);

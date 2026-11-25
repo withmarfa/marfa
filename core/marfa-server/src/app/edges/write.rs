@@ -899,6 +899,19 @@ pub(super) fn repeat(held: &Edge, from: &str, to: &str, edge_type: &str) -> Resu
     .with_detail("differs", differs))
 }
 
+fn has_folder_path_length(text: &str) -> bool {
+    (1..=MAX_FOLDER_PATH).contains(&text.chars().count())
+}
+
+fn names_a_file_inside_folder(text: &str) -> bool {
+    edges::depth_inside_folder(text).is_some_and(|depth| depth > 0)
+}
+
+/// Whether a write would accept `text` as the `path` of an `in-folder` edge.
+pub(super) fn folder_path_accepted(text: &str) -> bool {
+    has_folder_path_length(text) && names_a_file_inside_folder(text)
+}
+
 fn judge_folder(properties: &Map<String, Value>) -> Result<()> {
     if let Some(other) = properties
         .keys()
@@ -920,8 +933,7 @@ fn judge_folder(properties: &Map<String, Value>) -> Result<()> {
     }
     let path = format!("properties.{FOLDER_PATH}");
     let text = properties.get(FOLDER_PATH).and_then(Value::as_str);
-    let Some(text) = text.filter(|text| (1..=MAX_FOLDER_PATH).contains(&text.chars().count()))
-    else {
+    let Some(text) = text.filter(|text| has_folder_path_length(text)) else {
         return Err(invalid_property(
             &path,
             format!(
@@ -929,7 +941,7 @@ fn judge_folder(properties: &Map<String, Value>) -> Result<()> {
             ),
         ));
     };
-    if edges::depth_inside_folder(text).is_none_or(|depth| depth == 0) {
+    if !names_a_file_inside_folder(text) {
         return Err(invalid_property(
             &path,
             format!(

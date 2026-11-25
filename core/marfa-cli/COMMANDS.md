@@ -107,7 +107,7 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | See connectors, their runs and their problems | `marfa connectors list`, `marfa connectors get`, `marfa connectors runs` |
 | Remove a connector, or only its state | `marfa connectors delete`, `marfa connectors state delete` |
 | Manage a connector's inbound endpoints and deliveries | `marfa connectors endpoints list`, `marfa connectors endpoints create`, `marfa connectors endpoints retire`, `marfa connectors deliveries list`, `marfa connectors deliveries body`, `marfa connectors deliveries handle` |
-| List, make, update and revoke folders, and read their sync reports | `marfa folders inventory`, `marfa folders create`, `marfa folders update`, `marfa folders revoke`, `marfa folders health` |
+| List, make, update and revoke folders, read their sync reports, and list their directories | `marfa folders inventory`, `marfa folders create`, `marfa folders update`, `marfa folders revoke`, `marfa folders health`, `marfa folders directories` |
 | Manage webhooks and their deliveries | `marfa webhooks create`, `marfa webhooks list`, `marfa webhooks get`, `marfa webhooks update`, `marfa webhooks delete`, `marfa webhooks deliveries`, `marfa webhooks redeliver` |
 | Read the audit log | `marfa audit` |
 | List and run the housekeeping jobs, and confirm the server's clock | `marfa housekeeping list`, `marfa housekeeping run`, `marfa housekeeping confirm-clock` |
@@ -5017,6 +5017,26 @@ marfa folders inventory [OPTIONS]
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
 | `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
+
+### marfa folders directories
+
+List a folder's immediate directories and their file counts.
+
+Start at the top level or pass a listed path to `--under`. Each directory has a count of files directly inside it and a count that includes its subdirectories. The result also counts files at the requested level and in the whole folder. A key needs read access to `system.folder` and `in-folder`. Counts include only files the caller can read. A placement whose stored path no write would accept is left out of every count and reported as `unreadable_placements`.
+
+With `--json`, the result has `folder_id`, `under`, `direct_files`, `total_files`, `unreadable_placements` and `directories`. Each directory has `path`, `direct_files`, `all_files` and `has_directories`.
+
+```text
+marfa folders directories [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The folder's `system.folder` ID. |
+
+| Option | Description |
+| --- | --- |
+| `--under <PATH>` | A directory path from the folder's root, such as `notes/2026`. Use up to 1024 characters. A leading slash, backslash, NUL or `..` component is invalid. |
 
 ### marfa folders remove
 

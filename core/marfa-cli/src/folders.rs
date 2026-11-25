@@ -56,6 +56,28 @@ pub enum FoldersCommand {
         #[command(flatten)]
         page: crate::commands::PageArgs,
     },
+    /// List a folder's immediate directories and their file counts.
+    ///
+    /// Start at the top level or pass a listed path to `--under`. Each directory
+    /// has a count of files directly inside it and a count that includes its
+    /// subdirectories. The result also counts files at the requested level and
+    /// in the whole folder. A key needs read access to `system.folder` and
+    /// `in-folder`. Counts include only files the caller can read. A placement
+    /// whose stored path no write would accept is left out of every count and
+    /// reported as `unreadable_placements`.
+    ///
+    /// With `--json`, the result has `folder_id`, `under`, `direct_files`,
+    /// `total_files`, `unreadable_placements` and `directories`. Each directory has `path`,
+    /// `direct_files`, `all_files` and `has_directories`.
+    Directories {
+        /// The folder's `system.folder` ID.
+        id: String,
+        /// A directory path from the folder's root, such as `notes/2026`.
+        /// Use up to 1024 characters. A leading slash, backslash, NUL or
+        /// `..` component is invalid.
+        #[arg(long, value_name = "PATH", allow_hyphen_values = true)]
+        under: Option<String>,
+    },
     /// Make a directory stop following its folder: its own state under
     /// `.marfa` goes, and its files stay as plain files. Empty administrative directories
     /// remain. Refused while writes wait, except for a first sync still
@@ -463,6 +485,16 @@ pub fn run(
                 "folders", &id, "status",
             ]))?;
             output::report(&report, json, || describe_health(&report))
+        }
+        FoldersCommand::Directories { id, under } => {
+            let request = crate::remote::request::Request::get(&["folders", &id, "directories"])
+                .query_opt("under", under);
+            let remote = match socket {
+                Some(path) => Remote::local(path)?,
+                None => Remote::resolve(named)?,
+            };
+            let report = remote.json(&request)?;
+            output::report(&report, json, || describe_directories(&report))
         }
         FoldersCommand::Pause { dir } => {
             let folder = working(&dir, named.session_if_named()?)?;
@@ -1139,6 +1171,49 @@ fn describe_health(report: &serde_json::Value) -> String {
                 }
             }
         }
+    }
+    lines.join("\n")
+}
+
+fn describe_directories(report: &serde_json::Value) -> String {
+    let report = &output::printable_value(report);
+    let under = report["under"].as_str().unwrap_or_default();
+    let place = if under.is_empty() {
+        "the top level".to_string()
+    } else {
+        under.to_string()
+    };
+    let mut lines = vec![
+        format!(
+            "folder {}",
+            report["folder_id"].as_str().unwrap_or_default()
+        ),
+        format!(
+            "{} file(s) directly at {place}; {} file(s) in the folder",
+            report["direct_files"], report["total_files"]
+        ),
+    ];
+    let unreadable = report["unreadable_placements"].as_i64().unwrap_or(0);
+    if unreadable > 0 {
+        lines.push(format!(
+            "{unreadable} placement(s) with a damaged path left out of every count"
+        ));
+    }
+    for directory in report["directories"].as_array().into_iter().flatten() {
+        lines.push(format!(
+            "{}: {} file(s) directly, {} in all{}",
+            directory["path"].as_str().unwrap_or_default(),
+            directory["direct_files"],
+            directory["all_files"],
+            if directory["has_directories"].as_bool() == Some(true) {
+                ", with directories beneath"
+            } else {
+                ""
+            }
+        ));
+    }
+    if report["directories"].as_array().is_none_or(Vec::is_empty) {
+        lines.push("no directory here".to_string());
     }
     lines.join("\n")
 }
@@ -2052,6 +2127,70 @@ mod tests {
     fn remote_health_is_a_folder_command() {
         use clap::Parser;
         assert!(crate::Cli::try_parse_from(["marfa", "folders", "health", "folder"]).is_ok());
+    }
+
+    #[test]
+    fn folder_directories_names_the_folder_and_takes_an_optional_under() {
+        use clap::Parser;
+        let parsed = |words: &[&str]| {
+            let mut argv = vec!["marfa", "folders", "directories"];
+            argv.extend_from_slice(words);
+            crate::Cli::try_parse_from(argv)
+        };
+        assert!(parsed(&[]).is_err());
+        assert!(parsed(&["folder"]).is_ok());
+        assert!(parsed(&["folder", "--under", "notes/2026"]).is_ok());
+        assert!(parsed(&["folder", "--under"]).is_err());
+    }
+
+    #[test]
+    fn folder_directories_takes_an_under_that_starts_with_a_hyphen() {
+        use clap::Parser;
+        let parsed = crate::Cli::try_parse_from([
+            "marfa",
+            "folders",
+            "directories",
+            "folder",
+            "--under",
+            "-drafts",
+        ])
+        .unwrap();
+        let crate::Command::Folders {
+            command: FoldersCommand::Directories { under, .. },
+        } = parsed.command
+        else {
+            panic!("not a directories command");
+        };
+        assert_eq!(under.as_deref(), Some("-drafts"));
+    }
+
+    #[test]
+    fn a_directory_listing_says_each_level_and_each_directory() {
+        let said = describe_directories(&serde_json::json!({
+            "folder_id": "f1",
+            "under": "notes",
+            "direct_files": 2,
+            "total_files": 8,
+            "unreadable_placements": 2,
+            "directories": [
+                { "path": "notes/2026", "direct_files": 1, "all_files": 3, "has_directories": true },
+                { "path": "notes/old", "direct_files": 1, "all_files": 1, "has_directories": false },
+            ],
+        }));
+        assert_eq!(
+            said,
+            "folder f1\n2 file(s) directly at notes; 8 file(s) in the folder\n\
+             2 placement(s) with a damaged path left out of every count\n\
+             notes/2026: 1 file(s) directly, 3 in all, with directories beneath\n\
+             notes/old: 1 file(s) directly, 1 in all"
+        );
+        let empty = describe_directories(&serde_json::json!({
+            "folder_id": "f1", "under": "", "direct_files": 0, "total_files": 0, "directories": [],
+        }));
+        assert_eq!(
+            empty,
+            "folder f1\n0 file(s) directly at the top level; 0 file(s) in the folder\nno directory here"
+        );
     }
     use super::*;
     use marfa_core::{DrainReport, DrainVerdict, Verdict, WriteKind};

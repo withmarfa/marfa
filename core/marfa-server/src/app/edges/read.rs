@@ -77,7 +77,7 @@ fn readable(tx: &Transaction<'_>, caller: &Caller, edge: &Edge) -> Result<bool> 
 }
 
 /// The from items an edge page may open by, or `None` where every item is in reach.
-fn from_reach(
+pub(super) fn from_reach(
     tx: &Transaction<'_>,
     caller: &Caller,
     catalog: &Catalog,
