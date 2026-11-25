@@ -179,8 +179,7 @@ it("queues and sends the creation, change, move and removal of an edge with an a
       )!;
       const answered = await device.drain();
       if (end === "from") {
-        // A move of an edge's source changes the reach (`reach/moves-edge-from`):
-        // the move is answered and the copy expires.
+        // Moving the from item expires the copy (`queue-and-verdicts/edge-from-move-expires`).
         expect(answered.ok, label).toBe(false);
         if (!answered.ok)
           expect(answered.refusal.code, label).toBe("copy_expired");

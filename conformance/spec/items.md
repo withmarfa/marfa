@@ -256,7 +256,7 @@ When `PATCH /items/{id}` names a `source`, the server MUST answer `400 validatio
 
 When `POST /items` without `mode: create_only`, or a `POST /items/bulk` entry under `mode: upsert`, names a `source_id` that, under the source it resolves to, an item of the declared type holds that is active or archived, and the write changes the item as it stands, the server MUST apply it as an update to that item, answered `200` at the item's next version, whichever credential sends it.
 
-**Reason:** two keys that claim one source share its natural keys, so a connector's item is one item whichever of its keys writes it. A write that changes nothing is answered at the version held (`versions/unchanged-upsert`).
+**Reason:** two keys that claim one source share its natural keys, so a connector's item is one item whichever of its keys writes it. A write that changes nothing returns the held version on `POST /items` (`versions/unchanged-upsert`) and is reported `skipped` in bulk (`items/bulk-unchanged`).
 
 **Tests:** `correctness/dedup.test.ts › duplicate (source, source_id) upserts onto the existing item (natural-key upsert)`, `compliance/claimed-sources.test.ts › upserts onto one item from two keys claiming one source`, `› lands a bulk entry naming a claim on the claim's item, not on its own source's`, `compliance/create-only.test.ts › updates the item as before under mode upsert and under no mode`, `correctness/upsert-state-tags.test.ts › updates an archived item in place on POST /items and on POST /items/bulk, as it updates an active one`.
 
@@ -284,7 +284,7 @@ When a create applied as a natural-key upsert names `tags`, on `POST /items` or 
 
 When a create applied as a natural-key upsert names a `state`, on `POST /items` or in an entry of `POST /items/bulk`, the server MUST ignore the `state` it names.
 
-**Reason:** a person who archived an item a connector holds keeps it archived through the connector's next run, and a connector cannot bring an archived item back by naming `active`. An edge the upsert writes can still move the item, as it can move an item written any other way (`items/trash-cascade`). The bulk door's rule is `items/initial-state-bulk-update`.
+**Reason:** a connector cannot bring an archived item back by naming `active`. An inline `with-hosts` edge can still move the item into the bin (`edges/parts-late-binned`).
 
 **Tests:** `correctness/upsert-state-tags.test.ts › ignores the state it names on POST /items and on POST /items/bulk, an archived item included`.
 
@@ -1432,7 +1432,7 @@ When `PATCH /items/{id}`, `PUT /items/{id}/tags`, `POST /items/{id}/tags`, `DELE
 
 When a transition moves an item to `archived`, on `POST /items/{id}/transition` or in a bulk action, the server MUST NOT change the state of an item that an edge of a type that cascades on delete (`edges/cascade-parent-of` and `edges/cascade-custom`) reaches from it.
 
-**Reason:** a move into the bin takes the items such an edge reaches (`items/trash-cascade`), and a move to the archive takes none, so the children of an archived host stay active. The parts of a host are `edges/parts-archive`.
+**Reason:** archiving a host leaves its children's states as they stand. A move into the bin takes the items a cascading edge reaches (`items/trash-cascade`), and `edges/parts-archive` covers the host's parts.
 
 **Tests:** `correctness/archived-writes.test.ts › changes the state of no other item, whatever edges the item holds`, `› changes the state of no other item on a bulk transition to archived`.
 
