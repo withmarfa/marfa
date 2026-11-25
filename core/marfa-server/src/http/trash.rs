@@ -21,7 +21,7 @@ use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::types::{check_id, missing_field};
 
 const STATES: [&str; 3] = ["active", "archived", "trashed"];
-const TRANSITION_FIELDS: [&str; 1] = ["state"];
+const TRANSITION_FIELDS: [&str; 2] = ["state", "from"];
 const PREVIEW_FIELDS: [&str; 1] = ["ids"];
 const TRASH_FIELDS: [&str; 2] = ["ids", "digest"];
 const MAX_TRASH_IDS: usize = 20;
@@ -51,7 +51,22 @@ pub async fn transition(
                 "state is active, archived or trashed.",
             ));
         }
-        let change = Change::Transition { id, state, version };
+        let from = text_of(&sent, "from")?;
+        if from
+            .as_deref()
+            .is_some_and(|from| !STATES.contains(&from))
+        {
+            return Err(invalid_field(
+                "from",
+                "from is active, archived or trashed.",
+            ));
+        }
+        let change = Change::Transition {
+            id,
+            state,
+            from,
+            version,
+        };
         write::run(&door, &who, claim, change).await
     })
     .await

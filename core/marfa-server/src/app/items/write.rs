@@ -155,6 +155,8 @@ pub enum Change {
     Transition {
         id: String,
         state: String,
+        /// The state the writer read the item in, when it names one.
+        from: Option<String>,
         version: Option<i64>,
     },
     Delete {
@@ -898,7 +900,12 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 namespace,
                 read_revision,
             } => self.clear_extension(&id, &namespace, read_revision.as_deref()),
-            Change::Transition { id, state, version } => self.transition(&id, &state, version),
+            Change::Transition {
+                id,
+                state,
+                from,
+                version,
+            } => self.transition(&id, &state, from.as_deref(), version),
             Change::Delete { id, version } => self.delete(id, version),
             Change::Trash { ids, digest } => self.trash(ids, digest.as_deref()),
             Change::Restore { id, version } => self.restore(&id, version),
@@ -2392,7 +2399,24 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         Ok(row)
     }
 
-    fn transition(&self, id: &str, state: &str, version: Option<i64>) -> Result<Done> {
+    fn transition(
+        &self,
+        id: &str,
+        state: &str,
+        from: Option<&str>,
+        version: Option<i64>,
+    ) -> Result<Done> {
+        if let Some(from) = from {
+            let row = self.lifecycle_row(id, version)?;
+            if row.state != from {
+                return Err(Refusal::new(
+                    Code::StateConflict,
+                    format!("The item is {}, not {from}. Read it again.", row.state),
+                )
+                .with_detail("expected", from)
+                .with_detail("actual", row.state));
+            }
+        }
         let (item, _) = self.transitioned(id, state, version)?;
         self.answer(200, &item, "")
     }
