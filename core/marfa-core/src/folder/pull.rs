@@ -235,6 +235,11 @@ pub(super) enum TakenNow {
 pub(super) const REMOVING: &str = "removing";
 
 fn held_removal(why: &str) -> String {
+    if why == Folder::UNTOLD || why == "another file is at its path" {
+        return format!(
+            "{why}. To keep the local file, move it outside the synced folder and run `marfa folders scan <DIR>`. The item stays in Marfa."
+        );
+    }
     format!(
         "Marfa stopped while it took this file away, and cannot tell whether the file is still there: {why}. Its item is not deleted while it cannot tell; once the path holds the file as it was, or a removal reaches the file again, it settles"
     )
@@ -1963,11 +1968,16 @@ impl Folder {
         let conn = self.core.conn()?;
         context.check(&conn)?;
         let path = self.root.join(&row.path);
-        match self.file_identity(&path) {
-            Ok(Some(at)) => {
+        let metadata = self
+            .removal_file(&path)
+            .and_then(|entry| entry.map(|file| file.metadata()).transpose());
+        match metadata {
+            Ok(Some(metadata)) => {
                 let taken = state::Taken {
                     item_id: row.item_id.clone(),
-                    at,
+                    at: landing::identity(&metadata),
+                    born: identity::born(&metadata),
+                    hash: row.written_hash.clone(),
                 };
                 state::set_taken(&conn, &row.path, &taken)?;
                 landing::stop_if_asked(&path, "crash-before-take-away");
@@ -2031,16 +2041,21 @@ impl Folder {
         Ok(TakenAway::Ended(ended))
     }
 
+    const UNTOLD: &str =
+        "Marfa cannot tell whether the file at its path is the one it was removing";
+
     /// Checks the path without following directory links.
     pub(super) fn taken_now(&self, path: &str, taken: Option<&state::Taken>) -> TakenNow {
         let Some(taken) = taken else {
             return TakenNow::Unsure("Marfa cannot read its record of the removal".into());
         };
-        match self.file_identity(&self.root.join(path)) {
-            Ok(Some(at)) if super::same_directory(at, taken.at, super::device(&self.root_dir)) => {
-                TakenNow::Present
-            }
-            Ok(Some(_)) => TakenNow::Unsure("another file is at its path".into()),
+        let path = self.root.join(path);
+        match self.removal_file(&path) {
+            Ok(Some(file)) => self
+                .still_the_file(&path, file, taken)
+                .unwrap_or_else(|error| {
+                    TakenNow::Unsure(format!("Marfa cannot look at it: {error}"))
+                }),
             Ok(None) => TakenNow::Unsure("something other than a file is at its path".into()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => TakenNow::Absent,
             Err(error) if beyond_a_link(&error) => TakenNow::Unsure(
@@ -2048,6 +2063,52 @@ impl Folder {
             ),
             Err(error) => TakenNow::Unsure(format!("Marfa cannot look at it: {error}")),
         }
+    }
+
+    fn removal_file(&self, path: &Path) -> std::io::Result<Option<std::fs::File>> {
+        let (directory, name) = self.location(path, false)?;
+        let name = Path::new(&name);
+        if directory.entry_kind(name)? != crate::directory::FileType::RegularFile {
+            return Ok(None);
+        }
+        directory.capture_file(name).map(Some)
+    }
+
+    fn still_the_file(
+        &self,
+        path: &Path,
+        file: std::fs::File,
+        taken: &state::Taken,
+    ) -> std::io::Result<TakenNow> {
+        let metadata = file.metadata()?;
+        let another = || TakenNow::Unsure("another file is at its path".into());
+        if !super::same_directory(
+            landing::identity(&metadata),
+            taken.at,
+            super::device(&self.root_dir),
+        ) {
+            return Ok(another());
+        }
+        let Some(expected) = &taken.hash else {
+            return Ok(TakenNow::Unsure(Self::UNTOLD.into()));
+        };
+        if state::hash_reader(&file)? != *expected {
+            return Ok(another());
+        }
+        let born = identity::born(&metadata);
+        if !super::same_birth(taken.born, born) {
+            return Ok(match (taken.born.filter(|birth| *birth > 0), born) {
+                (Some(_), Some(_)) => another(),
+                _ => TakenNow::Unsure(Self::UNTOLD.into()),
+            });
+        }
+        let named = self.metadata(path)?;
+        if !super::same_file(&metadata, &named)
+            || super::changed_at(&metadata) != super::changed_at(&named)
+        {
+            return Ok(TakenNow::Unsure(Self::UNTOLD.into()));
+        }
+        Ok(TakenNow::Present)
     }
 
     /// Returns `None` for a nonregular entry.

@@ -1255,6 +1255,7 @@ const invocations: Record<string, () => string[]> = {
   "folders update": () => ["--version", "1", "--title", "t", ID],
   "folders revoke": () => [ID],
   "folders health": () => [ID],
+  "folders directories": () => [ID],
   login: () => ["--no-browser", "--print-token"],
   "profile avatar": () => [],
   "owner password": () => ["--stdin"],
