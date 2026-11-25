@@ -962,6 +962,7 @@ export class CliDevice implements DeviceUnderTest {
   async transitionItem(
     id: string,
     state: string,
+    from?: string,
   ): Promise<Outcome<QueuedWrite>> {
     return this.json<QueuedWrite>([
       "items",
@@ -969,6 +970,7 @@ export class CliDevice implements DeviceUnderTest {
       id,
       "--state",
       state,
+      ...(from === undefined ? [] : ["--from", from]),
     ]);
   }
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -172,5 +173,121 @@ describe("lifecycle transitions", () => {
     const archivedIds = archivedItems.data.data.map((i) => i.id);
     expect(archivedIds).toContain(other.data.item.id);
     expect(archivedIds).not.toContain(r.data.item.id);
+  });
+});
+
+describe("a transition that names the state it expects", () => {
+  async function made(state?: string): Promise<string> {
+    const r = await client.createItem(createNote({ source: ctx.source }));
+    expect(r.ok, JSON.stringify(r.error)).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    if (state !== undefined) {
+      const moved = await client.transitionItem(r.data.item.id, state);
+      expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    }
+    return r.data.item.id;
+  }
+
+  async function stateOf(id: string): Promise<string | undefined> {
+    const listed = await client.listItems({
+      state: "any",
+      filter: `id eq "${id}"`,
+      limit: 10,
+    });
+    expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+    return listed.data.data[0]?.state;
+  }
+
+  it("moves an item that is in the state from names", async () => {
+    const id = await made("archived");
+    const moved = await client.transitionItem(id, "active", {
+      from: "archived",
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.state).toBe("active");
+  });
+
+  it("refuses 409 state_conflict a transition whose from the item has left, naming both states, and moves nothing", async () => {
+    const id = await made("trashed");
+    const key = `transition-from-${randomUUID()}`;
+    const refused = await client.transitionItem(id, "active", {
+      from: "archived",
+      headers: { "Idempotency-Key": key },
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("state_conflict");
+    expect(refused.error?.error.details).toEqual({
+      expected: "archived",
+      actual: "trashed",
+    });
+    await expectMatchesSchema(
+      "POST",
+      "/items/{id}/transition",
+      409,
+      refused.error,
+    );
+    expect(await stateOf(id)).toBe("trashed");
+
+    // A repeat under the key is the first answer again.
+    const repeat = await client.transitionItem(id, "active", {
+      from: "archived",
+      headers: { "Idempotency-Key": key },
+    });
+    expect(repeat.status).toBe(409);
+    expect(repeat.headers.get("idempotency-replayed")).toBe("true");
+    expect(repeat.error?.error.code).toBe("state_conflict");
+
+    // The witness: the same move without from takes the item out of the bin.
+    const moved = await client.transitionItem(id, "active");
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.state).toBe("active");
+  });
+
+  it("moves an item in any state the graph leaves when the transition names no from", async () => {
+    const id = await made("trashed");
+    const moved = await client.transitionItem(id, "active");
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.state).toBe("active");
+  });
+
+  it("refuses a from that is not a state 400 validation_error naming from", async () => {
+    const id = await made();
+    for (const from of ["revoked", "deleted", ""]) {
+      const refused = await client.transitionItem(id, "archived", { from });
+      expect(refused.status, from).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      const errors = refused.error?.error.details?.errors as
+        | Array<{ path: string }>
+        | undefined;
+      expect(errors?.[0]?.path).toBe("from");
+    }
+    const number = await client.rawRequest(`/items/${id}/transition`, {
+      method: "POST",
+      body: { state: "archived", from: 1 },
+    });
+    expect(number.status).toBe(400);
+    expect(number.error?.error.code).toBe("validation_error");
+    expect(await stateOf(id)).toBe("active");
+  });
+
+  it("answers state_conflict rather than invalid_transition when from is wrong and the graph holds no such move", async () => {
+    const id = await made("trashed");
+    // Trashed to archived is not a move the graph holds.
+    const refused = await client.transitionItem(id, "archived", {
+      from: "active",
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("state_conflict");
+    expect(refused.error?.error.details).toEqual({
+      expected: "active",
+      actual: "trashed",
+    });
+
+    // The witness: with from right, the same move is invalid_transition.
+    const invalid = await client.transitionItem(id, "archived", {
+      from: "trashed",
+    });
+    expect(invalid.status).toBe(400);
+    expect(invalid.error?.error.code).toBe("invalid_transition");
   });
 });

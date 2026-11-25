@@ -547,10 +547,12 @@ export class MarfaClient {
   async transitionItem(
     id: string,
     state: string,
+    options?: { from?: string; headers?: Record<string, string> },
   ): Promise<ApiResponse<{ item: MarfaItem }>> {
     return this.request<{ item: MarfaItem }>(`/items/${id}/transition`, {
       method: "POST",
-      body: { state },
+      headers: options?.headers,
+      body: options?.from === undefined ? { state } : { state, from: options.from },
     });
   }
 

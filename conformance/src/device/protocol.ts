@@ -832,8 +832,15 @@ export interface DeviceUnderTest {
    * where it does not.
    */
   restoreItem(id: string): Promise<Outcome<QueuedWrite>>;
-  /** Move an item to another lifecycle state. */
-  transitionItem(id: string, state: string): Promise<Outcome<QueuedWrite>>;
+  /**
+   * Move an item to another lifecycle state. With `from`, refuse unless the
+   * copy shows the item in that state (`queue-and-verdicts/transition-from-held`).
+   */
+  transitionItem(
+    id: string,
+    state: string,
+    from?: string,
+  ): Promise<Outcome<QueuedWrite>>;
   /** Link two items. An edge is its own write. */
   createEdge(edge: EdgeDraft): Promise<Outcome<QueuedWrite>>;
   /**
