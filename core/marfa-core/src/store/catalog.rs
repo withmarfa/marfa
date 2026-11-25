@@ -323,6 +323,11 @@ fn type_rows_of(types: &[WireType]) -> Vec<TypeRow> {
             if let Some(label) = &entry.label {
                 json.insert("label".into(), Value::String(label.clone()));
             }
+            // Only what a copy answers of where the type came from: who made
+            // it names a sign-in, and a change of that alone is no change here.
+            if let Some(Value::Object(provenance)) = json.get_mut("provenance") {
+                provenance.remove("created_by");
+            }
             // The hints as the type declares them, not as it inherits them:
             // each hint is resolved from the nearest type that sets it.
             if let Some(declared) = &entry.display_hints {

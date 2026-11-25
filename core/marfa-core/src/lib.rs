@@ -152,7 +152,9 @@ pub use file_cache::{
     Attachments, DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache, KeptFetch, NotHeld,
     NotHeldReason,
 };
-pub use marfa_rules::catalog::{EdgeType, End, ItemType, TypeField, WrittenFrom};
+pub use marfa_rules::catalog::{
+    EdgeType, End, ItemType, TypeField, TypeOrigin, TypePlugin, WrittenFrom,
+};
 pub use marfa_rules::contract;
 pub use marfa_rules::display::ItemDisplay;
 pub use marfa_rules::thumbnail::Thumbnail;

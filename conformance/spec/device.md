@@ -5020,7 +5020,7 @@ A device MUST answer a read of either catalog from its copy alone, with no serve
 
 ### `device/catalog-type-read`
 
-A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its plural (`types/plural`), its fields with those it inherits, each naming the type that declares it, with the label it is shown by (`types/field-label`), and a field declared again nearer the type taking the place of the one above, each display hint, the icon among them, from the nearest type that sets it (`types/read-display-hint`), and its feed window (`device/catalog-feed-window`).
+A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its plural (`types/plural`), its fields with those it inherits, each naming the type that declares it, with the label it is shown by (`types/field-label`), and a field declared again nearer the type taking the place of the one above, each display hint, the icon among them, from the nearest type that sets it (`types/read-display-hint`), its feed window (`device/catalog-feed-window`), and where it came from (`device/catalog-type-provenance`).
 
 **Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `device/folders-frontmatter.test.ts › takes each display hint from the nearest type that sets it, as the server resolves them`.
 
@@ -5031,6 +5031,22 @@ A device MUST answer an item type's `feed_days` as `GET /types/{id}` answers `re
 **Reason:** an app uses the window and the item's age to tell when a feed item is old enough to expire (`housekeeping/feed-expiry-arrival`), even offline (`device/catalog-offline`). A missing key inherits from a parent, while an explicit `null` overrides the parent's window (`types/list-declared-policy`).
 
 **Tests:** `device/fidelity.test.ts › reads a type's feed window from a working copy as the server resolves it`, `device/catalog.test.ts › moves the catalog version when only a type's feed window changes, and answers the window from the copy alone`.
+
+### `device/catalog-type-provenance`
+
+A device MUST answer an item type's `origin` and `plugin` as `GET /types/{id}` answers `provenance.origin` and `provenance.plugin` (`types/provenance-read`), with `unknown` and no plugin for a type whose listing names no origin or one the device does not know.
+
+**Reason:** an app tells a plugin's type from the owner's own, before it tries to change one, from the copy alone (`device/catalog-offline`); `provenance.created_by` names a sign-in, so the device does not answer it.
+
+**Tests:** `device/fidelity.test.ts › reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates`, `device/catalog.test.ts › answers each type's origin and plugin from the copy alone, and moves the catalog version when a plugin installs, updates and leaves`.
+
+### `device/catalog-type-provenance-version`
+
+A device MUST move the catalog version when a refresh changes a type's origin or plugin, and leave it where it was when a refresh changes only `provenance.created_by`.
+
+**Reason:** a plugin's update that changes only its version is a change a caller finds by the catalog version (`device/catalog-version-moves`), and a creator the device does not answer is no change to what it answers.
+
+**Tests:** `device/fidelity.test.ts › reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates`, `device/catalog.test.ts › answers each type's origin and plugin from the copy alone, and moves the catalog version when a plugin installs, updates and leaves`.
 
 ### `device/catalog-type-tables`
 

@@ -684,6 +684,22 @@ pub struct TypeField {
     pub definition: JsonObject,
 }
 
+/// Where a type came from: `Unknown` where the copy cannot tell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum TypeOrigin {
+    Platform,
+    Registered,
+    Plugin,
+    Unknown,
+}
+
+/// The plugin that installed a type.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TypePlugin {
+    pub name: String,
+    pub version: String,
+}
+
 /// An item type as the copy holds it, with the fields it inherits.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ItemType {
@@ -709,6 +725,10 @@ pub struct ItemType {
     pub roles: Vec<String>,
     /// The resolved feed expiry window in days. `nil` when the type has no window.
     pub feed_days: Option<i64>,
+    /// Where the type came from.
+    pub origin: TypeOrigin,
+    /// The plugin that installed the type; none for any other origin.
+    pub plugin: Option<TypePlugin>,
 }
 
 /// One end of an edge.
@@ -795,6 +815,16 @@ impl From<marfa_core::ItemType> for ItemType {
             link_field: held.link_field,
             roles: held.roles,
             feed_days: held.feed_days,
+            origin: match held.origin {
+                marfa_core::TypeOrigin::Platform => TypeOrigin::Platform,
+                marfa_core::TypeOrigin::Registered => TypeOrigin::Registered,
+                marfa_core::TypeOrigin::Plugin => TypeOrigin::Plugin,
+                marfa_core::TypeOrigin::Unknown => TypeOrigin::Unknown,
+            },
+            plugin: held.plugin.map(|plugin| TypePlugin {
+                name: plugin.name,
+                version: plugin.version,
+            }),
         }
     }
 }

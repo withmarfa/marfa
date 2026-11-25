@@ -2761,6 +2761,116 @@ describe("the scripted answers match the server's", () => {
     ).toEqual([30, 30, null, null, null, null]);
   });
 
+  it("reads a platform type, a registered type and a plugin's type with the origin and plugin the server names, and moves the catalog version as the plugin installs and updates", async () => {
+    const registered = `user.origin-registered-${ctx.runId}`;
+    const plugged = `common.origin-${ctx.runId.replaceAll("-", "").slice(0, 8)}`;
+    const name = `origin${ctx.runId.replaceAll("-", "").slice(0, 8)}`;
+    const made = await client.registerType({
+      id: registered,
+      fields: { title: { type: "string" } },
+    } as unknown as Parameters<typeof client.registerType>[0]);
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    const bundle = (version: string) => ({
+      format: 1,
+      name,
+      title: "Origins",
+      description: "A plugin the origin comparison installs.",
+      mark: "lucide:ticket",
+      maker: "Marfa",
+      marfa: "0.0.1",
+      version,
+      types: [
+        {
+          id: plugged,
+          description: "A thing a plugin brings.",
+          fields: { title: { type: "string" } },
+        },
+      ],
+      edge_types: [],
+    });
+
+    const device = new CliDevice({
+      binary: requireBinary(),
+      store: newStore("fidelity-origin"),
+      url: apiUrl,
+      key: apiKey,
+    });
+    const hydrated = await device.hydrate(["core.note"], "library");
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    const versionOf = async () => {
+      const status = await device.status();
+      expect(status.ok, JSON.stringify(status)).toBe(true);
+      return status.ok ? status.value.catalog_version : undefined;
+    };
+    // A plugin's install changes what the credential reaches, so the server
+    // expires the copy and the device rebuilds it from the server, catalog
+    // included.
+    const catchUp = async () => {
+      const rebuilt = await device.hydrate(["core.note"], "library");
+      expect(rebuilt.ok, JSON.stringify(rebuilt)).toBe(true);
+    };
+    const compare = async (id: string, expectedOrigin: string) => {
+      const served = await client.getType(id);
+      expect(served.ok, JSON.stringify(served.error)).toBe(true);
+      const provenance = (
+        served.data as unknown as {
+          provenance: {
+            origin: string;
+            plugin: { name: string; version: string } | null;
+          };
+        }
+      ).provenance;
+      const read = await device.itemType(id);
+      expect(read.ok, JSON.stringify(read)).toBe(true);
+      if (!read.ok) return;
+      expect(
+        { origin: read.value.origin, plugin: read.value.plugin },
+        `the copy answered ${id}'s provenance otherwise than the server's read of the type does`,
+      ).toEqual({ origin: provenance.origin, plugin: provenance.plugin });
+      expect(
+        provenance.origin,
+        `the server did not call ${id} what the comparison needs`,
+      ).toBe(expectedOrigin);
+    };
+
+    const installed = await client.installPlugin(bundle("1.0.0"));
+    expect(installed.status, JSON.stringify(installed.error)).toBe(201);
+    try {
+      const before = await versionOf();
+      await catchUp();
+      const afterInstall = await versionOf();
+      expect(
+        afterInstall,
+        "installing a plugin left the catalog version where it was",
+      ).not.toBe(before);
+      await compare("core.note", "platform");
+      await compare(registered, "registered");
+      await compare(plugged, "plugin");
+
+      const updated = await client.installPlugin(bundle("1.1.0"));
+      expect(updated.status, JSON.stringify(updated.error)).toBe(200);
+      await catchUp();
+      const afterUpdate = await versionOf();
+      expect(
+        afterUpdate,
+        "a plugin update that changed only its version left the catalog version where it was",
+      ).not.toBe(afterInstall);
+      await compare(plugged, "plugin");
+    } finally {
+      const removed = await client.removePlugin(name);
+      expect(removed.ok, JSON.stringify(removed.error)).toBe(true);
+    }
+    // The server keeps a removed plugin's types with their provenance
+    // (`plugins/remove-keeps-types`), so the copy has nothing to change.
+    const afterRemoval = await versionOf();
+    await catchUp();
+    expect(
+      await versionOf(),
+      "a plugin's removal, which changes no type, moved the catalog version",
+    ).toBe(afterRemoval);
+    await compare(plugged, "plugin");
+  });
+
   it("matches an item frame on the event stream", async (context) => {
     const marker = `fidelity-frame-${ctx.runId}`;
     const frames = await withStreamAtCursor(

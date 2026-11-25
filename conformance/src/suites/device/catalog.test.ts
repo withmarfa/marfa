@@ -41,6 +41,7 @@ const RECIPE = {
   parent: "core.note",
   label: "Family recipe",
   version: 0,
+  provenance: { origin: "registered", plugin: null, created_by: null },
   fields: {
     servings: {
       type: "number",
@@ -129,6 +130,8 @@ describe("The type catalog a working copy holds", () => {
       link_field: null,
       roles: [],
       feed_days: null,
+      origin: "registered",
+      plugin: null,
     };
     const { fields, ...rest } = recipe;
     expect(
@@ -517,6 +520,78 @@ describe("The type catalog a working copy holds", () => {
     expect(
       value(await device.itemType("acme.child"), "acme.child").feed_days,
     ).toBeNull();
+  });
+
+  it("answers each type's origin and plugin from the copy alone, and moves the catalog version when a plugin installs, updates and leaves", async () => {
+    harness = await startHarness("catalog-provenance");
+    const { server, device } = harness;
+    let provenance: Record<string, unknown> | undefined = undefined;
+    const types = () =>
+      typeCatalog([
+        wireType("acme.own"),
+        wireType(
+          "acme.plugged",
+          provenance === undefined ? {} : { provenance },
+        ),
+        wireType("acme.odd", { provenance: { origin: "from-the-future" } }),
+        wireType("acme.silent", { provenance: {} }),
+      ]);
+    scriptHydration(server, {
+      head: "1",
+      catalog: types(),
+      edgeTypes: () => edgeTypeCatalog([]),
+    });
+    server.copyAnswer("GET", "/types", () => types());
+    server.copyAnswer("GET", "/events", copyLiveReplay("1", []));
+    value(await device.hydrate(["core.note"], "library"), "the hydration");
+    const read = async (id: string) => value(await device.itemType(id), id);
+    const held = value(await device.status(), "the state report");
+    expect(await read("core.note")).toMatchObject({
+      origin: "platform",
+      plugin: null,
+    });
+    expect(await read("acme.own")).toMatchObject({
+      origin: "registered",
+      plugin: null,
+    });
+    expect(
+      await read("acme.odd"),
+      "an origin the copy does not know was not read as unknown",
+    ).toMatchObject({ origin: "unknown", plugin: null });
+    expect(
+      await read("acme.silent"),
+      "a type naming no origin was not read as unknown",
+    ).toMatchObject({ origin: "unknown", plugin: null });
+
+    const steps: Array<Record<string, unknown> | undefined> = [
+      {
+        origin: "plugin",
+        plugin: { name: "tickets", version: "1.0.0" },
+        created_by: null,
+      },
+      {
+        origin: "plugin",
+        plugin: { name: "tickets", version: "1.1.0" },
+        created_by: null,
+      },
+      undefined,
+    ];
+    let before = held.catalog_version;
+    for (const step of steps) {
+      provenance = step;
+      value(await device.catchUp(), "a catch-up against a changed plugin");
+      const now = value(await device.status(), "the state report");
+      expect(
+        now.catalog_version,
+        "a plugin changing the type's provenance left the catalog version where it was",
+      ).not.toBe(before);
+      before = now.catalog_version;
+      expect(await read("acme.plugged")).toMatchObject(
+        step === undefined
+          ? { origin: "registered", plugin: null }
+          : { origin: "plugin", plugin: step.plugin },
+      );
+    }
   });
 
   it("keeps the catalogs and the version it held when a refresh fails after the item types", async () => {

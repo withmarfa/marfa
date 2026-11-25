@@ -120,6 +120,45 @@ pub struct TypeField {
     pub definition: Value,
 }
 
+/// Where a type came from, as `GET /types` says. A copy that cannot tell reads `Unknown`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TypeOrigin {
+    Platform,
+    Registered,
+    Plugin,
+    Unknown,
+}
+
+/// The plugin that installed a type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TypePlugin {
+    pub name: String,
+    pub version: String,
+}
+
+/// The origin and plugin a stored type names. A missing or unrecognised origin, or a plugin origin without a named plugin, reads as unknown; a plugin on any other origin is dropped.
+fn provenance_of(own: &Map<String, Value>) -> (TypeOrigin, Option<TypePlugin>) {
+    let Some(held) = own.get("provenance").and_then(Value::as_object) else {
+        return (TypeOrigin::Unknown, None);
+    };
+    let plugin = held
+        .get("plugin")
+        .and_then(Value::as_object)
+        .and_then(|plugin| {
+            Some(TypePlugin {
+                name: plugin.get("name")?.as_str()?.to_string(),
+                version: plugin.get("version")?.as_str()?.to_string(),
+            })
+        });
+    match held.get("origin").and_then(Value::as_str) {
+        Some("platform") => (TypeOrigin::Platform, None),
+        Some("registered") => (TypeOrigin::Registered, None),
+        Some("plugin") if plugin.is_some() => (TypeOrigin::Plugin, plugin),
+        _ => (TypeOrigin::Unknown, None),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ItemType {
     pub id: String,
@@ -142,6 +181,10 @@ pub struct ItemType {
     pub roles: Vec<String>,
     /// The resolved feed expiry window in days. An explicit `null` stops inheritance.
     pub feed_days: Option<i64>,
+    /// Where the type came from.
+    pub origin: TypeOrigin,
+    /// The plugin that installed the type; `None` for any other origin.
+    pub plugin: Option<TypePlugin>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -758,6 +801,7 @@ pub fn resolve_item_type(
     }
     let label = text(own, "label");
     let plural = crate::schema::plural_of(own);
+    let (origin, plugin) = provenance_of(own);
     Ok(Some(ItemType {
         id: id.to_string(),
         label,
@@ -779,6 +823,8 @@ pub fn resolve_item_type(
             .and_then(Value::as_f64)
             .filter(|days| crate::schema::whole(*days))
             .map(|days| days as i64),
+        origin,
+        plugin,
     }))
 }
 

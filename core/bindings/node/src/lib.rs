@@ -489,6 +489,22 @@ pub struct TypeField {
     pub definition: serde_json::Value,
 }
 
+/// Where a type came from: `unknown` where the copy cannot tell.
+#[napi(string_enum = "snake_case")]
+pub enum TypeOrigin {
+    Platform,
+    Registered,
+    Plugin,
+    Unknown,
+}
+
+/// The plugin that installed a type.
+#[napi(object)]
+pub struct TypePlugin {
+    pub name: String,
+    pub version: String,
+}
+
 /// An item type as the copy holds it, with the fields it inherits.
 #[napi(object)]
 pub struct ItemType {
@@ -515,6 +531,10 @@ pub struct ItemType {
     pub roles: Vec<String>,
     /// The resolved feed expiry window in days. Absent when the type has no window.
     pub feed_days: Option<i64>,
+    /// Where the type came from.
+    pub origin: TypeOrigin,
+    /// The plugin that installed the type; null for any other origin.
+    pub plugin: Option<TypePlugin>,
 }
 
 /// One end of an edge.
@@ -614,6 +634,16 @@ fn item_type(held: marfa_core::ItemType) -> ItemType {
         link_field: held.link_field,
         roles: held.roles,
         feed_days: held.feed_days,
+        origin: match held.origin {
+            marfa_core::TypeOrigin::Platform => TypeOrigin::Platform,
+            marfa_core::TypeOrigin::Registered => TypeOrigin::Registered,
+            marfa_core::TypeOrigin::Plugin => TypeOrigin::Plugin,
+            marfa_core::TypeOrigin::Unknown => TypeOrigin::Unknown,
+        },
+        plugin: held.plugin.map(|plugin| TypePlugin {
+            name: plugin.name,
+            version: plugin.version,
+        }),
     }
 }
 
