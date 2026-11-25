@@ -628,11 +628,11 @@ When the server answers a transition `409 state_conflict`, a device MUST give th
 
 ### `queue-and-verdicts/transition-from-shows-server`
 
-When the server answers a transition `409 state_conflict`, a device MUST show the item in the state the server holds it in.
+When the server answers a transition `409 state_conflict` and a read-back of the item succeeds, a device MUST show the item in the state that read-back holds.
 
-**Reason:** the copy showed the move while the write waited, and a copy that kept showing it would offer the person an item the server holds elsewhere, such as one in the bin.
+**Reason:** the copy showed the move while the write waited, and a copy that kept showing it would offer the person an item the server holds elsewhere, such as one in the bin. A refusal produces no event, so only a read-back tells the copy the server's state. Until one succeeds, the copy keeps the state it showed (`queue-and-verdicts/refused-read-fails`), and a later drain reads the item again.
 
-**Tests:** `device/transition-from-live.test.ts › refuses a queued unarchive once another device has trashed the item, and leaves it and what its trash took in the bin`, `› refuses a queued undo to active once another device has restored and archived the item, which stays archived`.
+**Tests:** `device/transition-from-live.test.ts › refuses a queued unarchive once another device has trashed the item, and leaves it and what its trash took in the bin`, `› refuses a queued undo to active once another device has restored and archived the item, which stays archived`, `device/verdicts.test.ts › refused: keeps the copy's state after a transition refused state_conflict until a read-back succeeds`.
 
 ### `queue-and-verdicts/transition-from-held`
 
@@ -1196,7 +1196,7 @@ If the read after a refusal meets an environmental failure, then a device MUST k
 
 **Reason:** the refusal is recorded before the read, so a read that fails never sends the write again, and the copy changes only on a read the server answered (`device/read-back-keeps-verdict`).
 
-**Tests:** `device/verdicts.test.ts › refused: preserves the local item until a fresh read succeeds at the next drain`.
+**Tests:** `device/verdicts.test.ts › refused: preserves the local item until a fresh read succeeds at the next drain`, `› refused: keeps the copy's state after a transition refused state_conflict until a read-back succeeds`.
 
 ### `queue-and-verdicts/refused-item-absent`
 

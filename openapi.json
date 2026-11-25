@@ -12807,7 +12807,8 @@
             },
             "required": [
               "code",
-              "message"
+              "message",
+              "details"
             ],
             "description": "What went wrong."
           }

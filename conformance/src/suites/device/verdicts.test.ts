@@ -952,6 +952,70 @@ describe("the server did not take the write", () => {
     ).toBe(2);
   });
 
+  it("refused: keeps the copy's state after a transition refused state_conflict until a read-back succeeds", async () => {
+    harness = await hydratedHarness("verdicts-state-conflict-unread", {
+      items: held(),
+    });
+    const moved = await harness.device.transitionItem(HELD.id, "archived");
+    expect(moved.ok, JSON.stringify(moved)).toBe(true);
+    if (!moved.ok) return;
+    harness.server.answer(
+      "POST",
+      /^\/items\/[^/]+\/transition$/,
+      refusal(409, "state_conflict", "The item is trashed, not active.", {
+        expected: "active",
+        actual: "trashed",
+      }),
+    );
+    scriptWrites(harness.server, {
+      read: [
+        refusal(503, "write_contention", "the write lock is busy"),
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version,
+            state: "trashed",
+            trashed_at: "2026-01-02T00:00:00.000Z",
+            properties: { title: "held", body: "held" },
+          }),
+        ),
+      ],
+    });
+    const shown = async (): Promise<string | undefined> => {
+      const rows = await harness!.device.list({
+        allStates: true,
+        filter: `id eq "${HELD.id}"`,
+      });
+      expect(rows.ok, JSON.stringify(rows)).toBe(true);
+      return rows.ok ? rows.value[0]?.state : undefined;
+    };
+
+    const drained = await harness.device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    expect(drained.value.verdicts[0]).toMatchObject({
+      verdict: "refused",
+      reason: "state_conflict",
+    });
+    expect(
+      await shown(),
+      "the failed read-back changed the copy's state before the server's answer could",
+    ).toBe("archived");
+
+    const again = await harness.device.drain();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(
+      await shown(),
+      "the owed read-back was never tried again, so the copy keeps a move the server refused",
+    ).toBe("trashed");
+    expect(
+      harness.server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${HELD.id}`,
+      ).length,
+    ).toBe(2);
+  });
+
   it("refused: takes a read-back answered 400 invalid_id as the server holding no such item", async () => {
     harness = await hydratedHarness("verdicts-refused-invalid-id", {
       items: held(),

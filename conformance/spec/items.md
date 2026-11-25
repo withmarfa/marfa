@@ -1368,11 +1368,19 @@ If `POST /items/{id}/transition` carries a top-level body key the operation does
 
 ### `items/transition-from`
 
-If `POST /items/{id}/transition` names a `from` other than the state the item is in, then the server MUST answer `409 state_conflict`.
+If `POST /items/{id}/transition` names a `from` of `active`, `archived` or `trashed` other than the state the item is in, and names no `version` other than the item's current version, then the server MUST answer `409 state_conflict`.
 
-**Reason:** a writer that decided on the item in one state, such as a device that queued an undo while offline, never overwrites a state another writer set since, such as a move to the bin that took other items with it.
+**Reason:** a writer that decided on the item in one state, such as a device that queued an undo while offline, never overwrites a state another writer set since, such as a move to the bin that took other items with it. Any other `from` is refused as `items/transition-from-unknown-state` says, and a stale `version` as `items/transition-version-before-from` says.
 
-**Tests:** `correctness/lifecycle-transitions.test.ts › refuses 409 state_conflict a transition whose from the item has left, naming both states, and moves nothing`.
+**Tests:** `correctness/lifecycle-transitions.test.ts › refuses 409 state_conflict a transition whose from the item has left, naming both states, and moves nothing`, `› answers version_conflict rather than state_conflict when the version is stale and from is wrong`.
+
+### `items/transition-version-before-from`
+
+If `POST /items/{id}/transition` names a `version` query parameter other than the item's current version and a `from` other than the state the item is in, then the server MUST answer `409 version_conflict`, not `409 state_conflict`.
+
+**Reason:** the server checks the version before `from`, so a writer whose read is stale is told to read the item again, which also gives it the state.
+
+**Tests:** `correctness/lifecycle-transitions.test.ts › answers version_conflict rather than state_conflict when the version is stale and from is wrong`.
 
 ### `items/transition-from-details`
 
@@ -1396,7 +1404,7 @@ Where `POST /items/{id}/transition` names no `from`, the server MUST move the it
 
 If `POST /items/{id}/transition` names a `from` other than `active`, `archived` or `trashed`, then the server MUST answer `400 validation_error` naming `from`.
 
-**Tests:** `correctness/lifecycle-transitions.test.ts › refuses a from that is not a state 400 validation_error naming from`.
+**Tests:** `correctness/lifecycle-transitions.test.ts › refuses a from that is not a state 400 validation_error naming from`, `› refuses a from of revoked 400 validation_error rather than state_conflict, and moves nothing`.
 
 ### `items/transition-from-before-graph`
 

@@ -269,6 +269,53 @@ describe("a transition that names the state it expects", () => {
     expect(await stateOf(id)).toBe("active");
   });
 
+  it("answers version_conflict rather than state_conflict when the version is stale and from is wrong", async () => {
+    const id = await made("trashed");
+    const listed = await client.listItems({
+      state: "any",
+      filter: `id eq "${id}"`,
+      limit: 10,
+    });
+    expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+    const version = listed.data.data[0]!.version;
+    const stale = await client.rawRequest(
+      `/items/${id}/transition?version=${String(version + 1)}`,
+      { method: "POST", body: { state: "active", from: "archived" } },
+    );
+    expect(stale.status).toBe(409);
+    expect(stale.error?.error.code).toBe("version_conflict");
+    expect(await stateOf(id)).toBe("trashed");
+
+    // The witness: at the item's version, the same request is state_conflict.
+    const current = await client.rawRequest(
+      `/items/${id}/transition?version=${String(version)}`,
+      { method: "POST", body: { state: "active", from: "archived" } },
+    );
+    expect(current.status).toBe(409);
+    expect(current.error?.error.code).toBe("state_conflict");
+    expect(await stateOf(id)).toBe("trashed");
+  });
+
+  it("refuses a from of revoked 400 validation_error rather than state_conflict, and moves nothing", async () => {
+    const id = await made("archived");
+    const refused = await client.transitionItem(id, "active", {
+      from: "revoked",
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    const errors = refused.error?.error.details?.errors as
+      Array<{ path: string }> | undefined;
+    expect(errors?.[0]?.path).toBe("from");
+    expect(await stateOf(id)).toBe("archived");
+
+    // The witness: a from that is a state, and not the item's, is state_conflict.
+    const conflict = await client.transitionItem(id, "active", {
+      from: "trashed",
+    });
+    expect(conflict.status).toBe(409);
+    expect(conflict.error?.error.code).toBe("state_conflict");
+  });
+
   it("answers state_conflict rather than invalid_transition when from is wrong and the graph holds no such move", async () => {
     const id = await made("trashed");
     // Trashed to archived is not a move the graph holds.

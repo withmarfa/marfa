@@ -8786,7 +8786,7 @@ export interface components {
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
+                details: {
                     /**
                      * @description The state `from` named.
                      * @enum {string}
