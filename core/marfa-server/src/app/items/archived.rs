@@ -146,10 +146,12 @@ fn one(
         let trashed_by: Option<&Writer> = row.trashed_by.as_ref();
         format!(
             "{{\"item\":{item},\"metadata\":{metadata},\"writer\":{},\"restored_at\":{},\
-             \"trashed_by\":{},\"lending_blobs\":{},\"lending_extensions\":{}}}",
+             \"trashed_by\":{},\"state_writer\":{},\"lending_blobs\":{},\
+             \"lending_extensions\":{}}}",
             print(&writer)?,
             print(&restored_at)?,
             print(&trashed_by)?,
+            print(&row.state_writer)?,
             print(&lending_blobs)?,
             print(&lending_extensions)?,
         )

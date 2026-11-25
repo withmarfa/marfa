@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
-import type { Outcome } from "../../device/protocol.js";
+import type { DrainVerdict, Outcome } from "../../device/protocol.js";
 import { refusedCode } from "../../device/refusal.js";
 import {
   cleanup,
@@ -86,6 +86,18 @@ afterAll(async () => {
   if (scratch) rmSync(scratch, { recursive: true, force: true });
 });
 
+/** Each write a drain did not have accepted, with the reason it names. */
+function refusedWrites(verdicts: DrainVerdict[]) {
+  return verdicts
+    .filter((verdict) => verdict.verdict !== "accepted")
+    .map(({ kind, verdict, reason, refusal }) => ({
+      kind,
+      verdict,
+      reason,
+      refusal,
+    }));
+}
+
 /** Refused as the server refuses: the `validation` class, carrying its code. */
 function expectRefusedAsTheServerDoes(
   outcome: Outcome<unknown>,
@@ -155,6 +167,8 @@ it("takes a tag the server takes, queues it, and has it accepted when the queue 
       `the server refused a tag of ${what}: ${JSON.stringify(served.error)}`,
     ).toBe(true);
   }
+  // A replace names the tags the copy read, so the copy reads these first.
+  expect((await device.catchUp()).ok).toBe(true);
   const written: string[] = [];
   const queue = async (outcome: Promise<Outcome<{ id: string }>>) => {
     const queued = await outcome;
@@ -186,7 +200,7 @@ it("takes a tag the server takes, queues it, and has it accepted when the queue 
   ).toBeGreaterThanOrEqual(written.length + 1);
   expect(
     drained.value.verdicts.map((verdict) => verdict.verdict),
-    "the server refused a write the device took",
+    `the server refused a write the device took: ${JSON.stringify(refusedWrites(drained.value.verdicts))}`,
   ).toEqual(drained.value.verdicts.map(() => "accepted"));
 
   const metadata = await client.getItem(row);

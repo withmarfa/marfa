@@ -9,6 +9,7 @@ import {
   listEntries,
   ndjson,
   tar,
+  WRITTEN_ARCHIVE_VERSION,
 } from "../../utils/archive.js";
 import {
   type ConnectorPlugin,
@@ -821,7 +822,7 @@ describe("a mapping in an archive", () => {
     const archive = await owner.exportArchive({ state: "any" });
     expect(archive.status).toBe(200);
     const manifest = archiveManifest(archive.data);
-    expect(manifest.version).toBe(4);
+    expect(manifest.version).toBe(WRITTEN_ARCHIVE_VERSION);
     const lines = archiveLines(archive.data, "instance").filter(
       (line) => "connector_mapping" in line,
     );

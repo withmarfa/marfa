@@ -10,7 +10,8 @@ use crate::app::refusal::Result;
 const ITEM: &str = "SELECT seq, id, type, state, tier, source, source_id, json(properties), \
      version, schema_version, occurred_at, created_at, updated_at, trashed_at, \
      capture_latitude, capture_longitude, link, trashed_by_kind, trashed_by_id, \
-     trashed_by_name, trashed_with, trashed_with_type, went_with_hosts, last_activity_at \
+     trashed_by_name, trashed_with, trashed_with_type, went_with_hosts, last_activity_at, \
+     state_writer_kind, state_writer_id, state_writer_name \
      FROM items";
 
 pub(super) struct Indexed {
@@ -97,6 +98,7 @@ fn item_of(row: &Row<'_>) -> rusqlite::Result<Item> {
         trashed_by: writer_of(row.get(17)?, row.get(18)?, row.get(19)?),
         mark: mark_of(row.get(20)?, row.get(21)?, row.get(22)?),
         last_activity_at: row.get(23)?,
+        state_writer: writer_of(row.get(24)?, row.get(25)?, row.get(26)?),
     })
 }
 
@@ -348,6 +350,8 @@ pub(super) struct Moved<'a> {
     pub state: &'a str,
     pub trashed_at: Option<&'a str>,
     pub trashed_by: Option<&'a Writer>,
+    /// Who asked for the move, or none where the server moved the row itself.
+    pub moved_by: Option<&'a Writer>,
     pub mark: Option<&'a Mark>,
     pub at: &'a str,
 }
@@ -357,7 +361,8 @@ pub(super) fn move_state(tx: &Transaction<'_>, item: &Item, to: &Moved<'_>) -> R
     tx.prepare_cached(
         "UPDATE items SET state = ?2, trashed_at = ?3, trashed_by_kind = ?4, trashed_by_id = ?5, \
          trashed_by_name = ?6, updated_at = ?7, last_activity_at = MAX(last_activity_at, ?7), \
-         trashed_with = ?8, trashed_with_type = ?9, went_with_hosts = ?10 WHERE seq = ?1",
+         trashed_with = ?8, trashed_with_type = ?9, went_with_hosts = ?10, \
+         state_writer_kind = ?11, state_writer_id = ?12, state_writer_name = ?13 WHERE seq = ?1",
     )?
     .execute(params![
         item.seq,
@@ -370,6 +375,9 @@ pub(super) fn move_state(tx: &Transaction<'_>, item: &Item, to: &Moved<'_>) -> R
         to.mark.map(|mark| &mark.with),
         to.mark.map(|mark| &mark.with_type),
         to.mark.is_some_and(|mark| mark.hosts),
+        to.moved_by.map(|by| &by.kind),
+        to.moved_by.map(|by| &by.id),
+        to.moved_by.map(|by| &by.name),
     ])?;
     stored(tx, &item.id)
 }
@@ -746,6 +754,10 @@ pub(super) fn snapshots_below(
     Ok(())
 }
 
+pub(super) fn current_writer(tx: &Transaction<'_>, seq: i64) -> Result<Option<Writer>> {
+    Ok(writer_and_restored(tx, seq)?.0)
+}
+
 /// Who wrote the item's current version, and when it last left the bin.
 pub(super) fn writer_and_restored(
     tx: &Transaction<'_>,
@@ -1006,6 +1018,7 @@ pub(super) struct Restoring<'a> {
     pub last_activity_at: &'a str,
     pub restored_at: Option<&'a str>,
     pub mark: Option<&'a Mark>,
+    pub state_writer: Option<&'a Writer>,
 }
 
 pub(super) fn insert_restored(
@@ -1018,9 +1031,9 @@ pub(super) fn insert_restored(
          version, schema_version, occurred_at, created_at, updated_at, trashed_at, \
          capture_latitude, capture_longitude, writer_kind, writer_id, writer_name, link, \
          trashed_by_kind, trashed_by_id, trashed_by_name, restored_at, last_activity_at, \
-         trashed_with, trashed_with_type) \
+         trashed_with, trashed_with_type, state_writer_kind, state_writer_id, state_writer_name) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, jsonb(?7), ?8, ?22, ?9, ?10, ?11, ?23, ?12, ?13, ?14, \
-         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?24, ?25, ?26, ?27)",
+         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
     )?;
     statement.execute(params![
         row.id,
@@ -1050,6 +1063,9 @@ pub(super) fn insert_restored(
         kept.last_activity_at,
         kept.mark.map(|mark| &mark.with),
         kept.mark.map(|mark| &mark.with_type),
+        kept.state_writer.map(|by| &by.kind),
+        kept.state_writer.map(|by| &by.id),
+        kept.state_writer.map(|by| &by.name),
     ])?;
     clear_tombstones(tx, row.type_id, row.link, row.source, row.source_id)?;
     stored(tx, row.id)

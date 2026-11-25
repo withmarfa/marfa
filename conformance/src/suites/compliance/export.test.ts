@@ -24,6 +24,7 @@ import {
   readLineFile,
   type LineFile,
   blobEntry,
+  WRITTEN_ARCHIVE_VERSION,
 } from "../../utils/archive.js";
 import { startReceiver } from "../../utils/webhook-receiver.js";
 
@@ -609,7 +610,7 @@ describe("the archive's contents", () => {
     ) as Record<string, unknown>;
     const typeLines = archiveLines(archive, "instance");
     expect(manifest).toMatchObject({
-      version: 4,
+      version: WRITTEN_ARCHIVE_VERSION,
       format: "marfa-archive",
       written_by: expect.stringMatching(/^marfa-server /),
       file_count: 1,

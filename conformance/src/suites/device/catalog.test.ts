@@ -128,6 +128,7 @@ describe("The type catalog a working copy holds", () => {
       icon: "lucide:sticky-note",
       link_field: null,
       roles: [],
+      feed_days: null,
     };
     const { fields, ...rest } = recipe;
     expect(
@@ -471,6 +472,51 @@ describe("The type catalog a working copy holds", () => {
     expect(
       value(await device.edgeType("mentor-of"), "mentor-of").reverse_name,
     ).toBe("mentored-by");
+  });
+
+  it("moves the catalog version when only a type's feed window changes, and answers the window from the copy alone", async () => {
+    harness = await startHarness("catalog-feed-window");
+    const { server, device } = harness;
+    let window: Record<string, unknown> = { feed_days: 30 };
+    const types = () =>
+      typeCatalog([
+        wireType("acme.base", { retentionPolicy: window }),
+        wireType("acme.child", { parent: "acme.base" }),
+      ]);
+    scriptHydration(server, {
+      head: "1",
+      catalog: types(),
+      edgeTypes: () => edgeTypeCatalog([]),
+    });
+    server.copyAnswer("GET", "/types", () => types());
+    server.copyAnswer("GET", "/events", copyLiveReplay("1", []));
+    value(await device.hydrate(["core.note"], "library"), "the hydration");
+    const held = value(await device.status(), "the state report");
+    expect(
+      value(await device.itemType("acme.child"), "acme.child").feed_days,
+      "a child did not take the window its parent names",
+    ).toBe(30);
+
+    window = { feed_days: 7 };
+    value(await device.catchUp(), "a catch-up against a changed window");
+    const moved = value(await device.status(), "the state report");
+    expect(
+      moved.catalog_version,
+      "a changed feed window left the catalog version where it was",
+    ).not.toBe(held.catalog_version);
+    expect(
+      value(await device.itemType("acme.child"), "acme.child").feed_days,
+    ).toBe(7);
+
+    window = { feed_days: null };
+    value(await device.catchUp(), "a catch-up against a window set to null");
+    expect(
+      value(await device.status(), "the state report").catalog_version,
+      "a window changed to null left the catalog version where it was",
+    ).not.toBe(moved.catalog_version);
+    expect(
+      value(await device.itemType("acme.child"), "acme.child").feed_days,
+    ).toBeNull();
   });
 
   it("keeps the catalogs and the version it held when a refresh fails after the item types", async () => {

@@ -518,3 +518,322 @@ describe("who wrote each version", () => {
     expect(byApp!.writer!.name).not.toMatch(UNPRINTABLE);
   });
 });
+
+interface Answered {
+  id: string;
+  version: number;
+  writer?: Writer | null;
+}
+
+/** `GET /items/{id}` as `bearer` reads it, naming `include` and `state` as given. */
+async function readItem(
+  bearer: string,
+  id: string,
+  query = "include=writer",
+): Promise<{ status: number; item: Answered; body: Record<string, unknown> }> {
+  const read = await call(bearer, "GET", `/items/${id}?${query}`);
+  if (read.status === 200) {
+    await expectMatchesSchema("GET", "/items/{id}", 200, read.body);
+  }
+  return {
+    status: read.status,
+    item: read.body.item as Answered,
+    body: read.body,
+  };
+}
+
+/** `POST /items/bulk-get` as `bearer` reads it. */
+async function bulkGet(
+  bearer: string,
+  ids: string[],
+  include: string[] = ["writer"],
+): Promise<Answered[]> {
+  const read = await call(bearer, "POST", "/items/bulk-get", { ids, include });
+  expect(read.status, JSON.stringify(read.body)).toBe(200);
+  await expectMatchesSchema("POST", "/items/bulk-get", 200, read.body);
+  return read.body.data as Answered[];
+}
+
+describe("who wrote an item's current version", () => {
+  it("answers the key that wrote the current version, from version 1 on, on both doors", async () => {
+    const creator = await mintKey("creating key");
+    const editor = await mintKey("editing key");
+    const id = await createNote(creator.key);
+    const byCreator = { kind: "key", id: creator.id, name: "creating key" };
+    const byEditor = { kind: "key", id: editor.id, name: "editing key" };
+
+    // The item is still at version 1, which no snapshot holds.
+    expect(await versionsOf(creator.key, id)).toEqual([]);
+    const first = await readItem(creator.key, id);
+    expect(first.status).toBe(200);
+    expect(first.item.version).toBe(1);
+    expect(first.item.writer).toEqual(byCreator);
+
+    await changeNote(editor.key, id, 1, "second");
+    const second = await readItem(creator.key, id);
+    expect(second.item.version).toBe(2);
+    expect(second.item.writer).toEqual(byEditor);
+
+    const other = await createNote(creator.key, "another");
+    const bulk = await bulkGet(creator.key, [other, id, other]);
+    expect(bulk.map((item) => item.id)).toEqual([other, id]);
+    expect(bulk.map((item) => item.writer)).toEqual([byCreator, byEditor]);
+  });
+
+  it("answers the app, the owner's browser and the local command that wrote an app's record", async () => {
+    const browser = await signIn();
+    const session = (await signIns()).find((row) => row.id === browser.id)!;
+    const app = await approveApp(browser, "writer app");
+    const record = listedApp(await signIns(), "writer app");
+    const reader = await mintKey(
+      "current writer reader",
+      { "system.connection": "read", "core.note": "write" },
+      ["grants.manage"],
+    );
+
+    const approved = await readItem(reader.key, record.id);
+    expect(approved.item.writer).toEqual({
+      kind: "browser",
+      id: session.id,
+      name: "Safari on macOS",
+    });
+    expect(await renameApp(record.id, "writer app renamed")).toBe(200);
+    const renamed = await readItem(reader.key, record.id);
+    expect(renamed.item.writer).toEqual({
+      kind: "local",
+      id: "local",
+      name: "Local command",
+    });
+
+    const note = await createNote(app.accessToken);
+    const byApp = {
+      kind: "app",
+      id: record.id,
+      name: "writer app renamed",
+    };
+    expect((await readItem(reader.key, note)).item.writer).toEqual(byApp);
+    const hidden = await bulkGet(
+      reader.key,
+      [record.id, note],
+      ["writer", "hidden"],
+    );
+    expect(hidden.map((item) => item.writer)).toEqual([
+      { kind: "local", id: "local", name: "Local command" },
+      byApp,
+    ]);
+  });
+
+  it("answers null for a current version the enrichment sweep wrote", async () => {
+    const minted = await mintKey("sweep file writer", { "core.file": "write" });
+    const client = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: minted.key,
+    });
+    const upload = await client.uploadBlob(
+      new TextEncoder().encode("the bilby ledger, page two"),
+      "text/plain",
+    );
+    expect(upload.status).toBe(201);
+    const created = await call(minted.key, "POST", "/items", {
+      type: "core.file",
+      properties: {
+        blob_ref: upload.data.hash,
+        mime_type: "text/plain",
+        title: "second ledger",
+      },
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const id = (created.body.item as { id: string }).id;
+    // The witness: before the sweep a sign-in is the writer.
+    expect((await readItem(minted.key, id)).item.writer).toEqual({
+      kind: "key",
+      id: minted.id,
+      name: "sweep file writer",
+    });
+
+    const operator = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: server.managementKey,
+    });
+    const run = await operator.runHousekeeping("enrichment-sweep");
+    expect(run.status).toBe(200);
+    expect(run.data.outcome, run.data.error ?? "").toBe("succeeded");
+    const swept = await readItem(minted.key, id);
+    expect(swept.item.version).toBe(2);
+    expect(swept.item.writer).toBeNull();
+    expect(swept.body.item).toHaveProperty("writer", null);
+    expect((await bulkGet(minted.key, [id]))[0]!.writer).toBeNull();
+  });
+
+  it("answers the sign-in whose write merged, and the one whose write lost as the copy's writer", async () => {
+    const author = await mintKey("merge author");
+    const merger = await mintKey("merging key");
+    const loser = await mintKey("conflicting key");
+    const created = await call(author.key, "POST", "/items", {
+      type: "core.note",
+      properties: { title: "both edit", body: "original" },
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const id = (created.body.item as { id: string }).id;
+    await changeNote(author.key, id, 1, "from the author");
+
+    // A stale write to a field nobody changed merges over version 2.
+    const merged = await call(merger.key, "PATCH", `/items/${id}`, {
+      version: 1,
+      properties: { title: "both edit, retitled" },
+    });
+    expect(merged.status, JSON.stringify(merged.body)).toBe(200);
+    expect((merged.body.item as { version: number }).version).toBe(3);
+    const afterMerge = await readItem(author.key, id);
+    expect(afterMerge.item.version).toBe(3);
+    expect(afterMerge.item.writer).toEqual({
+      kind: "key",
+      id: merger.id,
+      name: "merging key",
+    });
+
+    const resolved = await call(
+      loser.key,
+      "PATCH",
+      `/items/${id}?conflict=auto`,
+      { version: 1, properties: { body: "from the loser" } },
+    );
+    expect(resolved.status, JSON.stringify(resolved.body)).toBe(200);
+    const copyId = (
+      resolved.body.conflict_resolution as { conflicted_copy_id?: string }
+    ).conflicted_copy_id;
+    expect(copyId, "the resolution kept no copy").toBeTruthy();
+    expect((await readItem(author.key, copyId!)).item.writer).toEqual({
+      kind: "key",
+      id: loser.id,
+      name: "conflicting key",
+    });
+  });
+
+  it("answers the writer a revoked key had, with the name it had when it wrote", async () => {
+    const minted = await mintKey("key that is revoked");
+    const reader = await mintKey("current writer survivor", {
+      "core.note": "read",
+    });
+    const id = await createNote(minted.key);
+    await changeNote(minted.key, id, 1, "second");
+    const byKey = { kind: "key", id: minted.id, name: "key that is revoked" };
+    expect((await readItem(reader.key, id)).item.writer).toEqual(byKey);
+
+    expect(await endSignIn(minted.id)).toBe(200);
+    expect((await signIns()).map((row) => row.id)).not.toContain(minted.id);
+    expect((await readItem(reader.key, id)).item.writer).toEqual(byKey);
+    expect((await bulkGet(reader.key, [id]))[0]!.writer).toEqual(byKey);
+  });
+
+  it("answers the current writer of an archived item, and of one in the bin where the read names the state", async () => {
+    const minted = await mintKey("lifecycle writer");
+    const mover = await mintKey("lifecycle mover");
+    const id = await createNote(minted.key);
+    const byKey = { kind: "key", id: minted.id, name: "lifecycle writer" };
+    const client = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: mover.key,
+    });
+
+    expect((await client.transitionItem(id, "archived")).status).toBe(200);
+    // The move wrote no version, so the writer is the one who wrote it.
+    const archived = await readItem(minted.key, id);
+    expect(archived.status).toBe(200);
+    expect(archived.item.writer).toEqual(byKey);
+    expect((await bulkGet(minted.key, [id]))[0]!.writer).toEqual(byKey);
+
+    expect((await client.transitionItem(id, "trashed")).status).toBe(200);
+    // The witness: the bin refuses a read that names no state.
+    expect((await readItem(minted.key, id)).status).toBe(404);
+    const trashed = await readItem(
+      minted.key,
+      id,
+      "include=writer&state=trashed",
+    );
+    expect(trashed.status, JSON.stringify(trashed.body)).toBe(200);
+    expect(trashed.item.writer).toEqual(byKey);
+    expect(await bulkGet(minted.key, [id])).toEqual([]);
+  });
+
+  it("leaves the writer off an item read that does not name it, and off every other member", async () => {
+    const minted = await mintKey("quiet writer");
+    const id = await createNote(minted.key);
+    // The witness: the same read names the writer when asked.
+    expect((await readItem(minted.key, id)).item).toHaveProperty("writer");
+    expect((await bulkGet(minted.key, [id]))[0]).toHaveProperty("writer");
+
+    for (const query of [
+      "",
+      "include=metadata",
+      "include=versions,backrefs,neighbors",
+    ]) {
+      const read = await readItem(minted.key, id, query);
+      expect(read.status).toBe(200);
+      expect(read.item).not.toHaveProperty("writer");
+      expect(read.body).not.toHaveProperty("writer");
+    }
+    for (const include of [[], ["metadata", "edges", "extensions"]]) {
+      expect((await bulkGet(minted.key, [id], include))[0]).not.toHaveProperty(
+        "writer",
+      );
+    }
+    const listed = await call(minted.key, "GET", "/items?include=metadata");
+    expect(listed.status).toBe(200);
+    for (const item of listed.body.data as Answered[]) {
+      expect(item).not.toHaveProperty("writer");
+    }
+  });
+
+  it("gives a key that may not read the item's type no writer, and no refusal other than the item's", async () => {
+    const minted = await mintKey("writer of a closed type");
+    const narrow = await mintKey("reader of another type", {
+      "core.task": "read",
+    });
+    const wide = await mintKey("reader of the type", { "core.note": "read" });
+    const id = await createNote(minted.key);
+
+    // The witness: a key that reads the type is told.
+    expect((await readItem(wide.key, id)).item.writer).toMatchObject({
+      id: minted.id,
+    });
+    expect((await bulkGet(wide.key, [id]))[0]!.writer).toMatchObject({
+      id: minted.id,
+    });
+
+    const refused = await readItem(narrow.key, id);
+    expect(refused.status).toBe(404);
+    expect(JSON.stringify(refused.body)).not.toContain(minted.id);
+    expect(JSON.stringify(refused.body)).not.toContain("writer of a closed");
+    expect(await bulkGet(narrow.key, [id])).toEqual([]);
+    const nothing = await call(
+      (await mintKey("reader of no type", {})).key,
+      "POST",
+      "/items/bulk-get",
+      { ids: [id], include: ["writer"] },
+    );
+    expect(nothing.status).toBe(403);
+  });
+
+  it("refuses an include value it does not know beside writer, on both doors", async () => {
+    const minted = await mintKey("include writer");
+    const id = await createNote(minted.key);
+    const unknown = await readItem(minted.key, id, "include=writer,authors");
+    expect(unknown.status).toBe(400);
+    expect(unknown.body.error).toMatchObject({ code: "validation_error" });
+    const bulk = await call(minted.key, "POST", "/items/bulk-get", {
+      ids: [id],
+      include: ["writer", "authors"],
+    });
+    expect(bulk.status).toBe(400);
+    expect(bulk.body.error).toMatchObject({ code: "validation_error" });
+
+    // The witness: each door takes writer beside the extras it knows.
+    const known = await readItem(minted.key, id, "include=metadata,writer");
+    expect(known.status).toBe(200);
+    expect(known.item.writer).toMatchObject({ id: minted.id });
+    expect(
+      (await bulkGet(minted.key, [id], ["writer", "metadata"]))[0]!.writer,
+    ).toMatchObject({ id: minted.id });
+  });
+});

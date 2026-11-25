@@ -15,6 +15,20 @@ pub struct ListedFolder {
     pub dir: String,
     pub folder: String,
     pub paused: bool,
+    /// The opaque ID this directory's copy reports under, the
+    /// `folder_store_id` the server returns for it in a folder's status. It
+    /// is not a path and names no machine. Unset where the registry entry
+    /// holds none.
+    pub store: Option<String>,
+}
+
+fn listed_of(entry: marfa_core::folder::Registered) -> ListedFolder {
+    ListedFolder {
+        paused: marfa_core::Folder::paused_at(&entry.dir),
+        dir: entry.dir.display().to_string(),
+        folder: entry.folder,
+        store: entry.store,
+    }
 }
 #[napi(discriminant = "cause", discriminant_case = "camelCase")]
 pub enum StorageCause {
@@ -38,6 +52,20 @@ pub struct AddedFolder {
     pub dir: String,
     pub folder: String,
     pub storage: Option<StorageCause>,
+    /// Git tracks the directory: it is in a git work tree whose index holds a
+    /// file in it. Checking out, resetting or switching branches then changes
+    /// the files, and the folder syncs those changes. `false` where git cannot
+    /// be run, errors or does not answer within a second.
+    pub git_tracked: bool,
+}
+
+fn added_of(added: &marfa_core::Folder) -> AddedFolder {
+    AddedFolder {
+        dir: added.root().display().to_string(),
+        folder: added.folder_id().to_string(),
+        storage: storage_of(added.storage_cause()),
+        git_tracked: added.git_tracked(),
+    }
 }
 /// What `remove` did: the folder's state went, or only its registry entry,
 /// for `reason`. Where another instance answers at the folder's server,
@@ -526,11 +554,7 @@ impl Task for AddFolder {
         (|| -> marfa_core::Result<Self::Output> {
             let added =
                 marfa_core::Folder::add(&self.dir, &self.folder, self.server.clone(), None)?;
-            Ok(AddedFolder {
-                dir: added.root().display().to_string(),
-                folder: added.folder_id().to_string(),
-                storage: storage_of(added.storage_cause()),
-            })
+            Ok(added_of(&added))
         })()
         .map_err(|error| record(&mut self.failed, error))
     }
@@ -554,15 +578,7 @@ impl Task for ListFolders {
             let Some(registry) = marfa_core::folder::Registry::located() else {
                 return Ok(Vec::new());
             };
-            Ok(registry
-                .folders()?
-                .into_iter()
-                .map(|entry| ListedFolder {
-                    paused: marfa_core::Folder::paused_at(&entry.dir),
-                    dir: entry.dir.display().to_string(),
-                    folder: entry.folder,
-                })
-                .collect())
+            Ok(registry.folders()?.into_iter().map(listed_of).collect())
         })()
         .map_err(|error| record(&mut self.failed, error))
     }
@@ -1614,5 +1630,86 @@ mod tests {
             Some("links by name wait")
         );
         assert_eq!(scan_of(Default::default()).lookup_refused, None);
+    }
+
+    #[test]
+    fn a_listed_folder_carries_the_store_its_registry_entry_holds() {
+        let entry = |store: Option<&str>| marfa_core::folder::Registered {
+            dir: "/notes".into(),
+            folder: "folder".into(),
+            store: store.map(str::to_string),
+            root: None,
+        };
+        assert_eq!(
+            listed_of(entry(Some("0192-store"))).store.as_deref(),
+            Some("0192-store")
+        );
+        // The witness: an entry with none lists none.
+        assert_eq!(listed_of(entry(None)).store, None);
+    }
+
+    fn scratch_directory() -> tempfile::TempDir {
+        tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
+    }
+
+    /// A directory in a work tree of its own, with a file in it that `git add`
+    /// has put in the index.
+    fn tracked_directory() -> tempfile::TempDir {
+        let work_tree = scratch_directory();
+        let git = |args: &[&str]| {
+            let ran = std::process::Command::new("git")
+                .arg("-C")
+                .arg(work_tree.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                ran.status.success(),
+                "{}",
+                String::from_utf8_lossy(&ran.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        std::fs::create_dir(work_tree.path().join("notes")).unwrap();
+        std::fs::write(work_tree.path().join("notes/a.md"), "a").unwrap();
+        git(&["add", "notes"]);
+        work_tree
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn an_added_folder_says_whether_git_tracks_its_directory() {
+        let registry = scratch_directory().keep().join("folders.json");
+        // SAFETY: nextest runs each test in a process of its own, and nothing
+        // else in this one reads the environment while it is set.
+        unsafe { std::env::set_var(marfa_core::folder::REGISTRY_ENV, registry) };
+        let server = marfa_core::Server {
+            url: std::env::var("MARFA_TEST_URL").expect("MARFA_TEST_URL names the server"),
+            key: std::env::var("MARFA_TEST_KEY").expect("MARFA_TEST_KEY holds a working key"),
+        };
+        let seed = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/seed.sh");
+        let made = std::process::Command::new(seed)
+            .args([
+                "folder",
+                "node git tracked",
+                r#"{"query":{"types":["core.note"]}}"#,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+        let folder = String::from_utf8(made.stdout).unwrap().trim().to_string();
+        let work_tree = tracked_directory();
+        let add = |dir: &std::path::Path| {
+            marfa_core::Folder::add(dir, &folder, Some(server.clone()), None).unwrap()
+        };
+        let tracked = added_of(&add(&work_tree.path().join("notes")));
+        assert!(tracked.git_tracked);
+        // The witness: the same call for a directory outside any work tree.
+        let outside = scratch_directory();
+        assert!(!added_of(&add(outside.path())).git_tracked);
     }
 }

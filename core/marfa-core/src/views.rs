@@ -215,7 +215,6 @@ impl Core {
                     status_group_sql(&scope.catalog, &mut key_values)?,
                     String::new(),
                 ),
-                Some("source") => ("json_quote(items.source)".into(), String::new()),
                 Some("tags") => (
                     "json_quote(view_tags.tag)".into(),
                     "LEFT JOIN tags view_tags ON view_tags.item_id = items.id".into(),
@@ -509,7 +508,7 @@ fn field_sql(field: &str, catalog: &Catalog, json: bool) -> Result<String> {
         return Ok(property_sql(property_name(field)?, json));
     }
     let column = match field {
-        "created_at" | "updated_at" | "occurred_at" | "type" | "state" | "tier" => {
+        "created_at" | "updated_at" | "occurred_at" | "type" | "state" | "tier" | "source" => {
             format!("items.{field}")
         }
         "title" => {
@@ -1441,6 +1440,33 @@ mod tests {
         assert_eq!(ids(&core), ["b", "c", "a", "d"]);
         view(&core, json!({"sort":[{"by":"tags","direction":"desc"}]}));
         assert_eq!(ids(&core), ["a", "c", "b", "d"]);
+    }
+
+    #[test]
+    fn source_sorts_by_code_in_bytes_with_ascending_ids_breaking_ties() {
+        let core = copy();
+        for id in ["a", "b", "c", "d", "e"] {
+            put(&core, id, json!({}), &[]);
+        }
+        for (id, source) in [
+            ("a", "unknown"),
+            ("b", "zeta"),
+            ("c", "Zulu"),
+            ("d", "\u{e9}clair"),
+            ("e", "zeta"),
+        ] {
+            core.conn()
+                .unwrap()
+                .execute(
+                    "UPDATE items SET source = ?1 WHERE id = ?2",
+                    rusqlite::params![source, id],
+                )
+                .unwrap();
+        }
+        view(&core, json!({"sort":[{"by":"source","direction":"asc"}]}));
+        assert_eq!(ids(&core), ["c", "a", "b", "e", "d"]);
+        view(&core, json!({"sort":[{"by":"source","direction":"desc"}]}));
+        assert_eq!(ids(&core), ["d", "b", "e", "a", "c"]);
     }
 
     #[test]

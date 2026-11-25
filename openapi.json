@@ -413,6 +413,37 @@
         ],
         "description": "An edge is a typed, directed relationship from one item to another: `from_id` names the item it points from and `to_id` the item it points to."
       },
+      "Writer": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "browser",
+              "app",
+              "key",
+              "local"
+            ],
+            "description": "The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine."
+          },
+          "id": {
+            "type": "string",
+            "description": "The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.",
+            "example": "01a1011b-b5e5-7be6-8f3b-77492475b5a4"
+          },
+          "name": {
+            "type": "string",
+            "description": "The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.",
+            "example": "Safari on macOS"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "name"
+        ],
+        "description": "The sign-in that wrote an item version, first installed a plugin, or last changed an item's lifecycle state, named as it was then."
+      },
       "Item": {
         "type": "object",
         "properties": {
@@ -545,6 +576,28 @@
               "additionalProperties": {}
             },
             "description": "The item's extension namespaces that you can read, each mapped to its data. Present only where `include` names `extensions`."
+          },
+          "writer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Writer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The sign-in that wrote the item's current version, named as it was then, even after it ends. `null` if no sign-in wrote it, such as when Marfa reads a file's text. Present only where `include` names `writer`."
+          },
+          "state_writer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Writer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The sign-in that last changed the item's lifecycle state, named as it was then. `null` if the item has never moved, a server job moved it, or its last move predates this field. Present only where `include` names `writer`."
           }
         },
         "required": [
@@ -770,36 +823,13 @@
             "example": "deal-1042"
           },
           "writer": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "properties": {
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "browser",
-                  "app",
-                  "key",
-                  "local"
-                ],
-                "description": "The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Writer"
               },
-              "id": {
-                "type": "string",
-                "description": "The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.",
-                "example": "01a1011b-b5e5-7be6-8f3b-77492475b5a4"
-              },
-              "name": {
-                "type": "string",
-                "description": "The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.",
-                "example": "Safari on macOS"
+              {
+                "type": "null"
               }
-            },
-            "required": [
-              "kind",
-              "id",
-              "name"
             ],
             "description": "The sign-in that wrote this version, named as it was then, even after it ends. Whoever can read the snapshot sees it, such as another app's name or a key's label. `null` if no sign-in wrote it, such as when Marfa reads a file's text."
           },
@@ -1273,8 +1303,8 @@
       },
       "ViewField": {
         "type": "string",
-        "pattern": "^(?:title|created_at|updated_at|occurred_at|last_activity_at|type|state|tier|tags|properties\\.[A-Za-z_][A-Za-z0-9_]*)$",
-        "description": "A field: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `last_activity_at`, `type`, `state`, `tier`, `tags`) or `properties.<name>`.",
+        "pattern": "^(?:title|created_at|updated_at|occurred_at|last_activity_at|type|state|tier|tags|source|properties\\.[A-Za-z_][A-Za-z0-9_]*)$",
+        "description": "Field to sort by. Use an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier`, `tags`, or `source`), `last_activity_at`, or `properties.<name>`.",
         "example": "properties.status"
       },
       "ViewTier": {
@@ -1320,7 +1350,7 @@
         "properties": {
           "by": {
             "type": "string",
-            "description": "The field to group by: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier` or `tags`), `properties.<name>`, `source`, `status_group`, `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins.",
+            "description": "The field to group by: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier`, `tags` or `source`), `properties.<name>`, `status_group`, `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins.",
             "example": "properties.status"
           },
           "bucket": {
@@ -14086,7 +14116,7 @@
           "installed_by": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/PluginInstaller"
+                "$ref": "#/components/schemas/Writer"
               },
               {
                 "type": "null"
@@ -14217,7 +14247,7 @@
           "installed_by": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/PluginInstaller"
+                "$ref": "#/components/schemas/Writer"
               },
               {
                 "type": "null"
@@ -14538,37 +14568,6 @@
           "error"
         ],
         "description": "An error response."
-      },
-      "PluginInstaller": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "browser",
-              "app",
-              "key",
-              "local"
-            ],
-            "description": "The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine."
-          },
-          "id": {
-            "type": "string",
-            "description": "The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.",
-            "example": "01a1011b-b5e5-7be6-8f3b-77492475b5a4"
-          },
-          "name": {
-            "type": "string",
-            "description": "The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.",
-            "example": "Safari on macOS"
-          }
-        },
-        "required": [
-          "kind",
-          "id",
-          "name"
-        ],
-        "description": "The sign-in that first installed a plugin."
       },
       "PluginPage": {
         "type": "object",
@@ -17996,7 +17995,7 @@
           "Items"
         ],
         "summary": "Get an item",
-        "description": "Returns an item with its metadata and outbound edges. Use `include` to add its inbound edges, the items at the other end of its edges, or its version history in the same call. Use `state` to read an item in the trash.",
+        "description": "Returns an item with its metadata, outbound edges and any extras you ask for. Use `state` to read an item in the trash.",
         "security": [
           {
             "bearerAuth": []
@@ -18016,10 +18015,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Comma-separated extras: `backrefs` adds inbound edges, `neighbors` adds the items at the other end of the edges returned, and `versions` adds the first page of version snapshots you can read, oldest first."
+              "description": "Comma-separated extras. `backrefs` adds inbound edges. `neighbors` adds items at the other end of returned edges. `versions` adds the first page of readable snapshots, oldest first. `writer` adds the current version's `writer` and `state_writer`."
             },
             "required": false,
-            "description": "Comma-separated extras: `backrefs` adds inbound edges, `neighbors` adds the items at the other end of the edges returned, and `versions` adds the first page of version snapshots you can read, oldest first.",
+            "description": "Comma-separated extras. `backrefs` adds inbound edges. `neighbors` adds items at the other end of returned edges. `versions` adds the first page of readable snapshots, oldest first. `writer` adds the current version's `writer` and `state_writer`.",
             "name": "include",
             "in": "query"
           },
@@ -18102,7 +18101,7 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: the query has a parameter this endpoint doesn't take, or `state` is empty, names a state that doesn't exist, or puts `any` beside another state.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: the query has an unknown parameter, `include` names an unknown extra, or `state` is empty, names a state that doesn't exist, or puts `any` beside another state.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22345,10 +22344,11 @@
                         "edges",
                         "metadata",
                         "extensions",
+                        "writer",
                         "hidden"
                       ]
                     },
-                    "description": "`edges`, `metadata` and `extensions` add that data to each item. `hidden` also returns `system.*` and `app.*` items, which are left out by default."
+                    "description": "`edges`, `metadata` and `extensions` add that data to each item. `writer` adds each item's current version `writer` and `state_writer`. `hidden` also returns `system.*` and `app.*` items, which are left out by default."
                   }
                 },
                 "required": [
@@ -22470,7 +22470,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `ids` is missing.\n- `validation_error`: `ids` is not a list or has more than 100 IDs, or the body has a field this endpoint doesn't take.\n- `invalid_id`: an ID in `ids` is not a valid item ID.",
+            "description": "- `missing_required_field`: `ids` is missing.\n- `validation_error`: `ids` isn't a list or has more than 100 IDs, `include` names an unknown extra, or the body has a field this endpoint doesn't take.\n- `invalid_id`: an ID in `ids` is not a valid item ID.",
             "content": {
               "application/json": {
                 "schema": {

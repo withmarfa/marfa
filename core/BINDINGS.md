@@ -176,7 +176,11 @@ After the person confirms, call `discardKept(dir:)`. Its `KeptDiscarded` result 
 
 All three calls work offline. The two calls that change files ask a watch to release the folder and fail with `reading_handle` if it still holds the folder after 10 seconds. A watch can keep running while an app lists kept files. Removing unmatched files fails with `first_sync_waiting` while the first sync awaits confirmation and with `sync_paused` while sync is paused.
 
-The core finds whether a folder sits in synced or network storage (`Folder::storage_cause`). The Swift binding gives the finding to an app on `Folders::add`'s answer and on the watch's `Watching` event, so the app can warn the person as the command line does.
+The core finds whether a folder sits in synced or network storage (`Folder::storage_cause`). The Swift and Node bindings give the finding to an app on `Folders::add`'s answer and on the watch's `Watching` event, so the app can warn the person as the command line does.
+
+The Swift and Node bindings' `list` carries `store` for each directory: the opaque ID its copy reports under. It is the `folder_store_id` the server returns for that copy in `GET /folders/{id}/status` once the copy has reported, or nothing where the registry entry holds none. Two directories can follow one folder through one sign-in, and the sign-in and the folder ID say nothing to tell them apart, so an app matches a copy in a status report to its directory by `store`. The ID is not a path and names no machine, so a copy the report holds from another computer has no directory here.
+
+The core finds whether git tracks a folder's directory, meaning the directory is in a git work tree whose index holds a file in it (`Folder::git_tracked`). The Swift and Node bindings give the finding as `git_tracked` (`gitTracked` in Node) on `Folders::add`'s answer, so the app can warn the person, as the command line does, that a checkout, reset or branch switch changes files the folder syncs. It is `false` where git cannot be run, gives an error or does not answer within a second, and the folder is added all the same. It is a field of its own, because a directory can be in iCloud Drive and tracked by git at once, and `storage` holds one cause. Only the add reports it: a watch's `Watching` event does not.
 
 ## Values across the bindings
 

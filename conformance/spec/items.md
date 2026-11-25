@@ -254,11 +254,11 @@ When `PATCH /items/{id}` names a `source`, the server MUST answer `400 validatio
 
 ### `items/natural-key-upsert`
 
-When `POST /items` without `mode: create_only`, or a `POST /items/bulk` entry under `mode: upsert`, names a `source_id` that, under the source it resolves to, a live item of the declared type holds, the server MUST apply it as an update to that item, answered `200` at the item's next version, whichever credential sends it.
+When `POST /items` without `mode: create_only`, or a `POST /items/bulk` entry under `mode: upsert`, names a `source_id` that, under the source it resolves to, an item of the declared type holds that is active or archived, names no `edges`, and the write changes a field of the item, the server MUST apply it as an update to that item, answered `200` at the item's next version, whichever credential sends it.
 
-**Reason:** two keys that claim one source share its natural keys, so a connector's item is one item whichever of its keys writes it.
+**Reason:** two keys that claim one source share its natural keys, so a connector's item is one item whichever of its keys writes it. A write that changes nothing returns the held version on `POST /items` (`versions/unchanged-upsert`) and is reported `skipped` in bulk (`items/bulk-unchanged`). A write that names `edges` is covered by the edge chapter (`edges/parts-late-binned`) and the version statements (`versions/update-edges-only`).
 
-**Tests:** `correctness/dedup.test.ts › duplicate (source, source_id) upserts onto the existing item (natural-key upsert)`, `compliance/claimed-sources.test.ts › upserts onto one item from two keys claiming one source`, `› lands a bulk entry naming a claim on the claim's item, not on its own source's`, `compliance/create-only.test.ts › updates the item as before under mode upsert and under no mode`.
+**Tests:** `correctness/dedup.test.ts › duplicate (source, source_id) upserts onto the existing item (natural-key upsert)`, `compliance/claimed-sources.test.ts › upserts onto one item from two keys claiming one source`, `› lands a bulk entry naming a claim on the claim's item, not on its own source's`, `compliance/create-only.test.ts › updates the item as before under mode upsert and under no mode`, `correctness/upsert-state-tags.test.ts › updates an archived item in place on POST /items and on POST /items/bulk, as it updates an active one`.
 
 ### `items/natural-key-merge`
 
@@ -271,6 +271,22 @@ When a create is applied as a natural-key upsert, the server MUST lay its `prope
 When a create applied as a natural-key upsert names no `tags`, the server MUST leave the item's tags as they stand.
 
 **Tests:** `correctness/dedup.test.ts › merges a natural-key upsert's properties over the item's, and keeps its tags unless it names them`.
+
+### `items/natural-key-tags-named`
+
+When a create applied as a natural-key upsert names `tags`, on `POST /items` or in an entry of `POST /items/bulk`, the server MUST replace the item's tags with the tags it names.
+
+**Reason:** a connector's next run removes a tag a person added if the connector sends a tag list that omits it. An upsert without a tag list keeps the tags (`items/natural-key-tags`).
+
+**Tests:** `correctness/upsert-state-tags.test.ts › replaces the tags of an item with the tags it names, removing a tag a person added, on POST /items and on POST /items/bulk`, `› replaces the tags of an archived item with the tags it names, as it does for an active one`.
+
+### `items/natural-key-state`
+
+When a create applied as a natural-key upsert names a `state`, on `POST /items` or in an entry of `POST /items/bulk`, the server MUST ignore the `state` it names.
+
+**Reason:** a connector cannot bring an archived item back by naming `active`.
+
+**Tests:** `correctness/upsert-state-tags.test.ts › ignores the state it names on POST /items and on POST /items/bulk, an archived item included`.
 
 ### `items/natural-key-concurrent`
 
@@ -476,7 +492,7 @@ When a `POST /items/bulk` entry resolves an existing item, the server MUST ignor
 
 **Reason:** the update the entry describes does not read `state`, so refusing it would roll a page back over a field the write ignores.
 
-**Tests:** `compliance/bulk.test.ts › leaves a state alone on an entry that resolves an item rather than creating one`.
+**Tests:** `compliance/bulk.test.ts › leaves a state alone on an entry that resolves an item rather than creating one`, `correctness/upsert-state-tags.test.ts › ignores the state it names on POST /items and on POST /items/bulk, an archived item included`.
 
 ## Property values
 
@@ -811,6 +827,26 @@ If `POST /items/bulk-get` carries a top-level body key the operation does not de
 When `POST /items/bulk-get` names `metadata` in `include`, the server MUST answer a `metadata` list holding each answered item's metadata.
 
 **Tests:** `compliance/bulk-get.test.ts › hydrates metadata when include carries metadata`.
+
+### `items/bulk-get-writer`
+
+When `POST /items/bulk-get` names `writer` in `include`, the server MUST answer each item's `writer` as `versions/writer-current-bulk` states.
+
+**Tests:** `compliance/version-writers.test.ts › answers the key that wrote the current version, from version 1 on, on both doors`.
+
+### `items/bulk-get-include-unknown`
+
+If `POST /items/bulk-get` names in `include` a value other than `edges`, `metadata`, `extensions`, `writer` or `hidden`, then the server MUST answer `400 validation_error`.
+
+**Reason:** a misspelled value would otherwise be dropped, and the answer would leave out what the caller asked for without saying so.
+
+**Tests:** `compliance/version-writers.test.ts › refuses an include value it does not know beside writer, on both doors`.
+
+### `items/get-include-unknown`
+
+If `GET /items/{id}` names in `include` a value other than `metadata`, `edges`, `backrefs`, `neighbors`, `versions` or `writer`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/version-writers.test.ts › refuses an include value it does not know beside writer, on both doors`.
 
 ### `items/bulk-get-system`
 
@@ -1398,6 +1434,30 @@ If `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/tags`, `POST /ite
 
 **Tests:** `correctness/trash.test.ts › deleted item is hidden from default queries`, `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`.
 
+### `items/write-archived`
+
+When `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/tags`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an archived item, the server MUST apply the write as it applies it to an active item.
+
+**Reason:** an app can keep editing, tagging, and extending an item a person archived. A write to an item in the bin is refused (`items/write-in-bin`).
+
+**Tests:** `correctness/archived-writes.test.ts › takes PATCH /items/{id} as it takes it on an active item, and leaves the state`, `› takes a move to the bin from DELETE /items/{id}, as an active item does`, `› take POST, PUT and DELETE on /items/{id}/tags as they do on an active item, and leave the state`, `› take PUT and DELETE on /items/{id}/extensions/{namespace} as they do on an active item, and leave the state`.
+
+### `items/write-archived-state`
+
+When `PATCH /items/{id}`, `PUT /items/{id}/tags`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an archived item, names no `edges`, and the server applies the write, the server MUST leave the item archived.
+
+**Reason:** a write that names `edges` can move the item as the edge chapter states (`edges/parts-late-binned`).
+
+**Tests:** `correctness/archived-writes.test.ts › takes PATCH /items/{id} as it takes it on an active item, and leaves the state`, `› take POST, PUT and DELETE on /items/{id}/tags as they do on an active item, and leave the state`, `› take PUT and DELETE on /items/{id}/extensions/{namespace} as they do on an active item, and leave the state`.
+
+### `items/archive-no-cascade`
+
+When a transition moves an item to `archived`, on `POST /items/{id}/transition` or in a bulk action, the server MUST NOT change the state of an item that an edge of a type that cascades on delete (`edges/cascade-parent-of` and `edges/cascade-custom`) reaches from it.
+
+**Reason:** archiving a host leaves its children's states as they stand. A move into the bin takes the items a cascading edge reaches (`items/trash-cascade`), and `edges/parts-archive` covers the host's parts.
+
+**Tests:** `correctness/archived-writes.test.ts › changes the state of no other item, whatever edges the item holds`, `› changes the state of no other item on a bulk transition to archived`.
+
 ### `items/delete-version`
 
 When `DELETE /items/{id}` names a `version` the item no longer holds, the server MUST answer `409 version_conflict` with the item under `current` and no `ancestor`.
@@ -1742,6 +1802,96 @@ If `POST /items/{id}/purge` names a query parameter it does not declare, then th
 
 **Tests:** `compliance/purge-preconditions.test.ts › refuses a query parameter the purge operation does not declare, and purges nothing`.
 
+### `items/state-writer-field`
+
+When a credential sends `GET /items/{id}` with `include=writer` for an item it may read, the server MUST carry in `item` a `state_writer` holding the `kind`, `id` and `name` of the sign-in whose request last moved the item between active, archived, revoked and the bin, or `null` where no sign-in did.
+
+**Reason:** `writer` names who wrote the item's content (`versions/writer-current`), and a move between states writes no version (`versions/state-keeps-history`), so a client that shows who archived, trashed or restored an item needs its own answer.
+
+**Tests:** `compliance/state-writers.test.ts › answers the key that archived an item to another credential, and the one that brought it back`, `› answers the app that moved an item to the bin by the id and name its sign-in has`, `› answers the local command that restored an item from the bin`.
+
+### `items/state-writer-bulk`
+
+When a key sends `POST /items/bulk-get` with `writer` in `include`, the server MUST carry in each item of `data` a `state_writer` as `items/state-writer-field` states.
+
+**Tests:** `compliance/state-writers.test.ts › answers the key that archived an item to another credential, and the one that brought it back`, `› names the requester of a bulk trash, a bulk action and a restore that a bulk action runs`.
+
+### `items/state-writer-none`
+
+While an item has never moved between states since the server recorded state writers, or a server job moved it last, the server MUST answer its `state_writer` as `null`.
+
+**Reason:** a server job, such as the feed's expiry, moves an item with no sign-in's request, so no sign-in is named for it. A move made before the server recorded state writers is answered as `null` as well, even if a sign-in made it.
+
+**Tests:** `compliance/state-writers.test.ts › answers null for an item that was created and has not moved, in any state it was created in`, `› answers null for an item the feed-expiry job moved to the bin, and the requester once it is restored`, `compliance/upgrade-from-release.test.ts › answers no state writer for an item v0.0.90 wrote, and names the sign-in that moves it after the upgrade`.
+
+### `items/state-writer-recorded`
+
+When a request moves an item between active, archived, revoked and the bin, the server MUST record the sign-in that sent the request as the item's `state_writer`, whichever operation moved it.
+
+**Reason:** the transition, the delete, the restore, the revoking of a folder (which names the key that revoked it), a bulk write, a bulk action and the restore a bulk action runs each move state, and a door that recorded nothing would leave the previous mover named.
+
+**Tests:** `compliance/state-writers.test.ts › answers the key that archived an item to another credential, and the one that brought it back`, `› answers the app that moved an item to the bin by the id and name its sign-in has`, `› answers the local command that restored an item from the bin`, `› names the requester of a bulk trash, a bulk action and a restore that a bulk action runs`, `› answers the key that revoked a folder`.
+
+### `items/state-writer-cascade`
+
+When a request moves an item into the bin or out of it together with other items, the server MUST record the sign-in that sent the request as the `state_writer` of each item the move takes.
+
+**Tests:** `compliance/state-writers.test.ts › names the requester for each item a move to the bin takes along, and for each a restore brings back`.
+
+### `items/state-writer-kept`
+
+When a write leaves an item's state as it is, whether an update, a patch, an upsert that names a state or a transition to the state the item is in, the server MUST leave the item's `state_writer` as it was.
+
+**Reason:** only a move between states makes a sign-in the one that last moved the item.
+
+**Tests:** `compliance/state-writers.test.ts › leaves it as it was for an update, a patch and an upsert that names a state, and for a transition to the state the item is in`.
+
+### `items/state-writer-opt-in`
+
+When `GET /items/{id}` or `POST /items/bulk-get` does not name `writer` in `include`, the server MUST NOT carry a `state_writer` in the item.
+
+**Reason:** the name of a sign-in shows the owner's other sign-ins to every credential that may read it (`versions/writer-field`), so an ordinary read does not widen who sees them.
+
+**Tests:** `compliance/state-writers.test.ts › leaves it off an item read that does not name writer, and off every other member`.
+
+### `items/state-writer-reach`
+
+If a credential may not read the type of an item, then the server MUST NOT name the item's `state_writer` to it on `GET /items/{id}` or `POST /items/bulk-get`.
+
+**Reason:** the credential reads it under the reach that decides whether it reads the item's `writer` (`versions/writer-current-reach`).
+
+**Tests:** `compliance/state-writers.test.ts › gives a key that may not read the item's type no state writer, and no refusal other than the item's`.
+
+### `items/state-writer-archive`
+
+When `GET /export?format=archive` carries an item, the server MUST carry the item's `state_writer` on the item's line, or `null` where it has none.
+
+**Tests:** `compliance/state-writers-archive.test.ts › carries the state writer on each item's line, null where the item never moved, and keeps it on restore`.
+
+### `items/state-writer-restore`
+
+When `POST /restore` writes an item whose line names a `state_writer`, the server MUST keep it as the item's `state_writer`.
+
+**Reason:** a restore puts back a history that others wrote, so the sign-in that restores it moved none of the items (`versions/writer-restore`).
+
+**Tests:** `compliance/state-writers-archive.test.ts › carries the state writer on each item's line, null where the item never moved, and keeps it on restore`.
+
+### `items/state-writer-restore-none`
+
+When `POST /restore` inserts an item from a line that names no `state_writer`, the server MUST write the item with a `state_writer` of `null`.
+
+**Reason:** an archive an earlier release wrote names none, and a restore never refuses one for that. A restore that skips an item the instance already holds leaves that item's `state_writer` as it was.
+
+**Tests:** `compliance/state-writers-archive.test.ts › restores an archive that names no state writer with none, without refusing it`.
+
+### `items/state-writer-restore-bad`
+
+If an item line of an archive names a `state_writer` that is neither `null` nor a writer that `versions/writer-restore-invalid` admits, then the server MUST answer `400 validation_error` naming the field.
+
+**Reason:** the server checks an archived `state_writer` as it checks an archived `writer`. What the restore writes of a refused archive is the archive contract's rule.
+
+**Tests:** `compliance/state-writers-archive.test.ts › refuses an archive that names a malformed state writer`.
+
 ## Bulk writes
 
 `POST /items/bulk` writes a page of entries. Under `atomic: true`, the default, a refused entry rolls the whole page back; under `atomic: false` a refused entry leaves the others. Either way the page is one transaction, which commits once. A refused entry is an entry `errored` on a best-effort page and the page's rollback on an atomic one.
@@ -1788,9 +1938,11 @@ If a `POST /items/bulk` entry carries a key the operation does not declare, then
 
 ### `items/bulk-upsert`
 
-When a `POST /items/bulk` entry under `mode: upsert`, the default, names a natural key that resolves a live item, the server MUST update that item and report the entry `updated` with its `id`.
+When a `POST /items/bulk` entry under `mode: upsert`, the default, names a natural key that resolves an item that is active or archived, names no `edges`, and would change a field of the item, the server MUST update that item and report the entry `updated` with its `id`.
 
-**Tests:** `compliance/bulk.test.ts › upsert mode updates an existing (source, source_id) item in place`.
+**Reason:** an entry that would change nothing is reported `skipped` (`items/bulk-unchanged`). An entry that names `edges` is covered by the edge chapter (`edges/parts-late-binned`).
+
+**Tests:** `compliance/bulk.test.ts › upsert mode updates an existing (source, source_id) item in place`, `correctness/upsert-state-tags.test.ts › updates an archived item in place on POST /items and on POST /items/bulk, as it updates an active one`.
 
 ### `items/bulk-skipped`
 

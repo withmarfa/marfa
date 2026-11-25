@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use super::plan::{self, Act, Asked, Gate};
 use super::{
-    Door, Item, Keys, check_links, extension_documents_text, extension_text, extensions_text,
-    metadata_for, name_of, not_found, rows, summary_of, with_blocks,
+    Door, Item, Keys, Writer, check_links, extension_documents_text, extension_text,
+    extensions_text, metadata_for, name_of, not_found, rows, summary_of, with_blocks,
 };
 use crate::app::App;
 use crate::app::access::reach::Demand;
@@ -23,7 +23,7 @@ use crate::app::edges::{self, Reach};
 use crate::app::faults::{Faults, HOLD_READ_HYDRATION, HOLD_READ_SNAPSHOT};
 use crate::app::housekeeping::DAY_MS;
 use crate::app::query::{Secret, States, bad_cursor, judge_type};
-use crate::app::refusal::{Code, Result};
+use crate::app::refusal::{Code, Refusal, Result};
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
 const TITLES_PER_NAME: i64 = 20;
@@ -183,6 +183,27 @@ impl<'a, 'c> Reader<'a, 'c> {
         self.faults
     }
 
+    // Use the same reach as a version snapshot.
+    fn with_writer(&self, mut text: String, row: &Item) -> Result<String> {
+        if !self.caller.may_read_item(&row.type_id, &row.source) {
+            return Ok(text);
+        }
+        let writer = rows::current_writer(self.tx, row.seq)?;
+        let printed = |writer: &Option<Writer>| {
+            marfa_rules::number::to_vec(writer)
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .ok_or_else(|| Refusal::internal("a writer did not print"))
+        };
+        text.pop();
+        text.push_str(&format!(
+            ",\"writer\":{},\"state_writer\":{}}}",
+            printed(&writer)?,
+            printed(&row.state_writer)?
+        ));
+        Ok(text)
+    }
+
     fn history_page(&self, row: &Item, after: i64, limit: i64) -> Result<String> {
         let mut page = Vec::new();
         let mut at = after;
@@ -238,6 +259,7 @@ pub struct Detail {
     pub versions: bool,
     pub backrefs: bool,
     pub neighbors: bool,
+    pub writer: bool,
 }
 
 fn neighbors_of(read: &Reader<'_, '_>, far_ends: &[String]) -> Result<String> {
@@ -331,12 +353,15 @@ pub async fn detail(
         } else {
             String::new()
         };
+        let mut item = with_blocks(
+            row.answered(&read.read_only, &read.caller, &read.links)?,
+            &outbound.text,
+        );
+        if include.writer {
+            item = read.with_writer(item, &row)?;
+        }
         Ok(format!(
-            "{{\"item\":{},\"metadata\":{}{listed}{versions}{backrefs}{neighbors}}}",
-            with_blocks(
-                row.answered(&read.read_only, &read.caller, &read.links)?,
-                &outbound.text,
-            ),
+            "{{\"item\":{item},\"metadata\":{}{listed}{versions}{backrefs}{neighbors}}}",
             metadata_for(read.tx, &row, &read.caller)?
         ))
     })
@@ -368,6 +393,7 @@ pub struct Many {
     pub extensions: bool,
     pub edges: bool,
     pub hidden: bool,
+    pub writer: bool,
 }
 
 pub async fn bulk_get(
@@ -418,6 +444,9 @@ pub async fn bulk_get(
                 text.push_str(&format!(",\"extensions\":{held}"));
             }
             text.push('}');
+            if include.writer {
+                text = read.with_writer(text, row)?;
+            }
             items.push(text);
             if include.metadata {
                 metadata.push(metadata_for(read.tx, row, &read.caller)?);

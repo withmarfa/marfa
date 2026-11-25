@@ -417,10 +417,10 @@ async fn the_bulk_limit_may_not_be_set_above_what_one_line_holds() {
     assert_eq!(taken.status, StatusCode::OK, "{}", taken.body);
 }
 
-/// The layout of archive version 4. A change to any of it raises `VERSION`, and this pin with it.
+/// The layout of archive version 5. A change to any of it raises `VERSION`, and this pin with it.
 #[tokio::test]
 async fn the_layout_is_pinned_to_its_version() {
-    assert_eq!(archive::VERSION, 4);
+    assert_eq!(archive::VERSION, 5);
     let folder = TempDir::new().unwrap();
     let origin = Instance::start(folder.path(), &[]).await;
     let hash = origin.upload(b"a file the archive carries").await;
@@ -564,6 +564,7 @@ async fn the_layout_is_pinned_to_its_version() {
             "lending_extensions",
             "metadata",
             "restored_at",
+            "state_writer",
             "trashed_by",
             "writer"
         ]
@@ -661,18 +662,18 @@ async fn a_manifest_at_a_later_version_is_refused_naming_the_build_that_wrote_it
     let origin = Instance::start(folder.path(), &[]).await;
     origin.note("written by a later build").await;
     let archive = with_manifest(entries(&origin.archive().await), |manifest| {
-        manifest.insert("version".into(), 5.into());
+        manifest.insert("version".into(), 6.into());
         manifest.insert("written_by".into(), "marfa-server 9.0.0".into());
     });
     let fresh = Instance::start(folder.path(), &[]).await;
     let refused = fresh.restore(archive).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
     let message = refused.body["error"]["message"].as_str().unwrap();
-    assert!(message.contains("version 5"), "{message}");
+    assert!(message.contains("version 6"), "{message}");
     assert!(message.contains("marfa-server 9.0.0"), "{message}");
-    assert!(message.contains("up to version 4"), "{message}");
+    assert!(message.contains("up to version 5"), "{message}");
     let details = &refused.body["error"]["details"];
-    assert_eq!(details["version"], 5, "{details}");
+    assert_eq!(details["version"], 6, "{details}");
     assert_eq!(details["written_by"], "marfa-server 9.0.0", "{details}");
 }
 

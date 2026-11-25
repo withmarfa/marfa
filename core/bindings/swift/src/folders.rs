@@ -18,6 +18,11 @@ pub struct ListedFolder {
     pub folder: String,
     /// Its sync is paused with `Folders.pause`.
     pub paused: bool,
+    /// The opaque ID this directory's copy reports under, the
+    /// `folder_store_id` the server returns for it in a folder's status. It
+    /// is not a path and names no machine. `nil` where the registry entry
+    /// holds none.
+    pub store: Option<String>,
 }
 
 /// Why a folder's directory is in cloud-synced or network storage, where
@@ -62,6 +67,29 @@ pub struct AddedFolder {
     pub folder: String,
     /// Why the directory is in cloud-synced or network storage, where it is.
     pub storage: Option<StorageCause>,
+    /// Git tracks the directory: it is in a git work tree whose index holds a
+    /// file in it. Checking out, resetting or switching branches then changes
+    /// the files, and the folder syncs those changes. `false` where git cannot
+    /// be run or errors. The folder is added all the same.
+    pub git_tracked: bool,
+}
+
+fn added_of(added: &marfa_core::Folder) -> AddedFolder {
+    AddedFolder {
+        dir: added.root().display().to_string(),
+        folder: added.folder_id().to_string(),
+        storage: storage_of(added.storage_cause()),
+        git_tracked: added.git_tracked(),
+    }
+}
+
+fn listed_of(entry: marfa_core::folder::Registered) -> ListedFolder {
+    ListedFolder {
+        paused: marfa_core::Folder::paused_at(&entry.dir),
+        dir: entry.dir.display().to_string(),
+        folder: entry.folder,
+        store: entry.store,
+    }
 }
 
 /// Where one file stands, from the folder's own store.
@@ -526,19 +554,16 @@ guarded! {
         /// lists it in the machine's registry. The directory is made if it is
         /// not there. Its first sync waits: `sync` says what it will do, and
         /// `confirm_first_sync` lets it go. The answer says why the directory is
-        /// in cloud-synced or network storage, where it is; the folder is added
-        /// all the same. Reads the file system, so it can wait on a mount that
-        /// does not answer. Over a folder a watch holds, asks the watch to let it
-        /// go and waits up to 10 seconds, as every call that works a folder does:
-        /// past that, it is refused with `ReadingHandle`, naming the folder.
+        /// in cloud-synced or network storage, where it is, and whether git
+        /// tracks it; the folder is added all the same. Reads the file system,
+        /// so it can wait on a mount that does not answer. Over a folder a watch
+        /// holds, asks the watch to let it go and waits up to 10 seconds, as
+        /// every call that works a folder does: past that, it is refused with
+        /// `ReadingHandle`, naming the folder.
         pub fn add(&self, dir: String, folder: String) -> Result<AddedFolder, MarfaError> {
             let added = marfa_core::Folder::add(&dir, &folder, self.server(), self.renew())
                 .map_err(asked(&dir))?;
-            Ok(AddedFolder {
-                dir: added.root().display().to_string(),
-                folder: added.folder_id().to_string(),
-                storage: storage_of(added.storage_cause()),
-            })
+            Ok(added_of(&added))
         }
 
         /// The folders the machine's registry lists, the command line's among
@@ -550,11 +575,7 @@ guarded! {
             Ok(registry
                 .folders()?
                 .into_iter()
-                .map(|entry| ListedFolder {
-                    paused: marfa_core::Folder::paused_at(&entry.dir),
-                    dir: entry.dir.display().to_string(),
-                    folder: entry.folder,
-                })
+                .map(listed_of)
                 .collect())
         }
 
@@ -1326,6 +1347,263 @@ mod tests {
             watching(None),
             FolderEvent::Watching { storage: None, .. }
         ));
+    }
+
+    #[test]
+    fn a_listed_folder_carries_the_store_its_registry_entry_holds() {
+        let entry = |store: Option<&str>| marfa_core::folder::Registered {
+            dir: "/notes".into(),
+            folder: "folder".into(),
+            store: store.map(str::to_string),
+            root: None,
+        };
+        assert_eq!(
+            listed_of(entry(Some("0192-store"))).store.as_deref(),
+            Some("0192-store")
+        );
+        // The witness: an entry with none lists none.
+        assert_eq!(listed_of(entry(None)).store, None);
+    }
+
+    /// The folder `tag` names on the booted server, which follows notes
+    /// tagged `tag`.
+    fn seeded_folder(tag: &str) -> String {
+        let seed = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/seed.sh");
+        let made = std::process::Command::new(seed)
+            .args([
+                "folder",
+                tag,
+                &format!(
+                    r#"{{"query":{{"types":["core.note"],"filter":"tags contains \"{tag}\""}}}}"#
+                ),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+        String::from_utf8(made.stdout).unwrap().trim().to_string()
+    }
+
+    fn scratch_directory() -> tempfile::TempDir {
+        tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
+    }
+
+    /// The `folder_store_id` of each copy the server holds a report from for
+    /// `folder`.
+    fn reported_copies(folder: &str) -> Vec<String> {
+        let seed = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/seed.sh");
+        let asked = std::process::Command::new(seed)
+            .args(["folder-status", folder])
+            .output()
+            .unwrap();
+        assert!(
+            asked.status.success(),
+            "{}",
+            String::from_utf8_lossy(&asked.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&asked.stdout).unwrap();
+        let mut copies: Vec<String> = report["sign_ins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|sign_in| sign_in["copies"].as_array().unwrap())
+            .map(|copy| copy["folder_store_id"].as_str().unwrap().to_string())
+            .collect();
+        copies.sort();
+        copies
+    }
+
+    /// The id the directory's own store keeps for its copy, which every health
+    /// report of it carries.
+    fn stored_copy_id(dir: &str) -> String {
+        rusqlite::Connection::open_with_flags(
+            std::path::Path::new(dir)
+                .join(marfa_core::folder::STATE_DIR)
+                .join("core.sqlite"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap()
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'folder_store'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn two_directories_following_one_folder_list_the_ids_their_copies_report() {
+        let (url, key) = booted();
+        let folders = Folders::new(Some(url), Some(key), None).unwrap();
+        let folder = seeded_folder("binding listed stores");
+        let (first, second) = (scratch_directory(), scratch_directory());
+        let mut dirs = Vec::new();
+        for directory in [&first, &second] {
+            let path = directory.path().display().to_string();
+            let added = folders.add(path.clone(), folder.clone()).unwrap();
+            folders.confirm_first_sync(path.clone()).unwrap();
+            folders.sync(path).unwrap();
+            dirs.push(added.dir);
+        }
+        let listed = folders.list().unwrap();
+        let store_of = |dir: &str| {
+            listed
+                .iter()
+                .find(|entry| entry.dir == dir)
+                .unwrap_or_else(|| panic!("{dir} is not listed in {listed:?}"))
+                .store
+                .clone()
+                .expect("a directory that has reported lists its store")
+        };
+        let (first_store, second_store) = (store_of(&dirs[0]), store_of(&dirs[1]));
+        assert_ne!(first_store, second_store);
+        assert_eq!(first_store, stored_copy_id(&dirs[0]));
+        assert_eq!(second_store, stored_copy_id(&dirs[1]));
+        let mut both = vec![first_store, second_store];
+        both.sort();
+        assert_eq!(reported_copies(&folder), both);
+    }
+
+    /// A directory in a work tree of its own, with a file in it that `git add`
+    /// has put in the index.
+    fn tracked_directory() -> tempfile::TempDir {
+        let work_tree = scratch_directory();
+        let git = |args: &[&str]| {
+            let ran = std::process::Command::new("git")
+                .arg("-C")
+                .arg(work_tree.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                ran.status.success(),
+                "{}",
+                String::from_utf8_lossy(&ran.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        std::fs::create_dir(work_tree.path().join("notes")).unwrap();
+        std::fs::write(work_tree.path().join("notes/a.md"), "a").unwrap();
+        git(&["add", "notes"]);
+        work_tree
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn an_added_folder_says_whether_git_tracks_its_directory() {
+        let (url, key) = booted();
+        let folders = Folders::new(Some(url), Some(key), None).unwrap();
+        let folder = seeded_folder("binding git tracked");
+        let work_tree = tracked_directory();
+        let tracked = folders
+            .add(
+                work_tree.path().join("notes").display().to_string(),
+                folder.clone(),
+            )
+            .unwrap();
+        assert!(tracked.git_tracked);
+        // The witness: the same call for a directory outside any work tree.
+        let outside = scratch_directory();
+        let untracked = folders
+            .add(outside.path().display().to_string(), folder)
+            .unwrap();
+        assert!(!untracked.git_tracked);
+        let listed = folders.list().unwrap();
+        for added in [&tracked, &untracked] {
+            assert!(listed.iter().any(|entry| entry.dir == added.dir));
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn a_folder_is_added_untracked_where_git_cannot_be_run() {
+        let (url, key) = booted();
+        let folders = Folders::new(Some(url), Some(key), None).unwrap();
+        let folder = seeded_folder("binding git missing");
+        let work_tree = tracked_directory();
+        let notes = work_tree.path().join("notes").display().to_string();
+        // The witness: with git on the path, this directory is tracked.
+        assert!(
+            folders
+                .add(notes.clone(), folder.clone())
+                .unwrap()
+                .git_tracked
+        );
+        let no_programs = scratch_directory();
+        // SAFETY: nextest runs each test in a process of its own, and nothing
+        // else in this one reads the environment while it is set.
+        unsafe { std::env::set_var("PATH", no_programs.path()) };
+        let added = folders.add(notes, folder).unwrap();
+        assert!(!added.git_tracked);
+        assert!(
+            folders
+                .list()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.dir == added.dir)
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn a_folder_is_added_untracked_where_git_does_not_answer() {
+        use std::os::unix::fs::PermissionsExt;
+        let (url, key) = booted();
+        let folders = Folders::new(Some(url), Some(key), None).unwrap();
+        let folder = seeded_folder("binding git stalls");
+        let directory = scratch_directory();
+        let (bin, pids) = (scratch_directory(), scratch_directory());
+        let program = bin.path().join("git");
+        std::fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\necho $$ > {pids}/git\nexec /bin/sleep 30\n",
+                pids = pids.path().display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // SAFETY: nextest runs each test in a process of its own, and nothing
+        // else in this one reads the environment while it is set.
+        unsafe { std::env::set_var("PATH", bin.path()) };
+        let started = std::time::Instant::now();
+        let added = folders
+            .add(directory.path().display().to_string(), folder)
+            .unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        assert!(!added.git_tracked);
+        assert!(
+            folders
+                .list()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.dir == added.dir)
+        );
+        // No git is left running.
+        let pid: i32 = std::fs::read_to_string(pids.path().join("git"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let alive = |pid: i32| {
+            std::process::Command::new("/bin/kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        for _ in 0..200 {
+            if !alive(pid) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!alive(pid));
     }
 
     fn registry() {

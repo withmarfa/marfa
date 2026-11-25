@@ -169,6 +169,8 @@ export function wireType(
      *  sibling (`queue-and-verdicts/success-conflicted`), so a scripted type without one
      *  describes a server that cannot keep both copies. */
     mergePolicy?: { fields: Record<string, string>; default: string };
+    /** The retention policy the type declares; absent where it declares none. */
+    retentionPolicy?: Record<string, unknown>;
   } = {},
 ): Record<string, unknown> {
   // Core and system roots are shipped; the other fixture roots model registrations.
@@ -202,6 +204,9 @@ export function wireType(
       ...(options.icon === undefined ? {} : { icon: options.icon }),
     },
     ...(options.tables === undefined ? {} : { tables: options.tables }),
+    ...(options.retentionPolicy === undefined
+      ? {}
+      : { retention_policy: options.retentionPolicy }),
     merge_policy: options.mergePolicy ?? {
       fields: { body: "keep_both_copies" },
       default: "last_writer_wins",

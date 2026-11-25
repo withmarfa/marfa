@@ -2,6 +2,7 @@
 #   seed.sh note  <title> <body> [tag,tag]   prints the new item's id
 #   seed.sh file  <title> <description>      prints the new item's id
 #   seed.sh folder <title> <settings JSON>   prints the new folder's id
+#   seed.sh folder-status <id>               prints the folder's status report as JSON
 #   seed.sh trash <id>                       soft-deletes
 #   seed.sh purge <id>                       removes for good
 #
@@ -93,6 +94,8 @@ elif command == "file":
 elif command == "folder":
     title, settings = args
     print(call("POST", "/folders", {**json.loads(settings), "title": title})["item"]["id"])
+elif command == "folder-status":
+    print(json.dumps(call("GET", f"/folders/{args[0]}/status")))
 elif command == "trash":
     call("DELETE", f"/items/{args[0]}")
 elif command == "purge":

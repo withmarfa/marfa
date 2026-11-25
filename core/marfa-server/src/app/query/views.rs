@@ -91,9 +91,8 @@ fn title_key(catalog: &Catalog) -> Sql {
 
 fn key_of(by: &str, descending: bool, catalog: &Catalog) -> Option<Key> {
     let (expression, nullable) = match by {
-        "created_at" | "updated_at" | "occurred_at" | "last_activity_at" | "type" | "state" => {
-            (Sql::new(&format!("i.{by}")), false)
-        }
+        "created_at" | "updated_at" | "occurred_at" | "last_activity_at" | "type" | "state"
+        | "source" => (Sql::new(&format!("i.{by}")), false),
         "tier" => (Sql::new("i.tier"), true),
         "title" => (title_key(catalog), true),
         "tags" => (

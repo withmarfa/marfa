@@ -395,6 +395,67 @@ describe("who wrote each version, through an archive", () => {
     ).toEqual([null, null, null]);
   });
 
+  it("answers a restored item's current writer as the archive named it, and none where it names none", async () => {
+    const first = await mintKey("restored current writer");
+    const second = await mintKey("restored latest writer");
+    const named = await createNote(first.key, "named");
+    await changeNote(second.key, named, 1, "named, second");
+    const unnamed = await createNote(first.key, "unnamed");
+    const exporter = await mintKey("current writer exporter", {
+      "core.note": "read",
+    });
+    const archive = await new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: exporter.key,
+    }).exportArchive({ type: "core.note", source: first.source });
+    expect(archive.status).toBe(200);
+    let stripped = 0;
+    const withoutOne = editLineFile(archive.data, "items", (body) =>
+      body
+        .split("\n")
+        .filter((text) => text.trim() !== "")
+        .map((text) => {
+          const line = JSON.parse(text) as {
+            item: { id: string };
+            writer?: unknown;
+          };
+          if (line.item.id === unnamed) {
+            // The witness: the export named a writer to take out.
+            if (line.writer) stripped += 1;
+            delete line.writer;
+          }
+          return `${JSON.stringify(line)}\n`;
+        })
+        .join(""),
+    );
+    expect(stripped).toBe(1);
+    const owner = new MarfaClient({
+      baseUrl: target.apiUrl,
+      apiKey: "",
+      controlSocket: target.controlSocket,
+    });
+    const restored = await owner.restoreArchive(withoutOne);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+
+    const read = async (id: string) => {
+      const answer = await call(
+        target.workingKey,
+        "GET",
+        `/items/${id}?include=writer`,
+        undefined,
+        target.apiUrl,
+      );
+      expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+      return (answer.body.item as { writer?: Writer | null }).writer;
+    };
+    expect(await read(named)).toEqual({
+      kind: "key",
+      id: second.id,
+      name: "restored latest writer",
+    });
+    expect(await read(unnamed)).toBeNull();
+  });
+
   it("refuses an archive that names a malformed writer", async () => {
     const minted = await mintKey("archive source");
     const id = await createNote(minted.key, "malformed source");

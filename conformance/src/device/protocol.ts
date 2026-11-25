@@ -359,6 +359,8 @@ export interface ItemType {
   icon: string | null;
   link_field: string | null;
   roles: string[];
+  /** The resolved feed expiry window in days, or null when the type has no window. */
+  feed_days: number | null;
 }
 
 /** An edge type as the copy holds it. */

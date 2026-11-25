@@ -46,6 +46,9 @@ export const LINE_FILES: LineFile[] = [
 /** The version a restore reads, and the build that wrote the archive. */
 export const ARCHIVE_VERSION = 1;
 
+/** The version `GET /export?format=archive` writes (`archive/archive-version`). */
+export const WRITTEN_ARCHIVE_VERSION = 5;
+
 /** What every manifest names itself as. */
 export const ARCHIVE_FORMAT = "marfa-archive";
 
