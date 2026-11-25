@@ -2778,8 +2778,6 @@ fn local_admission_refusal(error: &CoreError) -> bool {
         || matches!(error, CoreError::UnknownType { .. })
 }
 
-/// Whether the copy refused a move because the item is no longer in the
-/// state the decision read.
 fn state_conflict(error: &CoreError) -> bool {
     matches!(error, CoreError::Validation { code, server: None, .. } if code == "state_conflict")
 }
@@ -7729,8 +7727,7 @@ mod tests {
         );
     }
 
-    /// As if a catch-up had applied another device's move of the item to the
-    /// bin, which leaves its version as it was.
+    /// A trash heard during catch-up leaves the item's version unchanged.
     #[cfg(debug_assertions)]
     pub(super) fn trashed_elsewhere(folder: &Folder, item_id: &str) {
         folder
@@ -7745,7 +7742,6 @@ mod tests {
             .unwrap();
     }
 
-    /// The payloads of the transitions queued for `item_id`.
     #[cfg(debug_assertions)]
     pub(super) fn transitions_queued(folder: &Folder, item_id: &str) -> Vec<Value> {
         let conn = folder.core.conn().unwrap();
@@ -7768,9 +7764,7 @@ mod tests {
             .state
     }
 
-    /// A scan of an archived note whose file the person has changed to say
-    /// `state: active`, held after it has read the item and before it queues
-    /// the move, while `change` is made to the item.
+    /// Change the item between the scan's read and its queue admission.
     #[cfg(debug_assertions)]
     fn unarchive_while_changed(
         folder_id: &str,
@@ -7820,8 +7814,6 @@ mod tests {
     #[test]
     fn a_scan_queues_no_unarchive_of_an_item_trashed_elsewhere_while_it_decides() {
         let (_, _registry) = registry::tests::own_registry();
-        // The witness: with nothing heard meanwhile, the file's line is sent,
-        // naming the state the scan read.
         let (_dir, folder, id, _) =
             unarchive_while_changed("01a00000-0000-7000-8000-00000000e7a1", |_, _| {});
         assert_eq!(
@@ -7843,7 +7835,6 @@ mod tests {
                 && file.reason.contains("state_conflict")),
             "{scanned:?}"
         );
-        // The refusal is kept with the file, so no later scan sends it.
         folder.scan().unwrap();
         assert_eq!(transitions_queued(&folder, &id), Vec::<Value>::new());
         assert_eq!(state_held(&folder, &id), ItemState::Trashed);

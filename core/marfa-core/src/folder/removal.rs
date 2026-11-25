@@ -270,7 +270,6 @@ impl Folder {
             {
                 #[cfg(debug_assertions)]
                 crate::fault::hold(|| format!("folder-restore-decided:{}", item.id));
-                // An item moved since it was read is left where it now is.
                 match self
                     .core
                     .transition_item_from(&item.id, state, Some(item.state))
@@ -1365,9 +1364,7 @@ mod tests {
         )
     }
 
-    /// A folder of active notes whose one note the server archived, the
-    /// pull's removal of its file paused, restored while `change` is made to
-    /// the item after the restore has read it and before it queues the move.
+    /// Change the item between the restore's read and its queue admission.
     #[cfg(debug_assertions)]
     fn restore_while_changed(
         folder_id: &str,
@@ -1426,8 +1423,6 @@ mod tests {
     #[test]
     fn a_restore_of_a_paused_removal_brings_back_no_item_trashed_elsewhere_while_it_decides() {
         let (_, _registry) = registry::tests::own_registry();
-        // The witness: with nothing heard meanwhile, the item is moved back
-        // into the query, naming the state the restore read.
         let (_dir, folder, id, restored) =
             restore_while_changed("01a00000-0000-7000-8000-00000000e7b1", |_, _| {});
         assert_eq!(restored.restored, 1, "{restored:?}");

@@ -789,8 +789,6 @@ impl Folder {
                     .core
                     .transition_item_from(item_id, state, Some(held.state))
                 {
-                    // The item moved since the scan read it, so the file's
-                    // line is held as refused rather than sent.
                     Err(error) if state_conflict(&error) => {
                         let reason = local_refusal_reason(&error);
                         flagged.push(Flagged {
