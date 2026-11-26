@@ -1,6 +1,6 @@
 //! Table choices, fills, events, and reads in a working copy.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
@@ -40,14 +40,15 @@ pub(crate) const FILLING: &str = "filling";
 pub(crate) const WHOLE: &str = "whole";
 const ONLINE: &str = "online";
 
-/// What one pass over the tables not yet whole did.
+/// What a fill of the tables not yet whole did.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct FillReport {
     /// Tables the pass left whole.
     pub whole: u64,
     /// Tables the pass found past the cap, which are read from the server.
     pub online: u64,
-    /// Tables the pass left still to fill, the failed among them.
+    /// Tables the call was asked to fill and did not, the failed and the
+    /// handed among them.
     pub unfilled: u64,
     pub pages: u64,
     pub rows: u64,
@@ -55,6 +56,8 @@ pub struct FillReport {
     pub failed: u64,
     /// The last of them, and why.
     pub failure: Option<String>,
+    /// Tables left to the hydration, catch-up or follow that took the stream.
+    pub handed: Vec<ChangedTable>,
 }
 
 impl FillReport {
@@ -67,6 +70,7 @@ impl FillReport {
         self.rows += later.rows;
         self.failed += later.failed;
         self.failure = later.failure.or(self.failure.take());
+        self.handed = later.handed;
     }
 }
 
@@ -98,7 +102,8 @@ pub struct TableHold {
     pub type_id: String,
     pub table: String,
     pub was_held: bool,
-    /// A report if the hold kept the stream through a fill pass.
+    /// `None` where another call held the stream, or took it before the
+    /// hold's first pass; that call fills the table.
     pub fill: Option<FillReport>,
 }
 
@@ -696,6 +701,8 @@ pub(crate) struct Pass<'a> {
     failed: HashMap<(String, String), Retry>,
     report: FillReport,
     claim: Option<&'a StreamClaim<'a>>,
+    took: BTreeSet<(String, String)>,
+    settled: BTreeSet<(String, String)>,
 }
 
 impl Pass<'_> {
@@ -729,11 +736,13 @@ impl Pass<'_> {
             return Ok(Step::Done);
         };
         let key = (owed.item.clone(), owed.table.clone());
+        self.took.insert(key.clone());
         let settled = self.report.whole + self.report.online;
         match advance(core, context, &owed, &mut self.report, stop, self.claim) {
             Ok(()) => {
                 self.failed.remove(&key);
                 if self.report.whole + self.report.online > settled {
+                    self.settled.insert(key);
                     Ok(Step::Settled {
                         item: owed.item,
                         table: owed.table,
@@ -873,6 +882,10 @@ fn advance(
         Err(error) if is_gone(&error) => return gone(),
         other => other?,
     };
+    #[cfg(debug_assertions)]
+    if claim.is_some() {
+        crate::fault::hold(|| "table-fill-page-read");
+    }
     let rows = page
         .get("data")
         .and_then(Value::as_array)
@@ -930,6 +943,7 @@ pub(crate) fn fill(
                 reconcile_all(tx)?;
                 crate::restored_rows::let_go_unheld(tx)?;
             }
+            pass.took = unfilled(tx)?;
             Ok(())
         })?;
         while held() {
@@ -949,15 +963,25 @@ pub(crate) fn fill(
             other.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?
         }
     }
-    pass.report.unfilled = core
-        .conn()?
-        .query_row(
-            "SELECT COUNT(*) FROM item_tables WHERE state IN ('owed', 'filling')",
-            [],
-            |row| row.get::<_, i64>(0),
-        )?
-        .max(0) as u64;
+    let left: Vec<(String, String)> = if held() {
+        let now = unfilled(&*core.conn()?)?;
+        pass.took.intersection(&now).cloned().collect()
+    } else {
+        pass.took.difference(&pass.settled).cloned().collect()
+    };
+    pass.report.unfilled = left.len() as u64;
+    if !held() {
+        pass.report.handed = ChangedTable::of(left);
+    }
     Ok(pass.report)
+}
+
+fn unfilled(conn: &Connection) -> Result<BTreeSet<(String, String)>> {
+    let mut query = conn.prepare_cached(
+        "SELECT item_id, name FROM item_tables WHERE state IN ('owed', 'filling')",
+    )?;
+    let rows = query.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 /// What the server holds of rows the device asked for by id.

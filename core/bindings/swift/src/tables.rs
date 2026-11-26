@@ -5,14 +5,15 @@ use std::sync::Arc;
 use crate::guard::guarded;
 use crate::{Core, JsonObject, MarfaError, QueuedWrite, SortDirection, Stop, flag_of, queued};
 
-/// What one pass over the tables not yet whole did.
+/// What a fill of the tables not yet whole did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct TableFill {
     /// Tables the pass left whole.
     pub whole: u64,
     /// Tables past the cap, which are read from the server.
     pub online: u64,
-    /// Tables left still to fill, the failed among them.
+    /// Tables the call was asked to fill and did not, the failed and the
+    /// handed among them.
     pub unfilled: u64,
     pub pages: u64,
     pub rows: u64,
@@ -20,6 +21,8 @@ pub struct TableFill {
     pub failed: u64,
     /// The last of them, and why.
     pub failure: Option<String>,
+    /// Tables left to the call that took the stream, counted in `unfilled`.
+    pub handed: Vec<ChangedTable>,
 }
 
 impl From<marfa_core::FillReport> for TableFill {
@@ -32,6 +35,7 @@ impl From<marfa_core::FillReport> for TableFill {
             rows: fill.rows,
             failed: fill.failed,
             failure: fill.failure,
+            handed: fill.handed.into_iter().map(ChangedTable::from).collect(),
         }
     }
 }
@@ -57,7 +61,8 @@ pub struct TableHold {
     pub r#type: String,
     pub table: String,
     pub was_held: bool,
-    /// `None` where another call holds the stream, whose fill takes it.
+    /// `None` where another call held the stream, or took it before the
+    /// hold's first pass; that call fills the table.
     pub fill: Option<TableFill>,
 }
 
@@ -177,7 +182,8 @@ fn answer(value: serde_json::Value) -> Result<JsonObject, MarfaError> {
 guarded! {
     #[uniffi::export]
     impl Core {
-        /// Chooses `table` for the types `type_id` names and reports any completed fill.
+        /// Chooses `table` for the types `type_id` names and fills it while no other
+        /// call holds the stream.
         pub fn hold_table(
             &self,
             type_id: String,

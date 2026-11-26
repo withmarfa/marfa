@@ -7,7 +7,7 @@ use napi_derive::napi;
 
 use crate::{MarfaCore, Stop, count, failure, flag_of, record, rethrown};
 
-/// One pass over the tables a copy holds that are not whole.
+/// What a fill of the tables a copy holds that are not whole did.
 #[napi(object)]
 pub struct TableFill {
     pub whole: i64,
@@ -19,6 +19,8 @@ pub struct TableFill {
     pub failed: i64,
     /// The last of them, and why.
     pub failure: Option<String>,
+    /// Tables left to the call that took the stream, counted in `unfilled`.
+    pub handed: Vec<ChangedTable>,
 }
 
 impl From<marfa_core::FillReport> for TableFill {
@@ -31,6 +33,7 @@ impl From<marfa_core::FillReport> for TableFill {
             rows: count(fill.rows),
             failed: count(fill.failed),
             failure: fill.failure,
+            handed: fill.handed.into_iter().map(ChangedTable::from).collect(),
         }
     }
 }
@@ -148,7 +151,7 @@ impl MarfaCore {
         })
     }
 
-    /// Chooses matching tables and reports any fill it completed.
+    /// Chooses matching tables and fills them while no other call holds the stream.
     #[napi(
         ts_return_type = "Promise<{ type: string; table: string; was_held: boolean; fill: TableFill | null }>"
     )]

@@ -154,8 +154,9 @@ impl Core {
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
         let mut taken = self.watch.take()?;
-        let _streaming = self.claim_stream(Mover::Hydration, stop)?;
-        let report = hydrate::hydrate(
+        let streaming = self.claim_stream(Mover::Hydration, stop)?;
+        let seen = self.tables_chosen();
+        let mut report = hydrate::hydrate(
             self,
             self.http()?,
             types,
@@ -167,6 +168,12 @@ impl Core {
         )?;
         taken.reached();
         self.settle_bodies(stop)?;
+        let context = reach::Context::capture(&*self.conn()?)?;
+        report.tables = crate::tables::fill(self, &context, stop, None)?;
+        drop(streaming);
+        if let Some(later) = self.fill_chosen_since(seen, stop)? {
+            report.tables.absorb(later);
+        }
         Ok(report)
     }
 
@@ -214,7 +221,8 @@ impl Core {
     ) -> std::result::Result<CatchUpReport, CatchUpFailed> {
         self.lock.refuse_unless_writer()?;
         let mut taken = self.watch.take()?;
-        let _streaming = self.claim_stream(Mover::CatchUp, stop)?;
+        let streaming = self.claim_stream(Mover::CatchUp, stop)?;
+        let seen = self.tables_chosen();
         let mut catalog_changed = false;
         catch_up::catch_up(
             self,
@@ -226,6 +234,21 @@ impl Core {
         .and_then(|report| {
             taken.reached();
             self.settle_bodies(stop)?;
+            Ok(report)
+        })
+        .and_then(|mut report| {
+            drop(streaming);
+            let before = store::last_table_change(&*self.conn()?)?;
+            if let Some(later) = self.fill_chosen_since(seen, stop)? {
+                report.tables.absorb(later);
+                let changed = store::tables_changed_since(&*self.conn()?, before, usize::MAX)?
+                    .unwrap_or_default();
+                for table in crate::tables::ChangedTable::of(changed) {
+                    if !report.changed_tables.contains(&table) {
+                        report.changed_tables.push(table);
+                    }
+                }
+            }
             Ok(report)
         })
         .map_err(|error| CatchUpFailed {
@@ -448,6 +471,9 @@ impl Core {
     fn claim_stream_once_hydrated(&self, stop: &AtomicBool) -> Result<Option<StreamClaim<'_>>> {
         let mut waited = false;
         loop {
+            if stop.load(Ordering::Relaxed) {
+                return Ok(None);
+            }
             let mut conn = self.conn()?;
             let answer = catch_up::refuse_unless_current(&mut conn);
             // A refill under way is waited for as a first hydration is; a
@@ -478,9 +504,6 @@ impl Core {
                     waited = true;
                 }
                 Err(error) => return Err(error),
-            }
-            if stop.load(Ordering::Relaxed) {
-                return Ok(None);
             }
             std::thread::sleep(catch_up::PACE.stop_poll);
         }

@@ -1964,6 +1964,7 @@ fn read_stream(
     let mut greatest = reach::cursor(&report.cursor).unwrap_or(0);
     // A settle a stop or a failure cut short is owed from before this stream.
     let mut unsettled = 1;
+    let mut chosen = core.tables_chosen();
     crate::busy::transaction(core, context, stop, |tx| {
         crate::tables::forget_reread(tx)?;
         crate::tables::reconcile_all(tx)
@@ -1974,7 +1975,9 @@ fn read_stream(
         if stop.load(Ordering::Relaxed) {
             return Ok(Ended::Stopped);
         }
-        if core.tables_owed.swap(false, Ordering::SeqCst) || (!filling && pass.retry_due(now())) {
+        let latest = core.tables_chosen();
+        if latest != chosen || (!filling && pass.retry_due(now())) {
+            chosen = latest;
             filling = pass.owes(&*core.conn()?, now())?;
         }
         recovery.tell(&report.cursor, on_change);
@@ -5456,7 +5459,7 @@ mod tests {
     fn a_call_whose_stop_is_raised_ends_canceled_where_another_call_holds_the_stream() {
         let server = Scripted::start();
         let (_dir, core) = hydrated_with_a_table(&server, hydration_streams());
-        let _held = core
+        let held = core
             .claim_stream(crate::Mover::CatchUp, &AtomicBool::new(false))
             .unwrap();
         let running = AtomicBool::new(false);
@@ -5478,6 +5481,16 @@ mod tests {
                 .map(drop)
                 .map_err(|failed| failed.error),
             Err(CoreError::Canceled)
+        );
+        drop(held);
+        let fill = core.try_claim_stream(crate::Mover::Fill).unwrap();
+        assert_eq!(
+            core.follow(&stop, false, |_| {}),
+            Ok(FollowReport::default())
+        );
+        assert!(
+            fill.held(),
+            "a follow whose stop was raised took the stream from a fill"
         );
     }
 

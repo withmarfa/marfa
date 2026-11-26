@@ -473,6 +473,8 @@ pub struct HydrateReport {
     /// would not replace, which stay as the server holds them. A write to one
     /// is judged by that definition.
     pub unreplaced_types: Vec<UnregisteredType>,
+    /// The fill of held tables the hydration ran once it completed.
+    pub tables: crate::tables::FillReport,
 }
 
 /// Why a hydration began again from the first page rather than carry on from

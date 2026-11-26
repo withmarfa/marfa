@@ -1384,6 +1384,10 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                         printable(&held.message)
                     ));
                 }
+                let fill = &report.tables;
+                if fill.whole + fill.online + fill.unfilled > 0 {
+                    line.push_str(&format!("\nheld tables: {}", fill_line(fill)));
+                }
                 line
             })
         }
@@ -1938,7 +1942,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     let what = printable(&format!("{type_id} {table}"));
                     match &held.fill {
                         Some(fill) => format!("holding {what}; {}", fill_line(fill)),
-                        None => format!("holding {what}; it fills with the stream"),
+                        None => format!("holding {what}; the call holding the stream fills it"),
                     }
                 })
             }
@@ -2998,8 +3002,12 @@ fn fill_line(fill: &marfa_core::FillReport) -> String {
         ),
         None => String::new(),
     };
+    let handed = match fill.handed.len() {
+        0 => String::new(),
+        count => format!("; {count} left to the call that took the stream"),
+    };
     format!(
-        "{} table(s) whole, {} read from the server, {} still to fill; {} page(s), {} row(s){failed}",
+        "{} table(s) whole, {} read from the server, {} still to fill; {} page(s), {} row(s){failed}{handed}",
         fill.whole, fill.online, fill.unfilled, fill.pages, fill.rows
     )
 }

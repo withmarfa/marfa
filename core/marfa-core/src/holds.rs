@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::files::unpin_held;
-use crate::streams::Mover;
+use crate::streams::{Mover, StreamClaim};
 use crate::{
     Core, CoreError, FillReport, Handle, HeldTables, NEVER_STOPPED, QueuedWrite, Result, RowsAsked,
     TableHold, WriteKind, busy, drain, http, hydrate, reach, row_writes, store, tables,
@@ -210,7 +210,8 @@ impl Core {
         Ok(pinned)
     }
 
-    /// Chooses matching tables and fills them while it holds the stream.
+    /// Chooses matching tables and fills them while it holds the stream,
+    /// leaving them to the call that holds or takes it.
     pub fn hold_table(&self, type_id: &str, table: &str) -> Result<TableHold> {
         self.hold_table_until(type_id, table, &NEVER_STOPPED)
     }
@@ -225,31 +226,11 @@ impl Core {
         let was_held = busy::retrying(&self.conn, stop, || {
             tables::choose(&mut *self.conn()?, type_id, table)
         })?;
-        // Signal first so the stream holder can pick up the choice.
-        self.tables_owed.store(true, Ordering::SeqCst);
-        let mut fill: Option<FillReport> = None;
-        while let Ok(streaming) = self.try_claim_stream(Mover::Fill) {
-            if !store::hydration_complete(&*self.conn()?)?
-                || !self.tables_owed.swap(false, Ordering::SeqCst)
-            {
-                break;
-            }
-            #[cfg(debug_assertions)]
-            crate::fault::hold(|| "table-hold-filling");
-            let context = reach::Context::capture(&*self.conn()?);
-            let filled =
-                context.and_then(|context| tables::fill(self, &context, stop, Some(&streaming)));
-            if !streaming.held() {
-                break;
-            }
-            let report = filled.inspect_err(|_| self.tables_owed.store(true, Ordering::SeqCst))?;
-            match &mut fill {
-                Some(before) => before.absorb(report),
-                None => fill = Some(report),
-            }
-            #[cfg(debug_assertions)]
-            crate::fault::hold(|| "table-hold-filled");
-        }
+        self.tables_chosen.fetch_add(1, Ordering::SeqCst);
+        let fill = match self.try_claim_stream(Mover::Fill) {
+            Ok(streaming) => self.fill_from(streaming, stop, true)?,
+            Err(_) => None,
+        };
         Ok(TableHold {
             type_id: type_id.into(),
             table: table.into(),
@@ -274,8 +255,68 @@ impl Core {
     pub fn fill_tables(&self, stop: &AtomicBool) -> Result<FillReport> {
         self.lock.refuse_unless_writer()?;
         let streaming = self.claim_stream(Mover::Fill, stop)?;
-        let context = reach::Context::capture(&*self.conn()?)?;
-        tables::fill(self, &context, stop, Some(&streaming))
+        Ok(self.fill_from(streaming, stop, false)?.unwrap_or_default())
+    }
+
+    /// Fills under `streaming`, then again while a choice made after a pass's
+    /// last look finds the stream free. `None` where a hold's stream was taken
+    /// before its first pass, or its copy is not hydrated.
+    fn fill_from<'a>(
+        &'a self,
+        mut streaming: StreamClaim<'a>,
+        stop: &AtomicBool,
+        hold: bool,
+    ) -> Result<Option<FillReport>> {
+        let mut fill: Option<FillReport> = None;
+        loop {
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "table-hold-filling");
+            let seen = self.tables_chosen.load(Ordering::SeqCst);
+            if hold && (!streaming.held() || !store::hydration_complete(&*self.conn()?)?) {
+                break;
+            }
+            let context = reach::Context::capture(&*self.conn()?)?;
+            let report = tables::fill(self, &context, stop, Some(&streaming))?;
+            let kept = streaming.held();
+            match &mut fill {
+                Some(before) => before.absorb(report),
+                None => fill = Some(report),
+            }
+            if !kept {
+                break;
+            }
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "table-hold-filled");
+            drop(streaming);
+            if self.tables_chosen.load(Ordering::SeqCst) == seen {
+                break;
+            }
+            match self.try_claim_stream(Mover::Fill) {
+                Ok(again) => streaming = again,
+                Err(_) => break,
+            }
+        }
+        Ok(fill)
+    }
+
+    /// Fills what a hold chose after `seen` once the stream is free, as the
+    /// hold found it taken.
+    pub(crate) fn fill_chosen_since(
+        &self,
+        seen: u64,
+        stop: &AtomicBool,
+    ) -> Result<Option<FillReport>> {
+        if self.tables_chosen.load(Ordering::SeqCst) == seen {
+            return Ok(None);
+        }
+        match self.try_claim_stream(Mover::Fill) {
+            Ok(streaming) => self.fill_from(streaming, stop, true),
+            Err(_) => Ok(None),
+        }
+    }
+
+    pub(crate) fn tables_chosen(&self) -> u64 {
+        self.tables_chosen.load(Ordering::SeqCst)
     }
 
     /// Reads rows from the copy when held whole, marking the answer with `held`.

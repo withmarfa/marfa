@@ -131,7 +131,7 @@ mod wire;
 mod write;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -329,9 +329,8 @@ pub struct Core {
     renewals: Arc<Mutex<Vec<(String, String)>>>,
     /// Before when a `VACUUM` that was refused or failed is not tried again.
     reclaim_held_until: Mutex<Option<std::time::Instant>>,
-    /// Raised by a table held while another call held the stream; a follow
-    /// looks at it each time it waits for a frame.
-    tables_owed: AtomicBool,
+    /// Counts table choices, so a fill sees one made after its last look.
+    tables_chosen: AtomicU64,
     /// `damage::seen` as the core opened, so its close keeps the
     /// write-ahead log of a store found damaged since.
     damage_seen: u64,

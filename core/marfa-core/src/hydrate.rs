@@ -797,6 +797,7 @@ fn attempt(
             unregistered_types: declared.unregistered.clone(),
             replaced_types: declared.replaced.clone(),
             unreplaced_types: declared.unreplaced.clone(),
+            tables: crate::tables::FillReport::default(),
         })))
     })();
     let settled = core

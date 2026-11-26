@@ -321,6 +321,8 @@ pub struct HydrateReport {
     /// Declared `app.*` types the instance holds in another definition and
     /// would not replace; they stay as the server holds them.
     pub unreplaced_types: Vec<UnregisteredType>,
+    /// The fill of held tables the hydration ran once it completed.
+    pub tables: tables::TableFill,
 }
 
 /// A declared type the instance refused to register or to replace, and why.
@@ -1982,6 +1984,7 @@ impl From<marfa_core::HydrateReport> for HydrateReport {
                     message: held.message,
                 })
                 .collect(),
+            tables: report.tables.into(),
         }
     }
 }

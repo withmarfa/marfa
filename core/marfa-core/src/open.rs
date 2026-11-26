@@ -2,7 +2,7 @@
 //! replacing, removing and reading what a refused or damaged store holds.
 
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -394,7 +394,7 @@ impl Core {
             watch: watch::Watch::new(),
             renewals: Arc::default(),
             reclaim_held_until: Mutex::default(),
-            tables_owed: AtomicBool::new(false),
+            tables_chosen: AtomicU64::new(0),
             damage_seen: damage::seen(),
         })
     }
@@ -514,7 +514,7 @@ impl Core {
             watch: watch::Watch::new(),
             renewals,
             reclaim_held_until: Mutex::default(),
-            tables_owed: AtomicBool::new(false),
+            tables_chosen: AtomicU64::new(0),
             damage_seen,
         })
     }
