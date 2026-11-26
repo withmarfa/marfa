@@ -1030,7 +1030,7 @@ A device MUST keep the folder registry at `MARFA_FOLDER_REGISTRY` when set, othe
 
 When a registered folder performs a pass after its registry entry disappears or its directory moves, a device MUST register the folder’s current directory again.
 
-**Tests:** `device/folders-one-mac.test.ts › lists a folder again where the registry lost it, a watch included`, `device/folders-one-mac.test.ts › holds a delete for a pass when the registry it was listed in is gone, and lists itself again`.
+**Tests:** `device/folders-one-mac.test.ts › lists a folder again where the registry lost it, a watch included`, `device/folders-one-mac.test.ts › holds a delete when the registry it was listed in is gone, lists itself again, and finds the file moved when the person settles it`.
 
 ### `folder-setup/nested-folder-refused`
 
@@ -1194,13 +1194,13 @@ When a registry read finds a listed folder missing or unreadable, a device MUST 
 
 **Reason:** A directory on a volume that is away cannot be found, as a deleted one cannot, and the entry is what lets another folder hold a delete for a file that may have moved into it.
 
-**Tests:** `device/folders-one-mac.test.ts › holds a delete while a listed folder is missing, until it lists itself again`, `device/folders-one-mac.test.ts › keeps a folder it cannot read listed, and holds a delete meanwhile`, `device/folders-watch-every.test.ts › says in one line which listed folders cannot be found, keeps them listed, and keeps the others in step`.
+**Tests:** `device/folders-one-mac.test.ts › holds a delete while a listed folder is missing, and finds the file moved there when the person settles it once the folder lists itself again`, `device/folders-one-mac.test.ts › keeps a folder it cannot read listed, and holds a delete meanwhile`, `device/folders-watch-every.test.ts › says in one line which listed folders cannot be found, keeps them listed, and keeps the others in step`.
 
 ### `folder-setup/registry-unreadable-deletes-held`
 
 When the machine’s registry cannot be read or disappears during a folder pass, a device MUST defer deletion of missing files whose move cannot be ruled out.
 
-**Tests:** `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`, `device/folders-one-mac.test.ts › holds a delete for a pass when the registry it was listed in is gone, and lists itself again`.
+**Tests:** `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`, `device/folders-one-mac.test.ts › holds a delete when the registry it was listed in is gone, lists itself again, and finds the file moved when the person settles it`.
 
 ### `folder-setup/registry-invalid-replaced-on-add`
 

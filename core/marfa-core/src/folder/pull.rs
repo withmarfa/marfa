@@ -1,8 +1,8 @@
 use super::selective::{Pick, Selection};
 use super::{
-    ATTACHMENT_EDGE, BoundFiles, Catalog, CoreError, EdgeTypes, FOLDER_TYPE, Flagged, Folder,
-    HashMap, HashSet, Item, ItemState, Lists, Look, Mode, Names, OFlags, Path, Peers, Result,
-    Serialize, Settings, SettingsFileReport, Uncarried, Value, beside, bytes_of,
+    ATTACHMENT_EDGE, Among, BoundFiles, Catalog, CoreError, EdgeTypes, FOLDER_TYPE, Flagged,
+    Folder, HashMap, HashSet, Item, ItemState, Lists, Look, Mode, Names, OFlags, Path, Peers,
+    Result, Serialize, Settings, SettingsFileReport, Uncarried, Value, beside, bytes_of,
     carries_frontmatter, cleaned, document, executable, fields, identity, is_document, landing,
     line_of, name_of, names, path_of, placement, plainly_inside, read_file, stat_metadata, state,
     suited,
@@ -628,6 +628,11 @@ impl Folder {
             .iter()
             .map(|row| (row.path.clone(), row.item_id.clone()))
             .collect();
+        let held: HashSet<String> = journal
+            .iter()
+            .filter(|row| matches!(row.kept, Some(state::Kept::Unsure(_))))
+            .map(|row| row.item_id.clone())
+            .collect();
         let kept: HashMap<String, (String, state::Kept)> = journal
             .into_iter()
             .filter_map(|row| Some((row.path, (row.item_id, row.kept?))))
@@ -686,6 +691,12 @@ impl Folder {
                     }),
                     state::Kept::Unsure(_) => {}
                 }
+                continue;
+            }
+            // Another file took a held file's path, and only the person
+            // settles whether its item comes back
+            // (`folder-files/missing-file-held-stays`).
+            if bound.is_none() && held.contains(&item.id) {
                 continue;
             }
             // Let the receiving directory bind the moved file first.
@@ -1192,9 +1203,10 @@ impl Folder {
             && journaled_for(&*self.core.conn()?, &bound.path, &item.id)?
         {
             match rendering.peers.moved_to(
-                bound,
+                &bound.into(),
                 rendering.members.contains(&item.id),
                 bytes_of(item, catalog).is_some(),
+                Among::Every,
             ) {
                 Look::Nowhere => {}
                 Look::Moved | Look::Arriving => {

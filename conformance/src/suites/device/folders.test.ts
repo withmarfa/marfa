@@ -5518,6 +5518,7 @@ describe("large removals, status and size", () => {
   it("lets a paused removal go once confirmed, or puts it back", async () => {
     harness = await sixLessThree("folder-removal-confirm", tight);
     expect((await harness.folder.push()).ok).toBe(true);
+    await grace();
     const confirmed = await harness.folder.confirm();
     expect(confirmed.ok && confirmed.value.deleted).toBe(3);
     expect((await harness.folder.push()).ok).toBe(true);

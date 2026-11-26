@@ -247,6 +247,23 @@ pub struct ConfirmedFolder {
     pub refused: Vec<UnsureFile>,
 }
 #[napi(object)]
+pub struct HeldFile {
+    pub path: String,
+    pub item: String,
+    pub missing_since: String,
+    pub reason: String,
+}
+#[napi(object)]
+pub struct SettledHeld {
+    pub trashed: Vec<String>,
+    pub gone: Vec<String>,
+    pub moved: Vec<String>,
+    pub kept: Vec<String>,
+    pub written_back: Vec<String>,
+    pub not_written_back: Vec<FlaggedFile>,
+    pub not_settled: Vec<UnsureFile>,
+}
+#[napi(object)]
 pub struct RestoredRemoval {
     pub put_back: i64,
     pub restored: i64,
@@ -424,6 +441,38 @@ impl Folders {
     pub fn restore(&self, dir: String) -> AsyncTask<RestoreRemoval> {
         AsyncTask::new(RestoreRemoval {
             dir,
+            server: self.server.clone(),
+            failed: None,
+        })
+    }
+
+    #[napi(ts_return_type = "Promise<Array<HeldFile>>")]
+    pub fn held(&self, dir: String) -> AsyncTask<ReadHeld> {
+        AsyncTask::new(ReadHeld { dir, failed: None })
+    }
+
+    #[napi(ts_return_type = "Promise<SettledHeld>")]
+    pub fn trash_held(&self, dir: String, paths: Vec<String>) -> AsyncTask<SettleHeld> {
+        AsyncTask::new(SettleHeld {
+            dir,
+            paths,
+            settle: marfa_core::Settle::Trash,
+            server: None,
+            failed: None,
+        })
+    }
+
+    #[napi(ts_return_type = "Promise<SettledHeld>")]
+    pub fn keep_held(
+        &self,
+        dir: String,
+        paths: Vec<String>,
+        write_back: bool,
+    ) -> AsyncTask<SettleHeld> {
+        AsyncTask::new(SettleHeld {
+            dir,
+            paths,
+            settle: marfa_core::Settle::Keep { write_back },
             server: self.server.clone(),
             failed: None,
         })
@@ -913,6 +962,83 @@ fn kept_file(file: marfa_core::KeptFile) -> marfa_core::Result<KeptFile> {
         until: file.until,
         reason: file.reason,
     })
+}
+
+pub struct ReadHeld {
+    dir: String,
+    failed: Option<CoreError>,
+}
+#[napi]
+impl Task for ReadHeld {
+    type Output = Vec<HeldFile>;
+    type JsValue = Vec<HeldFile>;
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rejected(env, self.failed.take(), error, &self.dir))
+    }
+    fn compute(&mut self) -> Result<Self::Output> {
+        marfa_core::Folder::held_of(&self.dir)
+            .map(|files| {
+                files
+                    .into_iter()
+                    .map(|file| HeldFile {
+                        path: file.path,
+                        item: file.item,
+                        missing_since: file.missing_since,
+                        reason: file.reason,
+                    })
+                    .collect()
+            })
+            .map_err(|error| record(&mut self.failed, error))
+    }
+    fn resolve(&mut self, _: Env, files: Self::Output) -> Result<Self::JsValue> {
+        Ok(files)
+    }
+}
+
+pub struct SettleHeld {
+    dir: String,
+    paths: Vec<String>,
+    settle: marfa_core::Settle,
+    server: Option<marfa_core::Server>,
+    failed: Option<CoreError>,
+}
+#[napi]
+impl Task for SettleHeld {
+    type Output = SettledHeld;
+    type JsValue = SettledHeld;
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rejected(env, self.failed.take(), error, &self.dir))
+    }
+    fn compute(&mut self) -> Result<Self::Output> {
+        (|| -> marfa_core::Result<Self::Output> {
+            let settled =
+                working(&self.dir, self.server.clone())?.settle_held(&self.paths, self.settle)?;
+            Ok(SettledHeld {
+                trashed: settled.trashed,
+                gone: settled.gone,
+                moved: settled.moved,
+                kept: settled.kept,
+                written_back: settled.written_back,
+                not_written_back: settled
+                    .not_written_back
+                    .into_iter()
+                    .map(flagged_file)
+                    .collect(),
+                not_settled: settled
+                    .not_settled
+                    .into_iter()
+                    .map(|file| UnsureFile {
+                        path: file.path,
+                        reason: file.reason,
+                    })
+                    .collect(),
+            })
+        })()
+        .map_err(|error| record(&mut self.failed, error))
+    }
+    fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
+        Ok(report)
+    }
 }
 
 pub struct RemoveFolder {

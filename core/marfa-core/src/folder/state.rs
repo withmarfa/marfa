@@ -1108,7 +1108,10 @@ pub enum Kept {
     /// Moved to a folder that knows the file only by this binding, and that
     /// has not taken it yet.
     Arriving,
-    /// Whether it moved cannot be told yet, and why.
+    /// Whether it was deleted or moved cannot be told, and why: held, with
+    /// no delete and no file written, until the person settles it
+    /// (`Folder::settle_held`), a file comes back at its path, or its item
+    /// leaves. No pass that cannot read the file's directory ends it.
     Unsure(String),
     /// The file at this path, which the scan holds for its name or skips,
     /// carries its identity or its item's ID.
@@ -1130,9 +1133,14 @@ impl Journaled {
         matches!(self.kept, Some(Kept::Carried(_)))
     }
 
-    /// Kept until a look at the other folders, or a full pass, can tell.
+    /// Kept until a look at the other folders finds the folder it went to
+    /// has taken it.
     pub fn looked_for(&self) -> bool {
-        matches!(self.kept, Some(Kept::Arriving | Kept::Unsure(_)))
+        matches!(self.kept, Some(Kept::Arriving))
+    }
+
+    pub fn held(&self) -> bool {
+        matches!(self.kept, Some(Kept::Unsure(_)))
     }
 }
 
@@ -1153,39 +1161,6 @@ pub fn journal_keep(
     conn.execute_cached(
         "UPDATE folder_journal SET kept = ?3, reason = ?4 WHERE path = ?1 AND item_id = ?2",
         params![path, item_id, kind, reason],
-    )?;
-    Ok(())
-}
-
-/// Set while a delete held as unsure was kept by a pass or a confirmation
-/// that could not read the file, which may have come back and gone since:
-/// the next pass that reads the whole folder starts its grace again.
-const UNREAD_HOLD: &str = "folder_unread_hold";
-
-pub fn journal_unread_hold(conn: &Connection) -> Result<(), CoreError> {
-    if crate::store::meta_get(conn, UNREAD_HOLD)?.is_none() {
-        crate::store::meta_set(conn, UNREAD_HOLD, "1")?;
-    }
-    Ok(())
-}
-
-pub fn journal_unread_held(conn: &Connection) -> Result<bool, CoreError> {
-    Ok(crate::store::meta_get(conn, UNREAD_HOLD)?.is_some())
-}
-
-pub fn journal_read_whole(conn: &Connection) -> Result<(), CoreError> {
-    crate::store::meta_delete(conn, UNREAD_HOLD)
-}
-
-/// Starts a journaled file's grace again from now.
-pub fn journal_restart(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
-    conn.execute_cached(
-        "UPDATE folder_journal SET missing_since = ?3 WHERE path = ?1 AND item_id = ?2",
-        params![
-            path,
-            item_id,
-            crate::store::iso_at(crate::clock::system_time())
-        ],
     )?;
     Ok(())
 }

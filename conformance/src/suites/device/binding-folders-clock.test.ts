@@ -16,6 +16,7 @@ import {
   type BindingFolderHarness,
 } from "./binding-folders.shared.js";
 import { untilHeld } from "./binding.shared.js";
+import { folderHarness, KEY, scriptFolderItem } from "./harness.js";
 import {
   EdgeDoor,
   scriptFolderChanges,
@@ -26,7 +27,7 @@ import {
 /** The wait that looks for a command asking for the folder is always on the clock. */
 const LOOK_WAIT_MS = 200;
 
-const made: BindingFolderHarness[] = [];
+const made: { stop(): Promise<void> }[] = [];
 afterEach(async () => {
   for (const harness of made.splice(0).reverse()) await harness.stop();
 });
@@ -35,6 +36,8 @@ async function prepared(
   label: string,
   files: Record<string, string> = {},
   more: FolderSettings = {},
+  /** The settings of another folder on the same machine and server. */
+  peerSettings?: FolderSettings,
 ) {
   const edges = new EdgeDoor();
   const feed = new StreamFeed();
@@ -47,15 +50,35 @@ async function prepared(
       removal_threshold: { files: 100, fraction: 1 },
       ...more,
     },
-    events: [(request) => (watching ? held : edges.stream())(request)],
+    // Only the watch's stream is held; the other folder's runs to its end.
+    events: [
+      (request) =>
+        (watching && request.headers.authorization !== `Bearer ${PEER_KEY}`
+          ? held
+          : edges.stream())(request),
+    ],
   });
   made.push(harness);
+  // Before the item doors, whose read would answer for any id.
+  const peerRow =
+    peerSettings && scriptFolderItem(harness.server, peerSettings);
   const rows = scriptFolderWrites(harness, { edges });
   const synced = await harness.bound.sync();
   expect(synced.ok, JSON.stringify(synced)).toBe(true);
+  const peer =
+    peerRow &&
+    (await folderHarness(`${label}-peer`, {
+      sharing: { server: harness.server, key: PEER_KEY },
+      folder: peerRow,
+      registry: harness.registry,
+    }));
+  if (peer) made.push(peer);
   watching = true;
-  return { ...harness, served: rows };
+  return { ...harness, served: rows, peer };
 }
+
+/** The other folder's key, so the events door can tell its requests apart. */
+const PEER_KEY = `${KEY}-peer`;
 
 /** The clock stays fixed from the first pass's start through its completion. */
 async function startFirstPass(harness: BindingFolderHarness) {
@@ -267,7 +290,7 @@ describe("folder clock and scan boundaries", () => {
     },
   );
 
-  it("decides a delete it could not tell from a move in a quick pass once the registry can be read, with no full pass", async () => {
+  it("holds a delete it could not tell from a move through every later pass of a watch, until the person trashes it through the binding", async () => {
     const harness = await prepared("binding-kept-look", {
       "note.md": "original\n",
     });
@@ -282,9 +305,9 @@ describe("folder clock and scan boundaries", () => {
     await folderTold(watch, "watching");
     // Let the first full pass end, then the file go while another folder the
     // file may have moved to cannot be told.
-    const run = async (ms: number) => {
-      for (let left = ms; left > 0; left -= 1_000) {
-        await advanceWithWatch(device, Math.min(1_000, left));
+    const run = async (ms: number, step = 1_000) => {
+      for (let left = ms; left > 0; left -= step) {
+        await advanceWithWatch(device, Math.min(step, left));
       }
     };
     await run(2_000);
@@ -302,18 +325,101 @@ describe("folder clock and scan boundaries", () => {
       "the witness: a delete that may be a move to a folder that cannot be read was sent",
     ).toBe(0);
 
+    const held = await bound.held();
+    expect(held.ok && held.value.map((file) => file.path)).toEqual(["note.md"]);
+
+    // Readable again, and past a full pass, the watch still sends no delete.
     writeFileSync(harness.registry, listed);
-    await run(65_000);
-    // The clock has stood since: only a request already on its way can land.
+    await run(11 * 60_000, 30_000);
+    expect(
+      deletes(),
+      "a later pass of the watch turned a held delete into a delete",
+    ).toBe(0);
+    const still = await bound.held();
+    expect(still.ok && still.value.map((file) => file.path)).toEqual([
+      "note.md",
+    ]);
+
+    // The watch lets the folder go to the call at its next look, on the clock.
+    let trashed: Awaited<ReturnType<typeof bound.trashHeld>> | undefined;
+    void bound.trashHeld(["note.md"]).then((answer) => {
+      trashed = answer;
+    });
+    await vi.waitFor(
+      async () => {
+        await device.clock.advance(LOOK_WAIT_MS);
+        expect(trashed, "the watch did not let the folder go").toBeDefined();
+      },
+      { timeout: 10_000, interval: 20 },
+    );
+    expect(trashed?.ok && trashed.value.trashed).toEqual(["note.md"]);
+    await run(2_000);
     await vi.waitFor(
       () => {
-        expect(
-          deletes(),
-          "the delete waited for the full pass, ten minutes off, instead of a quick pass a minute after the last look",
-        ).toBe(1);
+        expect(deletes(), "the trashed held file's delete was not sent").toBe(
+          1,
+        );
       },
       { timeout: 5_000, interval: 10 },
     );
+  });
+
+  it("releases a file another folder has yet to take within a minute of that folder taking it, with no full pass", async () => {
+    const harness = await prepared(
+      "binding-arriving-look",
+      { "note.txt": "original\n" },
+      {},
+      // Hydrated and never pulled, it holds the item and writes no file of it.
+      { query: { types: ["core.note"] } },
+    );
+    const { bound, device } = harness;
+    const peer = harness.peer!;
+    const deletes = () =>
+      harness.server.requests.filter(
+        (request) =>
+          request.method === "DELETE" && request.pathname.startsWith("/items/"),
+      ).length;
+    const watch = await bound.watch();
+    await folderTold(watch, "watching");
+    const run = async (ms: number) => {
+      for (let left = ms; left > 0; left -= 1_000) {
+        await advanceWithWatch(device, Math.min(1_000, left));
+      }
+    };
+    await run(2_000);
+    await device.hooks.hold("folder-file-changed");
+    renameSync(join(harness.dir, "note.txt"), join(peer.dir, "note.txt"));
+    await untilHeld(device, "folder-file-changed");
+    await device.hooks.release("folder-file-changed");
+    await run(30_000);
+    const missing = async () => {
+      const status = await bound.status();
+      expect(status.ok, JSON.stringify(status)).toBe(true);
+      return status.ok
+        ? status.value.files.some(
+            (file) => file.path === "note.txt" && file.state === "waiting",
+          )
+        : false;
+    };
+    expect(
+      await missing(),
+      "the witness: the binding of a file another folder has yet to take was released",
+    ).toBe(true);
+
+    // The blocked stream leaves only the watch's scan able to release the binding.
+    const taken = await peer.folder.push();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    await run(65_000);
+    await vi.waitFor(
+      async () => {
+        expect(
+          await missing(),
+          "the binding waited for the full pass, ten minutes off, instead of a quick pass a minute after the last look",
+        ).toBe(false);
+      },
+      { timeout: 5_000, interval: 10 },
+    );
+    expect(deletes(), "a file the other folder took was trashed").toBe(0);
   });
 
   it("keeps each folder's own interval where two folders of one machine are watched at once", async () => {

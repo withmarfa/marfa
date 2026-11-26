@@ -11,6 +11,7 @@ pub mod fields;
 mod first;
 mod form;
 mod handover;
+mod held;
 pub mod identity;
 mod landing;
 mod lines;
@@ -55,6 +56,7 @@ pub use every::{
     follows, watch_every,
 };
 pub use handover::{HANDOVER_WAIT, held_by_another, not_handed_over};
+pub use held::{HeldFile, Settle, Settled};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
 pub use storage::StorageCause;
 #[cfg(unix)]
@@ -94,7 +96,7 @@ use std::io::{Read, Seek};
 use crate::body::embed::{FILE_TYPE, bytes_of, carries_frontmatter, is_document};
 use crate::body::resolve::{Names, Resolver};
 use edge_types::EdgeTypes;
-use elsewhere::{Look, Peers};
+use elsewhere::{Among, Look, Lost, Peers};
 use embeds::ATTACHMENT_EDGE;
 pub use fields::{ID_FIELD, Uncarried, VERSION_FIELD};
 use lines::{BoundFiles, EdgeWork};
@@ -1375,7 +1377,7 @@ fn follow_binding(
             conn,
             &state::Bound {
                 path: follow.from.clone(),
-                identity: identity::of(&metadata).map(|found| found.key()),
+                identity: identity::unshared(&metadata).map(|found| found.key()),
                 ..settled
             },
         ),
@@ -2559,6 +2561,9 @@ struct Scanned {
     /// Device, inode and birth time, where the filesystem gave a usable
     /// three.
     mark: Option<String>,
+    /// Whether the file has another name on the disk, which may be another
+    /// folder's file.
+    linked: bool,
     born: Option<u128>,
     id: Option<String>,
     /// The version its `marfa_version` line names, where that is one the
@@ -2606,6 +2611,8 @@ impl Scanned {
             key: identity::relative(root, path)?,
             path: path.to_path_buf(),
             mark,
+            linked: captured
+                .is_some_and(|captured| identity::hard_linked(&captured.metadata.borrow())),
             born: captured.and_then(|captured| identity::born(&captured.metadata.borrow())),
             text: String::new(),
             hash: String::new(),
@@ -2617,6 +2624,12 @@ impl Scanned {
             executable: None,
             folded: false,
         })
+    }
+
+    /// The identity a binding records: none for a hard link, whose identity
+    /// another folder's file may share.
+    fn recorded_mark(&self) -> Option<String> {
+        self.mark.clone().filter(|_| !self.linked)
     }
 
     fn document(&self) -> document::Document {
@@ -3612,6 +3625,8 @@ mod gone_peer_tests;
 #[cfg(test)]
 mod held_links_tests;
 #[cfg(test)]
+mod held_tests;
+#[cfg(test)]
 mod quiet_watch_tests;
 #[cfg(test)]
 mod reclaim_tests;
@@ -3972,7 +3987,7 @@ mod tests {
 
     /// How many times this thread walked another folder's directory since
     /// the last call.
-    fn peers_walked() -> usize {
+    pub(super) fn peers_walked() -> usize {
         PEERS_WALKED.with(|walked| walked.replace(0))
     }
 

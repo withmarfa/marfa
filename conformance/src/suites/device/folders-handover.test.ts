@@ -269,21 +269,30 @@ describe("handing a folder to a command", () => {
         watch.stdout,
       ).toBe(true);
     }, WAIT);
-    // The witness that the pause holds the deletes until the confirm.
     expect(gone.map((id) => deletesOf(a, id))).toEqual([0, 0, 0]);
+    // Past the rename grace, which the confirm waits out too.
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
 
     const confirmed = await a.folder.confirm();
     expect(confirmed.ok, JSON.stringify(confirmed)).toBe(true);
     if (!confirmed.ok) return;
-    expect(confirmed.value.deleted).toBe(3);
-    // Taken back, the watch sends the deletes the confirm queued.
+    // The other folder on the Mac could hold them, so the confirm holds them.
+    expect(confirmed.value.deleted).toBe(0);
+    expect(confirmed.value.unsure.map((file) => file.path).sort()).toEqual([
+      "Note 1.md",
+      "Note 2.md",
+      "Note 3.md",
+    ]);
+    // Taken back, the watch sends what the folder changes next.
+    put(a, "After the confirm.md", note("After the confirm"));
     await vi.waitFor(() => {
-      expect(gone.map((id) => deletesOf(a, id))).toEqual([1, 1, 1]);
+      expect(sentTitles(a)).toContain("After the confirm");
       expect(handovers(watch, a.dir), watch.stdout).toEqual([
         "let go",
         "taken back",
       ]);
     }, WAIT);
+    expect(gone.map((id) => deletesOf(a, id))).toEqual([0, 0, 0]);
     const said = lines(watch, a.dir).find(handedOver);
     expect(said?.reason, JSON.stringify(said)).toEqual(expect.any(String));
 

@@ -5634,6 +5634,8 @@ describe("embedded files", () => {
       // together, and confirming sends both.
       const again = await harness.folder.push();
       expect(again.ok && again.value.scan.paused).toBe(2);
+      // Past the rename grace, which the confirm waits out too.
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
       const confirmed = await harness.folder.confirm();
       expect(confirmed.ok && confirmed.value.deleted).toBe(2);
       expect((await harness.folder.push()).ok).toBe(true);

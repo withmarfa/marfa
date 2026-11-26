@@ -1236,7 +1236,7 @@ When a file returns at its own path or a new name within the rename grace, a dev
 
 When another device changes a deleted item in content its file shows during the rename grace and no other registered directory holds the file's move, a device MUST restore the file from the changed item.
 
-**Reason:** A file another folder holds as this one moved is the item's file there, and written back here it would read there as a copy (`folder-files/moved-not-revived`, `folder-files/uncertain-move-no-replacement`). A file whose move cannot be told yet comes back once no folder holds it (`folder-files/missing-file-changed-revives`). A file whose folders both hold its item is not a move (`folder-files/item-in-folders-delete`), so it is written back.
+**Reason:** A file another folder holds as this one moved is the item's file there, and written back here it would read there as a copy (`folder-files/moved-not-revived`, `folder-files/uncertain-move-no-replacement`). A file whose move cannot be told yet comes back once the sweep finds it in no folder (`folder-files/missing-file-changed-revives`), or when the person keeps it and writes it back (`folder-files/missing-file-held-write-back`). A file whose folders both hold its item is not a move (`folder-files/item-in-folders-delete`), so it is written back.
 
 **Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`, `device/folders-pass-writeback.test.ts › writes a remote change into a file in place, and brings back a file deleted after the scan once its delete is journaled`, `device/folders-one-mac.test.ts › still writes back a file deleted where both folders hold its item when another device changes it`, `device/folders-held-links.test.ts › writes back a deleted held file when another device changes its item inside the grace`.
 
@@ -1250,7 +1250,7 @@ When a deleted file is revived by a visible remote change, a device MUST cancel 
 
 When a deleted file is revived by a visible remote change, a device MUST count it `revived`.
 
-**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`, `device/folders-one-mac.test.ts › writes back a file deleted while another folder could not be read, once that folder holds no copy, when another device changed its item inside the grace`.
+**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`, `device/folders-one-mac.test.ts › holds files deleted while another folder could not be read, and writes back the items another device changed once the person keeps them`.
 
 ### `folder-files/delete-unshown-change`
 
@@ -1562,7 +1562,7 @@ When a folder pull encounters a file at an item’s placement whose bytes it can
 
 When an unbound folder item’s placement already holds exactly its rendered bytes, a device MUST bind the existing file to that item.
 
-**Tests:** `device/folders.test.ts › takes back a file of its own the mapping had lost`, `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`, `device/folders-one-mac.test.ts › adopts the item's own bytes at its path, and keeps a previous file's delete, while another folder keeps its file ($mode, previous file $previous)`.
+**Tests:** `device/folders.test.ts › takes back a file of its own the mapping had lost`, `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`, `device/folders-one-mac.test.ts › adopts the item's own bytes at its path, and holds a previous file's delete for the person, while another folder keeps its file ($mode, previous file $previous)`.
 
 ### `folder-files/rendered-file-adopted-bytes-unchanged`
 
@@ -1576,7 +1576,7 @@ When a device binds an existing file to an unbound item under `folder-files/rend
 
 **Reason:** the bytes at the path are the arriving item's, so the other item's file is still gone.
 
-**Tests:** `device/folders-one-mac.test.ts › adopts the item's own bytes at its path, and keeps a previous file's delete, while another folder keeps its file ($mode, previous file $previous)`.
+**Tests:** `device/folders-one-mac.test.ts › adopts the item's own bytes at its path, and holds a previous file's delete for the person, while another folder keeps its file ($mode, previous file $previous)`.
 
 ### `folder-files/unowned-file-admitted`
 
@@ -2084,19 +2084,19 @@ When a file is saved back at a path whose binding remains after the person moved
 
 When a missing file is found in another registered directory as the same file by identity, carried ID or unambiguous bytes, a device MUST release the missing file’s binding, unless `folder-files/moved-binding-kept` keeps it.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and holds one found in no folder until the person trashes it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
 
 ### `folder-files/moved-file-not-trashed-item-preserved`
 
 When a missing file is found in another registered directory as the same file by identity, carried ID or unambiguous bytes, a device MUST NOT trash the item.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and holds one found in no folder until the person trashes it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
 
 ### `folder-files/moved-file-count`
 
 When a scan releases a missing file’s binding because it found the file in another registered directory, a device MUST count the file as `moved_away`.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and holds one found in no folder until the person trashes it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
 
 ### `folder-files/moved-carried-id-utf16`
 
@@ -2105,6 +2105,22 @@ When a file in another registered directory starts with a UTF-16 byte-order mark
 **Reason:** An editor that saves a moved file again as UTF-16 changes both its identity and its bytes, so its carried ID is all that shows where it came from. Read as UTF-8, the move is taken for a deletion and the item is deleted on the server.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file moved to another folder and saved again as UTF-16`.
+
+### `folder-files/moved-file-unique`
+
+When a file in another registered directory has a missing file's identity, carries its note's ID or has its bytes, and another file in the other registered directories does too, the other directory binds that file as a file of its own, or another file this directory binds has the same bytes, a device MUST NOT identify any of those files as the missing file's move.
+
+**Reason:** a move is told only where one file, in one other folder, can be the file that went, and only one file here can be the one it was. A guess that is wrong trashes a note the person kept or joins two notes into one. A hard link is one file at two names, so a folder that binds the other name binds this same file, not one moved into it (`folder-files/hard-link-no-identity`). A file the device cannot place is held for the person (`folder-files/missing-file-held`).
+
+**Tests:** `device/folders-one-mac.test.ts › holds missing notes while two other folders are on the Mac, a note copied into both of them included, until the person trashes them`, `device/folders-one-mac.test.ts › holds a delete whose file another folder holds as its own through a hard link`, `device/folders-one-mac.test.ts › holds both deletes of two files with the same bytes when another folder has one file with them`, `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`.
+
+### `folder-files/hard-link-no-identity`
+
+When a device binds a file that has another name on the disk, a device MUST NOT record the file's identity in the binding.
+
+**Reason:** the other name can be in another folder, which then holds a file with the identity this binding remembers. Once the person deletes this name, that file would read as this one moved, and the device would release a binding the person deleted.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a delete whose file another folder holds as its own through a hard link`.
 
 ### `folder-files/peer-owned-bytes-not-move`
 
@@ -2120,17 +2136,121 @@ When two folder queries both hold an item and each directory has its own bound f
 
 ### `folder-files/missing-file-trashed`
 
-When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item or, under a name other than the missing file's name followed by a suffix, carries the missing file's identity or its item's ID, and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
+When a missing file’s deletion grace expires in a scan that read the whole directory, the device can read its folder registry and neither lists nor remembers another directory, no other file present in the same directory is bound to its item or, under a name other than the missing file's name followed by a suffix, carries the missing file's identity or its item's ID, and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
 
-**Reason:** the files of one sweep are decided before any of them is trashed, so files deleted together are all trashed, whichever the sweep reaches first and whether they link one another. A link line in a file shows the note it names by title, and a note already trashed by the same sweep would otherwise read as a change made elsewhere.
+**Reason:** with no other folder on the computer, the file cannot have moved into one, so the missing file is the person's delete. The files of one sweep are decided before any of them is trashed, so files deleted together are all trashed, whichever the sweep reaches first and whether they link one another. A link line in a file shows the note it names by title, and a note already trashed by the same sweep would otherwise read as a change made elsewhere.
 
-**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`, `device/folders-placement.test.ts › keeps the item when %s cuts off another Mac's move after the rename`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a deleted note's item where the Mac has no other folder, and says so`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`, `device/folders-placement.test.ts › keeps the item when %s cuts off another Mac's move after the rename`.
 
 ### `folder-files/missing-file-trashed-path-reported`
 
-When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item or, under a name other than the missing file's name followed by a suffix, carries the missing file's identity or its item's ID, and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
+When a scan queues deletion of a missing file's item under `folder-files/missing-file-trashed`, a device MUST name the path in the scan report’s `trashed`.
 
-**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a deleted note's item where the Mac has no other folder, and says so`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
+
+### `folder-files/missing-file-held`
+
+When a missing file’s deletion grace expires or a paused removal of it is confirmed, no other directory holds the moved file, and `folder-files/missing-file-trashed` does not apply, a device MUST NOT queue deletion of its item.
+
+**Reason:** the device cannot tell the person's delete from a move into another folder that has let the file go, cannot be read, or holds a file it cannot tell apart from others, and a delete sent for a move trashes the note the person kept. A note is held as any other file is: its ID line shows where it went only while another folder holds a file with that line, and a folder that let the file go, or an editor that saved it again without the line, leaves nothing to find. The person settles each held file (`folder-files/missing-file-held-trash`, `folder-files/missing-file-held-keep`).
+
+**Tests:** `device/folders-one-mac.test.ts › holds a missing note found in no folder on the Mac while another folder is on it, and says why`, `device/folders-one-mac.test.ts › holds missing notes while two other folders are on the Mac, a note copied into both of them included, until the person trashes them`, `cli/folder.test.ts › holds a note moved to another folder and saved there without its ID line, and once the person trashes it keeps the file there and the item's history in the bin`, `cli/folder.test.ts › holds the original item of a new note moved to another folder before its ID line, where the file showed less than the item holds, and writes it back once the person keeps it (%s)`, `device/folders-one-mac.test.ts › holds a file moved to another folder that lets it go when its item is archived, until the person keeps its item`, `device/folders-one-mac.test.ts › holds a file moved to another folder whose unmatched files are then removed, until the person keeps its item and writes it back`, `device/folders-one-mac.test.ts › holds a file moved to another folder that is then removed from the Mac, and trashes a file deleted for real only once the person says so`, `device/folders-one-mac.test.ts › holds a file item moved to another folder that then saves new bytes over it, until the person keeps its item`, `device/folders-one-mac.test.ts › holds a note moved to another folder by copy and delete when that folder's query comes to hold it, until the person keeps its item`, `device/folders-one-mac.test.ts › holds a file an earlier release took into another folder that then takes it away when its item is archived, until the person keeps its item`, `device/folders-one-mac.test.ts › holds a file item deleted where both folders hold it, and trashes it once the person says so`, `device/folders-one-mac.test.ts › holds the files of a confirmed removal it cannot tell from a move while another folder is paused, until the person trashes them`, `device/folders-one-mac.test.ts › holds a confirmed removal of file items while another folder is on the Mac, and sends their deletes without pausing again once the person trashes them`, `cli/folder.test.ts › holds the original item of a new note moved to another folder before its ID line, and trashes it once the person says so`.
+
+### `folder-files/missing-file-held-reported`
+
+When a device holds a missing file under `folder-files/missing-file-held`, a device MUST name the file's path and the reason in the scan report's `unsure` and in the list `folders held` shows.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a file moved to another folder that lets it go when its item is archived, until the person keeps its item`, `device/folders-one-mac.test.ts › holds a file moved to another folder that is then removed from the Mac, and trashes a file deleted for real only once the person says so`, `device/folder-health.test.ts › shows a held delete as held and counts it as a held file until the person settles it`.
+
+### `folder-files/missing-file-held-names-folders`
+
+When a device holds a missing file only because the computer lists or remembers another directory, a device MUST give as the reason that directory's path where it is the only one, and the number of other directories where there are more.
+
+**Reason:** the person learns which folder the file may have gone to, and looks there before settling the hold.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a missing note found in no folder on the Mac while another folder is on it, and says why`, `device/folders-one-mac.test.ts › holds missing notes while two other folders are on the Mac, a note copied into both of them included, until the person trashes them`.
+
+### `folder-files/missing-file-held-status`
+
+While a device holds a missing file, a device MUST show the file in `folders status` as `held` with the flag `unsure`, also where another item's file now stands at its path.
+
+**Reason:** the device's report then counts it under `held_file` (`folder-sync/report-held-files`), so the person sees a file that waits on them. A file of another item at the path is listed beside it, so the hold is not hidden behind that file.
+
+**Tests:** `device/folder-health.test.ts › shows a held delete as held and counts it as a held file until the person settles it`, `device/folder-health.test.ts › shows a held delete whose path another note's file took as held, and keeps the hold when that file stops its write-back`.
+
+### `folder-files/missing-file-held-stays`
+
+While a device holds a missing file, a device MUST NOT queue deletion of its item or write its file again in a scan or a pull.
+
+**Reason:** a later scan knows no more than the one that held it: a folder that let the moved file go still holds no file, so nothing a scan sees makes the delete safe. Another item's file that takes the path does not settle it either, so a pull writes no file of the held item elsewhere. The hold ends when the person settles it, a file comes back at its path, or its item is trashed or gone.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a file moved to another folder that lets it go when its item is archived, until the person keeps its item`, `device/folders-one-mac.test.ts › holds files deleted while another folder could not be read, and writes back the items another device changed once the person keeps them`, `device/folders-contract-b.test.ts › keeps confirmed missing files unsure while another registered folder is unavailable`, `device/binding-folders-clock.test.ts › holds a delete it could not tell from a move through every later pass of a watch, until the person trashes it through the binding`, `device/folders-one-mac.test.ts › answers moved for a held delete whose path another note's file took once another folder holds its file, and keeps that note's file`.
+
+### `folder-files/missing-file-held-unread-pass`
+
+While a device holds a missing file, when a pass cannot read the directory the file was in, a device MUST keep holding the file.
+
+**Reason:** a pass that reads less than the one that held the file knows less, so it neither settles nor ends the hold. Only the person settles it, or a file that a pass reads at its path.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps a held delete through a scan that cannot read its directory`.
+
+### `folder-files/missing-file-held-trash`
+
+When the person trashes a held file with `folders held --trash` or a binding's `trash_held`, and no other directory that can be read holds the file as a move under `folder-files/moved-file-unique`, a device MUST queue deletion of its item.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a file moved to another folder that is then removed from the Mac, and trashes a file deleted for real only once the person says so`, `device/folders-contract-b.test.ts › keeps confirmed missing files unsure while another registered folder is unavailable`, `device/folder-health.test.ts › shows a held delete as held and counts it as a held file until the person settles it`, `cli/folder.test.ts › holds the original item of a new note moved to another folder before its ID line, and trashes it once the person says so`, `device/binding-folders-clock.test.ts › holds a delete it could not tell from a move through every later pass of a watch, until the person trashes it through the binding`, `device/folders-one-mac.test.ts › holds a confirmed removal of file items while another folder is on the Mac, and sends their deletes without pausing again once the person trashes them`.
+
+### `folder-files/missing-file-held-trash-moved`
+
+When the person trashes a held file and another directory that can be read now holds the file as a move under `folder-files/moved-file-unique`, a device MUST NOT queue deletion of its item.
+
+**Reason:** the person asked for the delete of a file they took to be gone, and the move found since shows it is not. `folders held` names the file in `moved`. A directory that cannot be read is no reason to keep a delete the person asked for, so only those read whole are looked in.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a delete when the registry it was listed in is gone, lists itself again, and finds the file moved when the person settles it`, `device/folders-one-mac.test.ts › holds a delete while a listed folder is missing, and finds the file moved there when the person settles it once the folder lists itself again`, `device/folders-one-mac.test.ts › answers moved for a held delete whose path another note's file took once another folder holds its file, and keeps that note's file`.
+
+### `folder-files/missing-file-held-path-kept`
+
+When the person settles a held file whose path another item's file has taken, a device MUST keep that file's binding.
+
+**Reason:** the file at the path is another note's, and letting it go would make it a new item or send its delete.
+
+**Tests:** `device/folders-one-mac.test.ts › answers moved for a held delete whose path another note's file took once another folder holds its file, and keeps that note's file`.
+
+### `folder-files/missing-file-held-trash-confirmed`
+
+When `folders held --trash` runs without `--yes` anywhere but at a terminal, or with `--json`, the CLI MUST NOT queue deletion of any item.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a file moved to another folder that is then removed from the Mac, and trashes a file deleted for real only once the person says so`.
+
+### `folder-files/missing-file-held-keep`
+
+When the person keeps a held file with `folders held --keep` or a binding's `keep_held`, a device MUST NOT queue deletion of its item.
+
+**Reason:** the folder's binding and placement of the file end instead, so the item stays in Marfa as it is, wherever its file went. While the folder's query holds the item, a later pull writes its file again, as it does for any item the folder holds without a file; `--write-back` does so at once.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a file moved to another folder that lets it go when its item is archived, until the person keeps its item`, `device/folders-one-mac.test.ts › holds a file item moved to another folder that then saves new bytes over it, until the person keeps its item`, `device/folders-one-mac.test.ts › holds a note moved to another folder by copy and delete when that folder's query comes to hold it, until the person keeps its item`, `device/folders-one-mac.test.ts › holds a file an earlier release took into another folder that then takes it away when its item is archived, until the person keeps its item`.
+
+### `folder-files/missing-file-held-write-back`
+
+When the person keeps a held file with `--write-back`, the folder's query holds its item and no other item's file stands at the held path, a device MUST write the item's file again at the held path.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a file moved to another folder whose unmatched files are then removed, until the person keeps its item and writes it back`, `device/folders-one-mac.test.ts › holds files deleted while another folder could not be read, and writes back the items another device changed once the person keeps them`, `cli/folder.test.ts › holds the original item of a new note moved to another folder before its ID line, where the file showed less than the item holds, and writes it back once the person keeps it (%s)`.
+
+### `folder-files/missing-file-held-settled`
+
+When the person settles a held file and the device queues its item's deletion, finds it moved, finds its item gone, ends the folder's binding of the file, or records the file to be written back, a device MUST stop holding it.
+
+**Reason:** `folders held` no longer lists it, and no later scan decides it again. A keep ends the hold in the same step that ends the binding or records the write-back, so a failure between them leaves the file held rather than neither held nor kept.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a file moved to another folder that lets it go when its item is archived, until the person keeps its item`, `device/folders-one-mac.test.ts › holds a file moved to another folder that is then removed from the Mac, and trashes a file deleted for real only once the person says so`, `device/folder-health.test.ts › shows a held delete as held and counts it as a held file until the person settles it`.
+
+### `folder-files/missing-file-held-unsettled`
+
+When the person settles a held file and the device does none of what `folder-files/missing-file-held-settled` lists, because a file is at its path again, another item's file stands where `--write-back` would write, or its item changed while the device decided, a device MUST keep holding the file and name it in `not_settled` with why.
+
+**Reason:** the person's answer could not be carried out as given, so the file waits on them still, and `folders held` shows it until it is settled.
+
+**Tests:** `device/folder-health.test.ts › shows a held delete whose path another note's file took as held, and keeps the hold when that file stops its write-back`.
 
 ### `folder-files/missing-file-carried`
 
@@ -2198,17 +2318,23 @@ When no file in the directory carries a missing file's identity or the ID of its
 
 ### `folder-files/missing-file-changed-revives`
 
-When a device finds a missing file in no other registered directory past its rename grace, or on confirming its paused removal, and another device has changed the file's item in content the file showed while the folder's query still holds the item, a device MUST restore the file from the changed item.
+When a sweep past a missing file's rename grace, or the confirm of its paused removal, would queue deletion of its item under `folder-files/missing-file-trashed`, and another device has changed the file's item in content the file showed while the folder's query still holds the item, a device MUST restore the file from the changed item.
 
-**Reason:** The change is newer than the person's deletion, which no other device has heard of yet, so it wins as it does inside the grace (`folder-files/delete-remote-revives`). A pull writes no file back while its move cannot be told (`folder-files/uncertain-move-no-replacement`), so a change made inside the grace may show only once the move is told. The device tells the change from its working copy alone, with no server and no held bytes, so a scan that reaches no server decides it too: a file item by whether its item still names the blob the folder last wrote or sent the file as, and a document by whether its item still shows what the folder last agreed. It decides on everything it read of the item, its version, tags and edges, and queues the deletion only while the working copy still holds exactly that, so a change heard while it decides is decided again rather than trashed with it.
+**Reason:** The change is newer than the person's deletion, which no other device has heard of yet, so it wins as it does inside the grace (`folder-files/delete-remote-revives`). A change heard without a pull, or while the move could not be told, shows only once the sweep decides. A file the device holds is settled by the person instead (`folder-files/missing-file-held-write-back`), and one the person trashes goes to the bin with the change, which the bin keeps. The device tells the change from its working copy alone, with no server and no held bytes, so a scan that reaches no server decides it too: a file item by whether its item still names the blob the folder last wrote or sent the file as, and a document by whether its item still shows what the folder last agreed. It decides on everything it read of the item, its version, tags and edges, and queues the deletion only while the working copy still holds exactly that, so a change heard while it decides is decided again rather than trashed with it.
 
-**Tests:** `device/folders-one-mac.test.ts › writes back a file deleted while another folder could not be read, once that folder holds no copy, when another device changed its item inside the grace`, `device/folders-one-mac.test.ts › trashes no item of a confirmed removal that another device changed since its file went, and writes the file back`.
+**Tests:** `device/folders-one-mac.test.ts › writes back a note deleted past the grace whose item another device changed, where the Mac has no other folder`, `device/folders-one-mac.test.ts › trashes no item of a confirmed removal that another device changed since its file went, and writes the file back`.
 
 ### `folder-files/missing-file-said`
 
-When a missing file is trashed after no other directory holds it, the CLI MUST say that no directory on the machine holds the file.
+When a scan queues deletion of a missing file's item under `folder-files/missing-file-trashed`, the CLI MUST say that no directory on the machine holds the file.
 
-**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a deleted note's item where the Mac has no other folder, and says so`.
+
+### `folder-files/missing-file-held-said`
+
+When a scan holds a missing file under `folder-files/missing-file-held`, the CLI MUST say that the file's deletion is on hold, why, and that `folders held` settles it.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a missing note found in no folder on the Mac while another folder is on it, and says why`.
 
 ### `folder-files/uncertain-move-deferred`
 
@@ -2266,17 +2392,17 @@ When the machine's folder registry lists, at another directory, the store that a
 
 While a missing file could be in unreadable registered directories or among several files elsewhere with its bytes, a device MUST NOT write the file again.
 
-**Reason:** written again here, the moved file would read as a copy there and become a new item. Within the rename grace, the grace sweep then tells a move from a deletion (`folder-files/uncertain-move-deferred`, `folder-files/missing-file-trashed`), and a pass looks for the file again (`folder-files/kept-file-looked-again`). A file found nowhere whose item changed elsewhere comes back then (`folder-files/missing-file-changed-revives`).
+**Reason:** written again here, the moved file would read as a copy there and become a new item. Within the rename grace, the grace sweep then tells a move from a deletion (`folder-files/uncertain-move-deferred`, `folder-files/missing-file-trashed`). Past it, a file the device still cannot place is held for the person (`folder-files/missing-file-held`), who writes it back with `folders held --keep --write-back` (`folder-files/missing-file-held-write-back`).
 
 **Tests:** `device/folders-one-mac.test.ts › writes no file back for a held delete when another device changes its item`, `device/folders-one-mac.test.ts › writes back no file moved to a folder it cannot read when another device changes its item inside the grace`.
 
 ### `folder-files/kept-file-looked-again`
 
-While a folder watch keeps a missing file's binding past the rename grace because it cannot tell where the file went, or because another directory has yet to take it, a device MUST look for the file in the other registered directories again no later than one minute after its last look, whatever the folder's full-pass interval.
+While a folder watch keeps a missing file's binding past the rename grace because another directory has yet to take the file, a device MUST look for the file in the other registered directories again no later than one minute after its last look, whatever the folder's full-pass interval.
 
-**Reason:** a delete or a move whose direction was uncertain waited for the next full pass, which is ten minutes by default. Looking walks every other registered directory, so a quick pass looks only once a minute and a watch at rest wakes for it then, where a look at every pass would walk them each time.
+**Reason:** a move waited for the next full pass, which is ten minutes by default. Looking walks every other registered directory, so a quick pass looks only once a minute and a watch at rest wakes for it then, where a look at every pass would walk them each time. A file the device holds is not looked for again, since only the person settles it (`folder-files/missing-file-held-stays`).
 
-**Tests:** `device/binding-folders-clock.test.ts › decides a delete it could not tell from a move in a quick pass once the registry can be read, with no full pass`.
+**Tests:** `device/binding-folders-clock.test.ts › releases a file another folder has yet to take within a minute of that folder taking it, with no full pass`.
 
 ### `folder-files/uncertain-move-not-text`
 
@@ -2284,7 +2410,7 @@ When another registered directory holds a file whose bytes can be read but are n
 
 **Reason:** The file is held on its own (`folder-documents/unreadable-no-write`), so it is no doubt about where another directory's missing file went, and a deletion of a missing file that waited on it would wait for as long as the file stays.
 
-**Tests:** `device/folders-one-mac.test.ts › confirms a large removal while another folder holds files that are not text`, `device/folders-one-mac.test.ts › holds a file that is not text on its own, and takes it in once it can be read`.
+**Tests:** `device/folders-one-mac.test.ts › finds a confirmed removal's moved files while another folder holds files that are not text, and holds the rest`, `device/folders-one-mac.test.ts › holds a file that is not text on its own, and takes it in once it can be read`.
 
 ### `folder-files/moved-arrival-bytes`
 
@@ -2292,7 +2418,7 @@ When a file that carries no ID arrives from another directory whose missing-file
 
 **Reason:** a file item's file carries nothing that names its item, so only the other directory's binding can, whatever the file's name. A pull can place a file item at a document name (`.md`, `.markdown` or `.txt`).
 
-**Tests:** `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
+**Tests:** `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and holds one found in no folder until the person trashes it`.
 
 ### `folder-files/moved-arrival-text-note`
 
@@ -2306,25 +2432,9 @@ When a file at a name other than `.md` or `.markdown` (in any letter case) arriv
 
 When a file at a `.md` or `.markdown` name (in any letter case) that carries no ID arrives from another directory, where the file it left was a note bound by identity or bytes or a new note whose ID line was never written, a device MUST admit the arriving file as a new item.
 
-**Reason:** a note's Markdown file carries its ID line, so a Markdown file without one is not that note's file. A `.txt` note moved to another directory as `.md` is a new item there. A new note moved before its ID line is written has no item bound to it, and the directory it left cannot name an item the arriving file belongs to, so the receiving directory admits it with every edit made before and after the move. What the directory it left does with the original item is stated apart (`folder-files/moved-new-note-original-trashed`, `folder-files/moved-new-note-original-written-back`). Every way tried to bind a file that has no ID line yet opened a worse failure than this second item.
+**Reason:** a note's Markdown file carries its ID line, so a Markdown file without one is not that note's file. A `.txt` note moved to another directory as `.md` is a new item there. A new note moved before its ID line is written has no item bound to it, and the directory it left cannot name an item the arriving file belongs to, so the receiving directory admits it with every edit made before and after the move. The directory it left holds the original item for the person, since the file never carried its ID line (`folder-files/missing-file-held`): `--trash` sends it to the bin, and `--keep --write-back` writes its file again, so both directories hold both items. Every way tried to bind a file that has no ID line yet opened a worse failure than this second item.
 
 **Tests:** `device/folders-one-mac.test.ts › makes a new item of a text note moved to another folder as Markdown, and keeps its words`, `device/folders-one-mac.test.ts › makes a second item of a new note moved before its id line is written, and keeps its edits`.
-
-### `folder-files/moved-new-note-original-trashed`
-
-When a directory has sent a new note as an item but has not written the file's ID line, the file moves to another registered directory, the directory it left finds the file in no directory past its deletion grace, and the item, rendered, holds nothing the file did not show, a device MUST queue deletion of the item in the directory it left.
-
-**Reason:** the receiving directory admits the moved file as a new item (`folder-files/moved-arrival-markdown-new`), and no file carries the original's ID line except the receiving folder's own write of it, so the missing file is a deletion of what it showed (`folder-files/missing-file-trashed`). The original's words are in the new item. A file that begins with a header showing the properties the item holds, such as its `title`, shows all of it.
-
-**Tests:** `cli/folder.test.ts › trashes the original item of a new note moved to another folder before its ID line, where the file showed what the item holds`.
-
-### `folder-files/moved-new-note-original-written-back`
-
-When a directory has sent a new note as an item but has not written the file's ID line, the file moves to another registered directory, the directory it left finds the file in no directory, and the item, rendered, holds a property the file did not show, a device MUST write the item's file again in the directory it left.
-
-**Reason:** the receiving directory admits the moved file as a new item (`folder-files/moved-arrival-markdown-new`), so the missing file is read as the file of an item that holds more than it showed (`folder-files/missing-file-changed-revives`), not as a deletion of what the file showed. A file with a heading or plain text shows no `title`, and the item holds one the directory took from the file. Both directories then hold both items, each with the words it was sent with.
-
-**Tests:** `cli/folder.test.ts › writes back the original item of a new note moved to another folder before its ID line, where the file showed less than the item holds (%s)`.
 
 ### `folder-files/moved-file-item-bytes`
 
@@ -2332,7 +2442,7 @@ When a file item's missing file has unambiguous bytes in a file that carries no 
 
 **Reason:** the directory that file is in takes it as the file item by those bytes (`folder-files/moved-arrival-bytes`), so a delete would trash the item that directory now holds. A note's missing Markdown file is still found only by its identity or its ID line.
 
-**Tests:** `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
+**Tests:** `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and holds one found in no folder until the person trashes it`.
 
 ### `folder-files/moved-binding-kept`
 
@@ -2498,6 +2608,8 @@ When two folder queries hold one item, a device MUST keep each directory’s bou
 
 ### `folder-files/item-in-folders-delete`
 
-When the person deletes either of two files whose folders both hold the item, a device MUST trash the item after the deletion grace rather than treat the other directory’s file as a move.
+When the person deletes either of two files whose folders both hold the item, a device MUST NOT take the other directory’s file as the deleted file’s move.
 
-**Tests:** `device/folders-one-mac.test.ts › keeps two folders' files for one item editable`, `device/folders-one-mac.test.ts › trashes a file item deleted where both folders hold it`.
+**Reason:** each folder holds its own file of the item, so the other file is not this one moved. The other folder’s copy holds the item, so the device cannot tell the delete from a move into a folder that later lets the file go, and holds it for the person (`folder-files/missing-file-held`).
+
+**Tests:** `device/folders-one-mac.test.ts › keeps two folders' files for one item editable`, `device/folders-one-mac.test.ts › holds a file item deleted where both folders hold it, and trashes it once the person says so`.

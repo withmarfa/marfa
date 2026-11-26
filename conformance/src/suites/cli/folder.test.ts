@@ -1821,33 +1821,62 @@ describe("a folder round trip", () => {
     await sync(reached.folder);
     await sync(left.folder);
 
-    const items = await notesWith(word, since);
-    const fresh = items.filter((item) =>
-      String(item.properties.body).includes("Added after the move"),
-    );
-    const original = items.filter((item) => !fresh.includes(item));
-    expect(fresh, "the moved file was not made one new item").toHaveLength(1);
-    expect(original, "the sent note is not one item").toHaveLength(1);
-    expect(String(fresh[0]!.properties.body)).toContain(word);
+    const items = async () => {
+      const found = await notesWith(word, since);
+      const fresh = found.filter((item) =>
+        String(item.properties.body).includes("Added after the move"),
+      );
+      const original = found.filter((item) => !fresh.includes(item));
+      expect(fresh, "the moved file was not made one new item").toHaveLength(1);
+      expect(original, "the sent note is not one item").toHaveLength(1);
+      expect(String(fresh[0]!.properties.body)).toContain(word);
+      return { original: original[0]!, fresh: fresh[0]! };
+    };
+    const held = await c.cli.json<{ held: Array<{ path: string }> }>([
+      "folders",
+      "held",
+      left.folder,
+    ]);
     return {
       left: left.folder,
       reached: reached.folder,
-      original: original[0]!,
-      fresh: fresh[0]!,
+      ...(await items()),
+      items,
       trashed: passes.flatMap((pass) => pass.scan.trashed),
+      held: held.held.map((file) => file.path),
     };
   }
 
-  it("trashes the original item of a new note moved to another folder before its ID line, where the file showed what the item holds", async () => {
+  /** What `folders held --trash` or `--keep` settled. */
+  async function settleHeld(
+    folder: string,
+    settle: string[],
+  ): Promise<{ trashed: string[]; kept: string[]; written_back: string[] }> {
+    return c.cli.json(["folders", "held", folder, ...settle]);
+  }
+
+  it("holds the original item of a new note moved to another folder before its ID line, and trashes it once the person says so", async () => {
     await onOwnRegistry(async () => {
       const word = unique("moved-header");
       const made = await movedBeforeItsId(
         `---\ntitle: Fresh\n---\n${word}\n`,
         word,
       );
-      expect(made.trashed).toEqual(["Fresh.md"]);
-      expect(made.original.state).toBe("trashed");
-      expect(made.fresh.state).toBe("active");
+      expect(made.trashed).toEqual([]);
+      expect(made.held).toEqual(["Fresh.md"]);
+      expect(made.original.state).toBe("active");
+      const settled = await settleHeld(made.left, [
+        "--trash",
+        "Fresh.md",
+        "--yes",
+      ]);
+      expect(settled.trashed).toEqual(["Fresh.md"]);
+      for (const folder of [made.left, made.reached, made.left]) {
+        await sync(folder);
+      }
+      const after = await made.items();
+      expect(after.original.state).toBe("trashed");
+      expect(after.fresh.state).toBe("active");
       for (const folder of [made.left, made.reached]) {
         expect(
           Object.keys(filesHolding(folder, word)),
@@ -1861,7 +1890,7 @@ describe("a folder round trip", () => {
   });
 
   it.each(["a heading", "no header"])(
-    "writes back the original item of a new note moved to another folder before its ID line, where the file showed less than the item holds (%s)",
+    "holds the original item of a new note moved to another folder before its ID line, where the file showed less than the item holds, and writes it back once the person keeps it (%s)",
     async (shape) => {
       await onOwnRegistry(async () => {
         const word = unique("moved-bare");
@@ -1870,9 +1899,17 @@ describe("a folder round trip", () => {
           word,
         );
         expect(made.trashed).toEqual([]);
+        expect(made.held).toEqual(["Fresh.md"]);
         expect(made.original.state).toBe("active");
         expect(made.fresh.state).toBe("active");
         expect(String(made.original.properties.body)).not.toContain("Added");
+        const settled = await settleHeld(made.left, [
+          "--keep",
+          "Fresh.md",
+          "--write-back",
+        ]);
+        expect(settled.written_back).toEqual(["Fresh.md"]);
+        for (const folder of [made.reached, made.left]) await sync(folder);
         for (const folder of [made.left, made.reached]) {
           const held = filesHolding(folder, word);
           expect(
@@ -1885,6 +1922,74 @@ describe("a folder round trip", () => {
       });
     },
   );
+
+  it("holds a note moved to another folder and saved there without its ID line, and once the person trashes it keeps the file there and the item's history in the bin", async () => {
+    await onOwnRegistry(async () => {
+      const since = new Date().toISOString();
+      const left = await follow("rewritten-from", { types: ["core.note"] });
+      const reached = await follow("rewritten-to", {
+        types: ["core.note"],
+        filter: `tags contains "${unique("elsewhere")}"`,
+      });
+      const word = unique("rewritten");
+      const path = join(left.folder, "Plan.md");
+      writeFileSync(path, `---\ntitle: Plan\n---\n${word}\n`);
+      await sync(left.folder);
+      const id = /^marfa_id: (.+)$/m
+        .exec(readFileSync(path, "utf8"))?.[1]
+        ?.trim();
+      expect(id, "the folder wrote no ID line").toBeDefined();
+      trackItem(c.ctx, id!);
+      appendFileSync(path, "Second draft\n");
+      await sync(left.folder);
+      const before = await c.cli.json<ItemEnvelope>(["items", "get", id!]);
+      expect(before.item.version).toBe(2);
+
+      // An editor's replacement save changes the inode before either folder scans.
+      const rewritten = `---\ntitle: Plan\n---\n${word}\nSecond draft\nRewritten there\n`;
+      writeFileSync(join(reached.folder, "Plan.md"), rewritten);
+      rmSync(path);
+      await sync(reached.folder);
+      await sync(left.folder);
+      await pastTheGrace();
+      await sync(reached.folder);
+      const swept = await sync(left.folder);
+      expect(swept.scan.trashed).toEqual([]);
+      expect(swept.scan.unsure.map((file) => file.path)).toEqual(["Plan.md"]);
+      const still = await c.cli.json<ItemEnvelope>(["items", "get", id!]);
+      expect(still.item.state).toBe("active");
+      const settled = await settleHeld(left.folder, [
+        "--trash",
+        "Plan.md",
+        "--yes",
+      ]);
+      expect(settled.trashed).toEqual(["Plan.md"]);
+      await sync(left.folder);
+
+      expect(
+        readFileSync(join(reached.folder, "Plan.md"), "utf8"),
+        "the file the person saved in the other folder was changed or removed",
+      ).toContain("Rewritten there\n");
+      const fresh = (await notesWith(word, since)).filter((item) =>
+        String(item.properties.body).includes("Rewritten there"),
+      );
+      expect(fresh, "the saved file did not become a new item").toHaveLength(1);
+      const binned = await c.cli.json<ItemEnvelope>(["items", "get", id!]);
+      expect(binned.item.state).toBe("trashed");
+
+      await c.cli.json(["items", "restore", id!]);
+      const back = await c.cli.json<ItemEnvelope>(["items", "get", id!]);
+      expect(back.item.state).toBe("active");
+      expect(back.item.properties.body).toBe(before.item.properties.body);
+      const versions = await c.cli.json<{
+        data: Array<{ version: number; properties: { body?: string } }>;
+      }>(["items", "versions", id!]);
+      expect(versions.data[0]).toMatchObject({
+        version: 1,
+        properties: { body: `${word}\n` },
+      });
+    });
+  });
 
   it.each(["a tag", "its state"])(
     "keeps a note's file in the folder it was moved into when that folder's query leaves the note out by %s, and the folder it left writes its file again",
@@ -1934,7 +2039,14 @@ describe("a folder round trip", () => {
         await sync(reached.folder);
         const swept = await sync(left.folder);
 
-        expect(swept.scan.trashed).toEqual(["Gone.md"]);
+        // Another folder is on the computer, so the deleted note is held.
+        expect(swept.scan.trashed).toEqual([]);
+        expect(swept.scan.unsure.map((file) => file.path)).toEqual(["Gone.md"]);
+        expect(
+          (await settleHeld(left.folder, ["--trash", "Gone.md", "--yes"]))
+            .trashed,
+        ).toEqual(["Gone.md"]);
+        await sync(left.folder);
         expect(
           swept.pull.written,
           "the folder the file left wrote no file of the note it holds",

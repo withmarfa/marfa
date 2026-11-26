@@ -368,14 +368,11 @@ impl Folder {
                 continue;
             }
             let at = Some(bound.item_id.as_str());
-            files.push(if !lists.takes(&bound.path) {
+            files.push(if let Some(reason) = unsure.get(bound.path.as_str()) {
+                FileStatus::new(&bound.path, at, "held").because("unsure", *reason)
+            } else if !lists.takes(&bound.path) {
                 FileStatus::new(&bound.path, at, "unreached")
                     .because("lists", "the folder's lists no longer take it, so it is held rather than deleted")
-            } else if let Some(reason) = unsure
-                .get(bound.path.as_str())
-                .filter(|_| !disk.contains(&bound.path))
-            {
-                FileStatus::new(&bound.path, at, "held").because("unsure", *reason)
             } else if let Some(dir) = walked.directories.iter().find(|dir| {
                 dir.path.is_empty()
                     || bound
@@ -413,6 +410,20 @@ impl Folder {
                     ..FileStatus::new(&bound.path, at, "waiting")
                 }
             });
+        }
+        // A hold whose path another item, or no item, now holds still waits
+        // for the person.
+        for row in &journaled {
+            if let Some(state::Kept::Unsure(reason)) = &row.kept
+                && by_path
+                    .get(row.path.as_str())
+                    .is_none_or(|bound| bound.item_id != row.item_id)
+            {
+                files.push(
+                    FileStatus::new(&row.path, Some(&row.item_id), "held")
+                        .because("unsure", reason.clone()),
+                );
+            }
         }
         if let Some(reads) = reads {
             reads.finish(self, &walked);

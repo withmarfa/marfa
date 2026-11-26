@@ -72,6 +72,8 @@ const tight = {
   query: { types: ["core.note"] },
   removal_threshold: { files: 2, fraction: 0.25 },
 };
+/** Past the rename grace, which a confirm waits out too (`folder-files/delete-grace`). */
+const pastTheGrace = () => new Promise((resolve) => setTimeout(resolve, 6_000));
 
 async function departing(
   label: string,
@@ -670,6 +672,7 @@ it("does not confirm a paused deletion for a file put back since the pause", asy
   const paused = await harness.folder.scan();
   expect(paused.ok && paused.value.paused).toBe(3);
   writeFileSync(join(harness.dir, "Note 0.md"), original);
+  await pastTheGrace();
   const confirmed = await harness.folder.confirm();
   expect(confirmed.ok && confirmed.value.deleted).toBe(2);
   const queued = await harness.folder.device().queue();
@@ -698,6 +701,7 @@ it("keeps the item of a paused removal's file that returned under another name",
   const paused = await harness.folder.scan();
   expect(paused.ok && paused.value.paused).toBe(3);
   renameSync(join(away, "Note 0.md"), join(harness.dir, "moved.md"));
+  await pastTheGrace();
   const confirmed = await harness.folder.confirm();
   // The two files gone under every name are the witness that the
   // confirmation lets go of what it proves gone.
@@ -735,6 +739,7 @@ it("keeps the item of a paused removal's file that returned under a name another
   expect(paused.ok && paused.value.paused).toBe(3);
   // `Note 3.md` holds the name, so the returned file is held, not read.
   renameSync(join(away, "Note 0.md"), join(harness.dir, "note 3.md"));
+  await pastTheGrace();
   const confirmed = await harness.folder.confirm();
   // The two files gone under every name are the witness.
   expect(confirmed.ok && confirmed.value.deleted).toBe(2);
@@ -768,6 +773,7 @@ it("keeps the item of a paused removal's file that returned under a name the fol
   const paused = await harness.folder.scan();
   expect(paused.ok && paused.value.paused).toBe(3);
   renameSync(join(away, "Note 0.md"), join(harness.dir, "Note 0.bin"));
+  await pastTheGrace();
   const confirmed = await harness.folder.confirm();
   expect(confirmed.ok && confirmed.value.deleted).toBe(2);
   const queued = await harness.folder.device().queue();
@@ -1283,6 +1289,7 @@ it("keeps a paused removal unsure while part of the folder cannot be read", asyn
   }
   const rescanned = await harness.folder.scan();
   expect(rescanned.ok && rescanned.value.paused).toBe(3);
+  await pastTheGrace();
   const released = await harness.folder.confirm();
   expect(released.ok && released.value.deleted).toBe(3);
 });
@@ -1331,11 +1338,16 @@ it("keeps a paused removal unsure while a missing file's path cannot be read", a
     chmodSync(sub, 0o700);
   }
   // The witness: once the path can be read, the file back in it keeps its
-  // item and the three gone under every name are let go.
+  // item, and the three gone under every name stay held until the person
+  // trashes them.
   const rescanned = await harness.folder.scan();
-  expect(rescanned.ok && rescanned.value.paused).toBe(3);
-  const released = await harness.folder.confirm();
-  expect(released.ok && released.value.deleted).toBe(3);
+  expect(rescanned.ok, JSON.stringify(rescanned)).toBe(true);
+  expect(rescanned.ok && rescanned.value.trashed).toEqual([]);
+  const gone = ["sub/Note 1.md", "sub/Note 2.md", "sub/Note 3.md"];
+  const held = await harness.folder.held();
+  expect(held.ok && held.value.held.map((f) => f.path).sort()).toEqual(gone);
+  const released = await harness.folder.trashHeld(gone);
+  expect(released.ok && released.value.trashed.sort()).toEqual(gone);
   const status = await harness.folder.status();
   expect(
     status.ok &&
@@ -1497,6 +1509,7 @@ it("keeps confirmed missing files unsure while another registered folder is unav
   for (const n of [0, 1, 2]) rmSync(join(harness.dir, `Note ${String(n)}.md`));
   const paused = await harness.folder.scan();
   expect(paused.ok && paused.value.paused).toBe(3);
+  await pastTheGrace();
   const away = second.dir + "-away";
   renameSync(second.dir, away);
   try {
@@ -1517,14 +1530,33 @@ it("keeps confirmed missing files unsure while another registered folder is unav
   } finally {
     renameSync(away, second.dir);
   }
-  const confirmed = await harness.folder.confirm();
-  expect(confirmed.ok).toBe(true);
-  // Once the folder can be checked, ordinary scans can settle the deletion.
-  await new Promise((resolve) => setTimeout(resolve, 6000));
   const rescanned = await harness.folder.scan();
-  expect(rescanned.ok && rescanned.value.paused).toBe(3);
-  const released = await harness.folder.confirm();
-  expect(released.ok && released.value.deleted).toBe(3);
+  expect(rescanned.ok && rescanned.value.paused).toBe(0);
+  expect(rescanned.ok && rescanned.value.trashed).toEqual([]);
+  const held = await harness.folder.held();
+  expect(held.ok && held.value.held.map((f) => f.path).sort()).toEqual([
+    "Note 0.md",
+    "Note 1.md",
+    "Note 2.md",
+  ]);
+  const before = await harness.folder.device().queue();
+  expect(
+    before.ok && before.value.filter((r) => r.kind === "delete_item"),
+  ).toEqual([]);
+  const trashed = await harness.folder.trashHeld([
+    "Note 0.md",
+    "Note 1.md",
+    "Note 2.md",
+  ]);
+  expect(trashed.ok && trashed.value.trashed.sort()).toEqual([
+    "Note 0.md",
+    "Note 1.md",
+    "Note 2.md",
+  ]);
+  const queued = await harness.folder.device().queue();
+  expect(
+    queued.ok && queued.value.filter((r) => r.kind === "delete_item"),
+  ).toHaveLength(3);
 });
 
 it("registers the resolved directory, followed folder and store identity", async () => {

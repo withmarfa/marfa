@@ -951,6 +951,7 @@ impl Folder {
                 .as_ref()
                 .and_then(identity::of)
                 .map(|found| found.key()),
+            linked: metadata.as_ref().is_some_and(identity::hard_linked),
             born: metadata.as_ref().and_then(identity::born),
             id: file.id.clone(),
             line: file.line,
@@ -1107,7 +1108,7 @@ impl Folder {
             &state::Bound {
                 path: file.key.clone(),
                 item_id: item_id.to_string(),
-                identity: file.mark.clone(),
+                identity: file.recorded_mark(),
                 content_hash: file.hash.clone(),
                 presentation: (file.unreadable.is_none() && !kept.bytes).then(|| {
                     let presentation = file.document().presentation();

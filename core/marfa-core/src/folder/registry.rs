@@ -823,7 +823,7 @@ fn existing_prefix_resolved(path: &Path) -> PathBuf {
 
 /// The identity of the directory `root` holds open, as an entry records it.
 /// `None` where the file system keeps no birth time, which admission refuses.
-fn root_identity(root: &Directory) -> Option<String> {
+pub(super) fn root_identity(root: &Directory) -> Option<String> {
     super::identity::of(&root.metadata().ok()?).map(|identity| identity.key())
 }
 
