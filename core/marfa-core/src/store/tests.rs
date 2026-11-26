@@ -3,7 +3,7 @@ use std::path::Path;
 
 use super::dead::{DeadEffect, effect_key, remaining_dead_fields};
 use super::forget::read_of_row_owed_elsewhere;
-use super::open::{OLDEST_UPGRADED, UPGRADES, make, statement, upgrade};
+use super::open::{OLDEST_UPGRADED, UPGRADES, Upgrade, make, statement, upgrade};
 use super::queue::{QUEUE_COLUMNS, waiting_writes_for_edge};
 use super::reads::tags_for;
 use super::*;

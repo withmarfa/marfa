@@ -258,6 +258,9 @@ pub struct Folder {
     unwatched: std::sync::atomic::AtomicUsize,
     /// Why the store this open found was refused, where the open replaced it.
     replaced: Option<String>,
+    /// Why the folder's directory is not shown to be the one its store's
+    /// records were made in, or `None` where it is.
+    root_proof: std::sync::OnceLock<Option<String>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -540,8 +543,10 @@ impl Folder {
             inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
             unwatched: std::sync::atomic::AtomicUsize::new(0),
+            root_proof: std::sync::OnceLock::new(),
             replaced: None,
         };
+        added.root_unproved();
         let row = added.row_on_server()?;
         // The catalog the hydration would read, so a default type the
         // query does not hold is refused before anything is bound.
@@ -653,7 +658,7 @@ impl Folder {
         )?;
         let core = working(core)?;
         let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
-        Ok(Folder {
+        let opened = Folder {
             root,
             root_dir,
             store_mark: state_dir
@@ -677,8 +682,12 @@ impl Folder {
             inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
             unwatched: std::sync::atomic::AtomicUsize::new(0),
+            root_proof: std::sync::OnceLock::new(),
             replaced,
-        })
+        };
+        // Recorded, or checked, before any pass can depend on it.
+        opened.root_unproved();
+        Ok(opened)
     }
 
     /// Why the store this open found was refused, where the open replaced
@@ -717,7 +726,7 @@ impl Folder {
             .map_err(|_| not_a_folder(&root))?;
         let core = Core::read_directory(&state_dir, &state.join("core.sqlite"))?;
         let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
-        Ok(Folder {
+        let read = Folder {
             root,
             root_dir,
             store_mark: state_dir
@@ -741,8 +750,11 @@ impl Folder {
             inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
             unwatched: std::sync::atomic::AtomicUsize::new(0),
+            root_proof: std::sync::OnceLock::new(),
             replaced: None,
-        })
+        };
+        read.root_unproved();
+        Ok(read)
     }
 
     /// Answers whether the directory was listed.
@@ -1440,7 +1452,7 @@ impl landing::Ledger for Rows<'_> {
         let discarding = state::Discarding {
             id: retained.id.clone(),
             aside: self.aside.clone(),
-            aside_at,
+            aside_at: Some(aside_at),
             kept: retained.kept.clone(),
             private: private.to_string_lossy().into_owned(),
             from: joined(&self.dir, &retained.target),
@@ -1881,7 +1893,10 @@ impl Folder {
                         retained::retained_reason(&joined(&row.dir, &retained.target), retained),
                     )
                 }
-                Err(row) => (joined(&row.aside, &row.kept), retained::UNREAD.into()),
+                Err(row) => (
+                    joined(row.aside.as_deref().unwrap_or_default(), &row.kept),
+                    retained::UNREAD.into(),
+                ),
             })
             .collect()
     }
@@ -2006,6 +2021,54 @@ impl Folder {
             self.root_dir.child(below, true)?;
         }
         Ok(())
+    }
+}
+
+/// The folder's directory as its store first found it, which shows a store
+/// copied or restored into another directory is not where its records of
+/// stopped removals and discards were made.
+const ROOT_AT: &str = "folder_root_at";
+
+const ROOT_UNTOLD: &str = "the file system keeps no birth time for the folder's directory, so Marfa cannot tell it is the directory the record was made in";
+
+const ROOT_OTHER: &str = "the folder's directory is not the one its store was made in, as when the store was copied or restored into another directory, so the file may be in the original";
+
+impl Folder {
+    /// Why the folder's directory is not shown to be the one its store's
+    /// records were made in, or `None` where it is. A writer records the
+    /// directory where none is recorded, and again where it differs and no
+    /// record could depend on it.
+    pub(super) fn root_unproved(&self) -> Option<String> {
+        self.root_proof
+            .get_or_init(|| {
+                self.root_checked().unwrap_or_else(|error| {
+                    Some(format!(
+                        "Marfa cannot check the folder's directory: {error}"
+                    ))
+                })
+            })
+            .clone()
+    }
+
+    fn root_checked(&self) -> Result<Option<String>> {
+        let found = identity::Seen::of(&self.root_dir.metadata().map_err(io_error)?);
+        let conn = self.core.conn()?;
+        let recorded: Option<identity::Seen> = crate::store::meta_get(&conn, ROOT_AT)?
+            .and_then(|value| serde_json::from_str(&value).ok());
+        let differs = match recorded.map(|recorded| recorded.compare(&found)) {
+            Some(identity::Compared::Same) => return Ok(None),
+            Some(identity::Compared::Weaker) => Some(ROOT_UNTOLD),
+            Some(identity::Compared::Other) => Some(ROOT_OTHER),
+            None => None,
+        };
+        let writer = self.core.handle() == crate::lock::Handle::Writer;
+        if writer && (recorded.is_none() || !state::any_recovery_record(&conn)?) {
+            let value = serde_json::to_string(&found)
+                .map_err(|error| CoreError::Store(error.to_string()))?;
+            crate::store::meta_set(&conn, ROOT_AT, &value)?;
+            return Ok(found.born.is_none().then(|| ROOT_UNTOLD.to_string()));
+        }
+        Ok(differs.map(str::to_string))
     }
 }
 
@@ -7713,7 +7776,9 @@ mod tests {
         let listed = folder.unmatched_files().unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].kept, None, "{listed:?}");
-        let done = folder.remove_unmatched(&["new.md".to_string()]).unwrap();
+        let done = folder
+            .remove_unmatched(&["new.md".to_string()], false)
+            .unwrap();
         assert_eq!(done.removed.len(), 1, "{done:?}");
         assert!(done.kept.is_empty(), "{done:?}");
         assert!(!dir.path().join("new.md").exists());
@@ -7740,7 +7805,9 @@ mod tests {
             "---\nstate: archived\n---\nedited\n",
         )
         .unwrap();
-        let done = folder.remove_unmatched(&["new.md".to_string()]).unwrap();
+        let done = folder
+            .remove_unmatched(&["new.md".to_string()], false)
+            .unwrap();
         assert!(done.removed.is_empty(), "{done:?}");
         assert_eq!(done.kept.len(), 1, "{done:?}");
         assert!(dir.path().join("new.md").exists());
@@ -8517,7 +8584,7 @@ mod tests {
             ("out.md", true)
         );
         assert!(listed[0].held.is_some() && listed[0].kept.is_none());
-        let removed = folder.remove_unmatched(&["out.md".into()]).unwrap();
+        let removed = folder.remove_unmatched(&["out.md".into()], false).unwrap();
         assert!(removed.removed.is_empty(), "{removed:?}");
         assert!(dir.path().join("out.md").is_file());
 

@@ -12,15 +12,25 @@ use std::path::Path;
 
 pub const SCHEMA: &str = include_str!("../schema.sql");
 
-/// SQLite's `user_version`; a shape change increments it, appends to `SHAPES`
-/// and appends its step to `UPGRADES`.
-pub const SCHEMA_VERSION: i64 = 12;
+/// SQLite's `user_version`; a change to the shape or to what a row holds
+/// increments it, appends to `SHAPES` and appends its step to `UPGRADES`.
+pub const SCHEMA_VERSION: i64 = 13;
 
 /// The oldest version a writer upgrades in place; it refuses an older store.
 pub(super) const OLDEST_UPGRADED: i64 = 11;
 
-/// One SQL step per version, starting at `OLDEST_UPGRADED`.
-pub(super) const UPGRADES: &[&str] = &[JOURNAL_BY_ITEM];
+/// One step per version, starting at `OLDEST_UPGRADED`.
+pub(super) const UPGRADES: &[Upgrade] = &[
+    Upgrade::Sql(JOURNAL_BY_ITEM),
+    Upgrade::Rows(crate::folder::state::recovery_records_upgraded),
+];
+
+/// What moves a store from one version to the next.
+pub(super) enum Upgrade {
+    Sql(&'static str),
+    /// Rewrites rows in place.
+    Rows(fn(&Connection) -> Result<(), CoreError>),
+}
 
 /// Keys `folder_journal` by path and item, and keeps with each row the
 /// identity and bytes of the binding the item still has at its path.
@@ -940,7 +950,7 @@ pub(crate) fn make_marked(path: &Path, marks: &[(&str, &str)]) -> Result<(), Cor
 }
 
 /// A crash must leave the store at its original version or the target version.
-pub(super) fn upgrade(conn: &Connection, oldest: i64, steps: &[&str]) -> Result<(), CoreError> {
+pub(super) fn upgrade(conn: &Connection, oldest: i64, steps: &[Upgrade]) -> Result<(), CoreError> {
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     let target = oldest + steps.len() as i64;
     // Another program may have upgraded it between the read and the lock.
@@ -955,7 +965,10 @@ pub(super) fn upgrade(conn: &Connection, oldest: i64, steps: &[&str]) -> Result<
         return Err(refused(&tx, found));
     };
     for step in &steps[from..] {
-        tx.execute_batch(step)?;
+        match step {
+            Upgrade::Sql(sql) => tx.execute_batch(sql)?,
+            Upgrade::Rows(rewrite) => rewrite(&tx)?,
+        }
     }
     tx.pragma_update(None, "user_version", target)?;
     tx.commit()?;

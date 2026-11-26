@@ -892,7 +892,7 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
     let agreed = going.is_empty() || yes || asks_to_remove(dir, &going)?;
     let going: Vec<String> = going.into_iter().map(|file| file.path.clone()).collect();
     let done = if agreed {
-        folder.remove_unmatched(&going)?
+        folder.remove_unmatched(&going, false)?
     } else {
         Default::default()
     };
@@ -954,7 +954,7 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
     let going: Vec<String> = files.iter().map(|file| file.path.clone()).collect();
     let agreed = going.is_empty() || yes || asks_to_discard(dir, &going)?;
     let done = if agreed {
-        folder.discard_kept()?
+        folder.discard_kept(false)?
     } else {
         marfa_core::KeptDiscarded {
             kept: files,

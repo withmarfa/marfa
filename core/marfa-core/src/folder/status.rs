@@ -438,6 +438,25 @@ impl Folder {
                 file.reason = Some(why.clone());
             }
         }
+        // Each record a stop left is listed, also where no file is at its
+        // path, so the owner sees every one and what ends it.
+        let listed: HashSet<String> = files.iter().map(|file| file.path.clone()).collect();
+        for (path, why) in &removing {
+            if let Some(why) = why
+                && !listed.contains(path)
+            {
+                let item = state::bound_at(&*self.core.conn()?, path)?.map(|row| row.item_id);
+                files.push(
+                    FileStatus::new(path, item.as_deref(), "held")
+                        .because(super::pull::REMOVING, why.clone()),
+                );
+            }
+        }
+        for (path, why) in self.discards_held()? {
+            if !listed.contains(&path) {
+                files.push(FileStatus::new(&path, None, "held").because("kept", why));
+            }
+        }
         files.sort_by(|a, b| a.path.cmp(&b.path));
         let additions = files
             .iter()
@@ -850,6 +869,7 @@ mod tests {
             inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
             unwatched: std::sync::atomic::AtomicUsize::new(0),
+            root_proof: std::sync::OnceLock::new(),
             replaced: None,
             unflushed: Default::default(),
             writers: Default::default(),

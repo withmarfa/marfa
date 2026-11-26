@@ -1831,7 +1831,7 @@ mod tests {
         folder.pause_sync().unwrap();
         refused(folder.confirm().map(drop));
         refused(folder.restore().map(drop));
-        refused(folder.remove_unmatched(&["one.md".into()]).map(drop));
+        refused(folder.remove_unmatched(&["one.md".into()], false).map(drop));
         refused(folder.scan().map(drop));
         refused(folder.hydrate().map(drop));
         refused(folder.confirm_first_sync().map(drop));

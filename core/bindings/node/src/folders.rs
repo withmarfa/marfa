@@ -942,7 +942,7 @@ impl Task for DiscardKept {
     }
     fn compute(&mut self) -> Result<Self::Output> {
         (|| -> marfa_core::Result<Self::Output> {
-            let done = working(&self.dir, None)?.discard_kept()?;
+            let done = working(&self.dir, None)?.discard_kept(false)?;
             Ok(KeptDiscarded {
                 discarded: done.discarded,
                 put_back: done.put_back,

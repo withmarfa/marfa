@@ -174,6 +174,7 @@ impl Peer {
                 inventory: std::sync::Mutex::default(),
                 every_addition: std::sync::atomic::AtomicBool::new(false),
                 unwatched: std::sync::atomic::AtomicUsize::new(0),
+                root_proof: std::sync::OnceLock::new(),
                 replaced: None,
             })
         });

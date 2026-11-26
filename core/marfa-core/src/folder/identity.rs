@@ -92,6 +92,19 @@ impl Seen {
         }
     }
 
+    /// Whether `found` is this file, where `found` was read while a
+    /// descriptor of this file stays open, so its inode cannot have passed
+    /// to another file: device and inode are then exact, and a birth time is
+    /// compared only where both sides keep one.
+    pub(crate) fn same_while_open(&self, found: &Seen) -> bool {
+        found.device == self.device
+            && found.inode == self.inode
+            && match (self.born, found.born) {
+                (Some(recorded), Some(found)) => recorded == found,
+                _ => true,
+            }
+    }
+
     /// `found` against this record. Another device is another file, even
     /// where the volume was only mounted again.
     pub(crate) fn compare(&self, found: &Seen) -> Compared {

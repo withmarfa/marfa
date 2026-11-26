@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use super::pull::{HELD_ENDS, TakenAway, TakenNow, TakenSettled};
+use super::pull::{Settler, TakenAway, TakenSettled};
 use super::{Folder, copy_changed, lists::Lists, plainly_inside, state};
 use crate::Result;
 
@@ -23,10 +23,15 @@ pub struct Unmatched {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub held: Option<String>,
     /// Why a removal a stop left holds the file's binding. Removing
-    /// unmatched files ends it, keeping the item, only where `kept` is unset;
-    /// it never takes such a file away.
+    /// unmatched files never takes such a file away.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub removing: Option<String>,
+    /// Whether no file is at the path of a removal a stop left, but Marfa
+    /// cannot prove the file is gone. Removing unmatched files stops
+    /// tracking the path only where the owner confirmed it may, keeping the
+    /// item and deleting no file.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unproved: bool,
 }
 
 /// What removing unmatched files did.
@@ -40,8 +45,8 @@ pub struct UnmatchedRemoved {
     /// to be sent.
     pub ended: usize,
     /// Removals a stop left, ended because their files are shown gone, or
-    /// at the owner's word where the record does not read. Their items are
-    /// unchanged.
+    /// at the owner's confirmed word where Marfa cannot prove them gone.
+    /// Their items are unchanged.
     pub settled: Vec<Unmatched>,
 }
 
@@ -70,7 +75,7 @@ impl Folder {
             .filter(|row| unmatched.contains(&row.item_id) && !removing.contains_key(&row.path))
             .cloned()
             .collect();
-        let removing = removing.into_iter().map(|(path, (record, why))| {
+        let removing = removing.into_iter().map(|(path, (record, held))| {
             let item_id = bound
                 .iter()
                 .find(|row| row.path == path)
@@ -79,9 +84,10 @@ impl Folder {
             Unmatched {
                 path,
                 item_id,
-                kept: (why != HELD_ENDS).then(|| why.clone()),
+                kept: (!held.unproved).then(|| held.why.clone()),
                 held: None,
-                removing: Some(why),
+                removing: Some(held.why),
+                unproved: held.unproved,
             }
         });
         if rows.is_empty() {
@@ -113,20 +119,15 @@ impl Folder {
     /// record, where it reads, and why it holds.
     fn held_removals(
         &self,
-    ) -> Result<std::collections::HashMap<String, (Option<state::Taken>, String)>> {
+    ) -> Result<std::collections::HashMap<String, (Option<state::Taken>, super::pull::HeldRemoval)>>
+    {
         if self.root_gone().is_some() {
             return Ok(Default::default());
         }
-        let taken = state::taken(&*self.core.conn()?)?;
-        Ok(taken
+        Ok(self
+            .removals_unsettled()?
             .into_iter()
-            .filter_map(
-                |(path, record)| match self.taken_now(&path, record.as_ref()) {
-                    TakenNow::Unread => Some((path, (record, HELD_ENDS.into()))),
-                    TakenNow::Held(why) => Some((path, (record, why))),
-                    TakenNow::Present | TakenNow::Absent => None,
-                },
-            )
+            .filter_map(|(path, (record, held))| Some((path, (record, held?))))
             .collect())
     }
 
@@ -135,8 +136,15 @@ impl Folder {
     /// to be sent. Ends the folder's placement of each item first; the item
     /// itself is not changed. A file that cannot go is kept and reported, and
     /// the rest go on. A path named twice is taken once, and one that is not
-    /// plainly inside the folder, or names no unmatched file, is kept.
-    pub fn remove_unmatched(&self, paths: &[String]) -> Result<UnmatchedRemoved> {
+    /// plainly inside the folder, or names no unmatched file, is kept. Where
+    /// `forget_unproved`, which only the owner's confirmation sets, it also
+    /// stops tracking each named path of a stopped removal whose file Marfa
+    /// cannot prove gone.
+    pub fn remove_unmatched(
+        &self,
+        paths: &[String],
+        forget_unproved: bool,
+    ) -> Result<UnmatchedRemoved> {
         self.refuse_if_gone()?;
         self.refuse_while_paused()?;
         self.refuse_while_waiting()?;
@@ -151,7 +159,13 @@ impl Folder {
         let mut unmatched: Vec<String> = state::unmatched(&*self.core.conn()?)?;
         let recorded = state::new_outside_state(&*self.core.conn()?)?;
         let held = state::held_outside(&*self.core.conn()?)?;
+        let settler = if forget_unproved {
+            Settler::Forgetting
+        } else {
+            Settler::Pass
+        };
         let mut named = HashSet::new();
+        let mut left: Option<String> = None;
         for path in paths {
             if !named.insert(path.as_str()) {
                 continue;
@@ -162,7 +176,17 @@ impl Folder {
                 kept: Some(why.into()),
                 held: None,
                 removing: None,
+                unproved: false,
             };
+            // The copy changed under this operation, so what it decided at
+            // the start no longer holds; each path after is kept and said.
+            if let Some(why) = &left {
+                match state::bound_at(&*self.core.conn()?, path)? {
+                    Some(row) => done.kept.push(entry(&row, Some(why.clone()))),
+                    None => done.kept.push(unbound(why)),
+                }
+                continue;
+            }
             if !plainly_inside(&self.root_dir, path) {
                 let reason = "it is not inside the folder";
                 match state::bound_at(&*self.core.conn()?, path)? {
@@ -177,9 +201,9 @@ impl Folder {
                 ));
                 continue;
             }
-            match self.settle_taken_at(path, true)? {
-                TakenSettled::None | TakenSettled::Cleared => {}
-                TakenSettled::Ended(item_id) => {
+            match self.settle_taken_at(path, settler, Some(&mut context)) {
+                Ok(TakenSettled::None | TakenSettled::Cleared) => {}
+                Ok(TakenSettled::Ended(item_id)) => {
                     if let Some(item_id) = &item_id
                         && state::bound_to_item(&*self.core.conn()?, item_id)?.is_none()
                     {
@@ -191,10 +215,16 @@ impl Folder {
                         kept: None,
                         held: None,
                         removing: None,
+                        unproved: false,
                     });
                     continue;
                 }
-                TakenSettled::Held(why) => {
+                Ok(settled @ (TakenSettled::Held(_) | TakenSettled::Unproved(_))) => {
+                    let (why, unproved) = match settled {
+                        TakenSettled::Unproved(why) => (why, true),
+                        TakenSettled::Held(why) => (why, false),
+                        _ => unreachable!(),
+                    };
                     let item_id =
                         state::bound_at(&*self.core.conn()?, path)?.map(|row| row.item_id);
                     done.kept.push(Unmatched {
@@ -203,9 +233,17 @@ impl Folder {
                         kept: Some(why.clone()),
                         held: None,
                         removing: Some(why),
+                        unproved,
                     });
                     continue;
                 }
+                Err(error) if copy_changed(&error) => {
+                    let why = COPY_CHANGED.to_string();
+                    done.kept.push(unbound(&why));
+                    left = Some(why);
+                    continue;
+                }
+                Err(error) => return Err(error),
             }
             let Some(row) = state::bound_at(&*self.core.conn()?, path)? else {
                 done.kept.push(unbound("it is not a file of the folder"));
@@ -242,7 +280,10 @@ impl Folder {
                 Ok(TakenAway::Refused(reason) | TakenAway::Busy(reason)) => {
                     done.kept.push(entry(&row, Some(reason)))
                 }
-                Err(error) if copy_changed(&error) => return Err(error),
+                Err(error) if copy_changed(&error) => {
+                    done.kept.push(entry(&row, Some(COPY_CHANGED.into())));
+                    left = Some(COPY_CHANGED.into());
+                }
                 Err(error) => done.kept.push(entry(&row, Some(error.to_string()))),
             }
         }
@@ -323,8 +364,13 @@ fn entry(row: &state::Bound, kept: Option<String>) -> Unmatched {
         kept,
         held: None,
         removing: None,
+        unproved: false,
     }
 }
+
+/// Why a file named for removal is kept once the copy changed under the
+/// removal.
+const COPY_CHANGED: &str = "the local copy changed while files were removed, as when a sync ran, so this file stays; run the removal again";
 
 /// The reason the status of a held file gives, too.
 pub(super) const HELD_OUTSIDE_REASON: &str = "is a new file that the folder's query would not hold, so it is held on disk and not sent, with no item: it is sent once its content matches the query, or once the folder's `outside_query` is `send`";
@@ -336,6 +382,7 @@ fn held_entry(path: String) -> Unmatched {
         kept: None,
         held: Some(HELD_OUTSIDE_REASON.into()),
         removing: None,
+        unproved: false,
     }
 }
 
@@ -428,7 +475,7 @@ pub(super) mod tests {
         .map(str::to_string)
         .to_vec();
 
-        let done = folder.remove_unmatched(&paths).unwrap();
+        let done = folder.remove_unmatched(&paths, false).unwrap();
 
         let removed: Vec<&str> = done.removed.iter().map(|file| file.path.as_str()).collect();
         assert_eq!(removed, ["new.md"], "{done:?}");
@@ -461,7 +508,7 @@ pub(super) mod tests {
         std::fs::remove_file(dir.path().join("new.md")).unwrap();
         std::os::unix::fs::symlink(&target, dir.path().join("new.md")).unwrap();
 
-        let done = folder.remove_unmatched(&["new.md".into()]).unwrap();
+        let done = folder.remove_unmatched(&["new.md".into()], false).unwrap();
 
         assert!(done.removed.is_empty(), "{done:?}");
         assert_eq!(done.kept.len(), 1, "{done:?}");
@@ -484,7 +531,7 @@ pub(super) mod tests {
         landed(&folder, "in.md");
 
         let done = folder
-            .remove_unmatched(&["out.md".into(), "out.md".into()])
+            .remove_unmatched(&["out.md".into(), "out.md".into()], false)
             .unwrap();
 
         assert!(done.removed.is_empty(), "{done:?}");
@@ -506,7 +553,9 @@ pub(super) mod tests {
         let elsewhere = tempfile::tempdir_in(dir.path().parent().unwrap()).unwrap();
         sub_made_a_link(dir.path(), elsewhere.path());
 
-        let done = folder.remove_unmatched(&["sub/new.md".into()]).unwrap();
+        let done = folder
+            .remove_unmatched(&["sub/new.md".into()], false)
+            .unwrap();
 
         assert!(done.removed.is_empty(), "{done:?}");
         assert_eq!(done.kept.len(), 1, "{done:?}");
@@ -537,7 +586,9 @@ pub(super) mod tests {
             })
         };
 
-        let done = folder.remove_unmatched(&["sub/new.md".into()]).unwrap();
+        let done = folder
+            .remove_unmatched(&["sub/new.md".into()], false)
+            .unwrap();
         swapper.join().unwrap();
 
         assert!(done.removed.is_empty(), "{done:?}");
@@ -575,7 +626,7 @@ pub(super) mod tests {
             {
                 let _stop = crate::fault::fail_on_this_thread(point);
                 let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    folder.remove_unmatched(&["new.md".into()])
+                    folder.remove_unmatched(&["new.md".into()], false)
                 }));
                 assert!(stopped.is_err(), "{point}: it did not stop");
             }
@@ -622,7 +673,7 @@ pub(super) mod tests {
         {
             let _stop = crate::fault::fail_on_this_thread(point);
             let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                folder.remove_unmatched(&[path.into()])
+                folder.remove_unmatched(&[path.into()], false)
             }));
             assert!(stopped.is_err(), "{point}: it did not stop");
         }
@@ -700,7 +751,7 @@ pub(super) mod tests {
         let (dir, folder, id) = removable();
         let done = {
             let _refused = crate::fault::fail_on_this_thread("withdraw-look-refused");
-            folder.remove_unmatched(&["new.md".into()]).unwrap()
+            folder.remove_unmatched(&["new.md".into()], false).unwrap()
         };
         assert!(done.removed.is_empty(), "{done:?}");
         assert!(!dir.path().join("new.md").exists());
@@ -885,7 +936,7 @@ pub(super) mod tests {
         let (dir, folder, _) = removable();
         let done = {
             let _save = crate::fault::fail_on_this_thread("save-after-last-look");
-            folder.remove_unmatched(&["new.md".into()]).unwrap()
+            folder.remove_unmatched(&["new.md".into()], false).unwrap()
         };
         assert!(done.removed.is_empty(), "{done:?}");
         assert_eq!(done.kept.len(), 1, "{done:?}");
@@ -1006,7 +1057,8 @@ pub(super) mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn an_unreadable_removal_record_whose_file_is_gone_is_ended_by_removing_unmatched_files() {
+    fn an_unreadable_removal_record_whose_file_is_gone_is_ended_only_at_the_owners_confirmed_word()
+    {
         let (dir, folder, id) = removable();
         let root = dir.path().to_path_buf();
         let folder = stopped_at(folder, &root, "new.md", "crash-before-take-away");
@@ -1022,9 +1074,15 @@ pub(super) mod tests {
         std::fs::remove_file(root.join("new.md")).unwrap();
         scanned_past_the_grace(&folder, "new.md");
         assert!(held_in_status(&folder, "new.md"));
+        // Unconfirmed, the owner's removal leaves it.
+        let unasked = folder.remove_unmatched(&["new.md".into()], false).unwrap();
+        assert!(unasked.settled.is_empty(), "{unasked:?}");
+        assert!(unasked.kept.iter().any(|file| file.unproved), "{unasked:?}");
+        assert_eq!(state::taken(&folder.core.conn().unwrap()).unwrap().len(), 1);
 
-        let done = folder.remove_unmatched(&["new.md".into()]).unwrap();
+        let done = folder.remove_unmatched(&["new.md".into()], true).unwrap();
 
+        assert_eq!(done.settled.len(), 1, "{done:?}");
         assert!(deletes_queued(&folder).is_empty(), "{done:?}");
         assert!(folder.core.get(&id).unwrap().is_some());
         let conn = folder.core.conn().unwrap();
@@ -1102,7 +1160,7 @@ pub(super) mod tests {
             );
 
             let listed = folder.unmatched_files().unwrap();
-            let done = folder.remove_unmatched(&["new.md".into()]).unwrap();
+            let done = folder.remove_unmatched(&["new.md".into()], false).unwrap();
 
             assert!(
                 listed.iter().all(|file| file.path != "new.md"
@@ -1155,7 +1213,9 @@ pub(super) mod tests {
                 std::fs::rename(root.join("sub/new.md"), elsewhere.path().join("new.md")).unwrap();
             }
 
-            let done = folder.remove_unmatched(&["sub/new.md".into()]).unwrap();
+            let done = folder
+                .remove_unmatched(&["sub/new.md".into()], false)
+                .unwrap();
 
             assert!(done.settled.is_empty(), "{case}: {done:?}");
             assert_eq!(done.kept.len(), 1, "{case}: {done:?}");
@@ -1196,7 +1256,7 @@ pub(super) mod tests {
             move || replaced_by_a_copy(&path)
         });
 
-        let done = folder.remove_unmatched(&["new.md".into()]).unwrap();
+        let done = folder.remove_unmatched(&["new.md".into()], false).unwrap();
 
         assert!(
             swap.join().unwrap(),
@@ -1224,9 +1284,9 @@ pub(super) mod tests {
                 let (path, record) = state::taken(&conn).unwrap().pop().unwrap();
                 let mut record = record.unwrap();
                 if spoil == "no birth time" {
-                    record.dir.born = None;
+                    record.dir.as_mut().unwrap().born = None;
                 } else {
-                    record.dir.device ^= 1;
+                    record.dir.as_mut().unwrap().device ^= 1;
                 }
                 state::set_taken(&conn, &path, &record).unwrap();
             }
@@ -1266,7 +1326,7 @@ pub(super) mod tests {
         assert!(crate::fault::reached("folder-taken-look:other.md") > 0);
         let before = crate::fault::reached("folder-taken-look:other.md");
 
-        let done = folder.remove_unmatched(&["new.md".into()]).unwrap();
+        let done = folder.remove_unmatched(&["new.md".into()], true).unwrap();
 
         assert_eq!(done.settled.len(), 1, "{done:?}");
         assert_eq!(
@@ -1323,7 +1383,7 @@ pub(super) mod tests {
             move || replaced_by_a_copy(&path)
         });
 
-        let done = folder.remove_unmatched(&["new.md".into()]).unwrap();
+        let done = folder.remove_unmatched(&["new.md".into()], false).unwrap();
 
         assert!(
             swap.join().unwrap(),
@@ -1346,7 +1406,7 @@ pub(super) mod tests {
         let done = {
             let _none = crate::fault::fail_on_this_thread("no-birth-time");
             assert!(seen(std::fs::metadata(&path).unwrap()).is_none());
-            folder.remove_unmatched(&["new.md".into()]).unwrap()
+            folder.remove_unmatched(&["new.md".into()], false).unwrap()
         };
 
         assert_eq!(done.removed.len(), 1, "{done:?}");
@@ -1367,7 +1427,7 @@ pub(super) mod tests {
         std::fs::remove_file(root.join("A.md")).unwrap();
 
         let done = folder
-            .remove_unmatched(&["A.md".into(), "Z.md".into()])
+            .remove_unmatched(&["A.md".into(), "Z.md".into()], false)
             .unwrap();
 
         let settled: Vec<&str> = done.settled.iter().map(|file| file.path.as_str()).collect();
@@ -1427,7 +1487,7 @@ pub(super) mod tests {
             let folder = Folder::open(&root, None).unwrap();
 
             folder.scan().unwrap();
-            let done = folder.remove_unmatched(&["new.md".into()]).unwrap();
+            let done = folder.remove_unmatched(&["new.md".into()], false).unwrap();
 
             assert!(done.settled.is_empty(), "unread {unread}: {done:?}");
             let conn = folder.core.conn().unwrap();
@@ -1477,10 +1537,58 @@ pub(super) mod tests {
                         .is_some_and(|reason| reason.contains("folders unmatched"))),
                 "{path}: {listed:?}"
             );
-            let done = folder.remove_unmatched(&[path.into()]).unwrap();
+            let done = folder.remove_unmatched(&[path.into()], false).unwrap();
             assert!(done.settled.is_empty(), "{path}: settled unasked: {done:?}");
             assert_eq!(done.kept.len(), 1, "{path}: {done:?}");
+            assert!(done.kept[0].unproved, "{path}: {done:?}");
+            let listed = folder.unmatched_files().unwrap();
+            assert!(
+                listed
+                    .iter()
+                    .any(|file| file.path == path && file.unproved && file.kept.is_none()),
+                "{path}: {listed:?}"
+            );
+
+            let done = folder.remove_unmatched(&[path.into()], true).unwrap();
+
+            assert_eq!(done.settled.len(), 1, "{path}: {done:?}");
+            assert!(deletes_queued(&folder).is_empty(), "{path}");
             assert!(folder.core.get(&id).unwrap().is_some());
+            let conn = folder.core.conn().unwrap();
+            assert!(state::taken(&conn).unwrap().is_empty(), "{path}");
+            assert!(state::bound_at(&conn, path).unwrap().is_none(), "{path}");
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_removal_v0_0_113_stopped_on_whose_file_is_still_there_keeps_its_binding() {
+        for path in ["new.md", "sub/new.md"] {
+            let (dir, folder, _) = removable_at(path);
+            let root = dir.path().to_path_buf();
+            let folder = stopped_at(folder, &root, path, "crash-before-take-away");
+            let before = state::taken(&folder.core.conn().unwrap()).unwrap();
+            drop(folder);
+            super::super::upgraded_tests::as_written_by_v0_0_113(&root);
+            let folder = Folder::open(&root, None).unwrap();
+
+            // The upgrade keeps all the record knew, and no directory.
+            let after = state::taken(&folder.core.conn().unwrap()).unwrap();
+            let (Some(before), Some(after)) = (&before[0].1, &after[0].1) else {
+                panic!("{path}: {before:?} {after:?}");
+            };
+            assert_eq!(after.item_id, before.item_id, "{path}");
+            assert_eq!(after.file, before.file, "{path}");
+            assert_eq!(after.hash, before.hash, "{path}");
+            assert_eq!(after.dir, None, "{path}");
+            folder.scan().unwrap();
+
+            if !births_kept(&root, path) {
+                continue;
+            }
+            let conn = folder.core.conn().unwrap();
+            assert!(state::taken(&conn).unwrap().is_empty(), "{path}");
+            assert!(state::bound_at(&conn, path).unwrap().is_some(), "{path}");
         }
     }
 }

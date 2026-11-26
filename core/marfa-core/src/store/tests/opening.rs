@@ -855,7 +855,7 @@ fn a_store_from_before_tags_were_replaced_by_their_own_kind_is_refused_with_its_
 }
 
 /// Append one hash per schema version; never change an existing entry.
-const SHAPES: [&str; 12] = [
+const SHAPES: [&str; 13] = [
     "9a505dc1b14cecc6",
     "115c1d4def4a3d91",
     "2d4e4e1e76ec61dc",
@@ -867,6 +867,7 @@ const SHAPES: [&str; 12] = [
     "8677b34bec9e8814",
     "03d2b1a62ad045a9",
     "19191f94ade9938b",
+    "07e2ec7950f2fc14",
     "07e2ec7950f2fc14",
 ];
 
@@ -942,20 +943,27 @@ fn a_store_at_an_earlier_version_is_upgraded_in_place_with_its_queue_kept() {
     let before = queued(&path);
     // A step that fails leaves the store at its version.
     let steps = [
-        "ALTER TABLE meta_before RENAME TO meta",
-        "SELECT * FROM absent",
+        Upgrade::Sql("ALTER TABLE meta_before RENAME TO meta"),
+        Upgrade::Sql("SELECT * FROM absent"),
     ];
     assert!(upgrade(&conn, 7, &steps).is_err());
     assert_eq!(version(&conn).unwrap(), 7);
     assert!(held_shape(&conn).unwrap().contains_key("meta_before"));
 
-    let steps = ["ALTER TABLE meta_before RENAME TO meta", "SELECT 1"];
+    let steps = [
+        Upgrade::Sql("ALTER TABLE meta_before RENAME TO meta"),
+        Upgrade::Sql("SELECT 1"),
+    ];
     upgrade(&conn, 7, &steps).unwrap();
     assert_eq!(version(&conn).unwrap(), 9);
     assert!(held_shape(&conn).unwrap().contains_key("meta"));
     assert_eq!(queued(&path), before, "the upgrade changed the queue");
     // Upgraded already: nothing runs again.
-    upgrade(&conn, 7, &["SELECT * FROM absent", "SELECT * FROM absent"]).unwrap();
+    let absent = [
+        Upgrade::Sql("SELECT * FROM absent"),
+        Upgrade::Sql("SELECT * FROM absent"),
+    ];
+    upgrade(&conn, 7, &absent).unwrap();
     // A version before the oldest is refused, unchanged.
     conn.pragma_update(None, "user_version", 3).unwrap();
     assert!(matches!(

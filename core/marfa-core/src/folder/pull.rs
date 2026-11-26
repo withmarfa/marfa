@@ -225,11 +225,22 @@ pub(super) enum TakenNow {
     Present,
     /// Nothing is at its path, in the directory the removal recorded.
     Absent,
-    /// Nothing is at its path, in the folder's own directory, but the record
-    /// does not read, so only the owner ends it.
-    Unread,
+    /// Nothing is at its path, but nothing shows that directory is the one
+    /// the removal ran in, for this reason, so only the owner's confirmed
+    /// word ends it.
+    Unproved(String),
     /// Held, for this reason.
     Held(String),
+}
+
+/// Who settles the record of a stopped removal.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Settler {
+    /// A pass, which ends only a record whose file is shown gone.
+    Pass,
+    /// The owner, who has also confirmed that Marfa may stop following a
+    /// path whose file it cannot show gone.
+    Forgetting,
 }
 
 /// What settling the record of a stopped removal did.
@@ -238,10 +249,14 @@ pub(super) enum TakenSettled {
     None,
     /// The recorded file is back, and the record is cleared.
     Cleared,
-    /// The file is gone, and the record and the binding of this item ended.
+    /// The file is gone, or the owner confirmed it may be, and the record
+    /// and the binding of this item ended.
     Ended(Option<String>),
     /// The record stays, for this reason.
     Held(String),
+    /// The record stays until the owner confirms Marfa may stop following
+    /// its path, for this reason.
+    Unproved(String),
 }
 
 /// The status flag for an unresolved removal.
@@ -266,13 +281,27 @@ fn held_away(why: &str) -> String {
     )
 }
 
+/// Why a removal is held where no file is at its path but Marfa cannot show
+/// the file is gone, and how the owner ends it.
+pub(super) fn unproved_removal(why: &str) -> String {
+    format!(
+        "Marfa stopped while it took this file away. No file is at its path, but Marfa cannot prove the file is gone: {why}. Its item is not deleted. To stop tracking this path, run `marfa folders unmatched <DIR> --remove` and confirm, or add `--yes --forget-unproved` in a script: the folder stops following the path, no file is deleted, and the item stays in Marfa as it is"
+    )
+}
+
 /// Why a removal whose record does not read is held while a file is at its
 /// path.
-const HELD_UNREAD: &str = "Marfa stopped while it took this file away, and cannot read its record of the removal, so it cannot tell whether this is the file. Its item is not deleted while it cannot tell. To keep the local file, move it outside the synced folder, then run `marfa folders unmatched <DIR> --remove` to end the removal. The item stays in Marfa";
+const HELD_UNREAD: &str = "Marfa stopped while it took this file away, and cannot read its record of the removal, so it cannot tell whether this is the file. Its item is not deleted while it cannot tell. To keep the local file, move it outside the synced folder; then `marfa folders unmatched <DIR> --remove` can stop tracking the path. The item stays in Marfa";
 
-/// Why a removal whose record does not read is held while nothing is at its
-/// path, and what the owner's removal of unmatched files does to it.
-pub(super) const HELD_ENDS: &str = "Marfa stopped while it took this file away, and cannot read its record of the removal. No file is at its path. Run `marfa folders unmatched <DIR> --remove` to end the removal: the folder stops following this path, and its item stays in Marfa as it is";
+/// Why nothing shows the folder's directory is the one a stopped
+/// removal or discard ran in, where its record does not read.
+pub(super) const RECORD_UNREAD: &str =
+    "Marfa cannot read its record, so it cannot tell which directory the file was in";
+
+/// The same, where the record was written by a release that kept no
+/// identity for the file's directory.
+pub(super) const RECORD_WITHOUT_DIRECTORY: &str =
+    "its record, made by an earlier release of Marfa, does not say which directory the file was in";
 
 /// What became of a file a pull or a confirmation took away.
 pub(super) enum TakenAway {
@@ -285,6 +314,57 @@ pub(super) enum TakenAway {
     /// A program holds it open for writing, so it stays until a later pass,
     /// for this reason.
     Busy(String),
+}
+
+/// Why a removal of a file whose directory moved as it was removed stops.
+const MOVED_AS_REMOVED: &str =
+    "a directory on its path moved or was replaced as Marfa removed it, so the file stays";
+
+/// What a removal found at its path, opened once.
+enum Opened {
+    File {
+        directory: crate::directory::Directory,
+        /// Held open until the removal ends.
+        #[allow(dead_code)]
+        file: std::fs::File,
+        seen: identity::Seen,
+        dir: identity::Seen,
+        hash: String,
+    },
+    NotAFile,
+    Absent,
+}
+
+/// Why a stopped removal holds its file's binding.
+pub(super) struct HeldRemoval {
+    pub(super) why: String,
+    /// Whether no file is at its path and only the owner's confirmed word
+    /// ends it.
+    pub(super) unproved: bool,
+}
+
+/// Ends the record of a stopped removal at `path` and the binding of its
+/// item there.
+fn ended_taken(
+    tx: &rusqlite::Connection,
+    path: &str,
+    record: Option<state::Taken>,
+) -> Result<TakenSettled> {
+    let bound = state::bound_at(tx, path)?.filter(|bound| {
+        record
+            .as_ref()
+            .is_none_or(|record| record.item_id == bound.item_id)
+    });
+    if let Some(bound) = &bound {
+        state::unbind(tx, path)?;
+        state::journal_clear(tx, path, &bound.item_id)?;
+    }
+    state::clear_taken(tx, path)?;
+    Ok(TakenSettled::Ended(
+        bound
+            .map(|bound| bound.item_id)
+            .or(record.map(|record| record.item_id)),
+    ))
 }
 
 /// The name a new file of `item` takes, from its title or else its id.
@@ -2003,102 +2083,16 @@ impl Folder {
         }
         // An earlier removal's record is settled by its own rules, never by
         // another removal of whatever file is at the path now.
-        match self.settle_taken_at(&row.path, false)? {
+        match self.settle_taken_at(&row.path, Settler::Pass, Some(context))? {
             TakenSettled::None | TakenSettled::Cleared => {}
             TakenSettled::Ended(_) => return Ok(TakenAway::Ended(0)),
-            TakenSettled::Held(why) => return Ok(TakenAway::Refused(why)),
+            TakenSettled::Held(why) | TakenSettled::Unproved(why) => {
+                return Ok(TakenAway::Refused(why));
+            }
         }
-        // Keep the binding until its placement can be ended.
-        let ended = self.end_placement(&row.item_id, &row.path)?;
-        #[cfg(debug_assertions)]
-        crate::fault::hold(|| "folder-take-away-ended");
-        let conn = self.core.conn()?;
-        context.check(&conn)?;
         let path = self.root.join(&row.path);
-        let captured = self.guarded(&conn, &path, false).and_then(|place| {
-            let name = Path::new(&place.name);
-            if place.directory.entry_kind(name)? != crate::directory::FileType::RegularFile {
-                return Ok(None);
-            }
-            let file = place.directory.capture_file(name)?.metadata()?;
-            let dir = place.directory.metadata()?;
-            Ok(Some((place, file, dir)))
-        });
-        match captured {
-            Ok(Some((place, file, dir))) => {
-                let name = Path::new(&place.name);
-                #[allow(unused_mut)]
-                let mut taken = state::Taken {
-                    item_id: row.item_id.clone(),
-                    file: identity::Seen::of(&file),
-                    dir: identity::Seen::of(&dir),
-                    hash: row.written_hash.clone(),
-                };
-                #[cfg(debug_assertions)]
-                if landing::asked_to_shift_birth(&path) {
-                    taken.file.born = taken.file.born.map(|born| born + 1);
-                }
-                state::set_taken(&conn, &row.path, &taken)?;
-                #[cfg(debug_assertions)]
-                crate::fault::hold(|| "folder-take-away-recorded");
-                landing::stop_if_asked(&path, "crash-before-take-away");
-                let still = |metadata: &std::fs::Metadata, found: &[u8]| {
-                    taken.file.compare(&identity::Seen::of(metadata)) == identity::Compared::Same
-                        && row.written_hash.as_deref() == Some(state::hash(found).as_str())
-                };
-                let removed =
-                    landing::remove_judged_at(&place.directory, place.guard(), name, still);
-                let kept = match &removed {
-                    Ok(true) => None,
-                    Ok(false) => Some(TakenAway::Kept),
-                    Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
-                        Some(TakenAway::Refused(error.to_string()))
-                    }
-                    Err(error) if landing::is_busy(error) => {
-                        Some(TakenAway::Busy(error.to_string()))
-                    }
-                    Err(error) if beyond_a_link(error) => {
-                        Some(TakenAway::Refused(NOT_INSIDE.into()))
-                    }
-                    Err(error) => {
-                        return Err(CoreError::Store(format!(
-                            "cannot remove {}: {error}",
-                            path.display()
-                        )));
-                    }
-                };
-                if let Some(kept) = kept {
-                    // Only the file the record names, unchanged in identity,
-                    // ends the record; any other file at the path is held.
-                    let found = place.directory.entry_kind(name).and_then(|kind| {
-                        if kind == crate::directory::FileType::RegularFile {
-                            place.directory.entry_metadata(name).map(Some)
-                        } else {
-                            Ok(None)
-                        }
-                    });
-                    match found {
-                        Ok(Some(found))
-                            if taken.file.compare(&identity::Seen::of(&found))
-                                == identity::Compared::Same =>
-                        {
-                            state::clear_taken(&conn, &row.path)?;
-                            return Ok(kept);
-                        }
-                        Err(error)
-                            if error.kind() == std::io::ErrorKind::NotFound
-                                && matches!(removed, Ok(false)) => {}
-                        _ => return Ok(kept),
-                    }
-                }
-                landing::stop_if_asked(&path, "crash-after-take-away");
-            }
-            Ok(None) => {
-                return Ok(TakenAway::Refused(
-                    "it is no longer a file: something else is at its path".into(),
-                ));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        let opened = match self.opened_for_removal(&path) {
+            Ok(opened) => opened,
             Err(error) if beyond_a_link(&error) => {
                 return Ok(TakenAway::Refused(NOT_INSIDE.into()));
             }
@@ -2108,13 +2102,180 @@ impl Folder {
                     path.display()
                 )));
             }
+        };
+        let taken = match &opened {
+            Opened::NotAFile => {
+                return Ok(TakenAway::Refused(
+                    "it is no longer a file: something else is at its path".into(),
+                ));
+            }
+            Opened::Absent => None,
+            Opened::File {
+                seen, dir, hash, ..
+            } => {
+                if row.written_hash.as_deref() != Some(hash.as_str()) {
+                    return Ok(TakenAway::Kept);
+                }
+                #[allow(unused_mut)]
+                let mut taken = state::Taken {
+                    item_id: row.item_id.clone(),
+                    file: *seen,
+                    dir: Some(*dir),
+                    hash: row.written_hash.clone(),
+                };
+                #[cfg(debug_assertions)]
+                if landing::asked_to_shift_birth(&path) {
+                    taken.file.born = taken.file.born.map(|born| born + 1);
+                }
+                // Before the placement ends, so a stop from here on leaves
+                // the file the record names, whatever takes its path.
+                state::set_taken(&*self.core.conn()?, &row.path, &taken)?;
+                #[cfg(debug_assertions)]
+                crate::fault::hold(|| "folder-take-away-recorded");
+                Some(taken)
+            }
+        };
+        let untaken = |reason: TakenAway| -> Result<TakenAway> {
+            state::clear_taken(&*self.core.conn()?, &row.path)?;
+            Ok(reason)
+        };
+        let ended = match self.end_placement(&row.item_id, &row.path) {
+            Ok(ended) => ended,
+            Err(error) => {
+                if taken.is_some() {
+                    state::clear_taken(&*self.core.conn()?, &row.path)?;
+                }
+                return Err(error);
+            }
+        };
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-take-away-ended");
+        let conn = self.core.conn()?;
+        if let Err(error) = context.check(&conn) {
+            if taken.is_some() {
+                state::clear_taken(&conn, &row.path)?;
+            }
+            return Err(error);
+        }
+        if let (Some(taken), Opened::File { directory, .. }) = (&taken, &opened) {
+            landing::stop_if_asked(&path, "crash-before-take-away");
+            // The directory at the path must still be the one opened; the
+            // file is removed only through it.
+            let place = match self.guarded(&conn, &path, false) {
+                Ok(place) => place,
+                Err(error) if beyond_a_link(&error) => {
+                    drop(conn);
+                    return untaken(TakenAway::Refused(NOT_INSIDE.into()));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    drop(conn);
+                    return untaken(TakenAway::Refused(MOVED_AS_REMOVED.into()));
+                }
+                Err(error) => {
+                    return Err(CoreError::Store(format!(
+                        "cannot look at {}: {error}",
+                        path.display()
+                    )));
+                }
+            };
+            let same_directory = place
+                .directory
+                .metadata()
+                .and_then(|now| Ok((now, directory.metadata()?)))
+                .is_ok_and(|(now, opened)| landing::identity(&now) == landing::identity(&opened));
+            if !same_directory {
+                drop(place);
+                drop(conn);
+                return untaken(TakenAway::Refused(MOVED_AS_REMOVED.into()));
+            }
+            let name = Path::new(&place.name);
+            let still = |metadata: &std::fs::Metadata, found: &[u8]| {
+                taken.file.same_while_open(&identity::Seen::of(metadata))
+                    && row.written_hash.as_deref() == Some(state::hash(found).as_str())
+            };
+            let removed = landing::remove_judged_at(&place.directory, place.guard(), name, still);
+            let kept = match &removed {
+                Ok(true) => None,
+                Ok(false) => Some(TakenAway::Kept),
+                Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
+                    Some(TakenAway::Refused(error.to_string()))
+                }
+                Err(error) if landing::is_busy(error) => Some(TakenAway::Busy(error.to_string())),
+                Err(error) if beyond_a_link(error) => Some(TakenAway::Refused(NOT_INSIDE.into())),
+                Err(error) => {
+                    return Err(CoreError::Store(format!(
+                        "cannot remove {}: {error}",
+                        path.display()
+                    )));
+                }
+            };
+            if let Some(kept) = kept {
+                // Only the file the record names ends the record; any other
+                // file at the path is held.
+                let found = place.directory.entry_kind(name).and_then(|kind| {
+                    if kind == crate::directory::FileType::RegularFile {
+                        place.directory.entry_metadata(name).map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                });
+                match found {
+                    Ok(Some(found)) if taken.file.same_while_open(&identity::Seen::of(&found)) => {
+                        state::clear_taken(&conn, &row.path)?;
+                        return Ok(kept);
+                    }
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::NotFound
+                            && matches!(removed, Ok(false)) => {}
+                    _ => return Ok(kept),
+                }
+            }
+            landing::stop_if_asked(&path, "crash-after-take-away");
         }
         let tx = conn.unchecked_transaction()?;
         context.change_pins(&tx, || state::unbind(&tx, &row.path))?;
         state::journal_clear(&tx, &row.path, &row.item_id)?;
         state::clear_taken(&tx, &row.path)?;
         tx.commit()?;
+        drop(opened);
         Ok(TakenAway::Ended(ended))
+    }
+
+    /// The file at `path` for a removal, opened once: its identity and bytes
+    /// come from the one descriptor, which the caller keeps open until the
+    /// removal ends, so its inode cannot pass to another file meanwhile.
+    fn opened_for_removal(&self, path: &Path) -> std::io::Result<Opened> {
+        let absent = |error: std::io::Error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                Ok(Opened::Absent)
+            } else {
+                Err(error)
+            }
+        };
+        let (directory, name) = match self.location(path, false) {
+            Ok(found) => found,
+            Err(error) => return absent(error),
+        };
+        let name = std::path::PathBuf::from(name);
+        match directory.entry_kind(&name) {
+            Ok(crate::directory::FileType::RegularFile) => {}
+            Ok(_) => return Ok(Opened::NotAFile),
+            Err(error) => return absent(error),
+        }
+        let file = match directory.capture_file(&name) {
+            Ok(file) => file,
+            Err(error) => return absent(error),
+        };
+        let seen = identity::Seen::of(&file.metadata()?);
+        let dir = identity::Seen::of(&directory.metadata()?);
+        let hash = state::hash_reader(&file)?;
+        Ok(Opened::File {
+            directory,
+            file,
+            seen,
+            dir,
+            hash,
+        })
     }
 
     const UNTOLD: &str =
@@ -2125,9 +2286,6 @@ impl Folder {
     pub(super) fn taken_now(&self, path: &str, taken: Option<&state::Taken>) -> TakenNow {
         #[cfg(debug_assertions)]
         crate::fault::hold(|| format!("folder-taken-look:{path}"));
-        // The folder's own directory holds the store the record is in, so it
-        // is the directory the removal ran in, whatever the record says.
-        let in_root = !path.contains('/');
         let path = self.root.join(path);
         let cannot_look = |error: std::io::Error| {
             TakenNow::Held(held_removal(&format!("Marfa cannot look at it: {error}")))
@@ -2145,30 +2303,39 @@ impl Folder {
             Err(error) => return cannot_look(error),
         };
         let name = Path::new(&name);
-        let unproved = match taken {
-            None if in_root => None,
-            None => Some(Self::UNREAD_DIRECTORY),
-            Some(taken) => match directory.metadata() {
-                Ok(found) => match taken.dir.compare(&identity::Seen::of(&found)) {
-                    identity::Compared::Same => None,
-                    identity::Compared::Weaker => Some(Self::DIRECTORY_UNTOLD),
-                    identity::Compared::Other => Some(Self::DIRECTORY_AWAY),
+        // Why an empty path would not show the file gone: it may be where
+        // another directory went.
+        let mut away = None;
+        let unproved = match (taken, self.root_unproved()) {
+            (None, _) => Some(RECORD_UNREAD.to_string()),
+            (Some(_), Some(root)) => Some(root),
+            (Some(taken), None) => match &taken.dir {
+                None => Some(RECORD_WITHOUT_DIRECTORY.to_string()),
+                Some(recorded) => match directory.metadata() {
+                    Ok(found) => match recorded.compare(&identity::Seen::of(&found)) {
+                        identity::Compared::Same => None,
+                        identity::Compared::Weaker => Some(Self::DIRECTORY_UNTOLD.to_string()),
+                        identity::Compared::Other => {
+                            away = Some(Self::DIRECTORY_AWAY);
+                            None
+                        }
+                    },
+                    Err(error) => return cannot_look(error),
                 },
-                Err(error) => return cannot_look(error),
             },
         };
         let kind = match directory.entry_kind(name) {
             Ok(kind) => kind,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return match (unproved, taken) {
+                return match (away, unproved) {
                     (Some(why), _) => TakenNow::Held(held_away(why)),
-                    (None, Some(_)) => TakenNow::Absent,
-                    (None, None) => TakenNow::Unread,
+                    (None, Some(why)) => TakenNow::Unproved(why),
+                    (None, None) => TakenNow::Absent,
                 };
             }
             Err(error) => return cannot_look(error),
         };
-        if let Some(why) = unproved {
+        if let Some(why) = away {
             return TakenNow::Held(held_away(why));
         }
         let Some(taken) = taken else {
@@ -2182,8 +2349,6 @@ impl Folder {
             .and_then(|file| self.still_the_file(&directory, name, file, taken))
             .unwrap_or_else(cannot_look)
     }
-
-    const UNREAD_DIRECTORY: &str = "Marfa cannot read its record of the removal, so it cannot tell the directory at the file's path from another put at its name";
 
     const DIRECTORY_AWAY: &str =
         "the directory it was in is not at its path, or another directory is";
@@ -2222,41 +2387,42 @@ impl Folder {
     }
 
     /// Settles the record of a stopped removal at `path`, read and written in
-    /// one transaction around the look at the disk. Only the owner, `by_owner`,
-    /// ends one whose record does not read.
-    pub(super) fn settle_taken_at(&self, path: &str, by_owner: bool) -> Result<TakenSettled> {
+    /// one transaction around the look at the disk. Only `Settler::Forgetting`
+    /// ends one whose file Marfa cannot show gone. With a `context`, the
+    /// change counts as the operation's own, so its later steps go on.
+    pub(super) fn settle_taken_at(
+        &self,
+        path: &str,
+        settler: Settler,
+        context: Option<&mut crate::reach::Context>,
+    ) -> Result<TakenSettled> {
+        // Read before the store is held, which reading it needs.
+        self.root_unproved();
         let conn = self.core.conn()?;
-        let tx = conn.unchecked_transaction()?;
-        let Some(record) = state::taken_at(&tx, path)? else {
-            return Ok(TakenSettled::None);
-        };
-        let settled = match self.taken_now(path, record.as_ref()) {
-            TakenNow::Present => {
-                state::clear_taken(&tx, path)?;
-                TakenSettled::Cleared
-            }
-            TakenNow::Absent | TakenNow::Unread if record.is_some() || by_owner => {
-                let bound = state::bound_at(&tx, path)?.filter(|bound| {
-                    record
-                        .as_ref()
-                        .is_none_or(|record| record.item_id == bound.item_id)
-                });
-                if let Some(bound) = &bound {
-                    state::unbind(&tx, path)?;
-                    state::journal_clear(&tx, path, &bound.item_id)?;
+        let settle = || -> Result<TakenSettled> {
+            let tx = conn.unchecked_transaction()?;
+            let Some(record) = state::taken_at(&tx, path)? else {
+                return Ok(TakenSettled::None);
+            };
+            let settled = match self.taken_now(path, record.as_ref()) {
+                TakenNow::Present => {
+                    state::clear_taken(&tx, path)?;
+                    TakenSettled::Cleared
                 }
-                state::clear_taken(&tx, path)?;
-                TakenSettled::Ended(
-                    bound
-                        .map(|bound| bound.item_id)
-                        .or(record.map(|record| record.item_id)),
-                )
-            }
-            TakenNow::Absent | TakenNow::Unread => TakenSettled::Held(HELD_ENDS.into()),
-            TakenNow::Held(why) => TakenSettled::Held(why),
+                TakenNow::Absent => ended_taken(&tx, path, record)?,
+                TakenNow::Unproved(_) if settler == Settler::Forgetting => {
+                    ended_taken(&tx, path, record)?
+                }
+                TakenNow::Unproved(why) => TakenSettled::Unproved(unproved_removal(&why)),
+                TakenNow::Held(why) => TakenSettled::Held(why),
+            };
+            tx.commit()?;
+            Ok(settled)
         };
-        tx.commit()?;
-        Ok(settled)
+        match context {
+            Some(context) => context.change_pins(&conn, settle),
+            None => settle(),
+        }
     }
 
     /// An owner's delete after a stop is indistinguishable from a completed removal.
@@ -2270,8 +2436,11 @@ impl Folder {
             return Ok(unsettled);
         }
         for (path, _) in taken {
-            if let TakenSettled::Held(why) = self.settle_taken_at(&path, false)? {
-                unsettled.insert(path, why);
+            match self.settle_taken_at(&path, Settler::Pass, None)? {
+                TakenSettled::Held(why) | TakenSettled::Unproved(why) => {
+                    unsettled.insert(path, why);
+                }
+                TakenSettled::None | TakenSettled::Cleared | TakenSettled::Ended(_) => {}
             }
         }
         Ok(unsettled)
@@ -2280,20 +2449,35 @@ impl Folder {
     /// Each record of a stopped removal recovery would not clear, with why it
     /// holds, or `None` where recovery ends it; recovery is not run.
     pub(super) fn taken_unsettled(&self) -> Result<HashMap<String, Option<String>>> {
+        Ok(self
+            .removals_unsettled()?
+            .into_iter()
+            .map(|(path, (_, held))| (path, held.map(|held| held.why)))
+            .collect())
+    }
+
+    /// Each record of a stopped removal recovery would not clear, with the
+    /// record where it reads and why it holds, or `None` where recovery ends
+    /// it.
+    pub(super) fn removals_unsettled(
+        &self,
+    ) -> Result<HashMap<String, (Option<state::Taken>, Option<HeldRemoval>)>> {
         let taken = state::taken(&*self.core.conn()?)?;
         let gone = self.root_gone();
         Ok(taken
             .into_iter()
             .filter_map(|(path, record)| {
-                if let Some(gone) = &gone {
-                    return Some((path, Some(held_removal(gone))));
-                }
-                match self.taken_now(&path, record.as_ref()) {
-                    TakenNow::Present => None,
-                    TakenNow::Absent => Some((path, None)),
-                    TakenNow::Unread => Some((path, Some(HELD_ENDS.into()))),
-                    TakenNow::Held(why) => Some((path, Some(why))),
-                }
+                let held = |why: String, unproved: bool| Some(HeldRemoval { why, unproved });
+                let held = match &gone {
+                    Some(gone) => held(held_removal(gone), false),
+                    None => match self.taken_now(&path, record.as_ref()) {
+                        TakenNow::Present => return None,
+                        TakenNow::Absent => None,
+                        TakenNow::Unproved(why) => held(unproved_removal(&why), true),
+                        TakenNow::Held(why) => held(why, false),
+                    },
+                };
+                Some((path, (record, held)))
             })
             .collect())
     }

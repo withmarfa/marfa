@@ -1254,7 +1254,7 @@ guarded! {
             dir: String,
             paths: Vec<String>,
         ) -> Result<UnmatchedRemoved, MarfaError> {
-            let done = working(&dir, None, None)?.remove_unmatched(&paths)?;
+            let done = working(&dir, None, None)?.remove_unmatched(&paths, false)?;
             Ok(UnmatchedRemoved {
                 removed: done
                     .removed
@@ -1299,7 +1299,7 @@ guarded! {
         /// its path instead. Needs no server. Asks a watch that holds the
         /// folder to let it go, as `add` does.
         pub fn discard_kept(&self, dir: String) -> Result<KeptDiscarded, MarfaError> {
-            let done = working(&dir, None, None)?.discard_kept()?;
+            let done = working(&dir, None, None)?.discard_kept(false)?;
             Ok(KeptDiscarded {
                 discarded: done.discarded,
                 put_back: done.put_back,
@@ -1901,7 +1901,7 @@ mod tests {
                 let (folders, path) = (folders.clone(), path.clone());
                 Box::new(move || {
                     folders
-                        .remove_unmatched(path.clone(), vec!["none.md".into()])
+                        .remove_unmatched(path.clone(), vec!["none.md".into()], false)
                         .map(drop)
                 })
             }),
@@ -2134,7 +2134,7 @@ mod tests {
         let path = dir.path().display().to_string();
         assert!(
             folders
-                .remove_unmatched(path.clone(), vec!["note.md".into()])
+                .remove_unmatched(path.clone(), vec!["note.md".into()], false)
                 .is_err()
         );
         assert!(folders.kept(path.clone()).is_err());
@@ -2237,7 +2237,7 @@ mod tests {
         let holder = marfa_core::Folder::open(&path, None).unwrap();
         refused_while_held(&path, || {
             folders
-                .remove_unmatched(path.clone(), named.clone())
+                .remove_unmatched(path.clone(), named.clone(), false)
                 .map(drop)
         });
         drop(holder);
@@ -2248,7 +2248,7 @@ mod tests {
 
         let (_, key) = booted();
         let offline = Folders::new(Some("http://127.0.0.1:9".into()), Some(key), None).unwrap();
-        let done = offline.remove_unmatched(path.clone(), named).unwrap();
+        let done = offline.remove_unmatched(path.clone(), named, false).unwrap();
 
         assert_eq!(
             done.removed,

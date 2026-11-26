@@ -439,8 +439,9 @@ pub(crate) struct Taken {
     /// The file as the removal found it.
     pub(crate) file: super::identity::Seen,
     /// The directory the file was in, so a directory put at its name is
-    /// never taken for it.
-    pub(crate) dir: super::identity::Seen,
+    /// never taken for it; `None` for a record a release before this field
+    /// wrote, which cannot show the file gone.
+    pub(crate) dir: Option<super::identity::Seen>,
     /// Hash of the bytes the binding expected to remove.
     pub(crate) hash: Option<String>,
 }
@@ -653,7 +654,8 @@ pub(crate) fn clear_retained(conn: &Connection, id: &str) -> Result<(), CoreErro
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Unread {
     pub(crate) id: String,
-    pub(crate) aside: String,
+    /// The directory its reserved name is in, where the row still names one.
+    pub(crate) aside: Option<String>,
     /// Its reserved name in `aside`.
     pub(crate) kept: String,
     /// The path it came from, where the row names one.
@@ -680,7 +682,7 @@ impl Unread {
         Unread {
             hash: text(&row["retained"]["read"]["hash"]),
             aside_at: serde_json::from_value(row["aside_at"].clone()).ok(),
-            aside: text(&row["aside"]).unwrap_or_default(),
+            aside: text(&row["aside"]),
             kept,
             from,
             id,
@@ -721,8 +723,9 @@ pub(crate) struct Discarding {
     /// The directory both names are in, as in [`Retained`].
     pub(crate) aside: String,
     /// That directory as the discard found it, so another put at its name
-    /// is never taken for it.
-    pub(crate) aside_at: super::identity::Seen,
+    /// is never taken for it; `None` for a record a release before this
+    /// field wrote, which cannot show the file gone.
+    pub(crate) aside_at: Option<super::identity::Seen>,
     /// Its reserved name, which it goes back to where that is free.
     pub(crate) kept: String,
     pub(crate) private: String,
@@ -770,6 +773,78 @@ pub(crate) fn discarding(
 
 pub(crate) fn clear_discarding_at(conn: &Connection, path: &str) -> Result<(), CoreError> {
     crate::store::meta_delete(conn, &format!("{DISCARDING}{path}"))
+}
+
+/// Whether any record of a stopped removal, a stopped discard, a kept file
+/// or a displaced file stands, which the folder's directory may prove.
+pub(crate) fn any_recovery_record(conn: &Connection) -> Result<bool, CoreError> {
+    for prefix in [TAKEN, DISCARDING, RETAINED, DISPLACED] {
+        if !under(conn, prefix)?.is_empty() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// A stopped removal's record as schema version 12 wrote it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TakenAt12 {
+    item_id: String,
+    at: (u64, u64),
+    born: Option<u128>,
+    hash: Option<String>,
+}
+
+/// A stopped discard's record as schema version 12 wrote it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiscardingAt12 {
+    id: String,
+    aside: String,
+    kept: String,
+    private: String,
+    from: String,
+    left: Option<String>,
+}
+
+/// Rewrites each record of a stopped removal or discard from the shape
+/// schema version 12 wrote to this one, keeping all it knew. It knew no
+/// directory's identity, so none of them can show its file gone. A record
+/// that does not read as that shape stays as it is.
+pub(crate) fn recovery_records_upgraded(conn: &Connection) -> Result<(), CoreError> {
+    for (path, value) in under(conn, TAKEN)? {
+        if let Ok(old) = serde_json::from_str::<TakenAt12>(&value) {
+            let taken = Taken {
+                item_id: old.item_id,
+                file: super::identity::Seen {
+                    device: old.at.0,
+                    inode: old.at.1,
+                    born: old.born,
+                },
+                dir: None,
+                hash: old.hash,
+            };
+            set_taken(conn, &path, &taken)?;
+        }
+    }
+    for (path, value) in under(conn, DISCARDING)? {
+        if let Ok(old) = serde_json::from_str::<DiscardingAt12>(&value) {
+            let discarding = Discarding {
+                id: old.id,
+                aside: old.aside,
+                aside_at: None,
+                kept: old.kept,
+                private: old.private,
+                from: old.from,
+                left: old.left,
+            };
+            let value = serde_json::to_string(&discarding)
+                .map_err(|error| CoreError::Store(error.to_string()))?;
+            crate::store::meta_set(conn, &format!("{DISCARDING}{path}"), &value)?;
+        }
+    }
+    Ok(())
 }
 
 const KEPT: &str = "folder_kept:";

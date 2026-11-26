@@ -30,6 +30,11 @@ pub struct KeptFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
     pub reason: String,
+    /// Whether this is a record of a stopped discard whose file is not at
+    /// its path, and Marfa cannot prove the file gone. A discard stops
+    /// tracking it only where the owner confirmed it may, deleting no file.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unproved: bool,
 }
 
 /// What discarding the kept files did.
@@ -42,9 +47,9 @@ pub struct KeptDiscarded {
     pub put_back: Vec<String>,
     /// The files still kept, where Marfa could not reach them.
     pub kept: Vec<KeptFile>,
-    /// The paths of records of a stopped discard that do not read, which
-    /// Marfa forgot because no file is at them in the folder's own
-    /// directory. No file was deleted.
+    /// The paths of records of a stopped discard that Marfa stopped
+    /// tracking at the owner's confirmed word, because no file is at them
+    /// and Marfa cannot prove the file gone. No file was deleted.
     pub forgotten: Vec<String>,
 }
 
@@ -71,6 +76,7 @@ fn kept_file(row: &state::Retained) -> KeptFile {
         until: (retained.writers == Some(writers::Writers::Unknown)).then(|| until(retained)),
         reason: retained_reason(&from, retained),
         from,
+        unproved: false,
     }
 }
 
@@ -78,21 +84,22 @@ pub(super) const UNREAD: &str = "Marfa could not read its record";
 
 fn unread_file(row: &state::Unread) -> KeptFile {
     KeptFile {
-        path: joined(&row.aside, &row.kept),
+        path: joined(row.aside.as_deref().unwrap_or_default(), &row.kept),
         from: row.from.clone(),
         writers: "unknown",
         until: None,
         reason: UNREAD.into(),
+        unproved: false,
     }
 }
 
-/// Why an unreadable record of a stopped discard whose file is gone from the
-/// folder's own directory is still listed.
-const UNREAD_GONE: &str = "Marfa could not read its record of a discard it stopped on, and no file is at this path. Run `marfa folders kept <DIR> --discard` to forget the record";
-
-/// Why an unreadable record of a stopped discard is still listed where no
-/// file is at its path in a directory Marfa cannot show is the one it was in.
-const UNREAD_UNPROVED: &str = "Marfa could not read its record of a discard it stopped on, and no file is at this path, but it cannot tell the directory at the path from another put at its name, so the file may be wherever that directory went. Put the directory back, or make the directory stop following its folder with `marfa folders remove <DIR>`";
+/// Why a record of a stopped discard is listed where no file is at its path
+/// but Marfa cannot prove the file gone, and how the owner ends it.
+fn unproved_discard(why: &str) -> String {
+    format!(
+        "Marfa stopped as it discarded a kept file. No file is at this path, but Marfa cannot prove the file is gone: {why}. To stop tracking it, run `marfa folders kept <DIR> --discard` and confirm, or add `--yes --forget-unproved` in a script: no file is deleted"
+    )
+}
 
 /// Why a file a stopped discard left is listed while Marfa cannot show the
 /// directory at its path is the one the discard recorded.
@@ -102,26 +109,19 @@ fn away_reason(why: &str) -> String {
     )
 }
 
-/// Where the file of a record of a stopped discard that does not read is.
-enum UnreadMark {
-    /// Something is at its path, or Marfa cannot tell.
-    There,
-    /// Nothing is at its path, in the folder's own directory.
-    Gone,
-    /// Nothing is at its path, in a directory Marfa cannot show is the one
-    /// the discard ran in.
-    Unproved,
-}
-
-/// Where a stopped discard's file is, by its mark.
+/// Where a stopped discard's file is, by its record.
 enum MarkAt {
-    /// Under its private name, or something is, in the directory the mark
-    /// recorded, opened and checked.
+    /// Under its private name, or something is, in the directory at the
+    /// record's path, opened.
     There(Directory),
-    /// Not there, in the directory the mark recorded.
+    /// Not there, in the directory the record recorded.
     Gone,
-    /// Unknown, for this reason: the directory at its path is not shown to
-    /// be the one the mark recorded.
+    /// Not there, but nothing shows the directory at the path is the one
+    /// the discard ran in, for this reason; only the owner's confirmed word
+    /// ends it.
+    Unproved(String),
+    /// Unknown, for this reason: the directory at its path is away, or
+    /// another directory is there.
     Away(String),
 }
 
@@ -384,31 +384,33 @@ impl Folder {
     /// The files this folder keeps because a program might still write to
     /// them, in path order.
     pub fn kept_files(&self) -> Result<Vec<KeptFile>> {
+        // Read before the store is held, which reading it needs.
+        self.root_unproved();
         let conn = self.core.conn()?;
         #[allow(clippy::type_complexity)]
         let mut moved: std::collections::HashMap<
             String,
-            Vec<(String, state::Discarding, Option<String>)>,
+            Vec<(String, state::Discarding, Option<(String, bool)>)>,
         > = std::collections::HashMap::new();
         let mut files = Vec::new();
         for (path, mark) in state::discarding(&conn)? {
             match mark {
                 Some(mark) => {
-                    let away = match self.mark_at(&mark) {
+                    let reason = match self.mark_at(&mark) {
                         MarkAt::Gone => continue,
                         MarkAt::There(_) => None,
-                        MarkAt::Away(why) => Some(why),
+                        MarkAt::Away(why) => Some((away_reason(&why), false)),
+                        MarkAt::Unproved(why) => Some((unproved_discard(&why), true)),
                     };
                     moved
                         .entry(mark.id.clone())
                         .or_default()
-                        .push((path, mark, away));
+                        .push((path, mark, reason));
                 }
                 None => {
-                    let reason = match self.unread_mark_at(&path) {
-                        UnreadMark::Gone => UNREAD_GONE.into(),
-                        UnreadMark::Unproved => UNREAD_UNPROVED.into(),
-                        UnreadMark::There => format!("{UNREAD}; delete it when it is not needed"),
+                    let (reason, unproved) = match self.unread_mark_at(&path) {
+                        MarkAt::Unproved(why) => (unproved_discard(&why), true),
+                        _ => (format!("{UNREAD}; delete it when it is not needed"), false),
                     };
                     files.push(KeptFile {
                         path,
@@ -416,20 +418,18 @@ impl Folder {
                         writers: "unknown",
                         until: None,
                         reason,
+                        unproved,
                     });
                 }
             }
         }
-        let reason = |mark: &state::Discarding, away: &Option<String>| {
-            if let Some(why) = away {
-                away_reason(why)
-            } else {
-                left_reason(
-                    mark.left
-                        .as_deref()
-                        .unwrap_or("Marfa stopped as it discarded it"),
-                )
-            }
+        let reason = |mark: &state::Discarding, held: &Option<(String, bool)>| match held {
+            Some((why, _)) => why.clone(),
+            None => left_reason(
+                mark.left
+                    .as_deref()
+                    .unwrap_or("Marfa stopped as it discarded it"),
+            ),
         };
         for row in state::retained(&conn)? {
             let (id, mut file) = match &row {
@@ -439,11 +439,12 @@ impl Folder {
             if let Some(marks) = moved.get_mut(id)
                 && !marks.is_empty()
             {
-                let (path, mark, away) = marks.remove(0);
+                let (path, mark, held) = marks.remove(0);
                 file.path = path;
-                if away.is_some() || mark.left.is_some() {
-                    file.reason = reason(&mark, &away);
+                if held.is_some() || mark.left.is_some() {
+                    file.reason = reason(&mark, &held);
                 }
+                file.unproved = held.as_ref().is_some_and(|(_, unproved)| *unproved);
             }
             files.push(file);
         }
@@ -451,9 +452,10 @@ impl Folder {
             moved
                 .into_values()
                 .flatten()
-                .map(|(path, mark, away)| KeptFile {
+                .map(|(path, mark, held)| KeptFile {
                     path,
-                    reason: reason(&mark, &away),
+                    reason: reason(&mark, &held),
+                    unproved: held.as_ref().is_some_and(|(_, unproved)| *unproved),
                     from: mark.from,
                     writers: "unknown",
                     until: None,
@@ -466,8 +468,10 @@ impl Folder {
     /// Deletes each file kept because a program might still write to it,
     /// whatever programs hold it, where it is unchanged since Marfa set it
     /// aside. One a program wrote to goes back to its path, as a pass would
-    /// put it back.
-    pub fn discard_kept(&self) -> Result<KeptDiscarded> {
+    /// put it back. Where `forget_unproved`, which only the owner's
+    /// confirmation sets, it also stops tracking each record of a stopped
+    /// discard whose file Marfa cannot prove gone.
+    pub fn discard_kept(&self, forget_unproved: bool) -> Result<KeptDiscarded> {
         let mut done = KeptDiscarded::default();
         for (row, settled) in self.settle_retained_as(true)? {
             match settled {
@@ -484,20 +488,48 @@ impl Folder {
                 RowSettled::Gone | RowSettled::Kept => {}
             }
         }
-        done.forgotten = self.forget_discards_gone()?;
+        if forget_unproved {
+            done.forgotten = self.forget_discards_unproved()?;
+        }
         done.kept.extend(self.kept_files()?);
         done.kept.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(done)
     }
 
-    /// Forgets each record of a stopped discard that does not read and whose
-    /// file is shown gone from the folder's own directory, which no pass can
-    /// settle. Only the owner's discard does this, and it deletes no file.
-    fn forget_discards_gone(&self) -> Result<Vec<String>> {
+    /// Each record of a stopped discard whose file is not at its path while
+    /// Marfa cannot show it gone, by the record's path, with why.
+    pub(super) fn discards_held(&self) -> Result<Vec<(String, String)>> {
+        self.root_unproved();
+        let marks = state::discarding(&*self.core.conn()?)?;
+        Ok(marks
+            .into_iter()
+            .filter_map(|(path, mark)| {
+                let at = match &mark {
+                    Some(mark) => self.mark_at(mark),
+                    None => self.unread_mark_at(&path),
+                };
+                match at {
+                    MarkAt::Away(why) => Some((path, away_reason(&why))),
+                    MarkAt::Unproved(why) => Some((path, unproved_discard(&why))),
+                    MarkAt::There(_) | MarkAt::Gone => None,
+                }
+            })
+            .collect())
+    }
+
+    /// Forgets each record of a stopped discard whose file is not at its
+    /// path and which Marfa cannot prove gone. Only the owner's confirmed
+    /// discard does this, and it deletes no file.
+    fn forget_discards_unproved(&self) -> Result<Vec<String>> {
+        self.root_unproved();
         let conn = self.core.conn()?;
         let mut forgotten = Vec::new();
         for (path, mark) in state::discarding(&conn)? {
-            if mark.is_none() && matches!(self.unread_mark_at(&path), UnreadMark::Gone) {
+            let at = match &mark {
+                Some(mark) => self.mark_at(mark),
+                None => self.unread_mark_at(&path),
+            };
+            if matches!(at, MarkAt::Unproved(_)) {
                 state::clear_discarding_at(&conn, &path)?;
                 forgotten.push(path);
             }
@@ -505,8 +537,10 @@ impl Folder {
         Ok(forgotten)
     }
 
-    /// Where `mark`'s file is, read through its directory once that is
-    /// shown, by its full identity, to be the one the mark recorded.
+    /// Where `mark`'s file is, read through the directory at its path. Its
+    /// absence shows the file gone only where that directory is shown, by its
+    /// full identity, to be the one the mark recorded, in a folder whose
+    /// directory is the one its store was made in.
     fn mark_at(&self, mark: &state::Discarding) -> MarkAt {
         let place = if mark.aside.is_empty() {
             "the folder's directory"
@@ -524,49 +558,56 @@ impl Folder {
                 ));
             }
         };
-        match aside.metadata() {
-            Ok(found) => match mark.aside_at.compare(&identity::Seen::of(&found)) {
-                identity::Compared::Same => {}
-                identity::Compared::Weaker => {
-                    return MarkAt::Away(format!(
-                        "the file system keeps no birth time for the directory {place}, so Marfa cannot tell it from another put at its name"
-                    ));
-                }
-                identity::Compared::Other => {
-                    return MarkAt::Away(format!(
-                        "another directory is at the path of the directory {place}, so the file is wherever that directory went"
-                    ));
-                }
-            },
+        let compared = match aside.metadata() {
+            Ok(found) => mark
+                .aside_at
+                .map(|recorded| recorded.compare(&identity::Seen::of(&found))),
             Err(error) => {
                 return MarkAt::Away(format!(
                     "Marfa cannot look at the directory {place}: {error}"
                 ));
             }
+        };
+        if compared == Some(identity::Compared::Other) {
+            return MarkAt::Away(format!(
+                "another directory is at the path of the directory {place}, so the file is wherever that directory went"
+            ));
         }
-        match aside.entry_identity(Path::new(&mark.private)) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => MarkAt::Gone,
-            _ => MarkAt::There(aside),
+        let there = !aside
+            .entry_identity(Path::new(&mark.private))
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+        if there {
+            return MarkAt::There(aside);
         }
+        let unproved = match (self.root_unproved(), compared) {
+            (Some(root), _) => root,
+            (None, Some(identity::Compared::Same)) => return MarkAt::Gone,
+            (None, None) => super::pull::RECORD_WITHOUT_DIRECTORY.to_string(),
+            (None, _) => format!(
+                "the file system keeps no birth time for the directory {place}, so Marfa cannot tell it from another put at its name"
+            ),
+        };
+        MarkAt::Unproved(unproved)
     }
 
     /// Where the file of a record of a stopped discard that does not read
-    /// is, at `path`, relative to the root. Only the folder's own directory,
-    /// which holds the store the record is in, is shown to be the directory
-    /// the discard ran in.
-    fn unread_mark_at(&self, path: &str) -> UnreadMark {
+    /// is, at `path`, relative to the root. The record names no directory's
+    /// identity, so an empty path never shows the file gone.
+    fn unread_mark_at(&self, path: &str) -> MarkAt {
         let path = Path::new(path);
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
-            return UnreadMark::There;
+            return MarkAt::Away(super::pull::RECORD_UNREAD.into());
         };
-        let nothing = self
-            .place_dir(&dir.to_string_lossy())
-            .and_then(|dir| dir.entry_identity(Path::new(name)))
-            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
-        match (nothing, dir.as_os_str().is_empty()) {
-            (false, _) => UnreadMark::There,
-            (true, true) => UnreadMark::Gone,
-            (true, false) => UnreadMark::Unproved,
+        let found = self.place_dir(&dir.to_string_lossy()).and_then(|dir| {
+            dir.entry_identity(Path::new(name))?;
+            Ok(dir)
+        });
+        match found {
+            Ok(dir) => MarkAt::There(dir),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                MarkAt::Unproved(super::pull::RECORD_UNREAD.into())
+            }
+            Err(error) => MarkAt::Away(format!("Marfa cannot look at it: {error}")),
         }
     }
 
@@ -583,8 +624,12 @@ impl Folder {
     /// The same, or, where `discard`, settles each as though no program held
     /// it. Answers each file it looked at and what became of it.
     fn settle_retained_as(&self, discard: bool) -> Result<Vec<(KeptFile, RowSettled)>> {
+        // Read before the store is held, which reading it needs.
+        let root_proved = self.root_unproved().is_none();
         let conn = self.core.conn()?;
-        self.settle_discarding(&conn)?;
+        let marked = self.settle_discarding(&conn)?;
+        // A kept file under a discard's private name is not gone.
+        let absence_proves = |id: &str| root_proved && !marked.contains(id);
         let rows = state::retained(&conn)?;
         let mut waiting = false;
         let mut back = false;
@@ -597,13 +642,15 @@ impl Folder {
                 for row in batch {
                     match row {
                         Ok(row) => {
-                            if let Some(open) = self.retained_open(&conn, row, now)? {
+                            let proves = absence_proves(&row.retained.id);
+                            if let Some(open) = self.retained_open(&conn, row, now, proves)? {
                                 opened.push((row, open));
                             }
                         }
                         // Left for the owner to discard.
                         Err(row) if discard => {
-                            let settled = self.discard_unread(&conn, row)?;
+                            let settled =
+                                self.discard_unread(&conn, row, absence_proves(&row.id))?;
                             looked.push((unread_file(row), settled));
                         }
                         Err(_) => {}
@@ -649,10 +696,15 @@ impl Folder {
     }
 
     /// Restore the kept name so the retained record can settle the file.
-    fn settle_discarding(&self, conn: &rusqlite::Connection) -> Result<()> {
+    /// Answers the ids of the kept files whose discard records stand and
+    /// read.
+    fn settle_discarding(
+        &self,
+        conn: &rusqlite::Connection,
+    ) -> Result<std::collections::HashSet<String>> {
         let marks = state::discarding(conn)?;
         if marks.is_empty() {
-            return Ok(());
+            return Ok(Default::default());
         }
         let rows: std::collections::HashSet<String> = state::retained(conn)?
             .into_iter()
@@ -661,6 +713,7 @@ impl Folder {
                 Err(row) => row.id,
             })
             .collect();
+        let mut standing = std::collections::HashSet::new();
         for (path, mark) in marks {
             let Some(mark) = mark else { continue };
             let aside = match self.mark_at(&mark) {
@@ -668,9 +721,13 @@ impl Folder {
                     state::clear_discarding_at(conn, &path)?;
                     continue;
                 }
-                MarkAt::Away(_) => continue,
+                MarkAt::Away(_) | MarkAt::Unproved(_) => {
+                    standing.insert(mark.id.clone());
+                    continue;
+                }
                 MarkAt::There(aside) => aside,
             };
+            standing.insert(mark.id.clone());
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "folder-discard-mark-checked");
             let private = Path::new(&mark.private);
@@ -695,7 +752,7 @@ impl Folder {
                 Err(_) => {}
             }
         }
-        Ok(())
+        Ok(standing)
     }
 
     /// Deletes the file of a row that does not read, which only the owner's
@@ -706,10 +763,14 @@ impl Folder {
         &self,
         conn: &rusqlite::Connection,
         row: &state::Unread,
+        absence_proves: bool,
     ) -> Result<RowSettled> {
-        // A directory away, or not shown to be the one recorded, keeps the
-        // row: its file is wherever that directory went.
-        let Ok(aside) = self.place_dir(&row.aside) else {
+        // A directory the row does not name, one away, or one not shown to be
+        // the one recorded keeps the row: its file is wherever that went.
+        let Some(place) = row.aside.as_deref() else {
+            return Ok(RowSettled::Kept);
+        };
+        let Ok(aside) = self.place_dir(place) else {
             return Ok(RowSettled::Kept);
         };
         let Ok(aside_at) = aside.metadata() else {
@@ -717,18 +778,18 @@ impl Folder {
         };
         let proved = match row.aside_at {
             Some(at) => landing::identity(&aside_at) == at,
-            None => row.aside.is_empty(),
+            None => place.is_empty() && self.root_unproved().is_none(),
         };
         if !proved {
             return Ok(RowSettled::Kept);
         }
-        let aside_at = identity::Seen::of(&aside_at);
+        let aside_at = Some(identity::Seen::of(&aside_at));
         let unchanged = match aside.read(Path::new(&row.kept)) {
             Ok(bytes) => row
                 .hash
                 .as_deref()
                 .is_some_and(|hash| state::hash(&bytes) == hash),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && absence_proves => {
                 state::clear_retained(conn, &row.id)?;
                 return Ok(RowSettled::Gone);
             }
@@ -746,7 +807,7 @@ impl Folder {
         let mark = |private: &Path, mark: landing::Mark<'_>| {
             let discarding = state::Discarding {
                 id: row.id.clone(),
-                aside: row.aside.clone(),
+                aside: place.to_string(),
                 aside_at,
                 kept: row.kept.clone(),
                 private: private.to_string_lossy().into_owned(),
@@ -778,6 +839,7 @@ impl Folder {
         conn: &rusqlite::Connection,
         row: &state::Retained,
         now: u64,
+        absence_proves: bool,
     ) -> Result<Option<(Directory, Directory, std::fs::File)>> {
         let retained = &row.retained;
         let places = self
@@ -807,10 +869,11 @@ impl Folder {
         match aside.open_file(Path::new(&retained.kept), OFlags::RDONLY, Mode::empty()) {
             Ok(file) => Ok(Some((dir, aside, file))),
             Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidInput
-                ) =>
+                if absence_proves
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidInput
+                    ) =>
             {
                 state::clear_retained(conn, &retained.id)?;
                 Ok(None)
@@ -913,7 +976,7 @@ mod tests {
             "{status:?}"
         );
 
-        let done = folder.discard_kept().unwrap();
+        let done = folder.discard_kept(false).unwrap();
         assert_eq!(done.discarded, vec![kept[0].path.clone()]);
         assert!(done.put_back.is_empty() && done.kept.is_empty(), "{done:?}");
         assert!(reserved_in(&root.join("Notes")).is_empty());
@@ -954,7 +1017,7 @@ mod tests {
         assert_eq!(kept[0].reason, "Marfa could not read its record");
         assert_eq!(reserved_in(&root.join("Notes")), reserved);
 
-        let done = folder.discard_kept().unwrap();
+        let done = folder.discard_kept(false).unwrap();
         assert_eq!(done.discarded, vec![path], "{done:?}");
         assert!(done.kept.is_empty(), "{done:?}");
         assert!(reserved_in(&root.join("Notes")).is_empty());
@@ -1004,7 +1067,7 @@ mod tests {
         );
         drop(conn);
 
-        let done = folder.discard_kept().unwrap();
+        let done = folder.discard_kept(false).unwrap();
         assert_eq!(
             done.discarded,
             vec![format!("Notes/{}", reserved[0])],
@@ -1039,7 +1102,7 @@ mod tests {
             drop(program);
 
             if discard {
-                let done = folder.discard_kept().unwrap();
+                let done = folder.discard_kept(false).unwrap();
                 assert_eq!(done.put_back, vec!["Notes/Plan.md".to_string()], "{done:?}");
                 assert!(done.discarded.is_empty());
             }
@@ -1103,7 +1166,7 @@ mod tests {
 
             let done = {
                 let _write = crate::fault::fail_on_this_thread("write-before-discard");
-                folder.discard_kept().unwrap()
+                folder.discard_kept(false).unwrap()
             };
 
             assert!(done.discarded.is_empty(), "unread {unread}: {done:?}");
@@ -1138,7 +1201,7 @@ mod tests {
         drop(program);
         std::fs::write(root.join("Notes/Plan.md"), "the person's edit\n").unwrap();
 
-        let done = folder.discard_kept().unwrap();
+        let done = folder.discard_kept(false).unwrap();
 
         assert_eq!(done.put_back.len(), 1, "{done:?}");
         assert_ne!(done.put_back[0], "Notes/Plan.md", "{done:?}");
@@ -1210,7 +1273,7 @@ mod tests {
         for unread in [false, true] {
             let (_dir, folder, root, path) = kept_aside(unread);
 
-            let done = folder.discard_kept().unwrap();
+            let done = folder.discard_kept(false).unwrap();
 
             assert_eq!(done.discarded, vec![path], "unread {unread}: {done:?}");
             assert!(done.kept.is_empty(), "unread {unread}: {done:?}");
@@ -1230,7 +1293,7 @@ mod tests {
 
             let done = {
                 let _refused = crate::fault::fail_on_this_thread("discard-unlink-refused");
-                folder.discard_kept().unwrap()
+                folder.discard_kept(false).unwrap()
             };
 
             assert!(done.discarded.is_empty(), "unread {unread}: {done:?}");
@@ -1265,7 +1328,7 @@ mod tests {
             {
                 let _stop = crate::fault::fail_on_this_thread("crash-after-private-rename");
                 let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    folder.discard_kept()
+                    folder.discard_kept(false)
                 }));
                 assert!(stopped.is_err(), "it did not stop");
             }
@@ -1290,7 +1353,7 @@ mod tests {
                 kept_somewhere(&root, "written after the stop"),
                 "unread {unread}: the write was lost"
             );
-            let done = folder.discard_kept().unwrap();
+            let done = folder.discard_kept(false).unwrap();
             assert!(done.discarded.is_empty(), "unread {unread}: {done:?}");
             assert!(
                 kept_somewhere(&root, "written after the stop"),
@@ -1308,7 +1371,7 @@ mod tests {
             {
                 let _stop = crate::fault::fail_on_this_thread("crash-after-private-rename");
                 let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    folder.discard_kept()
+                    folder.discard_kept(false)
                 }));
                 assert!(stopped.is_err(), "it did not stop");
             }
@@ -1317,7 +1380,7 @@ mod tests {
 
             let folder = Folder::open(&root, None).unwrap();
             folder.scan().unwrap();
-            folder.discard_kept().unwrap();
+            folder.discard_kept(false).unwrap();
 
             let kept = listed(&root, &folder.kept_files().unwrap());
             let aside: Vec<&(String, bool)> = kept.iter().filter(|(at, _)| *at != path).collect();
@@ -1337,8 +1400,9 @@ mod tests {
     fn discard_stopped(folder: Folder, root: &Path) -> Folder {
         {
             let _stop = crate::fault::fail_on_this_thread("crash-after-private-rename");
-            let stopped =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| folder.discard_kept()));
+            let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                folder.discard_kept(false)
+            }));
             assert!(stopped.is_err(), "it did not stop");
         }
         drop(folder);
@@ -1355,7 +1419,7 @@ mod tests {
             std::fs::rename(root.join("Notes"), elsewhere.path().join("Notes")).unwrap();
             std::fs::create_dir(root.join("Notes")).unwrap();
             folder.scan().unwrap();
-            folder.discard_kept().unwrap();
+            folder.discard_kept(false).unwrap();
             std::fs::remove_dir_all(root.join("Notes")).unwrap();
             std::fs::rename(elsewhere.path().join("Notes"), root.join("Notes")).unwrap();
 
@@ -1420,13 +1484,14 @@ mod tests {
         std::fs::remove_file(root.join("Notes").join(&private[0])).unwrap();
         folder.scan().unwrap();
 
-        let done = folder.discard_kept().unwrap();
+        let done = folder.discard_kept(false).unwrap();
 
         // Nothing shows the directory at its path is the one the discard ran in.
         assert!(done.forgotten.is_empty(), "{done:?}");
         let kept = folder.kept_files().unwrap();
         assert_eq!(kept.len(), 1, "{kept:?}");
-        assert_eq!(kept[0].reason, super::UNREAD_UNPROVED);
+        assert!(kept[0].unproved, "{kept:?}");
+        assert!(kept[0].reason.contains("cannot prove"), "{kept:?}");
     }
 
     /// Spoils every record of a stopped discard.
@@ -1455,7 +1520,7 @@ mod tests {
             let elsewhere = tempfile::tempdir_in(root.parent().unwrap()).unwrap();
             std::fs::rename(root.join("Notes"), elsewhere.path().join("Notes")).unwrap();
 
-            let done = folder.discard_kept().unwrap();
+            let done = folder.discard_kept(false).unwrap();
 
             assert!(
                 done.forgotten.is_empty(),
@@ -1514,9 +1579,9 @@ mod tests {
                 let (_, mark) = state::discarding(&conn).unwrap().pop().unwrap();
                 let mut mark = mark.unwrap();
                 if spoil == "no birth time" {
-                    mark.aside_at.born = None;
+                    mark.aside_at.as_mut().unwrap().born = None;
                 } else {
-                    mark.aside_at.device ^= 1;
+                    mark.aside_at.as_mut().unwrap().device ^= 1;
                 }
                 state::set_discarding(&conn, &mark).unwrap();
             }
@@ -1546,21 +1611,27 @@ mod tests {
             drop(folder);
             super::super::upgraded_tests::as_written_by_v0_0_113(&root);
             let folder = Folder::open(&root, None).unwrap();
+            let listed = |folder: &Folder| {
+                let kept = folder.kept_files().unwrap();
+                assert_eq!(kept.len(), 1, "{place:?}: {kept:?}");
+                assert_eq!(
+                    kept[0].from,
+                    super::super::joined(place, "Plan.md"),
+                    "{place:?}: {kept:?}"
+                );
+                assert!(root.join(&kept[0].path).is_file(), "{place:?}: {kept:?}");
+            };
+            listed(&folder);
 
-            folder.scan().unwrap();
+            {
+                // A program may still write to it, so the pass keeps it.
+                let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+                folder.scan().unwrap();
+            }
 
-            let kept = folder.kept_files().unwrap();
-            assert_eq!(kept.len(), 1, "{place:?}: {kept:?}");
+            listed(&folder);
             assert_eq!(
-                kept[0].from,
-                super::super::joined(place, "Plan.md"),
-                "{place:?}: {kept:?}"
-            );
-            assert!(root.join(&kept[0].path).is_file(), "{place:?}: {kept:?}");
-            assert_eq!(
-                state::retained(&folder.core.conn().unwrap())
-                    .unwrap()
-                    .len(),
+                state::retained(&folder.core.conn().unwrap()).unwrap().len(),
                 1,
                 "{place:?}: the record linking the kept file to its path went"
             );
@@ -1597,7 +1668,7 @@ mod tests {
                         .is_some_and(|reason| reason.contains("folders kept"))),
                 "{place:?}: {listed:?}"
             );
-            let done = folder.discard_kept().unwrap();
+            let done = folder.discard_kept(false).unwrap();
             assert!(done.forgotten.is_empty(), "{place:?}: {done:?}");
             assert_eq!(
                 state::discarding(&folder.core.conn().unwrap())
@@ -1605,6 +1676,31 @@ mod tests {
                     .len(),
                 1,
                 "{place:?}: a record that cannot be proved gone was settled unasked"
+            );
+            assert!(
+                done.kept
+                    .iter()
+                    .any(|file| file.path == path && file.unproved),
+                "{place:?}: {done:?}"
+            );
+
+            let done = folder.discard_kept(true).unwrap();
+
+            assert_eq!(done.forgotten, [path.clone()], "{place:?}: {done:?}");
+            assert!(
+                state::discarding(&folder.core.conn().unwrap())
+                    .unwrap()
+                    .is_empty(),
+                "{place:?}"
+            );
+            assert!(
+                !folder
+                    .status()
+                    .unwrap()
+                    .files
+                    .iter()
+                    .any(|file| file.path == path),
+                "{place:?}"
             );
         }
     }
@@ -1625,13 +1721,11 @@ mod tests {
         // The witness: its file is there, in a directory the record does not name.
         assert!(root.join(&path).is_file());
 
-        folder.discard_kept().unwrap();
+        folder.discard_kept(false).unwrap();
 
         assert!(root.join(&path).is_file());
         assert_eq!(
-            state::retained(&folder.core.conn().unwrap())
-                .unwrap()
-                .len(),
+            state::retained(&folder.core.conn().unwrap()).unwrap().len(),
             1,
             "the record went after a look in a directory it does not name"
         );
@@ -1656,12 +1750,10 @@ mod tests {
         let original = super::super::unmatched::tests::store_in_a_new_directory(&root);
         let folder = Folder::open(&root, None).unwrap();
 
-        folder.discard_kept().unwrap();
+        folder.discard_kept(false).unwrap();
 
         assert_eq!(
-            state::retained(&folder.core.conn().unwrap())
-                .unwrap()
-                .len(),
+            state::retained(&folder.core.conn().unwrap()).unwrap().len(),
             1,
             "the record went while its file is in the original directory"
         );
