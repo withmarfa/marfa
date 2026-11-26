@@ -114,7 +114,7 @@ fn claims_made_at_once_never_both_win() {
                     while !go.load(Ordering::Acquire) {
                         std::hint::spin_loop();
                     }
-                    if let Ok(claim) = core.claim_stream(Mover::CatchUp) {
+                    if let Ok(claim) = core.claim_stream(Mover::CatchUp, &AtomicBool::new(false)) {
                         won.fetch_add(1, Ordering::SeqCst);
                         if holding.fetch_add(1, Ordering::SeqCst) > 0 {
                             overlapped.store(true, Ordering::SeqCst);

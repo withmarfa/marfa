@@ -28,6 +28,9 @@ pub(crate) enum Mover {
     Hydration,
     CatchUp,
     Follow,
+    /// A fill of held tables. The others wait it out rather than be refused,
+    /// since an app that holds a table does not move the cursor on purpose.
+    Fill,
 }
 
 pub(crate) struct StreamClaim<'a>(&'a Mutex<Streaming>);
@@ -67,7 +70,8 @@ impl Core {
     /// Refused while a catch-up or a follow runs on this handle: a follow
     /// left running across a hydration would apply events read against the
     /// old slice to the new copy. A caller stops its follow first. A watch is
-    /// not stopped: the hydration takes its stream, and gives it back.
+    /// not stopped: the hydration takes its stream, and gives it back. A
+    /// table fill running on the handle is waited for.
     ///
     /// `types` is the slice's types. `store::EVERY_TYPE` alone is every type
     /// but the hidden ones (`system.*` and `app.*`), hydrated in one pass with no need to read the catalog
@@ -137,7 +141,7 @@ impl Core {
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
         let mut taken = self.watch.take()?;
-        let _streaming = self.claim_stream(Mover::Hydration)?;
+        let _streaming = self.claim_stream(Mover::Hydration, stop)?;
         let report = hydrate::hydrate(
             self,
             self.http()?,
@@ -197,7 +201,7 @@ impl Core {
     ) -> std::result::Result<CatchUpReport, CatchUpFailed> {
         self.lock.refuse_unless_writer()?;
         let mut taken = self.watch.take()?;
-        let _streaming = self.claim_stream(Mover::CatchUp)?;
+        let _streaming = self.claim_stream(Mover::CatchUp, stop)?;
         let mut catalog_changed = false;
         catch_up::catch_up(
             self,
@@ -324,7 +328,7 @@ impl Core {
     /// completes and no hydration or catch-up still holds the stream, then
     /// follows. `stop` ends the wait as it ends the follow. An expired copy
     /// is refused at once, as it stands. A second follow is refused at once,
-    /// waiting or not.
+    /// waiting or not. A table fill under way is waited for as a hydration is.
     ///
     /// `told_unreachable` says the caller was last told `server.unreachable`
     /// by a follow before this one, so this one says `server.reachable` when
@@ -410,7 +414,7 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let http = self.http.clone().ok_or(CoreError::NoServer)?;
         let _following = self.claim_follow()?;
-        let streaming = self.claim_stream(Mover::Follow)?;
+        let streaming = self.claim_stream(Mover::Follow, stop)?;
         self.follow_claimed(
             http,
             streaming,
@@ -451,6 +455,7 @@ impl Core {
                     // The hydration waited for holds it until it has
                     // settled, and a catch-up may have taken it since.
                     Err(Mover::Hydration | Mover::CatchUp) if waited => {}
+                    Err(Mover::Fill) => {}
                     Err(_) => return Err(one_at_a_time()),
                 },
                 Err(_) if waits => {
@@ -497,8 +502,17 @@ impl Core {
         .unwrap_or_else(|fault| Err(CoreError::Fault(fault_message(fault.as_ref()))))
     }
 
-    pub(crate) fn claim_stream(&self, mover: Mover) -> Result<StreamClaim<'_>> {
-        self.try_claim_stream(mover).map_err(|_| one_at_a_time())
+    /// Waits while a table fill holds the stream, until `stop` is raised.
+    pub(crate) fn claim_stream(&self, mover: Mover, stop: &AtomicBool) -> Result<StreamClaim<'_>> {
+        loop {
+            match self.try_claim_stream(mover) {
+                Ok(claim) => return Ok(claim),
+                Err(Mover::Fill) => {}
+                Err(_) => return Err(one_at_a_time()),
+            }
+            catch_up::refuse_if_stopped(stop)?;
+            std::thread::sleep(catch_up::PACE.stop_poll);
+        }
     }
 
     /// Refused with what holds the stream.

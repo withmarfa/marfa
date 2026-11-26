@@ -4822,7 +4822,10 @@ mod tests {
             ),
             other => panic!("a fault ended the follow as {other:?}"),
         }
-        assert!(core.claim_stream(crate::Mover::CatchUp).is_ok());
+        assert!(
+            core.claim_stream(crate::Mover::CatchUp, &AtomicBool::new(false))
+                .is_ok()
+        );
         assert!(core.claim_follow().is_ok());
     }
 
@@ -5274,7 +5277,7 @@ mod tests {
             }
             let (stop, done) = follow_for_real(&core);
             thread::sleep(MS(300));
-            let claim = core.claim_stream(holder).unwrap();
+            let claim = core.claim_stream(holder, &AtomicBool::new(false)).unwrap();
             store::meta_delete(&core.conn().unwrap(), store::META_HYDRATE_STATE).unwrap();
             assert!(
                 done.recv_timeout(MS(600)).is_err(),
@@ -5286,6 +5289,198 @@ mod tests {
             server.wait_for("/events", 1, Duration::from_secs(5));
             stop.store(true, Ordering::Relaxed);
             done.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    const LEDGER: &str = "app.acme.ledger";
+
+    /// A hydrated copy whose catalog declares the table `log` on `LEDGER`,
+    /// with `after` answering the streams asked for once it is hydrated.
+    #[cfg(debug_assertions)]
+    fn hydrated_with_a_table(
+        server: &Scripted,
+        after: Vec<Answer>,
+    ) -> (tempfile::TempDir, Arc<Core>) {
+        use crate::scripted::{certified, json};
+        let mut events = hydration_streams();
+        events.extend(after);
+        let (dir, core) = unhydrated(server, events);
+        server.on(
+            "/types",
+            vec![certified(json(
+                200,
+                &serde_json::json!({
+                    "data": [
+                        {"id": NOTE, "display_hints": {"title_field": "title"}},
+                        {
+                            "id": LEDGER,
+                            "fields": {},
+                            "tables": {"log": {"columns": {"a": {"type": "string"}}}},
+                        },
+                    ],
+                    "next_cursor": null,
+                })
+                .to_string(),
+            ))],
+        );
+        core.hydrate(&[NOTE.into()], SliceTier::Library).unwrap();
+        (dir, core)
+    }
+
+    #[cfg(debug_assertions)]
+    fn hydration_streams() -> Vec<Answer> {
+        use crate::scripted::copy_marker;
+        vec![
+            stream(vec![copy_marker("stream_cursor", "10")], Then::End),
+            stream(
+                vec![
+                    copy_marker("stream_cursor", "10"),
+                    copy_marker("stream_live", "10"),
+                ],
+                Then::End,
+            ),
+        ]
+    }
+
+    /// Holds `LEDGER`'s table on a thread of its own, stopped where its fill
+    /// holds the stream until `table_hold_filled`.
+    #[cfg(debug_assertions)]
+    fn table_hold_filling(core: &Arc<Core>) -> thread::JoinHandle<Result<crate::TableHold>> {
+        crate::fault::arm("table-hold-filling");
+        let holder = Arc::clone(core);
+        let hold = thread::spawn(move || holder.hold_table(LEDGER, "log"));
+        wait_until("the hold never began its fill", || {
+            crate::fault::waiting("table-hold-filling") > 0
+        });
+        hold
+    }
+
+    #[cfg(debug_assertions)]
+    fn table_hold_filled(hold: thread::JoinHandle<Result<crate::TableHold>>) {
+        crate::fault::release("table-hold-filling");
+        let held = hold.join().unwrap().unwrap();
+        assert!(
+            held.fill.is_some(),
+            "the hold left its fill to another: {held:?}"
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_follow_that_starts_while_a_table_hold_fills_waits_for_the_fill_and_keeps_following() {
+        let server = Scripted::start();
+        let (_dir, core) =
+            hydrated_with_a_table(&server, vec![stream(vec![created("n1", "11")], held())]);
+        let hydration_asked = server.seen("/events").len();
+        let hold = table_hold_filling(&core);
+        let flag = Arc::new(AtomicBool::new(false));
+        let (ended, done) = mpsc::channel();
+        let (told, changes) = mpsc::channel();
+        {
+            let (core, flag) = (Arc::clone(&core), Arc::clone(&flag));
+            thread::spawn(move || {
+                let _ = ended.send(core.follow(&flag, false, |change| {
+                    let _ = told.send(change.clone());
+                }));
+            });
+        }
+        let early = done.recv_timeout(MS(400));
+        assert!(
+            matches!(early, Err(RecvTimeoutError::Timeout)),
+            "a follow that started while a table hold filled ended rather than waiting: {early:?}"
+        );
+        assert_eq!(
+            server.seen("/events").len(),
+            hydration_asked,
+            "a follow waiting for a fill asked for a stream"
+        );
+        table_hold_filled(hold);
+        let applied = loop {
+            let change = changes
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the follow did not follow once the fill ended");
+            if change.item_id.is_some() {
+                break change;
+            }
+        };
+        assert_eq!(
+            (applied.item_id.as_deref(), applied.cursor.as_str()),
+            (Some("n1"), "11")
+        );
+        flag.store(true, Ordering::Relaxed);
+        let report = done
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the follow did not end when stopped")
+            .unwrap();
+        assert_eq!(report.applied, 1);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_hydration_waiting_for_a_table_hold_fill_is_canceled_by_its_stop() {
+        let server = Scripted::start();
+        let (_dir, core) = hydrated_with_a_table(&server, hydration_streams());
+        let hold = table_hold_filling(&core);
+        let stop = AtomicBool::new(true);
+        assert_eq!(
+            core.hydrate_until(&[NOTE.into()], SliceTier::Library, &[], &stop)
+                .map(drop),
+            Err(CoreError::Canceled)
+        );
+        table_hold_filled(hold);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_catch_up_or_hydration_that_starts_while_a_table_hold_fills_waits_for_the_fill() {
+        for hydrating in [false, true] {
+            let what = if hydrating {
+                "a hydration"
+            } else {
+                "a catch-up"
+            };
+            let server = Scripted::start();
+            let after = if hydrating {
+                hydration_streams()
+            } else {
+                vec![stream(
+                    vec![created("n1", "11"), stream_live(Some("11"))],
+                    Then::End,
+                )]
+            };
+            let (_dir, core) = hydrated_with_a_table(&server, after);
+            let hydration_asked = server.seen("/events").len();
+            let hold = table_hold_filling(&core);
+            let (ended, done) = mpsc::channel();
+            {
+                let core = Arc::clone(&core);
+                thread::spawn(move || {
+                    let _ = ended.send(if hydrating {
+                        core.hydrate(&[NOTE.into()], SliceTier::Library).map(drop)
+                    } else {
+                        core.catch_up().map(drop)
+                    });
+                });
+            }
+            let early = done.recv_timeout(MS(400));
+            assert!(
+                matches!(early, Err(RecvTimeoutError::Timeout)),
+                "{what} that started while a table hold filled ended rather than waiting: {early:?}"
+            );
+            assert_eq!(
+                server.seen("/events").len(),
+                hydration_asked,
+                "{what} waiting for a fill asked for a stream"
+            );
+            table_hold_filled(hold);
+            let finished = done
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap_or_else(|_| panic!("{what} did not end once the fill ended"));
+            assert_eq!(finished, Ok(()), "{what}");
+            if !hydrating {
+                assert_eq!(stored_cursor(&core), Some("11".to_string()));
+            }
         }
     }
 

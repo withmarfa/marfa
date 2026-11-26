@@ -211,7 +211,8 @@ impl Core {
     }
 
     /// Holds matching tables and fills them, or leaves them to the follow or
-    /// catch-up that holds the stream.
+    /// catch-up that holds the stream. A hydration, catch-up or follow that
+    /// starts during the fill waits for it.
     pub fn hold_table(&self, type_id: &str, table: &str) -> Result<TableHold> {
         self.hold_table_until(type_id, table, &NEVER_STOPPED)
     }
@@ -226,8 +227,10 @@ impl Core {
         let was_held = busy::retrying(&self.conn, stop, || {
             tables::choose(&mut *self.conn()?, type_id, table)
         })?;
-        let fill = match self.try_claim_stream(Mover::CatchUp) {
+        let fill = match self.try_claim_stream(Mover::Fill) {
             Ok(_streaming) if store::hydration_complete(&*self.conn()?)? => {
+                #[cfg(debug_assertions)]
+                crate::fault::hold(|| "table-hold-filling");
                 let context = reach::Context::capture(&*self.conn()?)?;
                 Some(tables::fill(self, &context, stop)?)
             }
@@ -259,7 +262,7 @@ impl Core {
     /// Fills each table the copy holds that is not whole.
     pub fn fill_tables(&self, stop: &AtomicBool) -> Result<FillReport> {
         self.lock.refuse_unless_writer()?;
-        let _streaming = self.claim_stream(Mover::CatchUp)?;
+        let _streaming = self.claim_stream(Mover::Fill, stop)?;
         let context = reach::Context::capture(&*self.conn()?)?;
         tables::fill(self, &context, stop)
     }
