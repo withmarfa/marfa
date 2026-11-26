@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import {
   appendFileSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -662,6 +663,104 @@ describe("a folder's unmatched files", () => {
     expect(door.get(note(1).id)?.version, "the item was changed").toBe(2);
   });
 
+  it("never removes a file put at the path after its removal was recorded, and holds it", async () => {
+    const { harness: made, door } = await unmatchedFolder(
+      "unmatched-replaced-after-record",
+      2,
+    );
+    const path = join(made.dir, "Note 1.md");
+    const point = "folder-take-away-recorded";
+    const bound = await openBindingFolder(made);
+    try {
+      await bound.device.hooks.hold(point);
+      const removing = bound.bound.removeUnmatched(["Note 1.md"]);
+      await untilHeld(bound.device, point);
+      // The same bytes under another inode and birth time.
+      copyFileSync(path, `${path}.copy`);
+      renameSync(`${path}.copy`, path);
+      await bound.device.hooks.release(point);
+      const removed = await removing;
+      expect(removed.ok, JSON.stringify(removed)).toBe(true);
+      if (!removed.ok) return;
+      expect(removed.value.removed).toEqual([]);
+    } finally {
+      await bound.device.close();
+    }
+    expect(
+      existsSync(path),
+      "a file put at the path after the removal was recorded was removed",
+    ).toBe(true);
+    expect(await statusOf(made, "Note 1.md")).toEqual([
+      expect.objectContaining({
+        item_id: note(1).id,
+        status: "held",
+        flag: "removing",
+      }),
+    ]);
+    // The witness: the same folder removes an unmatched file it may.
+    const witness = await made.folder.removeUnmatched({ yes: true });
+    expect(witness.ok, JSON.stringify(witness)).toBe(true);
+    expect(
+      witness.ok && witness.value.removed.map((file) => file.path),
+    ).toEqual(["Note 2.md"]);
+    expect(existsSync(path), "the held file was removed").toBe(true);
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(door.get(note(1).id)?.version, "the item was changed").toBe(2);
+  });
+
+  it("lists a file held for a stopped removal with why, and never takes it away", async () => {
+    const { harness: made, door } = await unmatchedFolder(
+      "unmatched-stopped-held-listed",
+      2,
+    );
+    await expect(
+      withFault("crash-before-take-away=Note 1.md", () =>
+        made.folder.removeUnmatched({ yes: true }),
+      ),
+      "the removal did not stop where the fault asks, so nothing below is about a stopped one",
+    ).rejects.toThrow(/crashing at .*Note 1\.md/);
+    const path = join(made.dir, "Note 1.md");
+    copyFileSync(path, `${path}.copy`);
+    renameSync(`${path}.copy`, path);
+    expect((await made.folder.scan()).ok).toBe(true);
+    expect(
+      await statusOf(made, "Note 1.md"),
+      "the copy is not held, so nothing below is about a held file",
+    ).toEqual([expect.objectContaining({ status: "held", flag: "removing" })]);
+
+    const listed = await made.folder.unmatched();
+    expect(listed.ok, JSON.stringify(listed)).toBe(true);
+    if (!listed.ok) return;
+    expect(
+      listed.value.unmatched.filter((file) => file.path === "Note 1.md"),
+    ).toEqual([
+      expect.objectContaining({
+        item_id: note(1).id,
+        kept: expect.stringMatching(/another file is at its path/),
+        removing: expect.stringMatching(/another file is at its path/),
+      }),
+    ]);
+    const removed = await made.folder.removeUnmatched({ yes: true });
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) return;
+    expect(
+      removed.value.removed.map((file) => file.path),
+      "the witness: the same command removes an unmatched file it may",
+    ).toEqual(["Note 2.md"]);
+    expect(
+      existsSync(path),
+      "a file held for a stopped removal was removed",
+    ).toBe(true);
+    expect(removed.value.settled).toEqual([]);
+    expect(await statusOf(made, "Note 1.md")).toEqual([
+      expect.objectContaining({ status: "held", flag: "removing" }),
+    ]);
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(door.get(note(1).id)?.version, "the item was changed").toBe(2);
+  });
+
   it("holds the binding of a file whose removal stopped while another directory has its directory's name, and keeps it once the directory is back", async () => {
     // New files outside the query's states are unmatched where they are made.
     const made = await folderHarness("unmatched-stopped-directory-away", {
@@ -729,7 +828,7 @@ describe("a folder's unmatched files", () => {
         item_id: shelved,
         status: "held",
         flag: "removing",
-        reason: expect.stringMatching(/no longer at its directory's path/),
+        reason: expect.stringMatching(/cannot tell where the file is/),
       }),
     ]);
     const unmatched = await made.folder.unmatched();
@@ -742,9 +841,31 @@ describe("a folder's unmatched files", () => {
     ).toEqual([
       expect.objectContaining({
         item_id: shelved,
-        removing: expect.stringMatching(/folders unmatched .* --remove/),
+        kept: expect.stringMatching(/Put back the directory/),
+        removing: expect.stringMatching(/Put back the directory/),
       }),
     ]);
+    const bound = await openBindingFolder(made);
+    try {
+      const named = await bound.bound.removeUnmatched(["sub/Shelved.md"]);
+      expect(named.ok, JSON.stringify(named)).toBe(true);
+      if (!named.ok) return;
+      expect(
+        named.value.settled,
+        "a removal was ended while its directory was away",
+      ).toEqual([]);
+      expect(named.value.kept).toEqual([
+        expect.objectContaining({
+          path: "sub/Shelved.md",
+          reason: expect.stringMatching(/Put back the directory/),
+        }),
+      ]);
+    } finally {
+      await bound.device.close();
+    }
+    expect(
+      (await statusOf(made, "sub/Shelved.md")).map((file) => file.flag),
+    ).toEqual(["removing"]);
 
     rmSync(join(made.dir, "sub"), { recursive: true });
     renameSync(away, join(made.dir, "sub"));

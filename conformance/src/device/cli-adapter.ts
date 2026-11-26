@@ -1705,8 +1705,8 @@ export interface UnmatchedFile {
   /** Why the file has no item, where its folder holds it outside the query
    *  (`folder-guards/outside-query-unmatched`). */
   held?: string;
-  /** Why a removal Marfa stopped on holds the file's binding where no file
-   *  is at its path (`folder-guards/unmatched-remove-stopped-empty-listed`). */
+  /** Why a removal Marfa stopped on holds the file's binding
+   *  (`folder-guards/unmatched-remove-stopped-listed`). */
   removing?: string;
 }
 
@@ -1725,8 +1725,9 @@ export interface KeptDiscard {
   discarded: string[];
   put_back: string[];
   kept: KeptFile[];
-  /** Records of a stopped discard forgotten because no file is at their
-   *  paths (`folder-files/write-retained-discard-forgets-gone`). */
+  /** Records of a stopped discard that do not read, forgotten because no
+   *  file is at their paths in the directory itself
+   *  (`folder-files/write-retained-discard-forgets-gone`). */
   forgotten: string[];
   declined: boolean;
 }
@@ -1756,8 +1757,8 @@ export interface UnmatchedRemoval {
   removed: UnmatchedFile[];
   kept: UnmatchedFile[];
   ended: number;
-  /** Removals Marfa stopped on that it ended because no file is at their
-   *  paths (`folder-guards/unmatched-remove-stopped-empty-ended`). */
+  /** Removals Marfa stopped on that it ended
+   *  (`folder-guards/unmatched-remove-stopped-unread-ended`). */
   settled: UnmatchedFile[];
   declined: boolean;
 }
