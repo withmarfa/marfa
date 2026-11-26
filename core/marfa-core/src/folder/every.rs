@@ -2115,6 +2115,43 @@ mod tests {
     }
 
     #[test]
+    fn the_watch_reads_a_folder_at_schema_11_and_a_kept_credential_still_reaches_it() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let registry = Registry::at(temp.path().join("folders.json"));
+        let dir = temp.path().join("older");
+        std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
+        let path = dir.join(STATE_DIR).join(store::FOLDER_STORE);
+        let core = Core::open(&path, None).unwrap();
+        store::meta_set(
+            &core.conn().unwrap(),
+            store::META_SERVER_ORIGIN,
+            "https://one.test",
+        )
+        .unwrap();
+        super::super::settings_file::bind(&core, "01a00000-0000-7000-8000-0000000036b1").unwrap();
+        drop(core);
+        registry
+            .add(&dir, &Directory::open(&dir).unwrap(), "older", None)
+            .unwrap();
+        store::testing::as_schema_11(&path);
+
+        let read = recorded(&dir).unwrap();
+        assert_eq!(read.origin.as_deref(), Some("https://one.test"));
+        assert!(!read.first_sync_waiting && !read.paused);
+        assert!(follows(&registry, "https://one.test"));
+        assert!(!follows(&registry, "https://two.test"));
+
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(
+                "INSERT INTO meta (key, value) VALUES (?1, '2026-01-01T00:00:00.000Z')",
+                [super::super::paused::META_PAUSED],
+            )
+            .unwrap();
+        assert!(recorded(&dir).unwrap().paused, "a pause was not read");
+    }
+
+    #[test]
     fn a_listed_directory_with_no_store_is_said_to_be_no_folder() {
         let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let dir = temp.path().join("notes");

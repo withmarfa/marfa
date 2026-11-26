@@ -3649,6 +3649,8 @@ mod relink_tests;
 mod same_name_tests;
 #[cfg(test)]
 mod scoped_pass_tests;
+#[cfg(all(test, unix))]
+mod upgraded_tests;
 
 #[cfg(test)]
 mod tests {

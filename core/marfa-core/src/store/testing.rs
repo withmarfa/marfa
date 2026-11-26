@@ -37,6 +37,29 @@ pub fn queue_admitting(conn: &Connection, kind: &str) {
     .unwrap();
 }
 
+/// Gives the store at `path`, which no connection holds open, the shape
+/// schema version 11 names, keeping the rows of its record of missing files.
+pub fn as_schema_11(path: &std::path::Path) {
+    Connection::open(path)
+        .unwrap()
+        .execute_batch(
+            "CREATE TEMP TABLE journal_kept AS
+               SELECT path, item_id, missing_since, kept, reason FROM folder_journal;
+             DROP TABLE folder_journal;
+             CREATE TABLE folder_journal (
+               path TEXT PRIMARY KEY,
+               item_id TEXT NOT NULL,
+               missing_since TEXT NOT NULL,
+               kept TEXT CHECK (kept IN ('arriving', 'unsure', 'carried')),
+               reason TEXT
+             ) WITHOUT ROWID;
+             INSERT INTO folder_journal SELECT * FROM journal_kept;
+             DROP TABLE journal_kept;
+             PRAGMA user_version = 11;",
+        )
+        .unwrap();
+}
+
 pub fn wire_type(id: &str, parent: Option<&str>, title_field: Option<&str>) -> WireType {
     WireType {
         id: id.into(),
