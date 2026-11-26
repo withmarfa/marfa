@@ -3017,7 +3017,8 @@ impl Folder {
         // Counted over every missing file, not only those past the grace, so
         // files a watch meets a pass apart are one removal.
         if settings.removal_threshold.exceeded(journaled.len(), of) {
-            let paths: Vec<String> = journaled.into_iter().map(|row| row.path).collect();
+            let mut paths: Vec<String> = journaled.into_iter().map(|row| row.path).collect();
+            paths.dedup();
             state::set_paused(&*self.core.conn()?, state::Removal::Disk, &paths)?;
             report.paused = paths.len();
             self.note_kept_look_passed()?;

@@ -25,6 +25,14 @@ pub struct Confirmed {
     pub refused: Vec<Unsure>,
 }
 
+/// A paused removal, with when its file went missing as the confirm found it
+/// before its scan, where it was not held.
+struct Paused {
+    path: String,
+    item_id: String,
+    missing_since: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Restored {
     /// Missing files the restore's pull wrote back.
@@ -54,18 +62,17 @@ impl Folder {
                 state::journaled(&conn)?,
             )
         };
-        let mut by_path: HashMap<String, Vec<String>> = HashMap::new();
+        let mut by_path: HashMap<String, Vec<state::Journaled>> = HashMap::new();
         for row in journaled {
-            by_path.entry(row.path).or_default().push(row.item_id);
+            by_path.entry(row.path.clone()).or_default().push(row);
         }
-        let paused: Vec<(String, String)> = disk
+        let paused: Vec<Paused> = disk
             .iter()
-            .flat_map(|path| {
-                by_path
-                    .get(path)
-                    .into_iter()
-                    .flatten()
-                    .map(|item_id| (path.clone(), item_id.clone()))
+            .flat_map(|path| by_path.get(path).into_iter().flatten())
+            .map(|row| Paused {
+                path: row.path.clone(),
+                item_id: row.item_id.clone(),
+                missing_since: (!row.held()).then(|| row.missing_since.clone()),
             })
             .collect();
         let mut confirmed = Confirmed::default();
@@ -134,7 +141,7 @@ impl Folder {
     /// grace, whose removal stays paused.
     fn confirm_removals(
         &self,
-        paused: &[(String, String)],
+        paused: &[Paused],
         scanned: &super::ScanReport,
         settings: &super::Settings,
         confirmed: &mut Confirmed,
@@ -156,7 +163,12 @@ impl Folder {
         let unread = unread_reason(scanned);
         let now = crate::store::millis_at(crate::clock::system_time());
         let mut missing = Vec::new();
-        for (path, item_id) in paused {
+        for Paused {
+            path,
+            item_id,
+            missing_since,
+        } in paused
+        {
             let bound = state::bound_at(&*self.core.conn()?, path)?
                 .is_some_and(|bound| &bound.item_id == item_id);
             // Unbound: found under another name by the scan.
@@ -164,8 +176,13 @@ impl Folder {
                 continue;
             }
             let since = journaled.get(&(path.clone(), item_id.clone()));
-            let in_grace = matches!(since, Some((since, None))
-                if !super::scan::elapsed_past(since, now, super::RENAME_GRACE));
+            // The scan clears the row of a path it cannot reach, not its grace.
+            let in_grace = match since {
+                Some((since, None)) => Some(since),
+                Some((_, Some(_))) => None,
+                None => missing_since.as_ref(),
+            }
+            .is_some_and(|since| !super::scan::elapsed_past(since, now, super::RENAME_GRACE));
             let reason = match self.file_at(&self.root.join(path)) {
                 Ok(true) => continue,
                 // Paused, it stays in view for a confirm that reads it all.

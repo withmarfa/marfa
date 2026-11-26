@@ -855,3 +855,246 @@ fn a_held_file_whose_path_another_notes_file_takes_can_go_to_the_bin() {
         "sending the held file to the bin let another item's file go"
     );
 }
+
+#[test]
+fn a_missing_file_with_another_files_bytes_goes_to_the_bin_where_no_other_folder_exists() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (a_dir, a) = folder(A);
+    for name in ["one.bin", "two.bin"] {
+        std::fs::write(a_dir.path().join(name), b"identical").unwrap();
+        assert_eq!(a.scan().unwrap().created, 1);
+        landed(&a, name);
+    }
+    let report = deleted(&a_dir, &a, &["one.bin"]);
+    assert_eq!(report.trashed, ["one.bin"], "{report:?}");
+    assert_eq!(deletes_queued(&a), [Some(1)]);
+    assert!(a.held_files().unwrap().is_empty());
+}
+
+#[test]
+fn a_missing_note_renamed_into_another_folder_is_moved() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (a_dir, a) = folder(A);
+    let (b_dir, _b) = folder(B);
+    note(&a_dir, &a, "note.md");
+    std::fs::rename(a_dir.path().join("note.md"), b_dir.path().join("moved.md")).unwrap();
+    assert_eq!(a.scan().unwrap().missing, 1);
+    past_the_grace(&a, "note.md");
+    peers_walked();
+    let report = a.scan().unwrap();
+    assert_eq!(report.moved_away, 1, "{report:?}");
+    assert!(a.held_files().unwrap().is_empty());
+}
+
+#[test]
+fn a_missing_note_renamed_into_another_folder_beside_a_copy_of_it_is_held() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (a_dir, a) = folder(A);
+    let (b_dir, _b) = folder(B);
+    note(&a_dir, &a, "note.md");
+    std::fs::copy(a_dir.path().join("note.md"), b_dir.path().join("copy.md")).unwrap();
+    std::fs::rename(a_dir.path().join("note.md"), b_dir.path().join("moved.md")).unwrap();
+    assert_eq!(a.scan().unwrap().missing, 1);
+    past_the_grace(&a, "note.md");
+    peers_walked();
+    let report = a.scan().unwrap();
+    assert_eq!(report.moved_away, 0, "{report:?}");
+    assert!(report.trashed.is_empty(), "{report:?}");
+    let reason = held_reason(&a, "note.md");
+    assert!(reason.contains("another file in the other folders carries its id"), "{reason}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_missing_note_renamed_into_a_folder_with_an_unreadable_directory_is_held() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (a_dir, a) = folder(A);
+    let (b_dir, _b) = folder(B);
+    note(&a_dir, &a, "note.md");
+    let sub = b_dir.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::rename(a_dir.path().join("note.md"), b_dir.path().join("moved.md")).unwrap();
+    assert_eq!(a.scan().unwrap().missing, 1);
+    past_the_grace(&a, "note.md");
+    peers_walked();
+    let report = {
+        let _sealed = crate::test_folders::locked(&sub, 0o000);
+        a.scan().unwrap()
+    };
+    assert_eq!(report.moved_away, 0, "{report:?}");
+    assert!(report.trashed.is_empty(), "{report:?}");
+    held_reason(&a, "note.md");
+}
+
+/// The sweep's report on a note gone past the grace, where another folder,
+/// with `listed`, is listed and given the note while the sweep holds its
+/// decision to delete it.
+#[cfg(debug_assertions)]
+fn swept_while(listed: bool) -> ScanReport {
+    let (listing, _own) = registry::tests::own_registry();
+    let (a_dir, a) = folder(A);
+    let item = note(&a_dir, &a, "note.md");
+    let saved = std::fs::read(a_dir.path().join("note.md")).unwrap();
+    std::fs::remove_file(a_dir.path().join("note.md")).unwrap();
+    assert_eq!(a.scan().unwrap().missing, 1);
+    past_the_grace(&a, "note.md");
+    let (b_dir, b) = folder(B);
+    let store = elsewhere::listed_store(&b.core);
+    listing.unregister(&b.root, store.as_deref()).unwrap();
+    let point = format!("folder-sweep-decided:{item}");
+    crate::fault::arm(&point);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let started = std::time::Instant::now();
+            while crate::fault::waiting(&point) == 0 {
+                if started.elapsed() > std::time::Duration::from_secs(10) {
+                    crate::fault::release(&point);
+                    panic!("the sweep never decided");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            if listed {
+                let registered = listing.register(&b.root, &b.root_dir, B, store.as_deref());
+                std::fs::write(b_dir.path().join("moved.md"), &saved).unwrap();
+                crate::fault::release(&point);
+                registered.unwrap();
+            } else {
+                crate::fault::release(&point);
+            }
+        });
+        a.scan().unwrap()
+    })
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_missing_note_goes_to_the_bin_where_no_folder_is_listed_while_the_sweep_decides() {
+    let report = swept_while(false);
+    assert_eq!(report.trashed, ["note.md"], "{report:?}");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_folder_listed_while_the_sweep_decides_holds_the_delete() {
+    let report = swept_while(true);
+    assert!(report.trashed.is_empty(), "{report:?}");
+    assert!(
+        report
+            .unsure
+            .iter()
+            .any(|file| file.path == "note.md" && file.reason.contains("another folder")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn two_items_missing_at_one_path_are_both_held_and_shown() {
+    let (_own, a_dir, a, _b_dir, _b, first) = held_note();
+    let second = rebind_onto_the_held_path(&a_dir, &a);
+    std::fs::remove_file(a_dir.path().join("note.md")).unwrap();
+    assert_eq!(a.scan().unwrap().missing, 1);
+    past_the_grace(&a, "note.md");
+    peers_walked();
+    let report = a.scan().unwrap();
+    assert!(report.trashed.is_empty(), "{report:?}");
+    let mut held: Vec<String> = a
+        .held_files()
+        .unwrap()
+        .into_iter()
+        .map(|file| file.item)
+        .collect();
+    held.sort();
+    let mut both = vec![first.clone(), second.clone()];
+    both.sort();
+    assert_eq!(held, both);
+    let shown = a.status().unwrap();
+    for item in [&first, &second] {
+        assert!(
+            shown.files.iter().any(|file| file.path == "note.md"
+                && file.item_id.as_deref() == Some(item.as_str())
+                && (file.status, file.flag) == ("held", Some("unsure"))),
+            "{:?}",
+            shown.files
+        );
+    }
+    assert!(
+        !shown.files.iter().any(|file| file.status == "waiting"),
+        "{:?}",
+        shown.files
+    );
+}
+
+#[test]
+fn a_hold_outlasts_another_items_file_leaving_its_path() {
+    let (_own, a_dir, a, _b_dir, _b, first) = held_note();
+    let second = rebind_onto_the_held_path(&a_dir, &a);
+    std::fs::rename(a_dir.path().join("note.md"), a_dir.path().join("again.md")).unwrap();
+    let report = a.scan().unwrap();
+    assert_eq!(bound_item(&a, "again.md"), Some(second), "{report:?}");
+    let held = a.held_files().unwrap();
+    assert_eq!(
+        held.iter()
+            .map(|file| (file.path.as_str(), file.item.as_str()))
+            .collect::<Vec<_>>(),
+        [("note.md", first.as_str())],
+        "{report:?}"
+    );
+}
+
+#[test]
+fn settling_a_held_file_whose_path_another_file_took_finds_its_move_by_identity() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (a_dir, a) = folder(A);
+    let (b_dir, _b) = folder(B);
+    let away = tempfile::tempdir().unwrap();
+    let saved = away.path().join("saved.bin");
+    for (name, bytes) in [("one.bin", [3, 2, 1]), ("other.bin", [1, 2, 3])] {
+        std::fs::write(a_dir.path().join(name), bytes).unwrap();
+        a.scan().unwrap();
+        landed(&a, name);
+    }
+    std::fs::rename(a_dir.path().join("one.bin"), &saved).unwrap();
+    a.scan().unwrap();
+    past_the_grace(&a, "one.bin");
+    assert_eq!(a.scan().unwrap().unsure.len(), 1);
+    let second = bound_item(&a, "other.bin").unwrap();
+    std::fs::rename(a_dir.path().join("other.bin"), a_dir.path().join("one.bin")).unwrap();
+    a.scan().unwrap();
+    assert_eq!(bound_item(&a, "one.bin"), Some(second));
+    std::fs::rename(&saved, b_dir.path().join("arrived.bin")).unwrap();
+
+    let settled = a.settle_held(&["one.bin".into()], Settle::Trash).unwrap();
+    assert_eq!(settled.moved, ["one.bin"], "{settled:?}");
+    assert!(deletes_queued(&a).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn confirming_a_removal_within_the_grace_whose_path_cannot_be_checked_keeps_it_paused() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (a_dir, a) = pausing(A);
+    let sub = a_dir.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    note(&a_dir, &a, "sub/note.md");
+    std::fs::remove_file(sub.join("note.md")).unwrap();
+    assert_eq!(a.scan().unwrap().paused, 1);
+
+    let confirmed = {
+        let _sealed = crate::test_folders::locked(&sub, 0o000);
+        a.confirm().unwrap()
+    };
+    assert_eq!(confirmed.deleted, 0, "{confirmed:?}");
+    assert!(
+        confirmed
+            .unsure
+            .iter()
+            .any(|file| file.path == "sub/note.md" && file.reason.contains("rename grace")),
+        "{confirmed:?}"
+    );
+    assert!(a.held_files().unwrap().is_empty());
+    assert_eq!(
+        state::paused(&a.core.conn().unwrap(), state::Removal::Disk).unwrap(),
+        ["sub/note.md"]
+    );
+    assert!(deletes_queued(&a).is_empty());
+}

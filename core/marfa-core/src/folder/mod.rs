@@ -6670,7 +6670,7 @@ mod tests {
         assert_eq!(server.seen(end).len(), asked);
     }
 
-    /// Moves the journaled delete at `path` past the grace.
+    /// Moves every journaled delete at `path` past the grace.
     pub(super) fn past_the_grace(folder: &Folder, path: &str) {
         let long_ago = crate::store::iso_at(
             crate::clock::system_time() - RENAME_GRACE - Duration::from_secs(1),
@@ -6682,7 +6682,7 @@ mod tests {
                 [path, long_ago.as_str()],
             )
             .unwrap();
-        assert_eq!(aged, 1, "{path} is not journaled");
+        assert!(aged > 0, "{path} is not journaled");
     }
 
     pub(super) fn kept(folder: &Folder, path: &str) -> Option<state::Kept> {

@@ -214,15 +214,19 @@ mod tests {
         );
     }
 
-    /// `folder_journal` as schema version 10 made it, before `carried`.
-    const JOURNAL_V10: &str = "
+    /// `folder_journal` with this build's columns under a check that allows
+    /// no `carried`.
+    const JOURNAL_OLDER_CHECK: &str = "
         DROP TABLE folder_journal;
         CREATE TABLE folder_journal (
-          path TEXT PRIMARY KEY,
+          path TEXT NOT NULL,
           item_id TEXT NOT NULL,
           missing_since TEXT NOT NULL,
           kept TEXT CHECK (kept IN ('arriving', 'unsure')),
-          reason TEXT
+          reason TEXT,
+          identity TEXT,
+          content_hash TEXT,
+          PRIMARY KEY (path, item_id)
         ) WITHOUT ROWID;
     ";
 
@@ -231,7 +235,7 @@ mod tests {
         let (dir, path) = refused_folder(
             true,
             &format!(
-                "{JOURNAL_V10} {RECORD}
+                "{JOURNAL_OLDER_CHECK} {RECORD}
                  INSERT INTO folder_journal (path, item_id, missing_since, kept, reason)
                    VALUES ('Unsure.md', 'unsure', '2026-01-01T00:00:00Z', 'unsure', 'offline');"
             ),
@@ -264,11 +268,14 @@ mod tests {
             &format!(
                 "{RECORD} DROP TABLE folder_journal;
                  CREATE TABLE folder_journal (
-                   path TEXT PRIMARY KEY,
+                   path TEXT NOT NULL,
                    item_id TEXT NOT NULL,
                    missing_since TEXT NOT NULL,
                    kept TEXT,
-                   reason TEXT
+                   reason TEXT,
+                   identity TEXT,
+                   content_hash TEXT,
+                   PRIMARY KEY (path, item_id)
                  ) WITHOUT ROWID;
                  INSERT INTO folder_journal (path, item_id, missing_since, kept)
                    VALUES ('Gone.md', 'gone', '2026-01-01T00:00:00Z', 'since_build');"
