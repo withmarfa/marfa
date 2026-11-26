@@ -1373,6 +1373,7 @@ it("keeps a paused removal unsure while a missing file's path cannot be read", a
   const paused = await harness.folder.scan();
   expect(paused.ok && paused.value.paused).toBe(4);
   renameSync(join(away, "Note 0.md"), join(sub, "Note 0.md"));
+  await pastTheGrace();
   chmodSync(sub, 0o000);
   onCleanup(() => chmodSync(sub, 0o700));
   try {

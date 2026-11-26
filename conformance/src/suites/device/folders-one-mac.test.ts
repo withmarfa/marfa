@@ -4594,7 +4594,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, held)).toBe(1);
   });
 
-  it("keeps a confirmed removal held as unsure while the file's own directory cannot be read", async () => {
+  it("keeps a confirmed removal paused inside the rename grace, and held as unsure past it, while the file's own directory cannot be read", async () => {
     const ids = [0, 1, 2, 3, 4, 5].map(
       (n) => `01a00000-0000-7000-8000-0000000035d${String(n)}`,
     );
@@ -4632,6 +4632,21 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
 
     chmodSync(sub, 0o000);
     try {
+      // Inside the grace, a confirm keeps the removal paused, its unread path included.
+      const early = await a.folder.confirm();
+      expect(early.ok, JSON.stringify(early)).toBe(true);
+      if (!early.ok) return;
+      expect(early.value.deleted).toBe(0);
+      expect(
+        early.value.unsure.find((file) => file.path === "sub/Note 4.md")
+          ?.reason,
+        "a confirm inside the rename grace held a file whose path it could not read",
+      ).toMatch(/less than the rename grace ago/);
+      expect(await heldIn(a)).toEqual([]);
+      const pausedEarly = await a.folder.status();
+      expect(pausedEarly.ok && pausedEarly.value.paused.disk).toBe(4);
+
+      await pastTheGrace();
       const confirmed = await a.folder.confirm();
       expect(confirmed.ok, JSON.stringify(confirmed)).toBe(true);
       if (!confirmed.ok) return;
@@ -4731,6 +4746,82 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(await heldIn(a)).toEqual(["Gone.md"]);
     await trashHeldFiles(a, ["Gone.md"]);
     expect(deletesOf(a.server, gone)).toBe(1);
+  });
+
+  it("holds a delete whose file moved to another folder beside a copy of it", async () => {
+    const moved = "01a00000-0000-7000-8000-0000000040f5";
+    const copied = "01a00000-0000-7000-8000-0000000040f6";
+    const { a, b } = await onOneMac(
+      "moved-beside-copy",
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          { item: { id: moved, properties: { title: "Moved", body: "m\n" } } },
+          {
+            item: { id: copied, properties: { title: "Copied", body: "c\n" } },
+          },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    renameSync(join(a.dir, "Moved.md"), join(b.dir, "Moved.md"));
+    cpSync(join(a.dir, "Copied.md"), join(b.dir, "Copy.md"));
+    renameSync(join(a.dir, "Copied.md"), join(b.dir, "Copied.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    // The witness: the same sweep finds the note moved alone.
+    expect(swept.value.scan.moved_away).toBe(1);
+    expect(
+      swept.value.scan.unsure.map((file) => file.path),
+      "a moved file was told from a copy of it in the same folder",
+    ).toEqual(["Copied.md"]);
+    expect(await heldIn(a)).toEqual(["Copied.md"]);
+    expect([moved, copied].map((id) => deletesOf(a.server, id))).toEqual([
+      0, 0,
+    ]);
+  });
+
+  it("holds a delete whose file moved into another folder that cannot be read whole", async () => {
+    const gone = "01a00000-0000-7000-8000-0000000040f7";
+    const { a, b } = await onOneMac(
+      "moved-partial-walk",
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          { item: { id: gone, properties: { title: "Gone", body: "g\n" } } },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    const shut = join(b.dir, "Shut");
+    mkdirSync(shut);
+    renameSync(join(a.dir, "Gone.md"), join(b.dir, "Gone.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    chmodSync(shut, 0o000);
+    try {
+      const held = await a.folder.push();
+      expect(held.ok, JSON.stringify(held)).toBe(true);
+      if (!held.ok) return;
+      expect(
+        held.value.scan.moved_away,
+        "a move was told from a folder read only in part, which may hold another file with its id",
+      ).toBe(0);
+      expect(held.value.scan.unsure.map((file) => file.path)).toEqual([
+        "Gone.md",
+      ]);
+    } finally {
+      chmodSync(shut, 0o755);
+    }
+    // The witness: read whole, the other folder shows the file moved.
+    const settled = await a.folder.trashHeld(["Gone.md"]);
+    expect(settled.ok && settled.value.moved).toEqual(["Gone.md"]);
+    expect(deletesOf(a.server, gone)).toBe(0);
   });
 
   it("keeps a held delete whose file came back and went again while its directory could not be read, until the person trashes it", async () => {
@@ -5214,6 +5305,52 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       1, 0,
     ]);
     expect(existsSync(join(a.dir, "photo.png"))).toBe(false);
+  });
+
+  it("trashes a deleted file item where the Mac has no other folder, though another file in its folder has its bytes", async () => {
+    const kept = "01a00000-0000-7000-8000-0000000044b3";
+    const gone = "01a00000-0000-7000-8000-0000000044b4";
+    const bytes = Buffer.from("the same bytes\n");
+    const rows = [
+      [kept, "kept.png"],
+      [gone, "photo.png"],
+    ] as const;
+    harness = await folderHarness("scan-trashes-duplicate-bytes", {
+      settings: { query: { types: ["core.file.image"] } },
+      items: {
+        "core.file.image": rows.map(([id, name]) => ({
+          item: {
+            id,
+            type: "core.file.image",
+            properties: {
+              title: name,
+              blob_ref: hashOf(bytes),
+              mime_type: "image/png",
+            },
+          },
+        })),
+      },
+    });
+    const a = harness;
+    scriptFolderWrites(a);
+    scriptBlob(a.server, bytes);
+    expect((await a.folder.pull()).ok).toBe(true);
+    expect(readFileSync(join(a.dir, "kept.png"))).toEqual(bytes);
+    rmSync(join(a.dir, "photo.png"));
+    const missing = await a.folder.scan();
+    expect(missing.ok && missing.value.missing).toBe(1);
+    await pastTheGrace();
+    const scanned = await a.folder.scan();
+    expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+    if (!scanned.ok) return;
+    expect(
+      scanned.value.trashed,
+      "a file in the same folder with the missing file's bytes was taken for where it went",
+    ).toEqual(["photo.png"]);
+    expect((await a.folder.push()).ok).toBe(true);
+    expect([deletesOf(a.server, gone), deletesOf(a.server, kept)]).toEqual([
+      1, 0,
+    ]);
   });
 
   it("holds a confirmed removal of file items while another folder is on the Mac, and sends their deletes without pausing again once the person trashes them", async () => {

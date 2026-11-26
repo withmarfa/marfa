@@ -721,11 +721,14 @@ it("replaces a store whose record of missing files has the same columns and othe
       CREATE TABLE journal_rows AS SELECT * FROM folder_journal;
       DROP TABLE folder_journal;
       CREATE TABLE folder_journal (
-        path TEXT PRIMARY KEY,
+        path TEXT NOT NULL,
         item_id TEXT NOT NULL,
         missing_since TEXT NOT NULL,
         kept TEXT CHECK (kept IN ('arriving', 'unsure')),
-        reason TEXT
+        reason TEXT,
+        identity TEXT,
+        content_hash TEXT,
+        PRIMARY KEY (path, item_id)
       ) WITHOUT ROWID;
       INSERT INTO folder_journal SELECT * FROM journal_rows;
       DROP TABLE journal_rows;
