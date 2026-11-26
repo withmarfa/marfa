@@ -984,49 +984,43 @@ While a device cannot find in the folder the directory of a file it moved out of
 
 **Tests:** `device/folders-contract-extra-c.test.ts › reports a save it moved out of its path once, after the directory it was in left the folder`.
 
-### `folder-files/write-crash-elsewhere-identity`
+### `folder-files/write-crash-elsewhere-untouched`
 
-If the directory at the path of another folder's directory, named by a device's record of a file it moved out of its path there, does not have the device number and the inode that the record holds, then a device MUST NOT put back or remove a file in that directory for that record.
+A device MUST NOT put back, remove or rename a file for a record of a file it moved out of its path that names a directory outside the folder.
 
-**Reason:** the roots of two volumes can share an inode, so another volume mounted at the same path can hold a directory with the recorded inode. Outside the folder, a device cannot tell a volume mounted again from another volume, so it keeps the file and the record.
+**Reason:** only a take-in from another folder, in an earlier release, wrote such a record. It holds a directory's device number and inode and no birth time, and another directory at the same path, such as the root of another volume mounted there, can have both, so nothing shows the directory at the path is the one recorded.
 
-**Tests:** `device/folders-take-in-recovery.test.ts › puts back or removes no file, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`.
-
-### `folder-files/write-crash-elsewhere-shape`
-
-If a device's record of a file it moved out of its path in another folder's directory is not a removal with the path and the reserved name in one directory and a reserved name of the form `.marfa-kept-<id>.tmp` for the record's own ID, then a device MUST NOT put back or remove a file for that record.
-
-**Reason:** a take-in from another folder wrote only such records. A record of any other shape names directories and names that no device wrote there.
-
-**Tests:** `device/folders-take-in-recovery.test.ts › puts back or removes no file for a record of a stopped take-in unlike one a take-in writes, and lists it until the owner discards it with nothing at its path (%s)`.
+**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, and puts back, removes or forgets nothing for it (%s)`, `› puts back, removes or forgets nothing, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`.
 
 ### `folder-files/write-crash-elsewhere-kept`
 
-When a full scan walks the whole folder, a device MUST keep each record of a file it moved out of its path in another folder's directory that it did not settle.
+A device MUST keep each record of a file it moved out of its path that names a directory outside the folder, and each record of a file it moved out of its path that it cannot read and that does not name both its directories in the folder.
 
-**Reason:** the file can be on a volume that is not mounted, and the record is what shows the person where it is.
+**Reason:** the file can be on a volume that is not mounted, and the record is what shows the person where it is. A scan of the folder never meets a file outside it.
 
-**Tests:** `device/folders-take-in-recovery.test.ts › puts back or removes no file, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`, `› puts back or removes no file for a record of a stopped take-in unlike one a take-in writes, and lists it until the owner discards it with nothing at its path (%s)`.
+**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, and puts back, removes or forgets nothing for it (%s)`, `› puts back, removes or forgets nothing, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`.
 
 ### `folder-files/write-crash-elsewhere-listed`
 
-While a device keeps a record of a file it moved out of its path in another folder's directory that it did not settle, a device MUST list the file in `folders kept`.
+While a device keeps a record as `folder-files/write-crash-elsewhere-kept` says, a device MUST list the file the record names in `folders kept`, with a reason that names `marfa folders remove`.
 
-**Tests:** `device/folders-take-in-recovery.test.ts › puts back or removes no file, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`, `› puts back or removes no file for a record of a stopped take-in unlike one a take-in writes, and lists it until the owner discards it with nothing at its path (%s)`.
+**Reason:** removing the directory from its folder is the one step that ends the record.
+
+**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, and puts back, removes or forgets nothing for it (%s)`, `› puts back, removes or forgets nothing, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`.
 
 ### `folder-files/write-crash-elsewhere-status`
 
-While a device keeps a record of a file it moved out of its path in another folder's directory that it did not settle, a device MUST list the file in the folder's status as `held` with the flag `kept`.
+While a device keeps a record as `folder-files/write-crash-elsewhere-kept` says, a device MUST list the file the record names in the folder's status as `held` with the flag `kept`.
 
-**Tests:** `device/folders-take-in-recovery.test.ts › puts back or removes no file, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`, `› puts back or removes no file for a record of a stopped take-in unlike one a take-in writes, and lists it until the owner discards it with nothing at its path (%s)`.
+**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, and puts back, removes or forgets nothing for it (%s)`, `› puts back, removes or forgets nothing, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`.
 
-### `folder-files/write-crash-elsewhere-forgets-gone`
+### `folder-files/write-crash-elsewhere-discard-kept`
 
-When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST forget each record it lists as `folder-files/write-crash-elsewhere-listed` says where nothing is at the file's path.
+When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST NOT forget a record it keeps as `folder-files/write-crash-elsewhere-kept` says, whether or not a file is at its path.
 
-**Reason:** no pass settles such a record, so it would stay listed for good. Forgetting it deletes no file, and the device reports the path in `forgotten`.
+**Reason:** nothing at the path does not show the file is gone. The directory at the path can be another volume's, or the directory's volume may not be mounted.
 
-**Tests:** `device/folders-take-in-recovery.test.ts › puts back or removes no file for a record of a stopped take-in unlike one a take-in writes, and lists it until the owner discards it with nothing at its path (%s)`.
+**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, and puts back, removes or forgets nothing for it (%s)`, `› puts back, removes or forgets nothing, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`.
 
 ### `folder-files/write-no-exchange`
 
@@ -1224,15 +1218,15 @@ A device MUST list, in `folders kept` and through a binding, each file a folder 
 
 ### `folder-files/write-retained-unread-discard`
 
-When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST delete each file the folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, where the record names a directory in the folder that still has the identity the record holds for it, and the file holds the bytes the record says were set aside.
+When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST delete each file the folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, where the record names a directory in the folder that still has the device number and inode the record holds for it, or names the folder's own directory and holds none, and the file holds the bytes the record says were set aside.
 
 **Tests:** `device/folders-open-writer.test.ts › lists a file it keeps under a record it cannot read, and deletes it when the owner discards it`, `› lists through a binding a file kept under a record it cannot read, and discards it only %s as set aside`, `› deletes a file kept under a record it cannot read only where it can tell the file's directory is the one recorded (%s)`.
 
 ### `folder-files/write-retained-unread-unverified-kept`
 
-When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, if a record a device cannot read names a directory outside the folder or holds no identity for its directory, then a device MUST NOT delete the file kept under that record.
+When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, if a record a device cannot read names a directory outside the folder, then a device MUST NOT delete the file kept under that record.
 
-**Reason:** matching bytes show what a file holds, not which directory it is in. A directory outside the folder can be another volume at the same path, and a record that does not read cannot show that it is one a take-in wrote.
+**Reason:** matching bytes show what a file holds, not which directory it is in. A directory outside the folder can be another volume at the same path.
 
 **Tests:** `device/folders-open-writer.test.ts › deletes a file kept under a record it cannot read only where it can tell the file's directory is the one recorded (%s)`.
 

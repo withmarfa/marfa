@@ -516,11 +516,7 @@ describe("a file a program holds open for writing", () => {
     ]);
   });
 
-  it.each([
-    "as recorded",
-    "with no identity for its directory",
-    "in a directory outside the folder",
-  ] as const)(
+  it.each(["as recorded", "in a directory outside the folder"] as const)(
     "deletes a file kept under a record it cannot read only where it can tell the file's directory is the one recorded (%s)",
     async (where) => {
       const harness = await noteFolder("folder-open-writer-unread-directory");
@@ -544,10 +540,6 @@ describe("a file a program holds open for writing", () => {
             "UPDATE meta SET value = json_set(value, '$.dir', ?, '$.aside', ?, '$.aside_at', json(?)) WHERE key LIKE 'folder_retained:%'",
           ).run(elsewhere, elsewhere, `[${at.dev},${at.ino}]`);
         }
-        if (where === "with no identity for its directory")
-          db.prepare(
-            "UPDATE meta SET value = json_remove(value, '$.aside_at') WHERE key LIKE 'folder_retained:%'",
-          ).run();
         db.prepare(
           "UPDATE meta SET value = json_set(value, '$.retained.since', 'soon') WHERE key LIKE 'folder_retained:%'",
         ).run();
@@ -570,6 +562,7 @@ describe("a file a program holds open for writing", () => {
       expect(listed.ok, JSON.stringify(listed)).toBe(true);
       if (!listed.ok) return;
       expect(listed.value.kept.map((file) => file.path)).toEqual([listedAs]);
+      expect(listed.value.kept[0]?.reason).toContain("marfa folders remove");
     },
   );
 

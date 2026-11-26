@@ -71,6 +71,10 @@ interface TakeIn {
   kept: string;
   read: Identity;
   waiting?: string;
+  /** Recorded as a file kept because a program might still write to it. */
+  retained?: boolean;
+  /** Recorded with no kind, so the record does not read. */
+  unreadable?: boolean;
 }
 
 const reserved = (id: string) => `.marfa-kept-${id}.tmp`;
@@ -103,16 +107,19 @@ function record(harness: FolderHarness, row: TakeIn): void {
     row.waiting === undefined
       ? ""
       : `"ours":[${JSON.stringify(row.waiting)},${object(row.read)}],`;
+  // Set aside long ago, where no program could be told from one writing.
+  const kept = row.retained ? `,"since":0,"writers":"unknown"` : "";
   const value =
     `{"dir":${JSON.stringify(row.dir)},"dir_at":${pair(row.dirAt)},` +
     `"aside":${JSON.stringify(row.aside)},"aside_at":${pair(row.asideAt)},` +
-    `"displacement":{"id":"${row.id}","kind":"${row.kind}",` +
+    `"${row.retained ? "retained" : "displacement"}":{"id":"${row.id}",` +
+    (row.unreadable ? "" : `"kind":"${row.kind}",`) +
     `"target":${JSON.stringify(row.target)},"kept":${JSON.stringify(row.kept)},` +
-    `${ours}"read":${object(row.read)}}}`;
+    `${ours}"read":${object(row.read)}${kept}}}`;
   const db = new DatabaseSync(harness.folder.store);
   try {
     db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run(
-      `folder_displaced:${row.id}`,
+      `folder_${row.retained ? "retained" : "displaced"}:${row.id}`,
       value,
     );
   } finally {
@@ -142,22 +149,42 @@ async function heldAsKept(harness: FolderHarness, path: string) {
     : [];
 }
 
+/** Asserts the owner's discard deletes and forgets nothing for `kept`,
+ *  and says how to end its record. */
+async function discardKeeps(harness: FolderHarness, kept: string) {
+  const discarded = await harness.folder.discardKept();
+  expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+  if (!discarded.ok) return;
+  expect(discarded.value.discarded).toEqual([]);
+  expect(
+    discarded.value.forgotten,
+    "the record was forgotten, and the save it names may be on a volume not mounted",
+  ).toEqual([]);
+  expect(discarded.value.kept.map((file) => file.path)).toEqual([kept]);
+  expect(discarded.value.kept[0]?.reason).toContain("marfa folders remove");
+}
+
 describe("a take-in an earlier release stopped in another folder's directory", () => {
   it.each([
     "as the take-in wrote it",
+    "kept while a program might write to it",
+    "a record that does not read",
     "an exchange",
     "a replace with a new file waiting",
     "its reserved name in another directory",
     "a reserved name its ID does not give",
     "a path outside its directory",
   ] as const)(
-    "puts back or removes no file for a record of a stopped take-in unlike one a take-in writes, and lists it until the owner discards it with nothing at its path (%s)",
+    "keeps and lists a record of a stopped take-in in another folder's directory, and puts back, removes or forgets nothing for it (%s)",
     async (shape) => {
       const harness = await noteFolder("take-in-recovery-shape");
       const scratch = tempFolder("marfa-take-in-");
       const source = join(scratch, "Source");
       mkdirSync(source);
       const row = stoppedTakeIn(source);
+      if (shape === "kept while a program might write to it")
+        row.retained = true;
+      if (shape === "a record that does not read") row.unreadable = true;
       if (shape === "an exchange") row.kind = "exchange";
       if (shape === "a replace with a new file waiting")
         row.waiting = reserved(newId());
@@ -185,13 +212,6 @@ describe("a take-in an earlier release stopped in another folder's directory", (
         join(source, "Recovery.md"),
         join(scratch, "Recovery.md"),
       ].filter((path) => existsSync(path));
-      if (shape === "as the take-in wrote it") {
-        // The witness: the record as a take-in wrote it is settled.
-        expect(putBack).toEqual([join(source, "Recovery.md")]);
-        expect(readFileSync(putBack[0]!, "utf8")).toBe(SAVE);
-        expect(await keptPaths(harness)).toEqual([]);
-        return;
-      }
       expect(putBack, "a file was put back for the record").toEqual([]);
       expect(readFileSync(kept, "utf8")).toBe(SAVE);
       expect(
@@ -200,21 +220,14 @@ describe("a take-in an earlier release stopped in another folder's directory", (
       ).toEqual([kept]);
       expect(await heldAsKept(harness, kept)).toHaveLength(1);
 
-      const discarded = await harness.folder.discardKept();
-      expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
-      if (!discarded.ok) return;
-      expect(discarded.value.discarded).toEqual([]);
+      await discardKeeps(harness, kept);
       expect(readFileSync(kept, "utf8"), "the owner's discard deleted it").toBe(
         SAVE,
       );
-      expect(await keptPaths(harness)).toEqual([kept]);
 
       rmSync(kept);
-      const forgot = await harness.folder.discardKept();
-      expect(forgot.ok, JSON.stringify(forgot)).toBe(true);
-      if (!forgot.ok) return;
-      expect(forgot.value.forgotten).toEqual([kept]);
-      expect(await keptPaths(harness)).toEqual([]);
+      await discardKeeps(harness, kept);
+      expect(await heldAsKept(harness, kept)).toHaveLength(1);
     },
   );
 
@@ -251,7 +264,7 @@ describe("a take-in an earlier release stopped in another folder's directory", (
     }
 
     it.each(["holds", "does not hold"] as const)(
-      "puts back or removes no file, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name",
+      "puts back, removes or forgets nothing, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name",
       async (holds) => {
         const harness = await noteFolder("take-in-recovery-volume");
         const scratch = tempFolder("marfa-take-in-volume-");
@@ -261,14 +274,13 @@ describe("a take-in an earlier release stopped in another folder's directory", (
         const second = image(scratch, "second");
         attach(first, mount);
 
-        // The witness: in the volume recorded, the record is settled.
-        record(harness, stoppedTakeIn(mount));
-        await scan(harness);
-        expect(readFileSync(join(mount, "Recovery.md"), "utf8")).toBe(SAVE);
-        rmSync(join(mount, "Recovery.md"));
-
         const row = stoppedTakeIn(mount);
         record(harness, row);
+        const kept = join(mount, row.kept);
+        // The witness: in the volume recorded, the record is kept and listed.
+        await scan(harness);
+        expect(existsSync(join(mount, "Recovery.md"))).toBe(false);
+        expect(await keptPaths(harness)).toEqual([kept]);
         detachImage(mount);
         // Occupy the device number the first volume released.
         const filler = join(scratch, "filler");
@@ -284,7 +296,6 @@ describe("a take-in an earlier release stopped in another folder's directory", (
           now[0],
           "the second volume has the first one's device number",
         ).not.toBe(row.dirAt[0]);
-        const kept = join(mount, row.kept);
         if (holds === "holds") writeFileSync(kept, "the other volume's file\n");
 
         await scan(harness);
@@ -302,6 +313,8 @@ describe("a take-in an earlier release stopped in another folder's directory", (
           "the record was forgotten, though the save is on the volume that was at its path",
         ).toEqual([kept]);
         expect(await heldAsKept(harness, kept)).toHaveLength(1);
+        await discardKeeps(harness, kept);
+        expect(existsSync(kept)).toBe(holds === "holds");
 
         detachImage(mount);
         const back = join(scratch, "First");

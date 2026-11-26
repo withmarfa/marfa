@@ -353,16 +353,15 @@ stays because that thing is what it checks.
   it cannot read once its file is gone, and ends it with --remove, keeping
   the item", spoils a removal record. The crash faults leave readable
   records, so they cannot produce these cases on their own.
-- In the same file, "deletes a file kept under a record it cannot read only
-  where it can tell the file's directory is the one recorded (%s)" spoils
-  the same record, and removes the identity it holds for its directory or
-  names a directory outside the folder in it. No operation or fault writes
-  such a record.
+- `device/folders-open-writer.test.ts`, "deletes a file kept under a record
+  it cannot read only where it can tell the file's directory is the one
+  recorded (%s)", spoils a retained-file record and names a directory outside
+  the folder in it. No operation or fault writes such a record.
 - `device/folders-take-in-recovery.test.ts` writes into a folder's store the
   record a take-in from another folder made as it stopped, and records of
-  other shapes naming another folder's directory. An earlier release took
-  files in from another folder; this release takes none in, so no operation
-  makes such a record.
+  other shapes naming another folder's directory, one of them a record that
+  does not read. An earlier release took files in from another folder; this
+  release takes none in, so no operation makes such a record.
 - `compliance/mcp-sign-in-acts.test.ts`, "refuses a confirmation once a new
   approval added a destination since the preview, with a new preview", adds a
   redirect URI to an app's stored registration while the server runs. Only a
