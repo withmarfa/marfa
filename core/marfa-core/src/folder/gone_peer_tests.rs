@@ -14,7 +14,7 @@ fn held(status: &StatusReport, path: &str) -> Option<(&'static str, Option<&'sta
 
 /// A folder that remembers another, no longer listed, with `held.txt` gone
 /// past the grace, and the other folder's directory.
-fn remembering(ids: [&str; 2]) -> (tempfile::TempDir, Folder, tempfile::TempDir) {
+pub(super) fn remembering(ids: [&str; 2]) -> (tempfile::TempDir, Folder, tempfile::TempDir) {
     let query = json!({ "query": {} });
     let (from, a) = folder_with(ids[0], query.clone(), None);
     let (other, b) = folder_with(ids[1], query, None);

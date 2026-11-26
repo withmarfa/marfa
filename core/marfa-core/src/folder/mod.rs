@@ -9,6 +9,7 @@ mod every;
 mod executable;
 pub mod fields;
 mod first;
+mod forget;
 mod form;
 mod handover;
 mod held;
@@ -55,6 +56,7 @@ pub use every::{
     Every, EveryFolder, Followed, HANDED_OVER, MISSING, PAUSED, RETRY_HANDED, Unwatched, followed,
     follows, watch_every,
 };
+pub use forget::{Forgotten, ForgottenIn, NotRead, Remembered, Remembering};
 pub use handover::{HANDOVER_WAIT, held_by_another, not_handed_over};
 pub use held::{HeldFile, Settle, Settled};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
@@ -3629,6 +3631,8 @@ fn typed_title(
 mod answered_tests;
 #[cfg(all(test, unix))]
 mod displaced_tests;
+#[cfg(all(test, unix))]
+mod forget_tests;
 #[cfg(test)]
 mod form_tests;
 #[cfg(all(test, unix))]

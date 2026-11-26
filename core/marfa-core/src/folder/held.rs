@@ -9,7 +9,7 @@ use crate::Result;
 
 /// A missing file whose deletion is held because Marfa cannot tell whether
 /// it was deleted or moved into another folder.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HeldFile {
     pub path: String,
     pub item: String,

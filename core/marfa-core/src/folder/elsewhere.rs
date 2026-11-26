@@ -9,7 +9,7 @@ use super::{Catalog, Folder, STATE_DIR, carries_frontmatter, identity, plainly_i
 use crate::directory::Directory;
 use crate::{Core, Result, store};
 
-const META_STORE: &str = "folder_store";
+pub(super) const META_STORE: &str = "folder_store";
 const META_LISTED_IN: &str = "folder_listed_in";
 /// The other folders it last found, kept for a registry that loses them.
 pub(super) const META_OTHERS: &str = "folder_others";
