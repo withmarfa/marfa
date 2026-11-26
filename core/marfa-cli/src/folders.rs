@@ -262,7 +262,9 @@ pub enum FoldersCommand {
     /// Confirm only when the directory is gone for good. If its volume is
     /// offline, mount it so Marfa can look for moved files. Forgetting the
     /// last other directory can send a missing file's item to the bin on the
-    /// next sync. The command leaves the folder registry unchanged.
+    /// next sync. The command leaves the folder registry unchanged, and
+    /// changes nothing while the registry lists the directory: `folders
+    /// remove` it first.
     ///
     /// It matches the path as spelled, made absolute, without following
     /// symbolic links: name it as `folders held` or `folders status` shows
@@ -271,17 +273,19 @@ pub enum FoldersCommand {
     ///
     /// It refuses a path where anything but an empty directory stands, such
     /// as a directory that holds files or cannot be read, since that may
-    /// still be the folder. Unmount the volume, or remove what is there or
-    /// make it readable, first.
+    /// still be the folder. Files a computer leaves by itself, such as
+    /// `.DS_Store`, do not count. Unmount the volume, or remove what is there
+    /// or make it readable, first.
     ///
     /// Without `--yes`, the command shows the affected folders and held
     /// files. It asks for confirmation at a terminal. With `--json` or
     /// outside a terminal, pass `--yes` to confirm.
     ///
     /// A watch can hand a folder over while the command runs. If a folder
-    /// cannot be read or claimed, is no longer listed, or its store has
-    /// changed since the preview, the command names it in `not_changed` and
-    /// exits 3.
+    /// cannot be read or claimed, is no longer listed at its path, or its
+    /// store has changed since the preview, or the registry lists the
+    /// directory or something stands there by then, the command names the
+    /// folder in `not_changed` and exits 3.
     ///
     /// With `--json`, the result has `dir`,
     /// `listed`, `folders` (each with `dir`, `folder` and `held`), `not_read`,
@@ -1134,9 +1138,11 @@ fn forget_remembered(dir: &Path, yes: bool, json: bool) -> Result<bool, CliError
     let shown = Folder::remembering(dir)?;
     let at_terminal =
         !json && std::io::stdin().is_terminal() && crate::output::stderr_is_terminal();
-    let asking = !shown.folders.is_empty();
+    let remembered = !shown.folders.is_empty();
+    // Forgetting a listed directory changes nothing, so there is no question.
+    let asking = remembered && !shown.listed;
     let asked = asking && !yes && at_terminal;
-    let agreed = asking && (yes || asked && asks_to_forget(&shown)?);
+    let agreed = remembered && (yes || asked && asks_to_forget(&shown)?);
     let (forgotten, not_changed) = if agreed {
         let done = Folder::forget_remembered(&shown)?;
         (done.forgotten, done.not_changed)
@@ -1251,7 +1257,7 @@ fn describe_remembered(shown: &marfa_core::Remembered) -> Vec<String> {
     }
     if shown.listed {
         lines.push(format!(
-            "{} is also a folder the registry lists, so each folder finds it again at its next pass and decides no held delete again; `folders remove` it first",
+            "{} is a folder the registry lists, so each folder finds it again at its next pass and forgetting it changes nothing; `folders remove` it first, then forget it",
             shown_path(&shown.dir)
         ));
     }

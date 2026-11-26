@@ -487,16 +487,17 @@ impl Folders {
         AsyncTask::new(ReadHeld { dir, failed: None })
     }
 
-    /// Which listed folders remember `dir`, and which of their held files
-    /// forgetting it lets be decided again. Reads only, and asks no watch.
+    /// Which listed folders remember `dir` or hold a file that waits on it,
+    /// and which of those held files forgetting it lets be decided again. Reads only, and asks no watch.
     #[napi(ts_return_type = "Promise<Remembered>")]
     pub fn remembering(&self, dir: String) -> AsyncTask<ReadRemembering> {
         AsyncTask::new(ReadRemembering { dir, failed: None })
     }
 
     /// Forgets the directory in each folder `remembered` names and lets the
-    /// held files shown be decided again at each folder's next sync. Asks a
-    /// watch that holds a folder to let it go.
+    /// held files shown be decided again at each folder's next sync. Changes
+    /// nothing while the registry lists `dir`. Asks a watch that holds a
+    /// folder to let it go.
     #[napi(ts_return_type = "Promise<Forgotten>")]
     pub fn forget_remembered(&self, remembered: Remembered) -> AsyncTask<ForgetRemembered> {
         AsyncTask::new(ForgetRemembered {

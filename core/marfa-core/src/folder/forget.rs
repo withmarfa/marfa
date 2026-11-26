@@ -17,13 +17,14 @@ use super::{Folder, STATE_DIR, admitted_root, handover, settings_file, state};
 use crate::directory::Directory;
 use crate::{Core, CoreError, Result, store};
 
-/// The folders on this computer that remember a directory, as read once.
+/// The folders on this computer that remember a directory, or hold a delete
+/// that waits on it, as read once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Remembered {
     /// The directory, made absolute as a folder records it.
     pub dir: PathBuf,
-    /// Whether the registry lists it too, so every folder finds it again at
-    /// its next pass and no held delete is decided again.
+    /// Whether the registry lists it too. Every folder finds it again at its
+    /// next pass, so a forget changes nothing until it is removed.
     pub listed: bool,
     pub folders: Vec<Remembering>,
     /// Listed folders whose memory could not be read, each with why.
@@ -33,7 +34,8 @@ pub struct Remembered {
     pub alike: Vec<PathBuf>,
 }
 
-/// A listed folder that remembers the directory.
+/// A listed folder that remembers the directory or holds a delete that waits
+/// on it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Remembering {
     pub dir: PathBuf,
@@ -60,7 +62,8 @@ pub struct Forgotten {
     pub listed: bool,
     pub forgotten: Vec<ForgottenIn>,
     /// Folders left as they were, each with why: those not read when shown,
-    /// and those whose store could not be claimed or was not the one shown.
+    /// and those not changed because the directory is listed or occupied, or
+    /// their store could not be claimed or was not the one shown.
     pub not_changed: Vec<NotRead>,
 }
 
@@ -73,8 +76,8 @@ pub struct ForgottenIn {
 }
 
 impl Folder {
-    /// Which listed folders remember `dir`, and which of their held deletes
-    /// forgetting it lets be decided again. Reads only, and asks no watch for
+    /// Which listed folders remember `dir` or hold a delete that waits on it,
+    /// and which of those held deletes forgetting it lets be decided again. Reads only, and asks no watch for
     /// a folder. `dir` is matched as spelled, made absolute, and never
     /// through the file system, so a link standing in a parent leads nowhere
     /// else. A remembered path that differs from it only in case is pointed
@@ -120,8 +123,9 @@ impl Folder {
     /// Forgets the directory in each folder `shown` names, and releases the
     /// held deletes it showed that still wait on it, unchanged. A watch
     /// holding a folder lets it go while this runs. A folder is changed only
-    /// while the registry lists it and its store is the one shown; none is
-    /// changed where anything but an empty directory stands at the directory.
+    /// while the registry lists it at its path, its store is the one shown,
+    /// the registry does not list the directory and nothing stands there but
+    /// an empty directory, all read again as it is changed.
     pub fn forget_remembered(shown: &Remembered) -> Result<Forgotten> {
         Folder::forget_waiting(shown, handover::HANDOVER_WAIT)
     }
@@ -130,24 +134,29 @@ impl Folder {
         nothing_stands(&shown.dir)?;
         let mut done = Forgotten {
             dir: shown.dir.clone(),
-            listed: listed()?.iter().any(|entry| entry.dir == shown.dir),
+            listed: shown.listed || listed()?.iter().any(|entry| entry.dir == shown.dir),
             forgotten: Vec::new(),
             not_changed: shown.not_read.clone(),
         };
         for holder in &shown.folders {
-            match forget_in(holder, &shown.dir, wait) {
-                Ok((released, listed)) => {
-                    done.listed |= listed;
-                    done.forgotten.push(ForgottenIn {
+            let changed = if done.listed {
+                Err(Left::Listed)
+            } else {
+                forget_in(holder, &shown.dir, wait)
+            };
+            match changed {
+                Ok(released) => done.forgotten.push(ForgottenIn {
+                    dir: holder.dir.clone(),
+                    folder: holder.folder.clone(),
+                    released,
+                }),
+                Err(left) => {
+                    done.listed |= matches!(left, Left::Listed);
+                    done.not_changed.push(NotRead {
                         dir: holder.dir.clone(),
-                        folder: holder.folder.clone(),
-                        released,
+                        reason: left.reason(&shown.dir),
                     });
                 }
-                Err(reason) => done.not_changed.push(NotRead {
-                    dir: holder.dir.clone(),
-                    reason,
-                }),
             }
         }
         Ok(done)
@@ -155,29 +164,48 @@ impl Folder {
 }
 
 /// Refuses a directory where something stands that may be the folder, or
-/// hold a file moved into it: only nothing, or an empty directory such as an
-/// unmounted volume's mount point, can be forgotten.
+/// hold a file moved into it.
 fn nothing_stands(dir: &Path) -> Result<()> {
-    use std::io::ErrorKind;
-    let refused = |what: String| {
-        Err(CoreError::Invalid(format!(
+    match occupied(dir) {
+        None => Ok(()),
+        Some(what) => Err(CoreError::Invalid(format!(
             "{} {what}, so it may still be the folder or hold a file moved into it, and nothing was forgotten; unmount its volume, or remove what is there or make it readable, then forget it again",
             dir.display()
-        )))
-    };
+        ))),
+    }
+}
+
+/// What stands at `dir`, if anything but nothing or an empty directory, such
+/// as an unmounted volume's mount point, does. A name a computer leaves by
+/// itself, such as `.DS_Store`, is never a file a folder takes, so it does
+/// not count.
+fn occupied(dir: &Path) -> Option<String> {
+    use std::io::ErrorKind;
     match std::fs::symlink_metadata(dir) {
         Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
-            Ok(())
+            None
         }
-        Err(error) => refused(format!("cannot be checked ({error})")),
-        Ok(found) if !found.is_dir() => refused("is not a directory".into()),
+        Err(error) => Some(format!("cannot be checked ({error})")),
+        Ok(found) if !found.is_dir() => Some("is not a directory".into()),
         Ok(_) => match std::fs::read_dir(dir) {
-            Ok(mut entries) => match entries.next() {
-                None => Ok(()),
-                Some(Ok(_)) => refused("is not empty".into()),
-                Some(Err(error)) => refused(format!("cannot be read ({error})")),
-            },
-            Err(error) => refused(format!("cannot be read ({error})")),
+            Ok(entries) => {
+                for entry in entries {
+                    match entry {
+                        Ok(entry) => {
+                            if !entry
+                                .file_name()
+                                .to_str()
+                                .is_some_and(super::lists::machine_name)
+                            {
+                                return Some("is not empty".into());
+                            }
+                        }
+                        Err(error) => return Some(format!("cannot be read ({error})")),
+                    }
+                }
+                None
+            }
+            Err(error) => Some(format!("cannot be read ({error})")),
         },
     }
 }
@@ -217,12 +245,19 @@ fn bound_store(
     core: &Core,
     state_dir: &Directory,
 ) -> Result<(Option<String>, String, Option<String>)> {
+    let place = state_dir
+        .metadata()
+        .ok()
+        .as_ref()
+        .and_then(super::identity::of)
+        .map(|identity| identity.key())
+        .unwrap_or_default();
     let mark = state_dir
         .entry_identity(Path::new("core.sqlite"))
         .map_err(|error| CoreError::Store(error.to_string()))?;
     let folder = settings_file::bound(core)?;
     let id = store::meta_get(&*core.conn()?, META_STORE)?;
-    Ok((folder, store_key(mark, id.as_deref()), id))
+    Ok((folder, store_key(&place, mark, id.as_deref()), id))
 }
 
 /// A listed folder's memory of `target`, or why it cannot be read.
@@ -250,24 +285,24 @@ fn read(
         .filter(|other| other.dir != target && alike(&other.dir, target))
         .map(|other| other.dir.clone())
         .collect();
-    if !others.iter().any(|other| other.dir == target) {
+    let waiting: Vec<HeldFile> = held
+        .into_iter()
+        .filter_map(|row| match row.kept {
+            Some(state::Kept::Unsure(unsure)) if unsure.waits_on(target) => Some(HeldFile {
+                path: row.path,
+                item: row.item_id,
+                missing_since: row.missing_since,
+                reason: unsure.reason,
+            }),
+            _ => None,
+        })
+        .collect();
+    // A hold outlives the memory it was made for, as an earlier forget of a
+    // listed directory could leave it.
+    if waiting.is_empty() && !others.iter().any(|other| other.dir == target) {
         return Ok((None, alike));
     }
-    let held = if listed {
-        Vec::new()
-    } else {
-        held.into_iter()
-            .filter_map(|row| match row.kept {
-                Some(state::Kept::Unsure(unsure)) if unsure.waits_on(target) => Some(HeldFile {
-                    path: row.path,
-                    item: row.item_id,
-                    missing_since: row.missing_since,
-                    reason: unsure.reason,
-                }),
-                _ => None,
-            })
-            .collect()
-    };
+    let held = if listed { Vec::new() } else { waiting };
     Ok((
         Some(Remembering {
             dir: entry.dir.clone(),
@@ -284,19 +319,70 @@ const NOT_SHOWN: &str =
 const NOT_LISTED: &str =
     "the registry no longer lists it as the folder that was shown, so nothing in it was changed";
 
+/// Why a folder was left as it was.
+enum Left {
+    /// The registry lists the directory being forgotten.
+    Listed,
+    Because(String),
+}
+
+impl Left {
+    fn reason(self, target: &Path) -> String {
+        match self {
+            Left::Listed => format!(
+                "the registry lists {}, so every folder finds it again at its next pass and nothing in this one was changed; `folders remove` it first, then forget it",
+                target.display()
+            ),
+            Left::Because(reason) => reason,
+        }
+    }
+}
+
+impl From<String> for Left {
+    fn from(reason: String) -> Left {
+        Left::Because(reason)
+    }
+}
+
+impl From<&str> for Left {
+    fn from(reason: &str) -> Left {
+        Left::Because(reason.into())
+    }
+}
+
+/// The state directory of the folder the registry lists as `holder` now,
+/// refused unless it is `state_dir`, the one claimed.
+fn still_at_path(
+    holder: &Remembering,
+    listed: &[Registered],
+    state_dir: &Directory,
+) -> std::result::Result<(), String> {
+    let entry = listed
+        .iter()
+        .find(|entry| entry.dir == holder.dir && entry.folder == holder.folder)
+        .ok_or(NOT_LISTED)?;
+    let now = opened_state(&holder.dir, entry.root.as_deref())?;
+    match now.same(state_dir) {
+        Ok(true) => Ok(()),
+        _ => Err(format!(
+            "another folder's saved state stands at {} now, so nothing in the one that was shown was changed",
+            holder.dir.display()
+        )),
+    }
+}
+
 /// Forgets `target` in the folder `holder` names, under its writer lock,
-/// and answers the paths released and whether the registry lists `target`;
-/// or why nothing in it changed.
+/// and answers the paths released; or why nothing in it changed.
 fn forget_in(
     holder: &Remembering,
     target: &Path,
     wait: Duration,
-) -> std::result::Result<(Vec<String>, bool), String> {
-    let is_holder = |entry: &Registered| entry.dir == holder.dir && entry.folder == holder.folder;
-    let entry = listed()
-        .map_err(|error| because("the folder registry cannot be read")(&error))?
+) -> std::result::Result<Vec<String>, Left> {
+    let registry_read =
+        || listed().map_err(|error| because("the folder registry cannot be read")(&error));
+    let entry = registry_read()?
         .into_iter()
-        .find(is_holder)
+        .find(|entry| entry.dir == holder.dir && entry.folder == holder.folder)
         .ok_or(NOT_LISTED)?;
     let state_dir = opened_state(&holder.dir, entry.root.as_deref())?;
     let label = holder.dir.join(STATE_DIR).join("core.sqlite");
@@ -307,6 +393,9 @@ fn forget_in(
                 other => because("it could not be claimed")(&other),
             },
         )?;
+    // The folder may have moved while its watch held it, with another listed
+    // at its path.
+    still_at_path(holder, &registry_read()?, &state_dir)?;
     // Compared before any open that can write, which tidies the store.
     let read = Core::read_directory(&state_dir, &label)
         .and_then(|core| bound_store(&core, &state_dir))
@@ -316,19 +405,28 @@ fn forget_in(
     }
     let core = Core::open_claimed(&state_dir, &label, None, Arc::new(lock))
         .map_err(|error| because("its saved state cannot be opened")(&error))?;
-    (|| -> Result<std::result::Result<(Vec<String>, bool), String>> {
+    (|| -> Result<std::result::Result<Vec<String>, Left>> {
         let (folder, store, _) = bound_store(&core, &state_dir)?;
         if folder.as_deref() != Some(holder.folder.as_str()) || store != holder.store {
             return Ok(Err(NOT_SHOWN.into()));
         }
         let conn = core.conn()?;
-        let commit = |listed: &[Registered]| -> Result<std::result::Result<_, String>> {
-            if !listed.iter().any(is_holder) {
-                return Ok(Err(NOT_LISTED.into()));
+        // Every entry as written: one `gone` drops, such as a rootless entry
+        // at an empty mount point, may be a folder whose volume is away.
+        let commit = |written: &[Registered]| -> Result<std::result::Result<_, Left>> {
+            if let Err(reason) = still_at_path(holder, written, &state_dir) {
+                return Ok(Err(reason.into()));
             }
-            // Listed, the directory stays a folder every pass reads, so
-            // nothing held for it is decided again.
-            let target_listed = listed.iter().any(|entry| entry.dir == target);
+            if written.iter().any(|entry| entry.dir == target) {
+                return Ok(Err(Left::Listed));
+            }
+            if let Some(what) = occupied(target) {
+                return Ok(Err(format!(
+                    "{} {what} now, so it may still be the folder or hold a file moved into it, and nothing in this folder was changed",
+                    target.display()
+                )
+                .into()));
+            }
             let tx = conn.unchecked_transaction()?;
             let others = remembered_in(&tx)?;
             let kept: Vec<&Registered> =
@@ -339,7 +437,7 @@ fn forget_in(
                 store::meta_set(&tx, META_OTHERS, &json)?;
             }
             let mut released: Vec<String> = Vec::new();
-            for file in holder.held.iter().filter(|_| !target_listed) {
+            for file in &holder.held {
                 let still = state::journaled_at(&tx, &file.path, &file.item)?.is_some_and(|row| {
                     row.missing_since == file.missing_since
                         && matches!(row.kept, Some(state::Kept::Unsure(unsure)) if unsure.waits_on(target))
@@ -352,14 +450,14 @@ fn forget_in(
                 }
             }
             tx.commit()?;
-            Ok(Ok((released, target_listed)))
+            Ok(Ok(released))
         };
         match Registry::located() {
-            Some(registry) => registry.while_listed(commit)?,
+            Some(registry) => registry.while_written(commit)?,
             None => commit(&[]),
         }
     })()
-    .map_err(|error| because("it could not be changed")(&error))?
+    .map_err(|error| Left::Because(because("it could not be changed")(&error)))?
 }
 
 fn remembered_in(conn: &Connection) -> Result<Vec<Registered>> {
@@ -371,9 +469,9 @@ fn remembered_in(conn: &Connection) -> Result<Vec<Registered>> {
     }
 }
 
-/// Which store was read: its file and the id it holds.
-fn store_key(mark: (u64, u64), id: Option<&str>) -> String {
-    format!("{}:{}:{}", mark.0, mark.1, id.unwrap_or_default())
+/// Which store was read: its state directory, its file and the id it holds.
+fn store_key(place: &str, mark: (u64, u64), id: Option<&str>) -> String {
+    format!("{place}/{}:{}/{}", mark.0, mark.1, id.unwrap_or_default())
 }
 
 fn alike(one: &Path, other: &Path) -> bool {

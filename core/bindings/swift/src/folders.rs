@@ -475,7 +475,8 @@ pub struct Remembered {
     pub alike: Vec<String>,
 }
 
-/// A listed folder that remembers the directory.
+/// A listed folder that remembers the directory or holds a delete that
+/// waits on it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RememberingFolder {
     pub dir: String,
@@ -807,8 +808,8 @@ guarded! {
         }
 
         /// Which listed folders remember `dir`, a folder the registry may no
-        /// longer list, and which of their held files forgetting it lets be
-        /// decided again. Show the person this before `forget_remembered`.
+        /// longer list, or hold a file that waits on it, and which of those
+        /// held files forgetting it lets be decided again. Show the person this before `forget_remembered`.
         /// Reads only, and asks no watch for a folder.
         pub fn remembering(&self, dir: String) -> Result<Remembered, MarfaError> {
             Ok(remembered(marfa_core::Folder::remembering(&dir)?))
@@ -817,9 +818,10 @@ guarded! {
         /// Forgets the directory in each folder `remembered` names, once the
         /// person confirms it is gone for good, and lets the held files shown
         /// be decided again at each folder's next sync. Trashes and keeps
-        /// nothing itself. A folder another process does not let go, or whose
-        /// store is not the one shown, is left as it was and named in
-        /// `not_changed`. Asks a watch that holds a folder to let it go, as
+        /// nothing itself, and changes nothing while the registry lists `dir`.
+        /// A folder another process does not let go, whose store is not the
+        /// one shown, or that is no longer at its listed path, is left as it
+        /// was and named in `not_changed`. Asks a watch that holds a folder to let it go, as
         /// `add` does.
         pub fn forget_remembered(&self, remembered: Remembered) -> Result<Forgotten, MarfaError> {
             let done = marfa_core::Folder::forget_remembered(&shown(remembered))?;
