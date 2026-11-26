@@ -224,9 +224,10 @@ it("refuses a queued exact edit behind this copy's own edit that the server merg
   const verdict = (id: string | undefined) =>
     report.verdicts.find((row) => row.id === id);
   for (const id of [exactId, witnessId]) {
-    expect(verdict(queued.get(id)?.first), JSON.stringify(report)).toMatchObject(
-      { verdict: "accepted" },
-    );
+    expect(
+      verdict(queued.get(id)?.first),
+      JSON.stringify(report),
+    ).toMatchObject({ verdict: "accepted" });
   }
   expect(
     verdict(queued.get(exactId)?.second),
