@@ -343,6 +343,12 @@ fn opened_by_writer(error: &CoreError) -> bool {
     )
 }
 
+/// Whether the person paused a folder whose store, refused to read with
+/// `error`, only its writer opens.
+pub(super) fn paused_unopened(dir: &Path, error: &CoreError) -> bool {
+    opened_by_writer(error) && recorded(dir).is_ok_and(|held| held.paused)
+}
+
 fn recorded(dir: &Path) -> crate::Result<Recorded> {
     let (root, state_dir) = state_of(dir)?;
     let (origin, first_sync_waiting, paused) =

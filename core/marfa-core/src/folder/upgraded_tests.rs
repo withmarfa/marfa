@@ -139,3 +139,21 @@ fn a_folder_at_schema_11_is_read_without_advice_to_remove_it_and_upgraded_by_its
     assert_eq!(version(other.path()), crate::store::SCHEMA_VERSION);
     b.scan().unwrap();
 }
+
+#[test]
+fn a_folder_at_schema_11_is_listed_paused_only_while_its_sync_is_paused() {
+    let (_, _registry) = registry::tests::own_registry();
+    let query = json!({ "query": {} });
+    let (paused, a) = folder_with("01a00000-0000-7000-8000-0000000036c1", query.clone(), None);
+    let (running, b) = folder_with("01a00000-0000-7000-8000-0000000036c2", query, None);
+    assert!(a.pause_sync().unwrap());
+    drop(a);
+    drop(b);
+    for dir in [paused.path(), running.path()] {
+        crate::store::testing::as_schema_11(&store_of(dir));
+    }
+
+    assert!(Folder::paused_at(paused.path()), "a paused folder was listed running");
+    assert!(!Folder::paused_at(running.path()));
+    assert_eq!(version(paused.path()), 11, "a read changed the store");
+}
