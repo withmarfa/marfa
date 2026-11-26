@@ -39,7 +39,10 @@ fn journal(dir: &Path) -> Vec<String> {
 }
 
 fn upgradable(refused: &CoreError) -> bool {
-    matches!(refused, CoreError::WrongSchema { .. })
+    matches!(
+        refused,
+        CoreError::WrongSchema { folder: Some(crate::FolderStore::Upgradable), .. }
+    )
 }
 
 #[test]
@@ -103,7 +106,7 @@ fn a_folder_at_schema_11_is_read_without_advice_to_remove_it_and_upgraded_by_its
 
     // The other folder, not yet upgraded, holds the next delete for the person.
     std::fs::remove_file(from.path().join("later.txt")).unwrap();
-    assert_eq!(a.scan().unwrap().missing, 1);
+    assert_eq!(a.scan().unwrap().missing, 2);
     past_the_grace(&a, "later.txt");
     let swept = a.scan().unwrap();
     assert_eq!(swept.deleted, 0, "{swept:?}");
