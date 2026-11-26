@@ -164,6 +164,19 @@ async function discardKeeps(harness: FolderHarness, kept: string) {
   expect(discarded.value.kept[0]?.reason).toContain("marfa folders remove");
 }
 
+/** Asserts the owner's discard, confirming Marfa cannot prove the file is
+ *  gone, forgets the record of `kept` only where nothing is at its path. */
+async function forgetsOnlyWhereGone(harness: FolderHarness, kept: string) {
+  const there = existsSync(kept);
+  const discarded = await harness.folder.discardKept({ unproved: true });
+  expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+  if (!discarded.ok) return;
+  expect(discarded.value.discarded).toEqual([]);
+  expect(discarded.value.forgotten).toEqual(there ? [] : [kept]);
+  expect(await keptPaths(harness)).toEqual(there ? [kept] : []);
+  expect(await heldAsKept(harness, kept)).toHaveLength(there ? 1 : 0);
+}
+
 describe("a take-in an earlier release stopped in another folder's directory", () => {
   it.each([
     "as the take-in wrote it",
@@ -175,7 +188,7 @@ describe("a take-in an earlier release stopped in another folder's directory", (
     "a reserved name its ID does not give",
     "a path outside its directory",
   ] as const)(
-    "keeps and lists a record of a stopped take-in in another folder's directory, and puts back, removes or forgets nothing for it (%s)",
+    "keeps and lists a record of a stopped take-in in another folder's directory, puts back or removes nothing for it, and forgets it only once the owner confirms with nothing at its path (%s)",
     async (shape) => {
       const harness = await noteFolder("take-in-recovery-shape");
       const scratch = tempFolder("marfa-take-in-");
@@ -221,6 +234,7 @@ describe("a take-in an earlier release stopped in another folder's directory", (
       expect(await heldAsKept(harness, kept)).toHaveLength(1);
 
       await discardKeeps(harness, kept);
+      await forgetsOnlyWhereGone(harness, kept);
       expect(readFileSync(kept, "utf8"), "the owner's discard deleted it").toBe(
         SAVE,
       );
@@ -228,6 +242,7 @@ describe("a take-in an earlier release stopped in another folder's directory", (
       rmSync(kept);
       await discardKeeps(harness, kept);
       expect(await heldAsKept(harness, kept)).toHaveLength(1);
+      await forgetsOnlyWhereGone(harness, kept);
     },
   );
 
@@ -264,7 +279,7 @@ describe("a take-in an earlier release stopped in another folder's directory", (
     }
 
     it.each(["holds", "does not hold"] as const)(
-      "puts back, removes or forgets nothing, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name",
+      "puts back or removes nothing, and keeps the record until the owner confirms with nothing at its path, where another volume at a stopped take-in's directory %s its reserved name",
       async (holds) => {
         const harness = await noteFolder("take-in-recovery-volume");
         const scratch = tempFolder("marfa-take-in-volume-");
@@ -314,6 +329,8 @@ describe("a take-in an earlier release stopped in another folder's directory", (
         ).toEqual([kept]);
         expect(await heldAsKept(harness, kept)).toHaveLength(1);
         await discardKeeps(harness, kept);
+        expect(existsSync(kept)).toBe(holds === "holds");
+        await forgetsOnlyWhereGone(harness, kept);
         expect(existsSync(kept)).toBe(holds === "holds");
 
         detachImage(mount);

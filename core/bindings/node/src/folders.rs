@@ -515,6 +515,26 @@ impl Folders {
         AsyncTask::new(DiscardKept { dir, failed: None })
     }
 
+    /// The paths of listed records Marfa cannot prove gone where nothing is
+    /// at the path, read beside a running watch.
+    #[napi(ts_return_type = "Promise<Array<string>>")]
+    pub fn unproved_gone(&self, dir: String) -> AsyncTask<UnprovedGone> {
+        AsyncTask::new(UnprovedGone { dir, failed: None })
+    }
+
+    /// Forgets each record `unprovedGone` lists at one of `paths` where
+    /// nothing is at its path still, once the person confirms Marfa cannot
+    /// prove the file is gone. Deletes no file, and asks a watch that holds
+    /// the folder to let it go.
+    #[napi(ts_return_type = "Promise<Array<string>>")]
+    pub fn forget_unproved(&self, dir: String, paths: Vec<String>) -> AsyncTask<ForgetUnproved> {
+        AsyncTask::new(ForgetUnproved {
+            dir,
+            paths,
+            failed: None,
+        })
+    }
+
     /// The callbacks share one event-loop queue, so the end follows every event.
     /// A callback that throws stops the watch and ends it with `listener_threw`.
     #[napi(
@@ -958,6 +978,48 @@ impl Task for DiscardKept {
     }
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
         Ok(report)
+    }
+}
+
+pub struct UnprovedGone {
+    dir: String,
+    failed: Option<CoreError>,
+}
+#[napi]
+impl Task for UnprovedGone {
+    type Output = Vec<String>;
+    type JsValue = Vec<String>;
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rejected(env, self.failed.take(), error, &self.dir))
+    }
+    fn compute(&mut self) -> Result<Self::Output> {
+        marfa_core::Folder::unproved_gone_of(&self.dir)
+            .map_err(|error| record(&mut self.failed, error))
+    }
+    fn resolve(&mut self, _: Env, paths: Self::Output) -> Result<Self::JsValue> {
+        Ok(paths)
+    }
+}
+
+pub struct ForgetUnproved {
+    dir: String,
+    paths: Vec<String>,
+    failed: Option<CoreError>,
+}
+#[napi]
+impl Task for ForgetUnproved {
+    type Output = Vec<String>;
+    type JsValue = Vec<String>;
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rejected(env, self.failed.take(), error, &self.dir))
+    }
+    fn compute(&mut self) -> Result<Self::Output> {
+        working(&self.dir, None)
+            .and_then(|folder| folder.forget_unproved(&self.paths))
+            .map_err(|error| record(&mut self.failed, error))
+    }
+    fn resolve(&mut self, _: Env, paths: Self::Output) -> Result<Self::JsValue> {
+        Ok(paths)
     }
 }
 

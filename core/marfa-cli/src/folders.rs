@@ -221,9 +221,12 @@ pub enum FoldersCommand {
     /// cannot read such a record and nothing is at its path in the directory
     /// itself, `--discard` forgets it and deletes no file for it. A file an
     /// earlier release moved aside in another folder's directory as it took
-    /// the file in is listed, with its record, until the directory stops
-    /// following its folder: Marfa never puts it back or deletes it, and
-    /// `--discard` never forgets it. With `--discard`, a watch
+    /// the file in is listed, with its record: Marfa never puts it back or
+    /// deletes it, and cannot prove it gone, so where nothing is at its path,
+    /// `--discard` forgets its record only once you confirm that, and
+    /// `--unproved` confirms it for a script. So does a record of a file
+    /// moved aside that Marfa cannot read and cannot show is in the folder.
+    /// With `--discard`, a watch
     /// holding the directory lets it go while this runs, and this is refused
     /// if the process holding the directory does not let it go within 10
     /// seconds.
@@ -238,6 +241,11 @@ pub enum FoldersCommand {
         /// anywhere else.
         #[arg(long, requires = "discard")]
         yes: bool,
+        /// Forget, without asking, each listed record Marfa cannot prove is
+        /// gone where nothing is at its path. Without it, a discard asks at a
+        /// terminal, and otherwise keeps such records.
+        #[arg(long, requires = "discard")]
+        unproved: bool,
     },
     /// List the files whose deletion the directory holds because Marfa cannot
     /// tell whether each was deleted or moved into another folder on this
@@ -796,7 +804,12 @@ pub fn run(
             )
         }
         FoldersCommand::Unmatched { dir, remove, yes } => unmatched(&dir, remove, yes, json),
-        FoldersCommand::Kept { dir, discard, yes } => kept(&dir, discard, yes, json),
+        FoldersCommand::Kept {
+            dir,
+            discard,
+            yes,
+            unproved,
+        } => kept(&dir, discard, (yes, unproved), json),
         FoldersCommand::Held {
             dir,
             trash,
@@ -939,7 +952,12 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
     )
 }
 
-fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError> {
+fn kept(
+    dir: &Path,
+    discard: bool,
+    (yes, unproved): (bool, bool),
+    json: bool,
+) -> Result<(), CliError> {
     if !discard {
         let files = Folder::kept_of(dir)?;
         return output::report(&serde_json::json!({ "kept": files }), json, || {
@@ -957,7 +975,7 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
     let files = folder.kept_files()?;
     let going: Vec<String> = files.iter().map(|file| file.path.clone()).collect();
     let agreed = going.is_empty() || yes || asks_to_discard(dir, &going)?;
-    let done = if agreed {
+    let mut done = if agreed {
         folder.discard_kept()?
     } else {
         marfa_core::KeptDiscarded {
@@ -965,12 +983,24 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
             ..Default::default()
         }
     };
+    let mut unproved_forgotten = Vec::new();
+    if agreed {
+        let gone = folder.unproved_gone()?;
+        let confirmed = if gone.is_empty() || unproved || (!yes && asks_to_forget(dir, &gone)?) {
+            gone
+        } else {
+            Vec::new()
+        };
+        unproved_forgotten = folder.forget_unproved(&confirmed)?;
+        done.kept
+            .retain(|file| !unproved_forgotten.contains(&file.path));
+    }
     output::report(
         &serde_json::json!({
             "discarded": done.discarded,
             "put_back": done.put_back,
             "kept": done.kept,
-            "forgotten": done.forgotten,
+            "forgotten": done.forgotten.iter().chain(&unproved_forgotten).collect::<Vec<_>>(),
             "declined": !agreed,
         }),
         json,
@@ -992,11 +1022,18 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
                     printable(path)
                 )
             }));
+            lines.extend(unproved_forgotten.iter().map(|path| {
+                format!(
+                    "{}: no file is there, and Marfa forgot its record as you confirmed, though it cannot prove the file is gone",
+                    printable(path)
+                )
+            }));
             if agreed {
                 lines.extend(done.kept.iter().map(|file| {
                     format!(
-                        "{} is still kept: Marfa could not reach it",
-                        printable(&file.path)
+                        "{} is still kept: {}",
+                        printable(&file.path),
+                        printable(&file.reason)
                     )
                 }));
             }
@@ -1180,6 +1217,25 @@ fn asks_to_discard(dir: &Path, going: &[String]) -> Result<bool, CliError> {
         writeln!(question, "  {}", printable(path))?;
     }
     write!(question, "Delete them? [y/N] ")?;
+    question.flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
+}
+
+fn asks_to_forget(dir: &Path, gone: &[String]) -> Result<bool, CliError> {
+    use std::io::{BufRead, Write};
+    let mut question = crate::output::stderr();
+    writeln!(
+        question,
+        "{} record(s) of a file Marfa moved aside in {} name a path where nothing is now. Marfa cannot prove each file is gone: it may be in another directory put at that path, or on a volume that is not mounted. Forgetting a record deletes no file:",
+        gone.len(),
+        dir.display()
+    )?;
+    for path in gone {
+        writeln!(question, "  {}", printable(path))?;
+    }
+    write!(question, "Forget them? [y/N] ")?;
     question.flush()?;
     let mut answer = String::new();
     std::io::stdin().lock().read_line(&mut answer)?;

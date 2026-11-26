@@ -711,6 +711,37 @@ fn kept_and_listed(folder: &Folder, root: &Path, path: &Path, case: &str) {
     assert_eq!(kept_paths(folder), [path], "{case}");
 }
 
+/// Asserts the owner, confirming Marfa cannot prove the file is gone, can
+/// forget the record of `path` only where nothing is there.
+fn forgotten_once_confirmed(folder: &Folder, path: &Path, case: &str) {
+    let there = path.exists();
+    let path = path.to_string_lossy().into_owned();
+    let gone = folder.unproved_gone().unwrap();
+    assert_eq!(gone.contains(&path), !there, "{case}: {gone:?}");
+    let other = folder.forget_unproved(&["elsewhere".into()]).unwrap();
+    assert!(other.is_empty(), "{case}: forgot what was not confirmed");
+    let forgotten = folder.forget_unproved(std::slice::from_ref(&path)).unwrap();
+    if there {
+        assert!(forgotten.is_empty(), "{case}: {forgotten:?}");
+        assert_eq!(kept_paths(folder), [path], "{case}");
+    } else {
+        assert_eq!(forgotten, [path], "{case}");
+        assert!(kept_paths(folder).is_empty(), "{case}");
+        assert!(held_as_kept_of(folder).is_empty(), "{case}");
+    }
+}
+
+fn held_as_kept_of(folder: &Folder) -> Vec<String> {
+    folder
+        .status()
+        .unwrap()
+        .files
+        .into_iter()
+        .filter(|file| file.status == "held" && file.flag == Some("kept"))
+        .map(|file| file.path)
+        .collect()
+}
+
 /// A record of a take-in from another folder holds its directory's device
 /// and inode and no birth time, which another directory at its path can
 /// share, so no shape of it is ever acted on.
@@ -768,6 +799,10 @@ fn a_take_in_record_in_another_folders_directory_is_kept_and_listed_never_acted_
         assert_eq!(put_back, None, "{shape}: a file was put back");
         assert_eq!(std::fs::read(&kept).unwrap(), SAVE, "{shape}");
         assert_eq!(displaced_rows(&folder), 1, "{shape}");
+        forgotten_once_confirmed(&folder, &kept, shape);
+        std::fs::remove_file(&kept).unwrap();
+        forgotten_once_confirmed(&folder, &kept, shape);
+        assert_eq!(displaced_rows(&folder), 0, "{shape}");
     }
 }
 
@@ -807,6 +842,7 @@ fn another_volume_at_a_take_ins_recorded_path_is_never_settled_against() {
         );
         assert_eq!(kept.exists(), case == "holds the reserved name", "{case}");
         assert_eq!(displaced_rows(&folder), 1, "{case}");
+        forgotten_once_confirmed(&folder, &kept, case);
     }
 }
 
@@ -835,6 +871,11 @@ fn a_take_in_record_is_listed_whatever_its_directory_answers() {
         assert_eq!(kept_paths(&folder), std::slice::from_ref(&path), "{case}");
         assert!(held_as_kept(&root).contains(&path), "{case}");
         assert_eq!(displaced_rows(&folder), 1, "{case}");
+        assert!(folder.unproved_gone().unwrap().is_empty(), "{case}");
+        assert!(
+            folder.forget_unproved(&[path]).unwrap().is_empty(),
+            "{case}"
+        );
     }
 }
 
@@ -910,6 +951,7 @@ fn a_file_kept_in_another_folders_directory_is_never_deleted_or_ended() {
 
         assert_eq!(kept.exists(), case != "no directory at the path", "{case}");
         assert_eq!(retained_rows(&folder), 1, "{case}");
+        forgotten_once_confirmed(&folder, &kept, case);
     }
 }
 
@@ -975,6 +1017,8 @@ fn a_record_outside_the_folder_that_does_not_read_is_kept_and_listed() {
             .is_some(),
         "the record was dropped"
     );
+    std::fs::remove_file(&kept).unwrap();
+    forgotten_once_confirmed(&folder, &kept, "no kind");
 }
 
 /// A stopped discard's record proves its directory, but the kept file's own

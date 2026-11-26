@@ -1727,7 +1727,9 @@ export interface KeptDiscard {
   kept: KeptFile[];
   /** Records of a stopped discard that do not read, forgotten because no
    *  file is at their paths in the directory itself
-   *  (`folder-files/write-retained-discard-forgets-gone`). */
+   *  (`folder-files/write-retained-discard-forgets-gone`), and records Marfa
+   *  cannot prove gone that `--unproved` confirmed
+   *  (`folder-files/write-crash-elsewhere-forget-confirmed`). */
   forgotten: string[];
   declined: boolean;
 }
@@ -1991,8 +1993,20 @@ export class CliFolder {
   }
 
   /** Discards them, confirmed. */
-  async discardKept(): Promise<Outcome<KeptDiscard>> {
-    return this.run(["folders", "kept", this.dir, "--discard", "--yes"]);
+  /** With `unproved`, also forgets each record Marfa cannot prove gone
+   *  where nothing is at its path
+   *  (`folder-files/write-crash-elsewhere-forget-confirmed`). */
+  async discardKept(
+    options: { unproved?: boolean } = {},
+  ): Promise<Outcome<KeptDiscard>> {
+    return this.run([
+      "folders",
+      "kept",
+      this.dir,
+      "--discard",
+      "--yes",
+      ...(options.unproved ? ["--unproved"] : []),
+    ]);
   }
 
   /** The files whose deletion the folder holds for the person (`folder-files/missing-file-held`). */

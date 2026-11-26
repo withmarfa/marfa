@@ -1498,8 +1498,7 @@ fn settle_row(
             .metadata()
             .ok()
             .map(|found| identity::Seen::of(&found)),
-        // An absolute `dir` is another folder's, with no binding here to follow.
-        follow: (dir_place != row.dir && !Path::new(&row.dir).is_absolute()).then(|| Follow {
+        follow: (dir_place != row.dir).then(|| Follow {
             from: joined(&row.dir, &row.displacement.target),
             dir,
             name: target,
@@ -1550,7 +1549,7 @@ impl state::Retained {
 }
 
 /// How the owner ends a record Marfa keeps and acts on no file for.
-pub(super) const END_RECORD: &str = "To end the record, make the directory stop following its folder with `marfa folders remove <DIR>`";
+pub(super) const END_RECORD: &str = "Marfa cannot prove the file is gone, so it never forgets the record itself: once nothing is at this path, `marfa folders kept <DIR> --discard` forgets it after you confirm, and `--unproved` confirms that for a script. Making the directory stop following its folder with `marfa folders remove <DIR>` also ends it";
 
 /// Why Marfa keeps a record of a file it moved from `from` into a directory
 /// outside the folder.

@@ -133,6 +133,40 @@ fn away_reason(why: &str) -> String {
     )
 }
 
+/// A record Marfa keeps and acts on no file for, by its key.
+enum Unproved {
+    Displaced(String),
+    Retained(String),
+}
+
+/// Each record Marfa keeps and acts on no file for, with its file's path.
+fn unproved(conn: &rusqlite::Connection) -> Result<Vec<(String, Unproved)>> {
+    let mut records = Vec::new();
+    for row in state::displaced(conn)? {
+        match row {
+            Ok(row) if row.outside() => records.push((
+                joined(&row.aside, &row.displacement.kept),
+                Unproved::Displaced(row.displacement.id),
+            )),
+            Err(row) if !row.inside => records.push((row.path, Unproved::Displaced(row.id))),
+            Ok(_) | Err(_) => {}
+        }
+    }
+    for row in state::retained(conn)? {
+        match row {
+            Ok(row) if row.outside() => records.push((
+                joined(&row.aside, &row.retained.kept),
+                Unproved::Retained(row.retained.id),
+            )),
+            Err(row) if Path::new(&row.aside).is_absolute() => {
+                records.push((joined(&row.aside, &row.kept), Unproved::Retained(row.id)));
+            }
+            Ok(_) | Err(_) => {}
+        }
+    }
+    Ok(records)
+}
+
 /// Where the file of a record of a stopped discard that does not read is.
 enum UnreadMark {
     /// Something is at its path, or Marfa cannot tell.
@@ -412,6 +446,12 @@ impl Folder {
         Folder::reading(root.as_ref())?.kept_files()
     }
 
+    /// [`Folder::unproved_gone`] of the directory at `root`, read from its
+    /// store without claiming it.
+    pub fn unproved_gone_of(root: impl AsRef<Path>) -> Result<Vec<String>> {
+        Folder::reading(root.as_ref())?.unproved_gone()
+    }
+
     /// The files this folder keeps because a program might still write to
     /// them, in path order.
     pub fn kept_files(&self) -> Result<Vec<KeptFile>> {
@@ -541,6 +581,51 @@ impl Folder {
         done.kept.extend(self.kept_files()?);
         done.kept.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(done)
+    }
+
+    /// The path of each record Marfa keeps and acts on no file for where
+    /// nothing is at that path, which Marfa cannot prove means the file is
+    /// gone: a record naming a directory outside the folder, or one that does
+    /// not read and cannot show it names only the folder's.
+    pub fn unproved_gone(&self) -> Result<Vec<String>> {
+        let conn = self.core.conn()?;
+        Ok(unproved(&conn)?
+            .into_iter()
+            .filter(|(path, _)| self.nothing_at(path))
+            .map(|(path, _)| path)
+            .collect())
+    }
+
+    /// Forgets each record [`Folder::unproved_gone`] lists at one of `paths`
+    /// where nothing is at its path still. Only the owner does this, once
+    /// told Marfa cannot prove the file is gone, and it deletes no file.
+    /// Answers the paths forgotten.
+    pub fn forget_unproved(&self, paths: &[String]) -> Result<Vec<String>> {
+        let conn = self.core.conn()?;
+        let mut forgotten = Vec::new();
+        for (path, record) in unproved(&conn)? {
+            if !paths.contains(&path) || !self.nothing_at(&path) {
+                continue;
+            }
+            match record {
+                Unproved::Displaced(id) => state::clear_displaced(&conn, &id)?,
+                Unproved::Retained(id) => state::clear_retained(&conn, &id)?,
+            }
+            forgotten.push(path);
+        }
+        Ok(forgotten)
+    }
+
+    /// Whether nothing is at `path`, absolute or relative to the root, nor
+    /// at its directory's path.
+    fn nothing_at(&self, path: &str) -> bool {
+        let path = Path::new(path);
+        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+            return false;
+        };
+        self.place_dir(&dir.to_string_lossy())
+            .and_then(|dir| dir.entry_identity(Path::new(name)))
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
     }
 
     /// Forgets each record of a stopped discard that does not read and whose
@@ -767,6 +852,10 @@ impl Folder {
         conn: &rusqlite::Connection,
         row: &state::Unread,
     ) -> Result<RowSettled> {
+        // Outside the folder, nothing shows its directory is the one recorded.
+        if Path::new(&row.aside).is_absolute() {
+            return Ok(RowSettled::Kept);
+        }
         // A directory away, or not shown to be the one recorded, keeps the
         // row: its file is wherever that directory went.
         let Ok(aside) = self.place_dir(&row.aside) else {
@@ -775,9 +864,6 @@ impl Folder {
         let Ok(aside_at) = aside.metadata() else {
             return Ok(RowSettled::Kept);
         };
-        if unverified(row) {
-            return Ok(RowSettled::Kept);
-        }
         let proved = match row.aside_at {
             Some(at) => landing::identity(&aside_at) == at,
             None => row.aside.is_empty(),

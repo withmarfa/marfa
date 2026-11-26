@@ -990,37 +990,45 @@ A device MUST NOT put back, remove or rename a file for a record of a file it mo
 
 **Reason:** only a take-in from another folder, in an earlier release, wrote such a record. It holds a directory's device number and inode and no birth time, and another directory at the same path, such as the root of another volume mounted there, can have both, so nothing shows the directory at the path is the one recorded.
 
-**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, and puts back, removes or forgets nothing for it (%s)`, `› puts back, removes or forgets nothing, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`.
+**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, puts back or removes nothing for it, and forgets it only once the owner confirms with nothing at its path (%s)`, `› puts back or removes nothing, and keeps the record until the owner confirms with nothing at its path, where another volume at a stopped take-in's directory %s its reserved name`.
 
 ### `folder-files/write-crash-elsewhere-kept`
 
-A device MUST keep each record of a file it moved out of its path that names a directory outside the folder, and each record of a file it moved out of its path that it cannot read and that does not name both its directories in the folder.
+A device MUST keep each record of a file it moved out of its path that names a directory outside the folder, and each record of a file it moved out of its path that it cannot read and that does not name both its directories in the folder, until the owner confirms it may forget the record as `folder-files/write-crash-elsewhere-forget-confirmed` says.
 
 **Reason:** the file can be on a volume that is not mounted, and the record is what shows the person where it is. A scan of the folder never meets a file outside it.
 
-**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, and puts back, removes or forgets nothing for it (%s)`, `› puts back, removes or forgets nothing, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`.
+**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, puts back or removes nothing for it, and forgets it only once the owner confirms with nothing at its path (%s)`, `› puts back or removes nothing, and keeps the record until the owner confirms with nothing at its path, where another volume at a stopped take-in's directory %s its reserved name`.
 
 ### `folder-files/write-crash-elsewhere-listed`
 
 While a device keeps a record as `folder-files/write-crash-elsewhere-kept` says, a device MUST list the file the record names in `folders kept`, with a reason that names `marfa folders remove`.
 
-**Reason:** removing the directory from its folder is the one step that ends the record.
+**Reason:** the reason says that the device cannot prove the file is gone, and how the owner ends the record.
 
-**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, and puts back, removes or forgets nothing for it (%s)`, `› puts back, removes or forgets nothing, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`.
+**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, puts back or removes nothing for it, and forgets it only once the owner confirms with nothing at its path (%s)`, `› puts back or removes nothing, and keeps the record until the owner confirms with nothing at its path, where another volume at a stopped take-in's directory %s its reserved name`.
 
 ### `folder-files/write-crash-elsewhere-status`
 
 While a device keeps a record as `folder-files/write-crash-elsewhere-kept` says, a device MUST list the file the record names in the folder's status as `held` with the flag `kept`.
 
-**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, and puts back, removes or forgets nothing for it (%s)`, `› puts back, removes or forgets nothing, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`.
+**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, puts back or removes nothing for it, and forgets it only once the owner confirms with nothing at its path (%s)`, `› puts back or removes nothing, and keeps the record until the owner confirms with nothing at its path, where another volume at a stopped take-in's directory %s its reserved name`.
 
 ### `folder-files/write-crash-elsewhere-discard-kept`
 
-When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST NOT forget a record it keeps as `folder-files/write-crash-elsewhere-kept` says, whether or not a file is at its path.
+If the owner discards a folder's kept files without confirming that the device cannot prove a file gone, then a device MUST NOT forget a record it keeps as `folder-files/write-crash-elsewhere-kept` says.
 
 **Reason:** nothing at the path does not show the file is gone. The directory at the path can be another volume's, or the directory's volume may not be mounted.
 
-**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, and puts back, removes or forgets nothing for it (%s)`, `› puts back, removes or forgets nothing, and keeps the record, where another volume at a stopped take-in's directory %s its reserved name`.
+**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, puts back or removes nothing for it, and forgets it only once the owner confirms with nothing at its path (%s)`, `› puts back or removes nothing, and keeps the record until the owner confirms with nothing at its path, where another volume at a stopped take-in's directory %s its reserved name`.
+
+### `folder-files/write-crash-elsewhere-forget-confirmed`
+
+When the owner confirms, through `folders kept --discard`, that a device cannot prove the files gone, a device MUST forget each record it keeps as `folder-files/write-crash-elsewhere-kept` says where nothing is at the file's path.
+
+**Reason:** at a terminal, the device asks a second question that says it cannot prove the files are gone; `--unproved` gives that answer for a script. Forgetting deletes no file, and the device reports each path in `forgotten`.
+
+**Tests:** `device/folders-take-in-recovery.test.ts › keeps and lists a record of a stopped take-in in another folder's directory, puts back or removes nothing for it, and forgets it only once the owner confirms with nothing at its path (%s)`, `› puts back or removes nothing, and keeps the record until the owner confirms with nothing at its path, where another volume at a stopped take-in's directory %s its reserved name`.
 
 ### `folder-files/write-no-exchange`
 

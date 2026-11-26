@@ -1311,6 +1311,27 @@ guarded! {
                     .collect::<Result<_, _>>()?,
             })
         }
+
+        /// The paths of listed records of a file Marfa moved aside, outside
+        /// the folder or under a record it cannot read, where nothing is at
+        /// the path. Marfa cannot prove such a file is gone, so it never
+        /// forgets these records itself. Reads beside a running watch.
+        pub fn unproved_gone(&self, dir: String) -> Result<Vec<String>, MarfaError> {
+            Ok(marfa_core::Folder::unproved_gone_of(&dir)?)
+        }
+
+        /// Forgets each record `unproved_gone` lists at one of `paths` where
+        /// nothing is at its path still, as `folders kept --discard` does once
+        /// the person confirms Marfa cannot prove the file is gone. Deletes no
+        /// file, and answers the paths forgotten. Asks a watch that holds the
+        /// folder to let it go, as `add` does.
+        pub fn forget_unproved(
+            &self,
+            dir: String,
+            paths: Vec<String>,
+        ) -> Result<Vec<String>, MarfaError> {
+            Ok(working(&dir, None, None)?.forget_unproved(&paths)?)
+        }
     }
 }
 
@@ -1908,6 +1929,10 @@ mod tests {
             ("discard_kept", {
                 let (folders, path) = (folders.clone(), path.clone());
                 Box::new(move || folders.discard_kept(path.clone()).map(drop))
+            }),
+            ("forget_unproved", {
+                let (folders, path) = (folders.clone(), path.clone());
+                Box::new(move || folders.forget_unproved(path.clone(), Vec::new()).map(drop))
             }),
         ];
         for (name, call) in calls {
