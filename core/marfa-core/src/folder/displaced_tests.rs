@@ -667,3 +667,255 @@ fn a_second_save_of_the_settings_file_is_kept_in_the_root_and_reported() {
     assert_eq!(kept_flags(&report), [kept[0].as_str()]);
     assert_eq!(report.created, 0);
 }
+
+/// What a take-in from another folder recorded as it stopped, with the file
+/// it took moved aside under its reserved name in `source`, which now holds
+/// the person's save.
+fn stopped_take_in(source: &Path) -> state::Displaced {
+    let target = source.join("Recovery.md");
+    std::fs::write(&target, "as the server has it\n").unwrap();
+    let read = object_of(&target);
+    let id = uuid::Uuid::now_v7().simple().to_string();
+    let kept = source.join(landing::reserved(&id));
+    std::fs::rename(&target, &kept).unwrap();
+    std::fs::write(&kept, "as the server has it\nthe person's edit\n").unwrap();
+    let place = source.to_string_lossy().into_owned();
+    state::Displaced {
+        dir: place.clone(),
+        dir_at: at(source),
+        aside: place,
+        aside_at: at(source),
+        displacement: Displacement {
+            id,
+            kind: Kind::Withdraw,
+            target: "Recovery.md".into(),
+            kept: kept.file_name().unwrap().to_string_lossy().into_owned(),
+            ours: None,
+            read,
+        },
+    }
+}
+
+fn displaced_rows(folder: &Folder) -> usize {
+    state::displaced(&folder.core.conn().unwrap())
+        .unwrap()
+        .len()
+}
+
+fn kept_paths(folder: &Folder) -> Vec<String> {
+    folder
+        .kept_files()
+        .unwrap()
+        .into_iter()
+        .map(|file| file.path)
+        .collect()
+}
+
+/// Two volume roots have the same inode, so a row recorded on one names the
+/// directory that another volume mounted at the same path has; a test cannot
+/// mount a volume, so the recorded device stands for the one that was there.
+#[test]
+fn another_volume_at_a_take_ins_recorded_path_is_never_settled_against() {
+    for holds_the_name in [true, false] {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        let other = tempfile::tempdir_in(root.join("..")).unwrap();
+        let source = other.path().canonicalize().unwrap();
+        let mut row = stopped_take_in(&source);
+        let was = row.dir_at.0 ^ 1;
+        row.dir_at.0 = was;
+        row.aside_at.0 = was;
+        row.displacement.read.device = was;
+        let kept = source.join(&row.displacement.kept);
+        if !holds_the_name {
+            std::fs::remove_file(&kept).unwrap();
+        }
+        state::set_displaced(&folder.core.conn().unwrap(), &row).unwrap();
+
+        folder.scan().unwrap();
+        folder.scan().unwrap();
+
+        let case = format!("holds the reserved name: {holds_the_name}");
+        assert!(
+            !source.join("Recovery.md").exists(),
+            "{case}: a file was put back in a directory on another volume"
+        );
+        assert_eq!(kept.exists(), holds_the_name, "{case}");
+        assert_eq!(
+            displaced_rows(&folder),
+            1,
+            "{case}: the record was forgotten, and the save it names may be on the volume that was at its path"
+        );
+        let path = kept.to_string_lossy().into_owned();
+        assert_eq!(kept_paths(&folder), [path.clone()], "{case}");
+        let status = Folder::status_of(&root).unwrap();
+        assert!(
+            status.files.iter().any(|file| file.path == path),
+            "{case}: {status:?}"
+        );
+
+        let done = folder.discard_kept().unwrap();
+        assert!(done.discarded.is_empty(), "{case}: {done:?}");
+        assert_eq!(kept.exists(), holds_the_name, "{case}");
+        if holds_the_name {
+            assert_eq!(kept_paths(&folder), [path], "{case}");
+        } else {
+            // Nothing is at its path, so the owner's discard forgets it.
+            assert_eq!(done.forgotten, [path], "{case}: {done:?}");
+            assert!(kept_paths(&folder).is_empty(), "{case}");
+            assert_eq!(displaced_rows(&folder), 0, "{case}");
+        }
+    }
+}
+
+#[test]
+fn a_row_in_another_folders_directory_unlike_a_take_ins_is_never_acted_on() {
+    type Change = fn(&mut state::Displaced, &Path);
+    let shapes: [(&str, Change); 6] = [
+        ("as a take-in wrote it", |_, _| {}),
+        ("an exchange", |row, _| {
+            row.displacement.kind = Kind::Exchange;
+        }),
+        ("a replace with a new file waiting", |row, _| {
+            let waiting = landing::reserved(&uuid::Uuid::now_v7().simple().to_string());
+            row.displacement.ours = Some((
+                waiting.to_string_lossy().into_owned(),
+                row.displacement.read.clone(),
+            ));
+        }),
+        ("its reserved name in another directory", |row, source| {
+            let aside = source.parent().unwrap().join("Aside");
+            std::fs::create_dir(&aside).unwrap();
+            std::fs::rename(
+                source.join(&row.displacement.kept),
+                aside.join(&row.displacement.kept),
+            )
+            .unwrap();
+            row.aside = aside.to_string_lossy().into_owned();
+            row.aside_at = at(&aside);
+        }),
+        ("a reserved name its id does not give", |row, source| {
+            let other = landing::reserved(&uuid::Uuid::now_v7().simple().to_string());
+            std::fs::rename(source.join(&row.displacement.kept), source.join(&other)).unwrap();
+            row.displacement.kept = other.to_string_lossy().into_owned();
+        }),
+        ("a target outside its directory", |row, _| {
+            row.displacement.target = "../Recovery.md".into();
+        }),
+    ];
+    for (shape, change) in shapes {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        let other = tempfile::tempdir_in(root.join("..")).unwrap();
+        let source = other.path().canonicalize().unwrap().join("Source");
+        std::fs::create_dir(&source).unwrap();
+        let mut row = stopped_take_in(&source);
+        change(&mut row, &source);
+        let kept = Path::new(&row.aside).join(&row.displacement.kept);
+        state::set_displaced(&folder.core.conn().unwrap(), &row).unwrap();
+
+        folder.scan().unwrap();
+        folder.scan().unwrap();
+
+        let put_back = [source.join("Recovery.md"), source.join("../Recovery.md")]
+            .into_iter()
+            .find(|path| path.exists());
+        if shape == "as a take-in wrote it" {
+            // The witness: the same row, as a take-in wrote it, is settled.
+            assert_eq!(
+                std::fs::read(put_back.unwrap()).unwrap(),
+                b"as the server has it\nthe person's edit\n"
+            );
+            assert_eq!(displaced_rows(&folder), 0);
+            continue;
+        }
+        assert_eq!(put_back, None, "{shape}: a file was put back");
+        assert_eq!(
+            std::fs::read(&kept).unwrap(),
+            b"as the server has it\nthe person's edit\n",
+            "{shape}"
+        );
+        assert_eq!(displaced_rows(&folder), 1, "{shape}");
+        let path = kept.to_string_lossy().into_owned();
+        assert_eq!(kept_paths(&folder), [path.clone()], "{shape}");
+        let done = folder.discard_kept().unwrap();
+        assert!(kept.exists(), "{shape}: the owner's discard deleted it");
+        assert_eq!(kept_paths(&folder), [path], "{shape}: {done:?}");
+    }
+}
+
+/// A file a take-in from another folder kept under its reserved name in
+/// `source` because a program might still write to it, recorded with the
+/// directory's identity on the device `device`.
+fn kept_by_a_take_in(source: &Path, device: u64) -> state::Retained {
+    let id = uuid::Uuid::now_v7().simple().to_string();
+    let kept = source.join(landing::reserved(&id));
+    std::fs::write(&kept, "as the take-in read it\n").unwrap();
+    let metadata = std::fs::metadata(&kept).unwrap();
+    let place = source.to_string_lossy().into_owned();
+    let at = (device, at(source).1);
+    state::Retained {
+        dir: place.clone(),
+        dir_at: at,
+        aside: place,
+        aside_at: at,
+        retained: landing::Retained {
+            id,
+            kind: Kind::Withdraw,
+            target: "Recovery.md".into(),
+            kept: kept.file_name().unwrap().to_string_lossy().into_owned(),
+            ours: None,
+            read: Object {
+                device,
+                inode: metadata.ino(),
+                length: Some(metadata.len()),
+                modified: None,
+                hash: Some(state::hash(b"as the take-in read it\n")),
+            },
+            changed: None,
+            since: 0,
+            writers: Some(super::writers::Writers::Unknown),
+        },
+    }
+}
+
+/// As in the test above, the recorded device stands for another volume.
+#[test]
+fn a_file_kept_in_another_folders_directory_is_discarded_only_there() {
+    for case in ["as recorded", "another volume at its path", "an exchange"] {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        let other = tempfile::tempdir_in(root.join("..")).unwrap();
+        let source = other.path().canonicalize().unwrap();
+        let here = at(&source).0;
+        let mut row = kept_by_a_take_in(
+            &source,
+            if case == "another volume at its path" {
+                here ^ 1
+            } else {
+                here
+            },
+        );
+        if case == "an exchange" {
+            row.retained.kind = Kind::Exchange;
+        }
+        let kept = source.join(&row.retained.kept);
+        state::set_retained(&folder.core.conn().unwrap(), &row).unwrap();
+
+        folder.scan().unwrap();
+        let done = folder.discard_kept().unwrap();
+
+        if case == "as recorded" {
+            // The witness: in the directory recorded, it is discarded.
+            assert!(!kept.exists(), "{done:?}");
+            continue;
+        }
+        assert!(kept.exists(), "{case}: it was deleted: {done:?}");
+        assert!(done.discarded.is_empty(), "{case}: {done:?}");
+        assert_eq!(
+            kept_paths(&folder),
+            [kept.to_string_lossy().into_owned()],
+            "{case}"
+        );
+    }
+}

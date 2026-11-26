@@ -1513,4 +1513,61 @@ mod tests {
             assert!(!folder.kept_files().unwrap().is_empty(), "{spoil}");
         }
     }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_kept_file_whose_record_does_not_read_stays_where_its_directory_cannot_be_told() {
+        use std::os::unix::fs::MetadataExt;
+        for case in [
+            "with no identity for its directory",
+            "in another folder's directory",
+            "in another folder's directory with no identity for it",
+        ] {
+            let (_dir, folder, root, path) = kept_aside(true);
+            let name = Path::new(&path).file_name().unwrap().to_owned();
+            let conn = folder.core.conn().unwrap();
+            let elsewhere = tempfile::tempdir_in(root.parent().unwrap()).unwrap();
+            let elsewhere = elsewhere.path().canonicalize().unwrap();
+            let kept = if case == "with no identity for its directory" {
+                root.join(&path)
+            } else {
+                std::fs::rename(root.join(&path), elsewhere.join(&name)).unwrap();
+                let at = std::fs::metadata(&elsewhere).unwrap();
+                conn.execute(
+                    "UPDATE meta SET value = json_set(value, '$.dir', ?1, '$.aside', ?1, '$.aside_at', json(?2)) WHERE key LIKE 'folder_retained:%'",
+                    rusqlite::params![
+                        elsewhere.to_string_lossy(),
+                        format!("[{},{}]", at.dev(), at.ino())
+                    ],
+                )
+                .unwrap();
+                elsewhere.join(&name)
+            };
+            if case.ends_with("no identity for it") || case.ends_with("its directory") {
+                conn.execute(
+                    "UPDATE meta SET value = json_remove(value, '$.aside_at') WHERE key LIKE 'folder_retained:%'",
+                    [],
+                )
+                .unwrap();
+            }
+            drop(conn);
+
+            let done = folder.discard_kept().unwrap();
+
+            assert!(kept.exists(), "{case}: the owner's discard deleted it");
+            assert!(done.discarded.is_empty(), "{case}: {done:?}");
+            assert_eq!(
+                listed(&root, &folder.kept_files().unwrap())
+                    .into_iter()
+                    .map(|(path, _)| path)
+                    .collect::<Vec<_>>(),
+                [if kept.starts_with(&root) {
+                    path.clone()
+                } else {
+                    kept.to_string_lossy().into_owned()
+                }],
+                "{case}"
+            );
+        }
+    }
 }

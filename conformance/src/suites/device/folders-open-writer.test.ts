@@ -10,12 +10,14 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   utimesSync,
   writeSync,
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { copyLiveReplay } from "../../device/marfa-answers.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 import type { PushReport } from "../../device/cli-adapter.js";
 import type { FolderDoor } from "../../device/folder-door.js";
 import { openBindingFolder } from "./binding-folders.shared.js";
@@ -513,6 +515,63 @@ describe("a file a program holds open for writing", () => {
       }),
     ]);
   });
+
+  it.each([
+    "as recorded",
+    "with no identity for its directory",
+    "in a directory outside the folder",
+  ] as const)(
+    "deletes a file kept under a record it cannot read only where it can tell the file's directory is the one recorded (%s)",
+    async (where) => {
+      const harness = await noteFolder("folder-open-writer-unread-directory");
+      holdOpen(harness);
+      write("first half\n");
+      close();
+      await setAsideUnknown(harness);
+      const [name] = keptNames(harness);
+      expect(name).toBeDefined();
+      let kept = join(harness.dir, name!);
+      let listedAs = name!;
+      const db = new DatabaseSync(harness.folder.store);
+      try {
+        if (where === "in a directory outside the folder") {
+          const elsewhere = tempFolder("marfa-unread-elsewhere-");
+          renameSync(kept, join(elsewhere, name!));
+          kept = join(elsewhere, name!);
+          listedAs = kept;
+          const at = statSync(elsewhere, { bigint: true });
+          db.prepare(
+            "UPDATE meta SET value = json_set(value, '$.dir', ?, '$.aside', ?, '$.aside_at', json(?)) WHERE key LIKE 'folder_retained:%'",
+          ).run(elsewhere, elsewhere, `[${at.dev},${at.ino}]`);
+        }
+        if (where === "with no identity for its directory")
+          db.prepare(
+            "UPDATE meta SET value = json_remove(value, '$.aside_at') WHERE key LIKE 'folder_retained:%'",
+          ).run();
+        db.prepare(
+          "UPDATE meta SET value = json_set(value, '$.retained.since', 'soon') WHERE key LIKE 'folder_retained:%'",
+        ).run();
+      } finally {
+        db.close();
+      }
+
+      const discarded = await harness.folder.discardKept();
+      expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+      if (!discarded.ok) return;
+      if (where === "as recorded") {
+        // The witness: where its directory is the one recorded, it goes.
+        expect(discarded.value.discarded).toEqual([name]);
+        expect(existsSync(kept)).toBe(false);
+        return;
+      }
+      expect(discarded.value.discarded).toEqual([]);
+      expect(existsSync(kept), "the owner's discard deleted it").toBe(true);
+      const listed = await harness.folder.kept();
+      expect(listed.ok, JSON.stringify(listed)).toBe(true);
+      if (!listed.ok) return;
+      expect(listed.value.kept.map((file) => file.path)).toEqual([listedAs]);
+    },
+  );
 
   it("puts back a file it kept that a program wrote to, when the owner discards the files it keeps", async () => {
     const harness = await noteFolder("folder-open-writer-discard-changed");
