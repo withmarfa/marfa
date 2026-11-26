@@ -2,9 +2,11 @@ import { execFile } from "node:child_process";
 import {
   appendFileSync,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   statSync,
@@ -27,6 +29,7 @@ import { untilHeld } from "./binding.shared.js";
 import { folderHarness, requireBinary, type FolderHarness } from "./harness.js";
 import {
   EdgeDoor,
+  asWrittenBy0_0_113,
   isContentWrite,
   read,
   scriptFolderWrites,
@@ -196,7 +199,7 @@ try:
         output += chunk
         sys.stdout.buffer.write(chunk)
         sys.stdout.buffer.flush()
-        if not answered and b"Remove them? [y/N]" in output:
+        if not answered and b"? [y/N]" in output:
             for action in actions:
                 if action[0] == "delete":
                     os.remove(action[1])
@@ -244,6 +247,130 @@ finally:
     },
   );
   return { output: stdout };
+}
+
+/** Stops a removal of the file at `path` once its record is written. */
+async function stoppedBeforeTakeAway(
+  made: FolderHarness,
+  path: string,
+): Promise<void> {
+  const name = path.split("/").pop()!;
+  await expect(
+    withFault(`crash-before-take-away=${name}`, () =>
+      made.folder.removeUnmatched({ yes: true }),
+    ),
+    "the removal did not stop where the fault asks, so nothing below is about a stopped one",
+  ).rejects.toThrow(new RegExp(`crashing at .*${name.replace(".", "\\.")}`));
+}
+
+/**
+ * A folder whose query holds active notes, with two new files written as
+ * archived, so each is unmatched where it is made: `Shelved.md` under
+ * `prefix`, and `witness.md` beside it.
+ */
+async function archivedFolder(
+  label: string,
+  prefix: string,
+): Promise<{
+  made: FolderHarness;
+  paths: { shelved: string; witness: string };
+  ids: { shelved: string; witness: string };
+}> {
+  const made = await folderHarness(label, {
+    settings: { query: { types: ["core.note"], state: ["active"] } },
+  });
+  started.push(made);
+  scriptFolderWrites(made, { edges: new EdgeDoor() });
+  const archived = (title: string) =>
+    `---\ntitle: ${title}\nstate: archived\n---\nwritten as archived\n`;
+  const paths = {
+    shelved: `${prefix}Shelved.md`,
+    witness: `${prefix}witness.md`,
+  };
+  if (prefix !== "") mkdirSync(join(made.dir, prefix));
+  writeFileSync(join(made.dir, paths.shelved), archived("Shelved"));
+  writeFileSync(join(made.dir, paths.witness), archived("Witness"));
+  const pushed = await made.folder.push();
+  expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+  const listed = await made.folder.unmatched();
+  expect(listed.ok, JSON.stringify(listed)).toBe(true);
+  if (!listed.ok) throw new Error(listed.refusal.raw);
+  const id = (path: string) =>
+    listed.value.unmatched.find((file) => file.path === path)?.item_id;
+  const ids = { shelved: id(paths.shelved)!, witness: id(paths.witness)! };
+  expect(
+    ids.shelved !== undefined && ids.witness !== undefined,
+    "the files are not unmatched, so nothing below is about them",
+  ).toBe(true);
+  return { made, paths, ids };
+}
+
+/**
+ * Checks that the removal stopped at `path`, whose file is gone and which
+ * Marfa cannot prove gone, holds the path with what ends it; that neither
+ * `--yes` alone nor a binding call without the owner's confirmation ends it;
+ * and that a confirmation at a terminal, which says so plainly, ends it and
+ * keeps the item.
+ */
+async function unprovedUntilConfirmed(
+  made: FolderHarness,
+  path: string,
+  item: string,
+): Promise<void> {
+  expect(await statusOf(made, path)).toEqual([
+    expect.objectContaining({
+      status: "held",
+      flag: "removing",
+      reason: expect.stringMatching(
+        /cannot prove the file is gone.*--forget-unproved/,
+      ),
+    }),
+  ]);
+  const listed = await made.folder.unmatched();
+  expect(listed.ok, JSON.stringify(listed)).toBe(true);
+  if (!listed.ok) return;
+  expect(listed.value.unmatched.filter((file) => file.path === path)).toEqual([
+    expect.objectContaining({ item_id: item, unproved: true }),
+  ]);
+  const yes = await made.folder.removeUnmatched({ yes: true });
+  expect(yes.ok, JSON.stringify(yes)).toBe(true);
+  expect(yes.ok && yes.value.settled, "ended with --yes alone").toEqual([]);
+  const bound = await openBindingFolder(made);
+  try {
+    const unasked = await bound.bound.removeUnmatched([path]);
+    expect(unasked.ok, JSON.stringify(unasked)).toBe(true);
+    if (!unasked.ok) return;
+    expect(unasked.value.settled, "ended through a binding unasked").toEqual(
+      [],
+    );
+    expect(unasked.value.kept).toEqual([
+      expect.objectContaining({ path, unproved: true }),
+    ]);
+  } finally {
+    await bound.device.close();
+  }
+  const declined = await atTerminal(made, "n");
+  expect(declined.output).toMatch(/cannot prove the files are gone/);
+  expect(await statusOf(made, path)).toHaveLength(1);
+
+  const { output } = await atTerminal(made, "y");
+
+  expect(output).toMatch(/no file is deleted/);
+  expect(await statusOf(made, path)).toEqual([]);
+  const after = await made.folder.unmatched();
+  expect(
+    after.ok && after.value.unmatched.filter((file) => file.path === path),
+  ).toEqual([]);
+  const queue = await made.folder.device().queue();
+  expect(
+    queue.ok &&
+      queue.value.filter(
+        (row) =>
+          row.item_id === item &&
+          (row.kind === "update_item" || row.kind === "delete_item"),
+      ),
+    "a write to the item of a path no longer tracked was queued",
+  ).toEqual([]);
 }
 
 describe("a folder's unmatched files", () => {
@@ -980,17 +1107,12 @@ describe("a folder's unmatched files", () => {
     },
   );
 
-  it("lists a stopped removal whose record it cannot read once its file is gone, and ends it with --remove, keeping the item", async () => {
+  it("lists a stopped removal whose record it cannot read once its file is gone, and ends it only once the owner confirms, keeping the item", async () => {
     const { harness: made, door } = await unmatchedFolder(
       "unmatched-stopped-unread",
       2,
     );
-    await expect(
-      withFault("crash-before-take-away=Note 1.md", () =>
-        made.folder.removeUnmatched({ yes: true }),
-      ),
-      "the removal did not stop where the fault asks, so nothing below is about a stopped one",
-    ).rejects.toThrow(/crashing at .*Note 1\.md/);
+    await stoppedBeforeTakeAway(made, "Note 1.md");
     const db = new DatabaseSync(made.folder.store);
     try {
       expect(
@@ -1009,33 +1131,7 @@ describe("a folder's unmatched files", () => {
       await deletedPastTheGrace(made),
       "the item of a file whose removal record does not read was deleted",
     ).toEqual([note(2).id]);
-    expect(await statusOf(made, "Note 1.md")).toEqual([
-      expect.objectContaining({
-        status: "held",
-        flag: "removing",
-        reason: expect.stringMatching(/cannot read its record/),
-      }),
-    ]);
-    const listed = await made.folder.unmatched();
-    expect(listed.ok, JSON.stringify(listed)).toBe(true);
-    if (!listed.ok) return;
-    expect(listed.value.unmatched).toEqual([
-      expect.objectContaining({
-        path: "Note 1.md",
-        item_id: note(1).id,
-        removing: expect.stringMatching(/--remove/),
-      }),
-    ]);
-
-    const removed = await made.folder.removeUnmatched({ yes: true });
-    expect(removed.ok, JSON.stringify(removed)).toBe(true);
-    if (!removed.ok) return;
-    expect(removed.value.settled).toEqual([
-      expect.objectContaining({ path: "Note 1.md", item_id: note(1).id }),
-    ]);
-    expect(await statusOf(made, "Note 1.md")).toEqual([]);
-    const after = await made.folder.unmatched();
-    expect(after.ok && after.value.unmatched).toEqual([]);
+    await unprovedUntilConfirmed(made, "Note 1.md", note(1).id);
     const queue = await made.folder.device().queue();
     expect(
       queue.ok &&
@@ -1046,6 +1142,200 @@ describe("a folder's unmatched files", () => {
     const pushed = await made.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     expect(door.get(note(1).id)?.version, "the item was changed").toBe(2);
+  });
+
+  it.each(["directly in the folder", "in a directory"] as const)(
+    "upgrades a removal release 0.0.113 stopped on %s, and stops tracking its path once the file is gone only once the owner confirms",
+    async (place) => {
+      const { made, paths, ids } = await archivedFolder(
+        `unmatched-stopped-older-${place === "in a directory" ? "nested" : "top"}`,
+        place === "in a directory" ? "sub/" : "",
+      );
+      await stoppedBeforeTakeAway(made, paths.shelved);
+      asWrittenBy0_0_113(made);
+      rmSync(join(made.dir, paths.shelved));
+      // The witness: the same folder sends a delete for a file a person deleted.
+      rmSync(join(made.dir, paths.witness));
+      const graceStarted = Date.now();
+      await vi.waitFor(
+        async () => {
+          expect((await made.folder.scan()).ok).toBe(true);
+          const queue = await made.folder.device().queue();
+          expect(queue.ok).toBe(true);
+          if (!queue.ok) return;
+          expect((Date.now() - graceStarted) / 1000).toBeGreaterThan(6);
+          expect(
+            queue.value
+              .filter((row) => row.kind === "delete_item")
+              .map((row) => row.item_id),
+            "the item of a file a removal an earlier release stopped on was deleted",
+          ).toEqual([ids.witness]);
+        },
+        { timeout: 25_000, interval: 1_000 },
+      );
+      await unprovedUntilConfirmed(made, paths.shelved, ids.shelved);
+    },
+  );
+
+  it("holds a stopped removal's path while a replacement file is there, and not once the original is back over it", async () => {
+    const { harness: made } = await unmatchedFolder(
+      "unmatched-stopped-original-back",
+      2,
+    );
+    await stoppedBeforeTakeAway(made, "Note 1.md");
+    const path = join(made.dir, "Note 1.md");
+    const original = join(made.dir, "..", "Note 1 original.md");
+    renameSync(path, original);
+    writeFileSync(path, `${readFileSync(original, "utf8")}a replacement\n`);
+    expect((await made.folder.scan()).ok).toBe(true);
+    expect(
+      await statusOf(made, "Note 1.md"),
+      "the replacement is not held, so nothing below is about it",
+    ).toEqual([expect.objectContaining({ status: "held", flag: "removing" })]);
+
+    renameSync(original, path);
+    expect((await made.folder.scan()).ok).toBe(true);
+
+    expect(
+      (await statusOf(made, "Note 1.md")).map((file) => file.flag),
+      "the original back over the replacement is still held",
+    ).not.toContain("removing");
+    const listed = await made.folder.unmatched();
+    expect(
+      listed.ok &&
+        listed.value.unmatched.filter((file) => file.path === "Note 1.md"),
+      "the original back over the replacement lost its binding",
+    ).toEqual([expect.objectContaining({ item_id: note(1).id })]);
+    const queue = await made.folder.device().queue();
+    expect(
+      queue.ok &&
+        queue.value.filter(
+          (row) => row.item_id === note(1).id && row.kind === "update_item",
+        ),
+      "the replacement's text was sent",
+    ).toEqual([]);
+  });
+
+  it("never removes a byte-identical file saved over the path as its placement ends, and holds it", async () => {
+    const { harness: made, door } = await unmatchedFolder(
+      "unmatched-replaced-as-placement-ends",
+      1,
+    );
+    const path = join(made.dir, "Note 1.md");
+    const point = "folder-take-away-ended";
+    const bound = await openBindingFolder(made);
+    try {
+      await bound.device.hooks.hold(point);
+      const removing = bound.bound.removeUnmatched(["Note 1.md"]);
+      await untilHeld(bound.device, point);
+      // The same bytes under another inode and birth time.
+      copyFileSync(path, `${path}.copy`);
+      renameSync(`${path}.copy`, path);
+      await bound.device.hooks.release(point);
+      const removed = await removing;
+      expect(removed.ok, JSON.stringify(removed)).toBe(true);
+      if (!removed.ok) return;
+      expect(removed.value.removed).toEqual([]);
+    } finally {
+      await bound.device.close();
+    }
+    expect(
+      existsSync(path),
+      "a file saved over the path as the placement ended was removed",
+    ).toBe(true);
+    expect(await statusOf(made, "Note 1.md")).toEqual([
+      expect.objectContaining({ status: "held", flag: "removing" }),
+    ]);
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(door.get(note(1).id)?.version, "the item was changed").toBe(2);
+  });
+
+  it("removes an unmatched file the file system keeps no birth time for", async () => {
+    const { harness: made, door } = await unmatchedFolder(
+      "unmatched-no-birth-time",
+      1,
+    );
+    const removed = await withFault("no-birth-time", () =>
+      made.folder.removeUnmatched({ yes: true }),
+    );
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) return;
+    expect(removed.value.removed.map((file) => file.path)).toEqual([
+      "Note 1.md",
+    ]);
+    expect(existsSync(join(made.dir, "Note 1.md"))).toBe(false);
+    expect(await statusOf(made, "Note 1.md")).toEqual([]);
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(door.get(note(1).id)?.version, "the item was changed").toBe(2);
+  });
+
+  it("settles a stopped removal and removes the next file named with it", async () => {
+    const { harness: made } = await unmatchedFolder(
+      "unmatched-stopped-then-next",
+      2,
+    );
+    await stoppedBeforeTakeAway(made, "Note 1.md");
+    rmSync(join(made.dir, "Note 1.md"));
+    const bound = await openBindingFolder(made);
+    try {
+      const removed = await bound.bound.removeUnmatched([
+        "Note 1.md",
+        "Note 2.md",
+      ]);
+
+      expect(removed.ok, JSON.stringify(removed)).toBe(true);
+      if (!removed.ok) return;
+      expect(removed.value.settled.map((file) => file.path)).toEqual([
+        "Note 1.md",
+      ]);
+      expect(removed.value.removed.map((file) => file.path)).toEqual([
+        "Note 2.md",
+      ]);
+    } finally {
+      await bound.device.close();
+    }
+    expect(existsSync(join(made.dir, "Note 2.md"))).toBe(false);
+  });
+
+  it("holds a stopped removal while the folder's store is in another directory, and keeps the binding once the original is back", async () => {
+    const { harness: made } = await unmatchedFolder(
+      "unmatched-stopped-store-moved",
+      2,
+    );
+    await stoppedBeforeTakeAway(made, "Note 1.md");
+    const original = join(made.dir, "..", "the original folder");
+    renameSync(made.dir, original);
+    mkdirSync(made.dir);
+    cpSync(join(original, ".marfa"), join(made.dir, ".marfa"), {
+      recursive: true,
+    });
+
+    const removed = await made.folder.removeUnmatched({ yes: true });
+
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) return;
+    expect(
+      removed.value.settled,
+      "a removal was ended while its file is in the original directory",
+    ).toEqual([]);
+    expect(await statusOf(made, "Note 1.md")).toEqual([
+      expect.objectContaining({
+        status: "held",
+        flag: "removing",
+        reason: expect.stringMatching(/not the one its store was made in/),
+      }),
+    ]);
+    rmSync(made.dir, { recursive: true });
+    renameSync(original, made.dir);
+    expect((await made.folder.scan()).ok).toBe(true);
+    const listed = await made.folder.unmatched();
+    expect(
+      listed.ok &&
+        listed.value.unmatched.filter((file) => file.path === "Note 1.md"),
+      "the file in the original directory lost its binding",
+    ).toEqual([expect.objectContaining({ item_id: note(1).id })]);
   });
 
   it("removes through a binding the unmatched files it may, and keeps the rest and says why", async () => {
@@ -1069,6 +1359,7 @@ describe("a folder's unmatched files", () => {
           path: "Note 2.md",
           itemId: note(2).id,
           reason: expect.stringMatching(/differ from what the folder wrote/),
+          unproved: false,
         },
       ]);
     } finally {

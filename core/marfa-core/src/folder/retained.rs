@@ -473,6 +473,10 @@ impl Folder {
     /// discard whose file Marfa cannot prove gone.
     pub fn discard_kept(&self, forget_unproved: bool) -> Result<KeptDiscarded> {
         let mut done = KeptDiscarded::default();
+        // First, so the kept file a forgotten record named settles as any.
+        if forget_unproved {
+            done.forgotten = self.forget_discards_unproved()?;
+        }
         for (row, settled) in self.settle_retained_as(true)? {
             match settled {
                 RowSettled::Discarded => done.discarded.push(row.path),
@@ -487,9 +491,6 @@ impl Folder {
                 }),
                 RowSettled::Gone | RowSettled::Kept => {}
             }
-        }
-        if forget_unproved {
-            done.forgotten = self.forget_discards_unproved()?;
         }
         done.kept.extend(self.kept_files()?);
         done.kept.sort_by(|a, b| a.path.cmp(&b.path));
@@ -1687,6 +1688,11 @@ mod tests {
             let done = folder.discard_kept(true).unwrap();
 
             assert_eq!(done.forgotten, [path.clone()], "{place:?}: {done:?}");
+            assert!(
+                folder.kept_files().unwrap().is_empty(),
+                "{place:?}: {:?}",
+                folder.kept_files()
+            );
             assert!(
                 state::discarding(&folder.core.conn().unwrap())
                     .unwrap()

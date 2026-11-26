@@ -1232,19 +1232,35 @@ A device MUST list in `folders kept` each file a stopped discard left under a na
 
 **Tests:** `device/folders-open-writer.test.ts › lists both files two stopped discards left under one record it cannot read`.
 
-### `folder-files/write-retained-discard-gone-listed`
+### `folder-files/write-retained-discard-unproved-listed`
 
-While a device keeps a record of a stopped discard that it cannot read and no file is at the record's path, a device MUST list the path in `folders kept` with a reason that says no file is there.
+While a device keeps a record of a stopped discard whose file is not at the record's path and that it cannot prove gone, a device MUST list the path in `folders kept` and as `held` in `folders status`, with a reason that says no file is there and names the command that ends it.
 
-**Tests:** `device/folders-open-writer.test.ts › forgets a record of a stopped discard it cannot read once its file is gone, when the owner discards`.
+**Reason:** the device cannot prove the file gone where the record does not read, was made by a release that recorded no directory, or names a directory it cannot show is the one the discard ran in. A record no list shows is one the owner cannot end, and the folder's health counts each such path as a held file.
 
-### `folder-files/write-retained-discard-forgets-gone`
+**Tests:** `device/folders-open-writer.test.ts › keeps a record of a stopped discard it cannot read once its file is gone, and forgets it only once the owner confirms`, `› upgrades a discard release 0.0.113 stopped on %s whose file is %s, keeping the path the file came from`.
 
-When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST forget each record of a stopped discard that it cannot read, where the record's path is directly in the directory and no file is at it.
+### `folder-files/write-retained-discard-unproved-kept`
 
-**Reason:** no pass can settle such a record, so it would stay listed for good. The directory itself holds the store the record is in, so it is the one the discard ran in. Forgetting deletes no file, and the device reports the path in `forgotten`.
+If a device cannot prove the file of a stopped discard gone, then a device MUST NOT forget the discard's record unless the owner confirms that the device may stop tracking it.
 
-**Tests:** `device/folders-open-writer.test.ts › forgets a record of a stopped discard it cannot read once its file is gone, when the owner discards`.
+**Reason:** `--yes` alone does not confirm it; the owner confirms at a terminal, where the question says the device cannot prove the files gone, or with `--yes --forget-unproved`, or an app passes `forget_unproved` once the person confirms.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps a record of a stopped discard it cannot read once its file is gone, and forgets it only once the owner confirms`, `› upgrades a discard release 0.0.113 stopped on %s whose file is %s, keeping the path the file came from`.
+
+### `folder-files/write-retained-discard-unproved-forgot`
+
+When the owner confirms that a device may stop tracking a record of a stopped discard it cannot prove gone, a device MUST forget the record, delete no file for it, and report its path in `forgotten`.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps a record of a stopped discard it cannot read once its file is gone, and forgets it only once the owner confirms`, `› upgrades a discard release 0.0.113 stopped on %s whose file is %s, keeping the path the file came from`.
+
+### `folder-files/write-retained-discard-keeps-origin`
+
+While a stopped discard's record stands, a device MUST keep the record of the kept file it names, with the path the file came from.
+
+**Reason:** the kept file is under the discard's private name, so its kept name holds nothing, and dropping its record would list the file with no path to say where it came from.
+
+**Tests:** `device/folders-open-writer.test.ts › upgrades a discard release 0.0.113 stopped on %s whose file is %s, keeping the path the file came from`.
 
 ## Deletion, purges and missing directories
 

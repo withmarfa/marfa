@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { expect } from "vitest";
 import { join } from "node:path";
 import {
@@ -834,4 +835,28 @@ export async function onCaseSensitiveVolume(
   writeFileSync(join(dir, "case.probe"), "");
   expect(existsSync(join(dir, "CASE.probe"))).toBe(false);
   rmSync(join(dir, "case.probe"));
+}
+
+/**
+ * Gives the folder's store, which no process holds, the records of stopped
+ * removals and discards in the shape release 0.0.113 wrote them, at the
+ * schema version it wrote. No door makes a store an earlier build saved.
+ */
+export function asWrittenBy0_0_113(harness: FolderHarness): void {
+  const db = new DatabaseSync(harness.folder.store);
+  try {
+    db.exec(`
+      UPDATE meta SET value = json_object(
+        'item_id', json_extract(value, '$.item_id'),
+        'at', json_array(json_extract(value, '$.file.device'), json_extract(value, '$.file.inode')),
+        'born', json_extract(value, '$.file.born'),
+        'hash', json_extract(value, '$.hash'))
+      WHERE key >= 'folder_taken:' AND key < 'folder_taken;' AND json_valid(value);
+      UPDATE meta SET value = json_remove(value, '$.aside_at')
+      WHERE key >= 'folder_discarding:' AND key < 'folder_discarding;' AND json_valid(value);
+      PRAGMA user_version = 12;
+    `);
+  } finally {
+    db.close();
+  }
 }

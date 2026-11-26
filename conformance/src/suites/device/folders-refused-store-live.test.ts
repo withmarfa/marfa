@@ -1056,7 +1056,7 @@ it("upgrades a folder's store at schema 11 in place, keeping each held file, and
   const scan = await exited(folder.hold(["folders", "scan", folder.dir]));
   expect(scan.exitCode(), scan.stderr).toBe(0);
   expect(scan.stderr).not.toContain(REPLACED);
-  expect(schemaVersion(folder)).toBe(12);
+  expect(schemaVersion(folder)).toBe(13);
   expect(journaled(folder)).toEqual(expect.arrayContaining(before));
   await pastRenameGrace();
   // The peer, not yet upgraded, cannot be read, so this delete is held too.
@@ -1081,5 +1081,5 @@ it("upgrades a folder's store at schema 11 in place, keeping each held file, and
   expect(watch.stdout).not.toContain("not watched");
   expect(watch.stderr).not.toContain(REPLACED);
   await watch.stop();
-  expect(schemaVersion(peer)).toBe(12);
+  expect(schemaVersion(peer)).toBe(13);
 });

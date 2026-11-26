@@ -346,13 +346,21 @@ stays because that thing is what it checks.
   kept under a record it cannot read, and discards it only %s as set aside"
   also use an unreadable record. No operation or fault produces one.
 - In the same file, "lists both files two stopped discards left under one
-  record it cannot read" spoils a retained-file record. "forgets a record of
-  a stopped discard it cannot read once its file is gone, when the owner
-  discards" spoils a discard record.
+  record it cannot read" spoils a retained-file record. "keeps a record of a
+  stopped discard it cannot read once its file is gone, and forgets it only
+  once the owner confirms" spoils a discard record.
 - `device/folders-unmatched.test.ts`, "lists a stopped removal whose record
-  it cannot read once its file is gone, and ends it with --remove, keeping
-  the item", spoils a removal record. The crash faults leave readable
-  records, so they cannot produce these cases on their own.
+  it cannot read once its file is gone, and ends it only once the owner
+  confirms, keeping the item", spoils a removal record. The crash faults
+  leave readable records, so they cannot produce these cases on their own.
+- `device/folders-open-writer.test.ts`, "upgrades a discard release 0.0.113
+  stopped on %s whose file is %s, keeping the path the file came from", and
+  `device/folders-unmatched.test.ts`, "upgrades a removal release 0.0.113
+  stopped on %s, and stops tracking its path once the file is gone only once
+  the owner confirms", rewrite the records of a stopped discard or removal in
+  the shape release 0.0.113 wrote and set the store's schema version to the
+  one it wrote (`asWrittenBy0_0_113` in `folders.shared.ts`): no door makes a
+  store an earlier build saved.
 - `compliance/mcp-sign-in-acts.test.ts`, "refuses a confirmation once a new
   approval added a destination since the preview, with a new preview", adds a
   redirect URI to an app's stored registration while the server runs. Only a

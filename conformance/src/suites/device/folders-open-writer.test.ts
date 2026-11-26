@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
   closeSync,
@@ -22,6 +22,7 @@ import { openBindingFolder } from "./binding-folders.shared.js";
 import { folderHarness, type FolderHarness } from "./harness.js";
 import {
   EdgeDoor,
+  asWrittenBy0_0_113,
   idIn,
   put,
   read,
@@ -166,6 +167,64 @@ async function listedKept(
     file.path,
     existsSync(join(harness.dir, file.path)),
   ]);
+}
+
+/**
+ * Checks that the record of a stopped discard at `path`, whose file is not
+ * there and which Marfa cannot prove gone, is listed with what ends it, kept
+ * by a discard the owner did not confirm for it, through the command and a
+ * binding, and forgotten once the owner confirms.
+ */
+async function unprovedUntilConfirmed(
+  harness: FolderHarness,
+  path: string,
+): Promise<void> {
+  const kept = await harness.folder.kept();
+  expect(kept.ok, JSON.stringify(kept)).toBe(true);
+  if (!kept.ok) return;
+  expect(kept.value.kept.filter((file) => file.path === path)).toEqual([
+    expect.objectContaining({
+      unproved: true,
+      reason: expect.stringMatching(/cannot prove the file is gone.*--discard/),
+    }),
+  ]);
+  const status = await harness.folder.status();
+  expect(status.ok, JSON.stringify(status)).toBe(true);
+  if (!status.ok) return;
+  expect(status.value.files.filter((file) => file.path === path)).toEqual([
+    expect.objectContaining({
+      status: "held",
+      flag: "kept",
+      reason: expect.stringMatching(/--forget-unproved/),
+    }),
+  ]);
+  const bound = await openBindingFolder(harness);
+  try {
+    const unasked = await bound.bound.discardKept();
+    expect(unasked.ok, JSON.stringify(unasked)).toBe(true);
+    if (!unasked.ok) return;
+    expect(unasked.value.forgotten, "forgotten unasked").toEqual([]);
+    expect(unasked.value.kept.filter((file) => file.path === path)).toEqual([
+      expect.objectContaining({ unproved: true }),
+    ]);
+  } finally {
+    await bound.device.close();
+  }
+  const yes = await harness.folder.discardKept();
+  expect(yes.ok, JSON.stringify(yes)).toBe(true);
+  expect(yes.ok && yes.value.forgotten, "forgotten with --yes alone").toEqual(
+    [],
+  );
+
+  const confirmed = await harness.folder.discardKept({ forgetUnproved: true });
+  expect(confirmed.ok, JSON.stringify(confirmed)).toBe(true);
+  if (!confirmed.ok) return;
+  expect(confirmed.value.forgotten).toEqual([path]);
+  expect(await listedKept(harness)).toEqual([]);
+  const after = await harness.folder.status();
+  expect(
+    after.ok && after.value.files.filter((file) => file.path === path),
+  ).toEqual([]);
 }
 
 const lastSentBody = (harness: FolderHarness) =>
@@ -721,7 +780,7 @@ describe("a file a program holds open for writing", () => {
     ).toBe(true);
   });
 
-  it("forgets a record of a stopped discard it cannot read once its file is gone, when the owner discards", async () => {
+  it("keeps a record of a stopped discard it cannot read once its file is gone, and forgets it only once the owner confirms", async () => {
     const harness = await noteFolder("folder-open-writer-discard-unread-gone");
     holdOpen(harness);
     write("first half\n");
@@ -749,21 +808,86 @@ describe("a file a program holds open for writing", () => {
       "the witness: while its file is there, the record is listed",
     ).toContainEqual([left, true]);
     rmSync(join(harness.dir, left!));
-    const kept = await harness.folder.kept();
-    expect(kept.ok, JSON.stringify(kept)).toBe(true);
-    if (!kept.ok) return;
-    expect(kept.value.kept.filter((file) => file.path === left)).toEqual([
-      expect.objectContaining({
-        reason: expect.stringMatching(/no file is at this path/),
-      }),
-    ]);
-
-    const discarded = await harness.folder.discardKept();
-    expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
-    if (!discarded.ok) return;
-    expect(discarded.value.forgotten).toEqual([left]);
-    expect(await listedKept(harness)).toEqual([]);
+    await unprovedUntilConfirmed(harness, left!);
   });
+
+  it.each([
+    ["directly in the folder", "there"],
+    ["directly in the folder", "gone"],
+    ["in a directory", "there"],
+    ["in a directory", "gone"],
+  ] as const)(
+    "upgrades a discard release 0.0.113 stopped on %s whose file is %s, keeping the path the file came from",
+    async (place, file) => {
+      const harness = await noteFolder(
+        `folder-open-writer-discard-older-${place === "in a directory" ? "nested" : "top"}-${file}`,
+      );
+      const dir = place === "in a directory" ? "Notes" : "";
+      if (dir !== "") {
+        mkdirSync(join(harness.dir, dir));
+        renameSync(
+          join(harness.dir, "Note.md"),
+          join(harness.dir, dir, "Note.md"),
+        );
+        expect((await harness.folder.scan()).ok).toBe(true);
+      }
+      const from = join(dir, "Note.md");
+      program = openSync(join(harness.dir, from), "a");
+      write("first half\n");
+      close();
+      await setAsideUnknown(harness);
+      const [name] = keptNames(harness, dir);
+      expect(
+        name,
+        "nothing was kept, so nothing below is about it",
+      ).toBeDefined();
+      await discardStopped(harness, name!);
+      const [left] = keptNames(harness, dir);
+      expect(left, "the witness: the discard moved the file").not.toBe(name);
+      asWrittenBy0_0_113(harness);
+      const path = join(dir, left!);
+
+      if (file === "there") {
+        // The watch upgrades the store; a program may still write to the
+        // file, so its pass keeps it under the name it was kept at.
+        const watch = harness.folder
+          .device()
+          .hold(["folders", "watch", harness.dir], "text", {
+            MARFA_TEST_FAULT: "writers-unknown",
+          });
+        try {
+          await vi.waitFor(
+            () => {
+              expect(keptNames(harness, dir)).toEqual([name]);
+            },
+            { timeout: 30_000, interval: 200 },
+          );
+        } finally {
+          await watch.stop();
+        }
+        const kept = await harness.folder.kept();
+        expect(kept.ok, JSON.stringify(kept)).toBe(true);
+        if (!kept.ok) return;
+        expect(
+          kept.value.kept,
+          "the file is not listed once, with the path it came from",
+        ).toEqual([expect.objectContaining({ path: join(dir, name!), from })]);
+        const bound = await openBindingFolder(harness);
+        try {
+          const listed = await bound.bound.kept();
+          expect(listed.ok && listed.value).toEqual([
+            expect.objectContaining({ path: join(dir, name!), from }),
+          ]);
+        } finally {
+          await bound.device.close();
+        }
+        return;
+      }
+      rmSync(join(harness.dir, path));
+      expect((await harness.folder.scan()).ok).toBe(true);
+      await unprovedUntilConfirmed(harness, path);
+    },
+  );
 
   it.each(["unchanged", "written to"] as const)(
     "lists through a binding a file a folder keeps, and discards it %s as folders kept does",

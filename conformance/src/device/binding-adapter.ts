@@ -1028,6 +1028,7 @@ export interface BindingKeptFile {
   writers: "open" | "unknown" | "not_looked";
   until?: string;
   reason: string;
+  unproved: boolean;
 }
 
 /** One folder worked through the host's Folders binding. */
@@ -1069,24 +1070,40 @@ export class BindingFolder {
   remove(): Call<FolderRemovalJson> {
     return this.device.folderCall("remove", this.dir);
   }
-  removeUnmatched(paths: string[]): Call<{
+  /** `forgetUnproved` stands for the owner's confirmation that Marfa may
+   *  stop tracking a path it cannot prove gone. */
+  removeUnmatched(
+    paths: string[],
+    forgetUnproved = false,
+  ): Call<{
     removed: Array<{ path: string; itemId?: string }>;
-    kept: Array<{ path: string; itemId?: string; reason: string }>;
+    kept: Array<{
+      path: string;
+      itemId?: string;
+      reason: string;
+      unproved: boolean;
+    }>;
     ended: number;
     settled: Array<{ path: string; itemId?: string }>;
   }> {
-    return this.device.folderCall("removeUnmatched", this.dir, paths);
+    return this.device.folderCall(
+      "removeUnmatched",
+      this.dir,
+      paths,
+      forgetUnproved,
+    );
   }
   kept(): Call<BindingKeptFile[]> {
     return this.device.folderCall("kept", this.dir);
   }
-  discardKept(): Call<{
+  /** `forgetUnproved` as `removeUnmatched` takes it. */
+  discardKept(forgetUnproved = false): Call<{
     discarded: string[];
     putBack: string[];
     kept: BindingKeptFile[];
     forgotten: string[];
   }> {
-    return this.device.folderCall("discardKept", this.dir);
+    return this.device.folderCall("discardKept", this.dir, forgetUnproved);
   }
   /** The files whose deletion the folder holds for the person (`folder-files/missing-file-held-reported`). */
   held(): Call<

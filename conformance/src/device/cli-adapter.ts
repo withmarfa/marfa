@@ -1708,6 +1708,9 @@ export interface UnmatchedFile {
   /** Why a removal Marfa stopped on holds the file's binding
    *  (`folder-guards/unmatched-remove-stopped-listed`). */
   removing?: string;
+  /** Set where no file is at the path of a stopped removal and Marfa cannot
+   *  prove it gone (`folder-guards/unmatched-remove-stopped-unproved-ended`). */
+  unproved?: boolean;
 }
 
 /** A file a directory keeps under a reserved name because a program might
@@ -1718,6 +1721,9 @@ export interface KeptFile {
   writers: "open" | "unknown" | "none";
   until?: string;
   reason: string;
+  /** Set on a record of a stopped discard whose file is not at its path and
+   *  that Marfa cannot prove gone (`folder-files/write-retained-discard-unproved-forgot`). */
+  unproved?: boolean;
 }
 
 /** What `folders kept --discard` did (`folder-files/write-retained-discard`). */
@@ -1725,9 +1731,8 @@ export interface KeptDiscard {
   discarded: string[];
   put_back: string[];
   kept: KeptFile[];
-  /** Records of a stopped discard that do not read, forgotten because no
-   *  file is at their paths in the directory itself
-   *  (`folder-files/write-retained-discard-forgets-gone`). */
+  /** Records of a stopped discard Marfa stopped tracking once the owner
+   *  confirmed (`folder-files/write-retained-discard-unproved-forgot`). */
   forgotten: string[];
   declined: boolean;
 }
@@ -1758,7 +1763,7 @@ export interface UnmatchedRemoval {
   kept: UnmatchedFile[];
   ended: number;
   /** Removals Marfa stopped on that it ended
-   *  (`folder-guards/unmatched-remove-stopped-unread-ended`). */
+   *  (`folder-guards/unmatched-remove-stopped-unproved-ended`). */
   settled: UnmatchedFile[];
   declined: boolean;
 }
@@ -1974,7 +1979,7 @@ export class CliFolder {
    * which is what a fixture without a pty meets.
    */
   async removeUnmatched(
-    options: { yes?: boolean } = {},
+    options: { yes?: boolean; forgetUnproved?: boolean } = {},
   ): Promise<Outcome<UnmatchedRemoval>> {
     return this.run([
       "folders",
@@ -1982,6 +1987,7 @@ export class CliFolder {
       this.dir,
       "--remove",
       ...(options.yes === true ? ["--yes"] : []),
+      ...(options.forgetUnproved === true ? ["--forget-unproved"] : []),
     ]);
   }
 
@@ -1990,9 +1996,19 @@ export class CliFolder {
     return this.run(["folders", "kept", this.dir]);
   }
 
-  /** Discards them, confirmed. */
-  async discardKept(): Promise<Outcome<KeptDiscard>> {
-    return this.run(["folders", "kept", this.dir, "--discard", "--yes"]);
+  /** Discards them, confirmed, and with `forgetUnproved` also forgets the
+   *  records Marfa cannot prove gone. */
+  async discardKept(
+    options: { forgetUnproved?: boolean } = {},
+  ): Promise<Outcome<KeptDiscard>> {
+    return this.run([
+      "folders",
+      "kept",
+      this.dir,
+      "--discard",
+      "--yes",
+      ...(options.forgetUnproved === true ? ["--forget-unproved"] : []),
+    ]);
   }
 
   /** The files whose deletion the folder holds for the person (`folder-files/missing-file-held`). */

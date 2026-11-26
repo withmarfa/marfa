@@ -464,6 +464,14 @@ When a device upgrades a folder's store, a device MUST keep each file the folder
 
 **Tests:** `device/folders-refused-store-live.test.ts › upgrades a folder's store at schema 11 in place, keeping each held file, and only says so to a command that reads it`.
 
+### `folder-setup/older-store-recovery-kept`
+
+When a device upgrades a folder's store, a device MUST keep each record of a stopped removal or stopped discard with all it holds: its path, its item, the path its file came from, and the file's device, inode and birth time where the record has them.
+
+**Reason:** an upgrade that drops what a record knew would list one file under two names, or lose the path a kept file came from. A record made by a release that recorded no directory cannot show its file gone, so `folder-guards/unmatched-remove-stopped-unproved-kept` and `folder-files/write-retained-discard-unproved-kept` hold it until the owner confirms.
+
+**Tests:** `device/folders-open-writer.test.ts › upgrades a discard release 0.0.113 stopped on %s whose file is %s, keeping the path the file came from`, `device/folders-unmatched.test.ts › upgrades a removal release 0.0.113 stopped on %s, and stops tracking its path once the file is gone only once the owner confirms`.
+
 ### `folder-setup/older-store-watched`
 
 When a device watches every folder on the machine and a folder's store is one `folder-setup/older-store-upgraded` upgrades, a device MUST upgrade the store and watch the folder rather than report it not watched.
