@@ -2350,11 +2350,11 @@ When a missing file could be in unreadable registered directories or several fil
 
 ### `folder-files/unlisted-missing-deferred`
 
-While a device remembers a directory that the machine's folder registry no longer lists, which it found in an earlier pass, and the registry lists that folder's store at no other directory, a device MUST NOT queue deletion of a missing file's item under `folder-files/missing-file-trashed`.
+While a device remembers a directory that the machine's folder registry no longer lists, which it found in an earlier pass, a device MUST NOT queue deletion of a missing file's item under `folder-files/missing-file-trashed`.
 
-**Reason:** a missing registry entry can hide a move into another folder: an unmounted volume, a directory removed from a volume that is mounted, and another volume mounted at the same path all look like that. A remembered folder that can be read is searched like a listed one, so a file found there is a move (`folder-files/moved-file-unique`), and one found in neither is held for the person (`folder-files/missing-file-held`). Once the registry lists the same store at another directory, the device reads the folder there instead, and a delete it already held stays held (`folder-files/missing-file-held-stays`).
+**Reason:** a missing registry entry can hide a move into another folder: an unmounted volume, a directory removed from a volume that is mounted, and another volume mounted at the same path all look like that. A remembered folder that can be read is searched like a listed one, so a file found there is a move (`folder-files/moved-file-unique`), and one found in neither is held for the person (`folder-files/missing-file-held`). The registry listing the same store at another directory does not end the memory, since that directory may hold a copy of the folder's saved state: only the person ends it (`folder-files/forget-remembered`).
 
-**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone`, `device/folders-one-mac.test.ts › holds a delete for a folder no longer listed while another folder's state stands at its directory, and once its directory holds no state, until the person trashes it`.
+**Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone`, `device/folders-one-mac.test.ts › holds a delete for a folder no longer listed while another folder's state stands at its directory, and once its directory holds no state, until the person trashes it`, `device/folders-one-mac.test.ts › keeps a folder remembered while a copy of its saved state is listed at another directory, and sends no delete for a file moved into it once the copy is removed and forgotten`.
 
 ### `folder-files/remembered-unreached-advice`
 
@@ -2382,9 +2382,9 @@ When the person confirms `folders forget` for a directory, or passes what a bind
 
 ### `folder-files/forget-exact-path`
 
-When the person forgets a directory, a device MUST forget only a remembered directory whose path is the one named, made absolute and with its existing parent directories resolved as the registry records a path.
+When the person forgets a directory, a device MUST forget only a remembered directory whose path is the one named, made absolute, without following a symbolic link in it.
 
-**Reason:** a near spelling may be another folder's directory. `folders forget` names a remembered directory that differs only in case in `alike` and leaves it remembered.
+**Reason:** a near spelling may be another folder's directory, and a link that now stands in a parent may lead to another remembered directory. `folders forget` names a remembered directory that differs only in case in `alike` and leaves it remembered.
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete for a folder no longer listed whose directory is gone until the person forgets that exact directory, then sends it with no other folder on the Mac`.
 
@@ -2398,7 +2398,7 @@ When the person forgets a directory, a device MUST NOT take any directory off th
 
 ### `folder-files/forget-shown-first`
 
-When `folders forget` runs without `--yes` anywhere but at a terminal, or with `--json`, the CLI MUST NOT change what any folder remembers or holds.
+When `folders forget` runs without `--yes`, either not at a terminal or with `--json`, the CLI MUST NOT change what any folder remembers or holds.
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete for a folder no longer listed whose directory is gone until the person forgets that exact directory, then sends it with no other folder on the Mac`.
 
@@ -2418,9 +2418,9 @@ If no folder the registry lists remembers the directory and every listed folder 
 
 ### `folder-files/forget-left-unchanged`
 
-If a folder cannot be read, another process does not let it go, or its store is not the one shown, then a device MUST leave what that folder remembers and holds unchanged and name the folder with the reason.
+If a folder cannot be read, another process does not let it go, the registry no longer lists it, or its store is not the one shown, then a device MUST leave what that folder remembers and holds unchanged and name the folder with the reason.
 
-**Reason:** a device changes a folder only under its writer lock, in the store the person was shown, so a folder whose state may differ from what the person agreed to keeps it.
+**Reason:** a device changes a folder only under its writer lock, in the store the person was shown, and compares the store before it opens the folder to write, so a folder whose state may differ from what the person agreed to keeps it. A listed folder whose registry entry records no admitted directory, with no saved state at its path, may be a volume that is not mounted, so it is named too.
 
 **Tests:** `device/folders-one-mac.test.ts › forgets a gone folder in the folders it can read, names one it cannot read and exits 3, and holds the delete it released again while another folder is listed`, `device/folders-one-mac.test.ts › forgets through the binding only in a folder whose store is still the one it showed, and the next sync sends the delete it released`.
 
@@ -2432,11 +2432,27 @@ If `folders forget` names a folder it could not read or change, then the CLI MUS
 
 ### `folder-files/forget-releases-held`
 
-When a device forgets a directory the registry does not list, a device MUST stop holding each missing file whose hold it showed as waiting on that directory, in each folder that forgot it.
+When a device forgets a directory the registry does not list, a device MUST stop holding each missing file it showed whose hold records that directory among the folders that made it unsure, and that has stayed missing since the moment shown, in each folder that forgot it.
 
 **Reason:** a held file is otherwise never decided again. The next pass decides it as it decides any missing file past the rename grace: it sends the delete where the computer has no other folder (`folder-files/missing-file-trashed`), and holds the file again where another folder stands (`folder-files/missing-file-held`).
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete for a folder no longer listed whose directory is gone until the person forgets that exact directory, then sends it with no other folder on the Mac`, `device/folders-one-mac.test.ts › forgets a gone folder in the folders it can read, names one it cannot read and exits 3, and holds the delete it released again while another folder is listed`, `device/folders-one-mac.test.ts › forgets through the binding only in a folder whose store is still the one it showed, and the next sync sends the delete it released`.
+
+### `folder-files/forget-releases-only-shown`
+
+When a device forgets a directory, a device MUST NOT stop holding a missing file that `folder-files/forget-releases-held` does not name.
+
+**Reason:** a hold's reason is words for the person, and may name another directory whose path starts the same or only the part of a folder it could not read, so a device records the folders a hold waits on apart from its reason and selects by that. A hold saved by a release that did not record them waits for `folders held`, and its reason says so. A file that came back and went missing again since it was shown is not the one the person agreed to.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps through the binding a hold made after the record it was given was read, and releases none from it`.
+
+### `folder-files/forget-refuses-occupied`
+
+If anything but an empty directory stands at the directory the person names, including a directory that cannot be read, then a device MUST refuse to forget it and change nothing.
+
+**Reason:** what stands there may still be the folder, or hold a file moved into it, and forgetting it would let the next pass send that file's delete. Nothing at the path, or an empty directory such as an unmounted volume's mount point, is forgotten. The refusal says to unmount the volume, or to remove what is there or make it readable, first.
+
+**Tests:** `device/folders-one-mac.test.ts › refuses to forget a directory where something stands that may still be the folder, and forgets it once only an empty directory is there`.
 
 ### `folder-files/forget-listed-releases-none`
 

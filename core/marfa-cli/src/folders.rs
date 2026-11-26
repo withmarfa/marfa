@@ -264,17 +264,24 @@ pub enum FoldersCommand {
     /// last other directory can send a missing file's item to the bin on the
     /// next sync. The command leaves the folder registry unchanged.
     ///
-    /// It matches the absolute path after resolving existing parent
-    /// directories. A trailing slash makes no difference. It reports
-    /// remembered paths that differ only in case.
+    /// It matches the path as spelled, made absolute, without following
+    /// symbolic links: name it as `folders held` or `folders status` shows
+    /// it. A trailing slash makes no difference. It reports remembered paths
+    /// that differ only in case.
+    ///
+    /// It refuses a path where anything but an empty directory stands, such
+    /// as a directory that holds files or cannot be read, since that may
+    /// still be the folder. Unmount the volume, or remove what is there or
+    /// make it readable, first.
     ///
     /// Without `--yes`, the command shows the affected folders and held
     /// files. It asks for confirmation at a terminal. With `--json` or
     /// outside a terminal, pass `--yes` to confirm.
     ///
     /// A watch can hand a folder over while the command runs. If a folder
-    /// cannot be read or claimed, or its store has changed since the
-    /// preview, the command names it and exits 3.
+    /// cannot be read or claimed, is no longer listed, or its store has
+    /// changed since the preview, the command names it in `not_changed` and
+    /// exits 3.
     ///
     /// With `--json`, the result has `dir`,
     /// `listed`, `folders` (each with `dir`, `folder` and `held`), `not_read`,
@@ -1128,20 +1135,15 @@ fn forget_remembered(dir: &Path, yes: bool, json: bool) -> Result<bool, CliError
     let at_terminal =
         !json && std::io::stdin().is_terminal() && crate::output::stderr_is_terminal();
     let asking = !shown.folders.is_empty();
-    let agreed = asking && (yes || at_terminal && asks_to_forget(&shown)?);
-    let done = if agreed {
-        Some(Folder::forget_remembered(&shown)?)
+    let asked = asking && !yes && at_terminal;
+    let agreed = asking && (yes || asked && asks_to_forget(&shown)?);
+    let (forgotten, not_changed) = if agreed {
+        let done = Folder::forget_remembered(&shown)?;
+        (done.forgotten, done.not_changed)
     } else {
-        None
+        (Vec::new(), shown.not_read.clone())
     };
-    let (forgotten, not_changed) = done
-        .map(|done| (done.forgotten, done.not_changed))
-        .unwrap_or_default();
-    let left = if agreed {
-        !not_changed.is_empty()
-    } else {
-        !shown.not_read.is_empty()
-    };
+    let left = !not_changed.is_empty();
     output::report(
         &serde_json::json!({
             "dir": shown.dir,
@@ -1156,40 +1158,50 @@ fn forget_remembered(dir: &Path, yes: bool, json: bool) -> Result<bool, CliError
         json,
         || {
             let mut lines = Vec::new();
+            // The question already showed what it would do.
+            if !asked {
+                lines.extend(describe_remembered(&shown));
+            }
             if agreed {
-                lines.extend(forgotten.iter().map(|done| {
-                    let mut line = format!(
-                        "{} forgot {}",
-                        shown_path(&done.dir),
-                        shown_path(&shown.dir)
-                    );
-                    if !done.released.is_empty() {
-                        line.push_str(&format!(
-                            "; its next pass decides {} held delete(s) again",
-                            done.released.len()
+                for done in &forgotten {
+                    if done.released.is_empty() {
+                        lines.push(format!(
+                            "{} forgot {}",
+                            shown_path(&done.dir),
+                            shown_path(&shown.dir)
                         ));
-                    }
-                    line
-                }));
-                lines.extend(not_changed.iter().map(|left| {
-                    format!(
-                        "{} was left as it was: {}",
-                        shown_path(&left.dir),
-                        printable(&left.reason)
-                    )
-                }));
-            } else {
-                // At a terminal the question already showed what it would do.
-                if !(asking && at_terminal) {
-                    lines.extend(describe_remembered(&shown));
-                }
-                if asking {
-                    lines.push(if at_terminal {
-                        "nothing was forgotten".into()
                     } else {
-                        "nothing was forgotten; pass --yes to forget it".into()
-                    });
+                        lines.push(format!(
+                            "{} forgot {}; its next pass decides these held deletions again:",
+                            shown_path(&done.dir),
+                            shown_path(&shown.dir)
+                        ));
+                        lines.extend(
+                            done.released
+                                .iter()
+                                .map(|path| format!("  {}", printable(path))),
+                        );
+                    }
                 }
+                // Those not read are named once, above.
+                lines.extend(
+                    not_changed
+                        .iter()
+                        .filter(|left| !shown.not_read.contains(left))
+                        .map(|left| {
+                            format!(
+                                "{} was left as it was: {}",
+                                shown_path(&left.dir),
+                                printable(&left.reason)
+                            )
+                        }),
+                );
+            } else if asking {
+                lines.push(if asked {
+                    "nothing was forgotten".into()
+                } else {
+                    "nothing was forgotten; pass --yes to forget it".into()
+                });
             }
             lines.join("\n")
         },

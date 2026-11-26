@@ -81,7 +81,8 @@ impl Folder {
     /// out, in `alike`. Refused where anything but an empty directory stands
     /// at `dir`.
     pub fn remembering(dir: impl AsRef<Path>) -> Result<Remembered> {
-        let dir = registry::absolute(dir.as_ref());
+        // Rebuilt from its parts, so a trailing slash is not shown.
+        let dir: PathBuf = registry::absolute(dir.as_ref()).components().collect();
         nothing_stands(&dir)?;
         let entries = listed()?;
         let listed = entries.iter().any(|entry| entry.dir == dir);

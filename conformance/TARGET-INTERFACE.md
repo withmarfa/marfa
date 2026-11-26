@@ -336,6 +336,11 @@ stays because that thing is what it checks.
   between preview and confirmation. This preserves the stored IDs while
   replacing the database file. The binding has no operation for making that
   replacement.
+- `device/folders-one-mac.test.ts`, "keeps a folder remembered while a copy of
+  its saved state is listed at another directory, and sends no delete for a
+  file moved into it once the copy is removed and forgotten", copies a
+  folder's `.marfa` directory to another directory, as a person copying a
+  folder by hand does. No operation copies a folder's saved state.
 - `device/folders-open-writer.test.ts`, "deletes a file it set aside unchanged
   a week after it could not tell whether a program writes to it", moves back
   the time a folder's store records for a file it keeps. The command line has

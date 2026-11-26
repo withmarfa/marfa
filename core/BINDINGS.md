@@ -188,14 +188,14 @@ Past the rename grace, a folder sends the delete of a missing file only where th
 
 Use `remembering(dir:)` to show what would change if the person forgot a directory. This call works offline. It reads the listed folders that remember the directory and returns a `Remembered` record with these fields.
 
-- `dir` is the path as a folder records it. `listed` says whether the registry still lists it.
-- `folders` contains each `RememberingFolder`, with its directory (`dir`), folder ID (`folder`), opaque store identifier (`store`), and the `held` files the next sync would reconsider.
+- `dir` is the path as given, made absolute. It is matched exactly as a folder records it, without following symbolic links. `listed` says whether the registry still lists it.
+- `folders` contains each `RememberingFolder`, with its directory (`dir`), folder ID (`folder`), opaque store identifier (`store`), and the `held` files the next sync would reconsider: those held because that directory could not be read or held the file.
 - `notRead` contains a `FolderLeft` with the directory and reason for each folder the call could not read.
 - `alike` contains remembered paths that differ only in case from the requested path.
 
-Show the directories and held files to the person. If a volume is unmounted, they can mount it. If they confirm the directory is gone for good, pass the returned record unchanged to `forgetRemembered(remembered:)`. The call asks any watch holding a folder to release it and checks the store identifier. It leaves the folder registry as it was. The next sync reconsiders each released file and can send its item to the bin when no other folder is listed or remembered.
+Both calls throw when anything but an empty directory stands at the path, such as a directory that holds files or cannot be read, because it may still be the folder. Show the directories and held files to the person. If a volume is unmounted, they can mount it. If they confirm the directory is gone for good, pass the returned record unchanged to `forgetRemembered(remembered:)`. The call asks any watch holding a folder to release it and checks the store identifier. It leaves the folder registry as it was. The next sync reconsiders each released file and can send its item to the bin when no other folder is listed or remembered.
 
-The `Forgotten` result lists each changed folder in `forgotten`, with the paths of its released files in `released`. A directory that is still listed releases no holds. Check `notChanged` for the directories the call could not read or change and the reason for each. In Node, use `remembering(dir)` and `forgetRemembered(remembered)`. They return the same fields as plain objects.
+The `Forgotten` result lists each changed folder in `forgotten`, with the paths of its released files in `released`. Only a held file still waiting on the directory, and still missing since the same moment it was shown, is released. A hold saved before Marfa recorded what it waits on is never released this way; settle it with `trashHeld` or `keepHeld`. A directory that is still listed releases no holds. Check `notChanged` for the directories the call could not read or change and the reason for each. In Node, use `remembering(dir)` and `forgetRemembered(remembered)`. They return the same fields as plain objects.
 
 The core finds whether a folder sits in synced or network storage (`Folder::storage_cause`). The Swift and Node bindings give the finding to an app on `Folders::add`'s answer and on the watch's `Watching` event, so the app can warn the person as the command line does.
 

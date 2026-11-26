@@ -4678,14 +4678,16 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, held)).toBe(0);
     await heldUnsure(a);
 
-    const forgotten = await a.folder.forget(there, { yes: true });
+    const forgotten = await a.folder.forgetText(there, { yes: true });
     expect(forgotten.ok, JSON.stringify(forgotten)).toBe(true);
     if (!forgotten.ok) return;
     expect(forgotten.value.exit).toBe(0);
-    expect(forgotten.value.not_changed).toEqual([]);
-    expect(
-      forgotten.value.forgotten.map((folder) => [folder.dir, folder.released]),
-    ).toEqual([[self, ["Held.md"]]]);
+    expect(forgotten.value.text).toContain(
+      `1 folder(s) on this computer remember ${there}:`,
+    );
+    expect(forgotten.value.text).toContain(
+      `${self} forgot ${there}; its next pass decides these held deletions again:\n  Held.md`,
+    );
     expect(await heldIn(a)).toEqual([]);
     const queued = await a.folder.device().queue();
     expect(queued.ok, JSON.stringify(queued)).toBe(true);
@@ -4701,6 +4703,92 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const sent = await a.folder.push();
     expect(sent.ok && sent.value.scan.trashed).toEqual(["Held.md"]);
     expect(deletesOf(a.server, held)).toBe(1);
+  });
+
+  it("refuses to forget a directory where something stands that may still be the folder, and forgets it once only an empty directory is there", async () => {
+    const held = "01a00000-0000-7000-8000-0000000035ec";
+    const { a, there } = await heldForGone("forget-occupied", [
+      "01a00000-0000-7000-8000-0000000035eb",
+      held,
+    ]);
+    mkdirSync(there);
+    writeFileSync(join(there, "Held.md"), "h\n");
+    const occupied = await a.folder.forget(there, { yes: true });
+    expect(occupied.ok, JSON.stringify(occupied)).toBe(false);
+    expect(!occupied.ok && occupied.refusal.raw).toContain("is not empty");
+    expect(!occupied.ok && occupied.refusal.raw).toContain("unmount");
+    expect(await heldIn(a)).toEqual(["Held.md"]);
+
+    rmSync(join(there, "Held.md"));
+    chmodSync(there, 0o000);
+    let sealed: Awaited<ReturnType<typeof a.folder.forget>>;
+    try {
+      sealed = await a.folder.forget(there, { yes: true });
+    } finally {
+      chmodSync(there, 0o700);
+    }
+    expect(sealed.ok, JSON.stringify(sealed)).toBe(false);
+    expect(!sealed.ok && sealed.refusal.raw).toContain("cannot be read");
+    expect(await heldIn(a)).toEqual(["Held.md"]);
+    const kept = await a.folder.push();
+    expect(kept.ok && kept.value.scan.trashed).toEqual([]);
+    expect(deletesOf(a.server, held)).toBe(0);
+
+    // An empty directory, as an unmounted volume's mount point leaves.
+    const forgotten = await a.folder.forget(there, { yes: true });
+    expect(forgotten.ok, JSON.stringify(forgotten)).toBe(true);
+    if (!forgotten.ok) return;
+    expect(forgotten.value.forgotten.map((folder) => folder.released)).toEqual([
+      ["Held.md"],
+    ]);
+    const sent = await a.folder.push();
+    expect(sent.ok && sent.value.scan.trashed).toEqual(["Held.md"]);
+    expect(deletesOf(a.server, held)).toBe(1);
+  });
+
+  it("keeps a folder remembered while a copy of its saved state is listed at another directory, and sends no delete for a file moved into it once the copy is removed and forgotten", async () => {
+    const held = "01a00000-0000-7000-8000-0000000035ee";
+    const { a, b } = await remembering("forget-copy", [
+      "01a00000-0000-7000-8000-0000000035ed",
+      held,
+    ]);
+    // Listed, the copy takes the place of the folder it was copied from.
+    const copy = join(tempFolder("forget-copy-c"), "copy");
+    mkdirSync(copy);
+    cpSync(join(b.dir, ".marfa"), join(copy, ".marfa"), { recursive: true });
+    const copied = new CliFolder(copy, {
+      binary: requireBinary(),
+      url: a.server.url,
+      key: KEY,
+      registry: a.registry,
+    });
+    expect((await copied.scan()).ok).toBe(true);
+    const listed = await a.folder.list();
+    expect(listed.ok && listed.value.map((entry) => entry.dir)).toContain(
+      realpathSync(copy),
+    );
+    expect(listed.ok && listed.value.map((entry) => entry.dir)).not.toContain(
+      realpathSync(b.dir),
+    );
+
+    renameSync(join(a.dir, "Held.md"), join(b.dir, "Held.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(deletesOf(a.server, held)).toBe(0);
+
+    expect((await copied.remove()).ok).toBe(true);
+    const gone = realpathSync(copy);
+    rmSync(copy, { recursive: true });
+    const forgotten = await a.folder.forget(gone, { yes: true });
+    expect(forgotten.ok, JSON.stringify(forgotten)).toBe(true);
+    const after = await a.folder.push();
+    expect(after.ok && after.value.scan.trashed).toEqual([]);
+    expect(
+      deletesOf(a.server, held),
+      "a delete was sent for a file moved into a folder whose copy was forgotten",
+    ).toBe(0);
+    expect(existsSync(join(b.dir, "Held.md"))).toBe(true);
   });
 
   it("forgets a gone folder in the folders it can read, names one it cannot read and exits 3, and holds the delete it released again while another folder is listed", async () => {
@@ -4726,7 +4814,27 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       expect(deletesOf(a.server, held)).toBe(0);
       await heldUnsure(a);
 
+      // Where no folder can be read, each is named and nothing is forgotten.
+      const own = join(a.dir, ".marfa");
       const state = join(third.dir, ".marfa");
+      chmodSync(own, 0o000);
+      chmodSync(state, 0o000);
+      let none: Awaited<ReturnType<typeof a.folder.forget>>;
+      try {
+        none = await a.folder.forget(there, { yes: true });
+      } finally {
+        chmodSync(own, 0o700);
+        chmodSync(state, 0o700);
+      }
+      expect(none.ok, JSON.stringify(none)).toBe(true);
+      if (!none.ok) return;
+      expect(none.value.exit).toBe(3);
+      expect(none.value.forgotten).toEqual([]);
+      expect(none.value.not_changed.map((folder) => folder.dir).sort()).toEqual(
+        [realpathSync(a.dir), realpathSync(third.dir)].sort(),
+      );
+      expect(await heldIn(a)).toEqual(["Held.md"]);
+
       chmodSync(state, 0o000);
       let forgotten: Awaited<ReturnType<typeof a.folder.forget>>;
       try {
@@ -4772,18 +4880,15 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       "01a00000-0000-7000-8000-0000000035e5",
       held,
     ]);
+    // Still listed, its volume is not mounted.
     const there = realpathSync(b.dir);
-    chmodSync(b.dir, 0o000);
-    try {
-      await deletedByHand(a);
-      const kept = await a.folder.push();
-      expect(kept.ok && kept.value.scan.trashed).toEqual([]);
-      expect(kept.ok && kept.value.scan.unsure[0]?.reason).toContain(
-        `the folder ${there} cannot be reached; if it is gone, \`folders remove\` it, then \`folders forget\` it`,
-      );
-    } finally {
-      chmodSync(b.dir, 0o755);
-    }
+    rmSync(b.dir, { recursive: true });
+    await deletedByHand(a);
+    const kept = await a.folder.push();
+    expect(kept.ok && kept.value.scan.trashed).toEqual([]);
+    expect(kept.ok && kept.value.scan.unsure[0]?.reason).toContain(
+      `the folder ${there} cannot be reached; if it is gone, \`folders remove\` it, then \`folders forget\` it`,
+    );
     await heldUnsure(a);
     const forgotten = await a.folder.forget(there, { yes: true });
     expect(forgotten.ok, JSON.stringify(forgotten)).toBe(true);
@@ -4793,6 +4898,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(
       forgotten.value.forgotten.map((folder) => [folder.dir, folder.released]),
     ).toEqual([[realpathSync(a.dir), []]]);
+    expect(await heldIn(a)).toEqual(["Held.md"]);
     const listed = await a.folder.list();
     expect(listed.ok && listed.value.map((entry) => entry.dir)).toContain(
       there,
@@ -4855,6 +4961,43 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const sent = await a.folder.push();
     expect(sent.ok && sent.value.scan.trashed).toEqual(["Held.md"]);
     expect(deletesOf(a.server, held)).toBe(1);
+  });
+
+  it("keeps through the binding a hold made after the record it was given was read, and releases none from it", async () => {
+    const held = "01a00000-0000-7000-8000-0000000035f0";
+    const { a, there } = await heldForGone("forget-stale", [
+      "01a00000-0000-7000-8000-0000000035ef",
+      held,
+    ]);
+    const self = realpathSync(a.dir);
+    const bound = await openBindingFolder(a);
+    try {
+      const before = await bound.device.remembering(there);
+      expect(before.ok, JSON.stringify(before)).toBe(true);
+      if (!before.ok) return;
+      expect(
+        before.value.folders.map((folder) => folder.held.map((f) => f.path)),
+      ).toEqual([["Held.md"]]);
+      // Kept, written back and deleted again: held anew, since a later time.
+      const written = await a.folder.keepHeld(["Held.md"], { writeBack: true });
+      expect(written.ok, JSON.stringify(written)).toBe(true);
+      await deletedByHand(a);
+      expect((await a.folder.push()).ok).toBe(true);
+      await heldUnsure(a);
+      const later = await bound.device.forgetRemembered(before.value);
+      expect(later.ok, JSON.stringify(later)).toBe(true);
+      expect(
+        later.ok &&
+          later.value.forgotten.map((folder) => [folder.dir, folder.released]),
+      ).toEqual([[self, []]]);
+      expect(await heldIn(a)).toEqual(["Held.md"]);
+    } finally {
+      await bound.device.close();
+    }
+    const kept = await a.folder.push();
+    expect(kept.ok && kept.value.scan.trashed).toEqual([]);
+    expect(deletesOf(a.server, held)).toBe(0);
+    await heldUnsure(a);
   });
 
   it("keeps a confirmed removal held as unsure while the file's own directory cannot be read", async () => {
