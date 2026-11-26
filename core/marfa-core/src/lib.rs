@@ -26,6 +26,8 @@ mod edge_rules;
 mod edge_writes;
 mod error;
 #[cfg(test)]
+mod exact_update_tests;
+#[cfg(test)]
 mod extension_revision_tests;
 /// Public so the binary can name a fault of its own.
 pub mod fault;

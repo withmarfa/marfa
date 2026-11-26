@@ -109,6 +109,14 @@ One thread tells every listener, so `changed` must return promptly.
 
 Each binding takes a `Stop` on the calls that can be stopped, such as a hydration, a catch-up, a drain and a read of the server's catalog. Raise it when the app's own cancellation is requested. What a stopped call leaves is in the contract (`device/stop-canceled` and the statements after it).
 
+## Refuse an edit where the item has moved
+
+An edit queued with `exact` set (on `Edit` in Swift and Node, `--exact` on `device items update`) is sent with `version_match: exact`. Where another writer moved the item past the edit's base version, the server answers `409 version_conflict` and merges none of the edit, `conflict=auto` included. The write is refused with the reason `version_conflict`, keeps the server's answer with the item as it holds it, and is not sent again; the copy then reads the item back and shows it as the server holds it (`queue-and-verdicts/exact-update-refused`). Use it for a change a person made to what they saw, such as a move to another tier, where a merge onto a later version would act on something they never saw. An edit without `exact` is merged, or blocked `conflict_unresolved` where the server cannot merge it.
+
+- A base version older than the copy holds is refused `Validation` with the code `version_conflict`, and the `expected` and `actual` versions in its details, and nothing is queued (`queue-and-verdicts/exact-update-held`). So `update_item_as_read` refuses an exact edit at any version but the one the copy holds, except behind this copy's own create that the server has yet to answer: an exact edit read at version 0 is queued on the version that create made, with `version_match: exact`, and the server refuses it `version_conflict` if the item has moved since (`queue-and-verdicts/as-read-own-create-exact`).
+- While the edit waits, the copy shows it only over the version it names, or behind a create or edit of the same item from this copy that the server has yet to answer. Over a later version it shows nothing (`queue-and-verdicts/laid-update-exact`).
+- Behind this copy's own create or edit, it moves to the version that write makes from its base, and so is not refused for this copy's own change. Where the server merged into that write another writer's change, it is refused (`queue-and-verdicts/exact-update-behind-own`).
+
 ## What a queued write survives
 
 A call that returns a queued write has synced it to the store's log, so the write is still there after the app is killed. On Linux it also survives a system crash or a power cut. On a Mac, iPhone or iPad the sync does not empty the drive's own cache, so a system crash or a sudden power cut can still lose the last writes; the store stays whole, because each checkpoint empties that cache. The store syncs every commit, including each page of a hydration, so a write or a hydration takes a little longer than it would without the sync.

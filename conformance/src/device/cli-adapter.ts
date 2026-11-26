@@ -583,6 +583,7 @@ export class CliDevice implements DeviceUnderTest {
     if (edit.version !== undefined)
       args.push("--version", String(edit.version));
     if (edit.asRead === true) args.push("--as-read");
+    if (edit.exact === true) args.push("--exact");
     if (edit.type !== undefined) args.push("--type", edit.type);
     if (edit.tier !== undefined) args.push("--tier", edit.tier);
     if (edit.replace === true) args.push("--replace");

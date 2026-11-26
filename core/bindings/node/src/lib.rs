@@ -863,6 +863,14 @@ pub struct Edit {
     /// `properties`, or a field the type requires, is refused before anything
     /// is queued.
     pub clear_properties: Option<Vec<String>>,
+    /// The server refuses the change, merging none of it, where the item has
+    /// moved past `baseVersion`: the queued write is refused with the reason
+    /// `version_conflict`, and the copy shows the item as the server holds
+    /// it. A `baseVersion` older than the copy holds throws `version_conflict`
+    /// and queues nothing, except `0` read behind this copy's own create that
+    /// the server has yet to answer: it is queued on the version that create
+    /// made, and the server refuses it if the item has moved since.
+    pub exact: Option<bool>,
 }
 
 /// An edge, before it is queued.
@@ -1554,6 +1562,7 @@ fn edit_of(edit: Edit) -> Result<marfa_core::Edit> {
         occurred_at: edit.occurred_at,
         clear_occurred_at: edit.clear_occurred_at.unwrap_or(false),
         clear_properties: edit.clear_properties.unwrap_or_default(),
+        exact: edit.exact.unwrap_or(false),
         ..Default::default()
     })
 }

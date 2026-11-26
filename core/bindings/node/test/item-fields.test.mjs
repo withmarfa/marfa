@@ -153,3 +153,24 @@ test("removes the properties an edit clears and keeps every other", (t) => {
     ["notes", "never-held"],
   );
 });
+
+test("asks the server to refuse an exact edit where the item has moved", (t) => {
+  const core = openCopy(t);
+  for (const exact of [false, true]) {
+    const made = core.createItem({
+      type: "core.note",
+      properties: { body: "x" },
+    });
+    const id = /** @type {string} */ (made.itemId);
+    const queued = core.updateItem(id, {
+      properties: { body: "y" },
+      baseVersion: core.get(id)?.version ?? 0,
+      exact,
+    });
+    const sent = core.queue().find((row) => row.id === queued.id);
+    assert.equal(
+      /** @type {Record<string, unknown>} */ (sent?.body).version_match,
+      exact ? "exact" : undefined,
+    );
+  }
+});
