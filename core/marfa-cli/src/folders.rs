@@ -187,7 +187,10 @@ pub enum FoldersCommand {
     /// `--remove`, a watch holding the directory lets it go while this runs, and
     /// this is refused if the process holding the directory does not let it go
     /// within 10 seconds. Use `--remove` to keep the item when removing its
-    /// file. Deleting the file by hand can send the item to the bin.
+    /// file. Deleting the file by hand can send the item to the bin. Also
+    /// lists, with why, a removal Marfa stopped on where no file is at its
+    /// path but Marfa cannot tell the file is gone; `--remove` ends it, and
+    /// its item stays in Marfa as it was.
     Unmatched {
         /// The directory.
         dir: PathBuf,
@@ -210,9 +213,13 @@ pub enum FoldersCommand {
     /// the program wrote; `--discard` puts such a file back too, in place of
     /// deleting it. One whose record Marfa could not read is deleted only
     /// while it holds the bytes Marfa set aside, and is listed still where it
-    /// holds anything else. With `--discard`, a watch holding the
-    /// directory lets it go while this runs, and this is refused if the process
-    /// holding the directory does not let it go within 10 seconds.
+    /// holds anything else. Every file a discard Marfa stopped on left under
+    /// another reserved name is listed, and so is a record of one whose file
+    /// is not where it says; `--discard` forgets such a record where nothing
+    /// is at its path, and deletes no file for it. With `--discard`, a watch
+    /// holding the directory lets it go while this runs, and this is refused
+    /// if the process holding the directory does not let it go within 10
+    /// seconds.
     Kept {
         /// The directory.
         dir: PathBuf,
@@ -898,6 +905,7 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
             "removed": done.removed,
             "kept": kept,
             "ended": done.ended,
+            "settled": done.settled,
             "declined": !agreed,
         }),
         json,
@@ -912,6 +920,12 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
                     done.removed.len()
                 )
             }];
+            lines.extend(done.settled.iter().map(|file| {
+                format!(
+                    "{}: the removal Marfa stopped on ended; its item is unchanged in Marfa",
+                    printable(&file.path)
+                )
+            }));
             lines.extend(kept_lines(&kept));
             lines.join("\n")
         },
@@ -949,6 +963,7 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
             "discarded": done.discarded,
             "put_back": done.put_back,
             "kept": done.kept,
+            "forgotten": done.forgotten,
             "declined": !agreed,
         }),
         json,
@@ -961,6 +976,12 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
             lines.extend(done.put_back.iter().map(|path| {
                 format!(
                     "{}: a program wrote to the file set aside from it, so Marfa put that file back, and the next push sends it",
+                    printable(path)
+                )
+            }));
+            lines.extend(done.forgotten.iter().map(|path| {
+                format!(
+                    "{}: no file is there, so Marfa forgot its record of the discard it stopped on",
                     printable(path)
                 )
             }));
@@ -1180,14 +1201,16 @@ fn describe_unmatched(files: &[marfa_core::Unmatched]) -> String {
         "{} unmatched file(s), {removable} of them removable with `folders unmatched --remove`",
         files.len()
     )];
-    lines.extend(files.iter().map(|file| match (&file.kept, &file.held) {
-        (_, Some(reason)) => format!("{} {}", printable(&file.path), printable(reason)),
-        (Some(reason), None) => format!(
-            "{} would be kept: {}",
-            printable(&file.path),
-            printable(reason)
-        ),
-        (None, None) => printable(&file.path),
+    lines.extend(files.iter().map(|file| {
+        match (&file.kept, file.held.as_ref().or(file.removing.as_ref())) {
+            (_, Some(reason)) => format!("{} {}", printable(&file.path), printable(reason)),
+            (Some(reason), None) => format!(
+                "{} would be kept: {}",
+                printable(&file.path),
+                printable(reason)
+            ),
+            (None, None) => printable(&file.path),
+        }
     }));
     lines.join("\n")
 }

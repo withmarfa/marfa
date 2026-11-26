@@ -1190,6 +1190,9 @@ pub struct UnmatchedRemoved {
     /// The folder's placements of the removed files' items, ended and queued
     /// to be sent at the next sync.
     pub ended: u64,
+    /// Removals Marfa stopped on, ended because no file is at their paths.
+    /// Their items are unchanged.
+    pub settled: Vec<UnmatchedFile>,
 }
 
 /// What Marfa last found of the programs writing to a kept file.
@@ -1227,6 +1230,9 @@ pub struct KeptDiscarded {
     pub put_back: Vec<String>,
     /// The files whose records remain after the discard.
     pub kept: Vec<KeptFile>,
+    /// Records of a stopped discard forgotten because no file is at their
+    /// paths. No file was deleted for them.
+    pub forgotten: Vec<String>,
 }
 
 guarded! {
@@ -1266,6 +1272,14 @@ guarded! {
                     })
                     .collect(),
                 ended: done.ended as u64,
+                settled: done
+                    .settled
+                    .into_iter()
+                    .map(|file| UnmatchedFile {
+                        path: file.path,
+                        item_id: file.item_id,
+                    })
+                    .collect(),
             })
         }
 
@@ -1287,6 +1301,7 @@ guarded! {
             Ok(KeptDiscarded {
                 discarded: done.discarded,
                 put_back: done.put_back,
+                forgotten: done.forgotten,
                 kept: done
                     .kept
                     .into_iter()

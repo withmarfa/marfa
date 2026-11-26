@@ -1073,6 +1073,7 @@ export class BindingFolder {
     removed: Array<{ path: string; itemId?: string }>;
     kept: Array<{ path: string; itemId?: string; reason: string }>;
     ended: number;
+    settled: Array<{ path: string; itemId?: string }>;
   }> {
     return this.device.folderCall("removeUnmatched", this.dir, paths);
   }
@@ -1083,6 +1084,7 @@ export class BindingFolder {
     discarded: string[];
     putBack: string[];
     kept: BindingKeptFile[];
+    forgotten: string[];
   }> {
     return this.device.folderCall("discardKept", this.dir);
   }

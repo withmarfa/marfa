@@ -285,11 +285,14 @@ pub struct KeptUnmatched {
 }
 /// What `removeUnmatched` did. `ended` counts the folder's placements of the
 /// removed files' items, ended and queued to be sent at the next sync.
+/// `settled` lists the removals Marfa stopped on that it ended because no
+/// file is at their paths; their items are unchanged.
 #[napi(object)]
 pub struct UnmatchedRemoved {
     pub removed: Vec<UnmatchedFile>,
     pub kept: Vec<KeptUnmatched>,
     pub ended: i64,
+    pub settled: Vec<UnmatchedFile>,
 }
 /// What Marfa last found of the programs writing to a kept file: `not_looked`
 /// where it has not looked since it set the file aside.
@@ -311,12 +314,14 @@ pub struct KeptFile {
     pub reason: String,
 }
 /// What `discardKept` did: the kept files deleted, the paths a written kept
-/// file went back to or was kept beside, and the records that remain.
+/// file went back to or was kept beside, the records that remain, and the
+/// records of a stopped discard forgotten because no file is at their paths.
 #[napi(object)]
 pub struct KeptDiscarded {
     pub discarded: Vec<String>,
     pub put_back: Vec<String>,
     pub kept: Vec<KeptFile>,
+    pub forgotten: Vec<String>,
 }
 #[allow(clippy::large_enum_variant)]
 #[napi(discriminant = "kind", discriminant_case = "camelCase")]
@@ -884,6 +889,14 @@ impl Task for RemoveUnmatched {
                     })
                     .collect(),
                 ended: count(done.ended as u64),
+                settled: done
+                    .settled
+                    .into_iter()
+                    .map(|file| UnmatchedFile {
+                        path: file.path,
+                        item_id: file.item_id,
+                    })
+                    .collect(),
             })
         })()
         .map_err(|error| record(&mut self.failed, error))
@@ -931,6 +944,7 @@ impl Task for DiscardKept {
             Ok(KeptDiscarded {
                 discarded: done.discarded,
                 put_back: done.put_back,
+                forgotten: done.forgotten,
                 kept: done
                     .kept
                     .into_iter()

@@ -2,8 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   chmodSync,
   closeSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
   openSync,
   readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
   utimesSync,
   writeSync,
 } from "node:fs";
@@ -134,8 +140,33 @@ function unreadRecord(harness: FolderHarness): void {
   }
 }
 
-const keptNames = (harness: FolderHarness) =>
-  readdirSync(harness.dir).filter((name) => name.startsWith(".marfa-kept-"));
+const keptNames = (harness: FolderHarness, dir = "") =>
+  readdirSync(join(harness.dir, dir)).filter((name) =>
+    name.startsWith(".marfa-kept-"),
+  );
+
+/** Stops a discard of the kept file `name` once it is under a name of its own. */
+async function discardStopped(harness: FolderHarness, name: string) {
+  await expect(
+    withFault(`crash-after-private-rename=${name}`, () =>
+      harness.folder.discardKept(),
+    ),
+    "the discard did not stop where the fault asks",
+  ).rejects.toThrow(/crashing at/);
+}
+
+/** Paths `folders kept` lists, each with whether a file is there. */
+async function listedKept(
+  harness: FolderHarness,
+): Promise<Array<[string, boolean]>> {
+  const kept = await harness.folder.kept();
+  expect(kept.ok, JSON.stringify(kept)).toBe(true);
+  if (!kept.ok) return [];
+  return kept.value.kept.map((file) => [
+    file.path,
+    existsSync(join(harness.dir, file.path)),
+  ]);
+}
 
 const lastSentBody = (harness: FolderHarness) =>
   JSON.stringify(sentUpdates(harness).at(-1)?.body ?? {});
@@ -598,6 +629,123 @@ describe("a file a program holds open for writing", () => {
       expect(after.ok && after.value.kept).toEqual([]);
     },
   );
+
+  it("lists a kept file a stopped discard left while another directory has its directory's name, and once the directory is back", async () => {
+    const harness = await noteFolder(
+      "folder-open-writer-discard-directory-away",
+    );
+    mkdirSync(join(harness.dir, "Notes"));
+    renameSync(
+      join(harness.dir, "Note.md"),
+      join(harness.dir, "Notes", "Note.md"),
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
+    program = openSync(join(harness.dir, "Notes", "Note.md"), "a");
+    write("first half\n");
+    close();
+    await setAsideUnknown(harness);
+    const [name] = keptNames(harness, "Notes");
+    expect(
+      name,
+      "nothing was kept in the directory, so nothing below is about it",
+    ).toBeDefined();
+    const before = readFileSync(join(harness.dir, "Notes", name!), "utf8");
+    await discardStopped(harness, name!);
+    const [left] = keptNames(harness, "Notes");
+    expect(left, "the witness: the discard moved the file").not.toBe(name);
+
+    const away = join(harness.dir, "..", "Notes moved away");
+    renameSync(join(harness.dir, "Notes"), away);
+    mkdirSync(join(harness.dir, "Notes"));
+    expect((await harness.folder.scan()).ok).toBe(true);
+    const discarded = await harness.folder.discardKept();
+    expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+    if (!discarded.ok) return;
+    expect(discarded.value.discarded).toEqual([]);
+    expect(discarded.value.forgotten).toEqual([]);
+    rmSync(join(harness.dir, "Notes"), { recursive: true });
+    renameSync(away, join(harness.dir, "Notes"));
+
+    expect(
+      await listedKept(harness),
+      "the file a stopped discard left is not listed where it is",
+    ).toEqual([[`Notes/${left!}`, true]]);
+    expect(readFileSync(join(harness.dir, "Notes", left!), "utf8")).toBe(
+      before,
+    );
+  });
+
+  it("lists both files two stopped discards left under one record it cannot read", async () => {
+    const harness = await noteFolder("folder-open-writer-discard-twice-unread");
+    holdOpen(harness);
+    write("first half\n");
+    close();
+    await setAsideUnknown(harness);
+    const [name] = keptNames(harness);
+    expect(name).toBeDefined();
+    unreadRecord(harness);
+    await discardStopped(harness, name!);
+    const [first] = keptNames(harness);
+    copyFileSync(join(harness.dir, first!), join(harness.dir, name!));
+    await discardStopped(harness, name!);
+    expect(
+      keptNames(harness),
+      "the second discard did not leave a second file, so nothing below is about it",
+    ).toHaveLength(2);
+
+    const listed = await listedKept(harness);
+    expect(listed.map(([path]) => path).sort()).toEqual(
+      keptNames(harness).sort(),
+    );
+    expect(
+      listed.every(([, there]) => there),
+      JSON.stringify(listed),
+    ).toBe(true);
+  });
+
+  it("forgets a record of a stopped discard it cannot read once its file is gone, when the owner discards", async () => {
+    const harness = await noteFolder("folder-open-writer-discard-unread-gone");
+    holdOpen(harness);
+    write("first half\n");
+    close();
+    await setAsideUnknown(harness);
+    const [name] = keptNames(harness);
+    expect(name).toBeDefined();
+    await discardStopped(harness, name!);
+    const [left] = keptNames(harness);
+    const db = new DatabaseSync(harness.folder.store);
+    try {
+      expect(
+        db
+          .prepare(
+            "UPDATE meta SET value = 'unreadable' WHERE key LIKE 'folder_discarding:%'",
+          )
+          .run().changes,
+        "no record of the stopped discard, so nothing below is about it",
+      ).toBe(1);
+    } finally {
+      db.close();
+    }
+    expect(
+      await listedKept(harness),
+      "the witness: while its file is there, the record is listed",
+    ).toContainEqual([left, true]);
+    rmSync(join(harness.dir, left!));
+    const kept = await harness.folder.kept();
+    expect(kept.ok, JSON.stringify(kept)).toBe(true);
+    if (!kept.ok) return;
+    expect(kept.value.kept.filter((file) => file.path === left)).toEqual([
+      expect.objectContaining({
+        reason: expect.stringMatching(/no file is at this path/),
+      }),
+    ]);
+
+    const discarded = await harness.folder.discardKept();
+    expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+    if (!discarded.ok) return;
+    expect(discarded.value.forgotten).toEqual([left]);
+    expect(await listedKept(harness)).toEqual([]);
+  });
 
   it.each(["unchanged", "written to"] as const)(
     "lists through a binding a file a folder keeps, and discards it %s as folders kept does",
