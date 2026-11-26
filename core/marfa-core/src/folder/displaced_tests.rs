@@ -936,11 +936,13 @@ fn a_record_whose_id_is_not_its_key_is_read_as_one_that_does_not_read() {
     )
     .unwrap();
 
-    let rows = state::displaced(&conn).unwrap();
-    assert!(
-        matches!(&rows[..], [Err(_)]),
-        "read under another record's id: {rows:?}"
-    );
+    match &state::displaced(&conn).unwrap()[..] {
+        [Err(row)] => {
+            assert_eq!(row.id, key);
+            assert!(!row.inside, "{row:?}");
+        }
+        rows => panic!("read under another record's id: {rows:?}"),
+    }
     match &state::retained(&conn).unwrap()[..] {
         [Err(row)] => assert_eq!(row.id, key),
         rows => panic!("read under another record's id: {rows:?}"),

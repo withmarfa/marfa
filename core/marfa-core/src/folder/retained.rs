@@ -4,7 +4,7 @@
 use super::fields::VERSION_FIELD;
 use super::{
     Directory, Folder, Rows, carries_frontmatter, device, document, identity, in_state, joined,
-    landing, line_of, outside_reason, state, writers,
+    landing, line_of, outside_reason, state, unread_displaced_reason, writers,
 };
 use std::path::Path;
 
@@ -58,6 +58,18 @@ fn until(retained: &landing::Retained) -> String {
         .unwrap_or_default()
 }
 
+/// `row` as listed, with why Marfa keeps it where it names a directory
+/// outside the folder.
+fn retained_file(row: &state::Retained) -> KeptFile {
+    let mut file = kept_file(row);
+    if row.outside() {
+        file.reason = outside_reason(&file.from);
+        file.writers = "unknown";
+        file.until = None;
+    }
+    file
+}
+
 fn kept_file(row: &state::Retained) -> KeptFile {
     let retained = &row.retained;
     let from = joined(&row.dir, &retained.target);
@@ -76,15 +88,23 @@ fn kept_file(row: &state::Retained) -> KeptFile {
 
 pub(super) const UNREAD: &str = "Marfa could not read its record";
 
-/// Why a file under a record that does not read stays, where nothing shows
-/// its directory is the one the record names.
-const UNREAD_UNVERIFIED: &str = "Marfa could not read its record, and cannot tell that this directory is the one it set the file aside in, so it deletes nothing here; delete it when it is not needed";
-
 /// Whether nothing shows that `row`'s directory is the one it names: it is
-/// outside the folder, where a record that does not read cannot show it is
-/// one a take-in wrote, or the row holds no identity for it.
+/// outside the folder, or a directory below the root the row holds no
+/// identity for.
 fn unverified(row: &state::Unread) -> bool {
-    Path::new(&row.aside).is_absolute() || row.aside_at.is_none()
+    Path::new(&row.aside).is_absolute() || (row.aside_at.is_none() && !row.aside.is_empty())
+}
+
+/// Why a file under a record that does not read stays.
+pub(super) fn unread_reason(row: &state::Unread) -> String {
+    if unverified(row) {
+        format!(
+            "Marfa could not read its record, and cannot tell that this directory is the one it set the file aside in, so it deletes nothing here and keeps the record; delete the file when it is not needed. {}",
+            super::END_RECORD
+        )
+    } else {
+        UNREAD.into()
+    }
 }
 
 fn unread_file(row: &state::Unread) -> KeptFile {
@@ -93,12 +113,7 @@ fn unread_file(row: &state::Unread) -> KeptFile {
         from: row.from.clone(),
         writers: "unknown",
         until: None,
-        reason: if unverified(row) {
-            UNREAD_UNVERIFIED
-        } else {
-            UNREAD
-        }
-        .into(),
+        reason: unread_reason(row),
     }
 }
 
@@ -447,23 +462,31 @@ impl Folder {
                 )
             }
         };
-        for row in state::displaced(&conn)?.into_iter().flatten() {
-            if let Some(outside) = row.outside()
-                && self.left_outside(&outside)
-            {
-                let from = joined(&row.dir, &row.displacement.target);
-                files.push(KeptFile {
-                    path: joined(&row.aside, &row.displacement.kept),
+        for row in state::displaced(&conn)? {
+            match row {
+                Ok(row) if row.outside() => {
+                    let from = joined(&row.dir, &row.displacement.target);
+                    files.push(KeptFile {
+                        path: joined(&row.aside, &row.displacement.kept),
+                        writers: "unknown",
+                        until: None,
+                        reason: outside_reason(&from),
+                        from,
+                    });
+                }
+                Err(row) if !row.inside => files.push(KeptFile {
+                    path: row.path,
+                    from: String::new(),
                     writers: "unknown",
                     until: None,
-                    reason: outside_reason(&from, outside.shaped),
-                    from,
-                });
+                    reason: unread_displaced_reason(),
+                }),
+                Ok(_) | Err(_) => {}
             }
         }
         for row in state::retained(&conn)? {
             let (id, mut file) = match &row {
-                Ok(row) => (&row.retained.id, self.kept_file(row)),
+                Ok(row) => (&row.retained.id, retained_file(row)),
                 Err(row) => (&row.id, unread_file(row)),
             };
             if let Some(marks) = moved.get_mut(id)
@@ -515,7 +538,6 @@ impl Folder {
             }
         }
         done.forgotten = self.forget_discards_gone()?;
-        done.forgotten.extend(self.forget_outside_gone()?);
         done.kept.extend(self.kept_files()?);
         done.kept.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(done)
@@ -534,62 +556,6 @@ impl Folder {
             }
         }
         Ok(forgotten)
-    }
-
-    /// `row` as listed, with why a row recovery leaves outside the folder
-    /// stays.
-    fn kept_file(&self, row: &state::Retained) -> KeptFile {
-        let mut file = kept_file(row);
-        if let Some(outside) = row.outside()
-            && self.left_outside(&outside)
-        {
-            file.reason = outside_reason(&file.from, outside.shaped);
-            file.writers = "unknown";
-            file.until = None;
-        }
-        file
-    }
-
-    /// Forgets each row recovery leaves outside the folder where nothing is
-    /// at its file's path. Only the owner's discard does this, and it
-    /// deletes no file.
-    fn forget_outside_gone(&self) -> Result<Vec<String>> {
-        let conn = self.core.conn()?;
-        let mut forgotten = Vec::new();
-        for row in state::displaced(&conn)?.into_iter().flatten() {
-            let path = joined(&row.aside, &row.displacement.kept);
-            if row
-                .outside()
-                .is_some_and(|outside| self.left_outside(&outside))
-                && self.nothing_at(&path)
-            {
-                state::clear_displaced(&conn, &row.displacement.id)?;
-                forgotten.push(path);
-            }
-        }
-        for row in state::retained(&conn)?.into_iter().flatten() {
-            let path = joined(&row.aside, &row.retained.kept);
-            if row
-                .outside()
-                .is_some_and(|outside| self.left_outside(&outside))
-                && self.nothing_at(&path)
-            {
-                state::clear_retained(&conn, &row.retained.id)?;
-                forgotten.push(path);
-            }
-        }
-        Ok(forgotten)
-    }
-
-    /// Whether nothing is at `path`, with no link on the way.
-    fn nothing_at(&self, path: &str) -> bool {
-        let path = Path::new(path);
-        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
-            return false;
-        };
-        self.place_dir(&dir.to_string_lossy())
-            .and_then(|dir| dir.entry_identity(Path::new(name)))
-            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
     }
 
     /// Where `mark`'s file is, read through its directory once that is
@@ -741,11 +707,18 @@ impl Folder {
         if marks.is_empty() {
             return Ok(());
         }
-        let rows: std::collections::HashSet<String> = state::retained(conn)?
+        // A mark is settled only for a record of a file in the folder that
+        // names the same directory and name.
+        let rows: std::collections::HashMap<String, (String, String)> = state::retained(conn)?
             .into_iter()
-            .map(|row| match row {
-                Ok(row) => row.retained.id,
-                Err(row) => row.id,
+            .filter_map(|row| match row {
+                Ok(row) if !row.outside() => {
+                    Some((row.retained.id, (row.aside, row.retained.kept)))
+                }
+                Err(row) if !Path::new(&row.aside).is_absolute() => {
+                    Some((row.id, (row.aside, row.kept)))
+                }
+                Ok(_) | Err(_) => None,
             })
             .collect();
         for (path, mark) in marks {
@@ -761,7 +734,7 @@ impl Folder {
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "folder-discard-mark-checked");
             let private = Path::new(&mark.private);
-            if !rows.contains(&mark.id) {
+            if rows.get(&mark.id) != Some(&(mark.aside.clone(), mark.kept.clone())) {
                 continue;
             }
             match landing::rename_new_at(&aside, private, &aside, Path::new(&mark.kept)) {
@@ -870,11 +843,8 @@ impl Folder {
         now: u64,
     ) -> Result<Option<(Directory, Directory, std::fs::File)>> {
         let retained = &row.retained;
-        // Never ended for its age: its file may be on a volume not mounted.
-        if row
-            .outside()
-            .is_some_and(|outside| self.left_outside(&outside))
-        {
+        // Never opened, settled or ended for its age.
+        if row.outside() {
             return Ok(None);
         }
         let places = self

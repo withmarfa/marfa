@@ -616,12 +616,59 @@ pub(crate) fn clear_displaced(conn: &Connection, id: &str) -> Result<(), CoreErr
     crate::store::meta_delete(conn, &format!("{DISPLACED}{id}"))
 }
 
-/// Every displacement not yet settled. A row that does not read is
-/// answered as its id alone, so it is reported, not lost.
-pub(crate) fn displaced(conn: &Connection) -> Result<Vec<Result<Displaced, String>>, CoreError> {
+/// A displacement whose row does not read, or names an id other than its
+/// key, placed by what of the row does.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct UnreadDisplaced {
+    /// The row's key.
+    pub(crate) id: String,
+    /// Where its file is, as far as the row tells.
+    pub(crate) path: String,
+    /// Whether the row names both its directories in the folder, where a
+    /// walk reports what it moved.
+    pub(crate) inside: bool,
+}
+
+impl UnreadDisplaced {
+    fn of(id: String, value: &str) -> UnreadDisplaced {
+        let row: serde_json::Value = serde_json::from_str(value).unwrap_or_default();
+        let place = |field: &str| {
+            row[field]
+                .as_str()
+                .filter(|place| !std::path::Path::new(place).is_absolute())
+                .map(str::to_string)
+        };
+        let inside = place("dir").is_some() && place("aside").is_some();
+        let aside = row["aside"].as_str().unwrap_or_default();
+        let kept = row["displacement"]["kept"]
+            .as_str()
+            .filter(|name| {
+                !name.contains('/') && super::landing::is_reserved(std::path::Path::new(name))
+            })
+            .map_or_else(
+                || super::landing::reserved(&id).to_string_lossy().into_owned(),
+                str::to_string,
+            );
+        UnreadDisplaced {
+            path: super::joined(aside, &kept),
+            inside,
+            id,
+        }
+    }
+}
+
+/// Every displacement not yet settled, each read under its key alone.
+pub(crate) fn displaced(
+    conn: &Connection,
+) -> Result<Vec<Result<Displaced, UnreadDisplaced>>, CoreError> {
     Ok(under(conn, DISPLACED)?
         .into_iter()
-        .map(|(id, value)| serde_json::from_str(&value).map_err(|_| id))
+        .map(
+            |(id, value)| match serde_json::from_str::<Displaced>(&value) {
+                Ok(row) if row.displacement.id == id => Ok(row),
+                _ => Err(UnreadDisplaced::of(id, &value)),
+            },
+        )
         .collect())
 }
 
@@ -649,7 +696,8 @@ pub(crate) fn clear_retained(conn: &Connection, id: &str) -> Result<(), CoreErro
     crate::store::meta_delete(conn, &format!("{RETAINED}{id}"))
 }
 
-/// A kept file whose row does not read, placed by what of the row does.
+/// A kept file whose row does not read, or names an id other than its key,
+/// placed by what of the row does.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Unread {
     pub(crate) id: String,
@@ -688,13 +736,16 @@ impl Unread {
     }
 }
 
-/// Every file kept for a pass to settle.
+/// Every file kept for a pass to settle, each read under its key alone.
 pub(crate) fn retained(conn: &Connection) -> Result<Vec<Result<Retained, Box<Unread>>>, CoreError> {
     Ok(under(conn, RETAINED)?
         .into_iter()
-        .map(|(id, value)| {
-            serde_json::from_str(&value).map_err(|_| Box::new(Unread::of(id, &value)))
-        })
+        .map(
+            |(id, value)| match serde_json::from_str::<Retained>(&value) {
+                Ok(row) if row.retained.id == id => Ok(row),
+                _ => Err(Box::new(Unread::of(id, &value))),
+            },
+        )
         .collect())
 }
 

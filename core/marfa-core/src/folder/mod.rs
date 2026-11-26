@@ -1523,90 +1523,48 @@ fn settle_row(
 }
 
 /// Whether `found`, a directory's device and inode, is the directory
-/// `recorded` names at `place`. A volume mounted again has another device
-/// number, so in the folder, where the root's is not the one recorded, the
-/// inode alone decides. Outside it, nothing tells a volume mounted again from
-/// another volume at the same path, whose root can have the same inode.
-fn same_directory(
-    place: &str,
-    found: (u64, u64),
-    recorded: (u64, u64),
-    root_device: Option<u64>,
-) -> bool {
-    let root_device = if Path::new(place).is_absolute() {
-        Some(recorded.0)
-    } else {
-        root_device
-    };
+/// `recorded` names. A volume mounted again has another device number, so
+/// where the root's is not the one recorded, the inode alone decides.
+fn same_directory(found: (u64, u64), recorded: (u64, u64), root_device: Option<u64>) -> bool {
     found.1 == recorded.1 && (found.0 == recorded.0 || root_device != Some(recorded.0))
 }
 
-/// A row's directories, where either is outside the folder: only a take-in
-/// from another folder recorded one there.
-pub(super) struct Outside<'a> {
-    dir: (&'a str, (u64, u64)),
-    aside: (&'a str, (u64, u64)),
-    /// Whether the row is as a take-in wrote it: a removal, its path and
-    /// reserved name in one directory, under the name its id gives.
-    shaped: bool,
-}
-
-impl<'a> Outside<'a> {
-    fn of(
-        dir: (&'a str, (u64, u64)),
-        aside: (&'a str, (u64, u64)),
-        removal: bool,
-        (id, target, kept): (&str, &str, &str),
-    ) -> Option<Outside<'a>> {
-        if !Path::new(dir.0).is_absolute() && !Path::new(aside.0).is_absolute() {
-            return None;
-        }
-        let name = |name: &str| {
-            let mut parts = Path::new(name).components();
-            matches!(parts.next(), Some(std::path::Component::Normal(_))) && parts.next().is_none()
-        };
-        let shaped = removal
-            && dir == aside
-            && name(target)
-            && name(kept)
-            && Path::new(kept) == landing::reserved(id);
-        Some(Outside { dir, aside, shaped })
-    }
+/// Whether a record names a directory outside the folder, which only a
+/// take-in from another folder recorded. Its device and inode, with no
+/// birth time, cannot tell that directory from another at its path, such as
+/// another volume's root, so no pass or discard acts on it.
+fn outside(dir: &str, aside: &str) -> bool {
+    Path::new(dir).is_absolute() || Path::new(aside).is_absolute()
 }
 
 impl state::Displaced {
-    pub(super) fn outside(&self) -> Option<Outside<'_>> {
-        let displacement = &self.displacement;
-        Outside::of(
-            (&self.dir, self.dir_at),
-            (&self.aside, self.aside_at),
-            displacement.kind == landing::Displaced::Withdraw && displacement.ours.is_none(),
-            (&displacement.id, &displacement.target, &displacement.kept),
-        )
+    pub(super) fn outside(&self) -> bool {
+        outside(&self.dir, &self.aside)
     }
 }
 
 impl state::Retained {
-    pub(super) fn outside(&self) -> Option<Outside<'_>> {
-        let retained = &self.retained;
-        Outside::of(
-            (&self.dir, self.dir_at),
-            (&self.aside, self.aside_at),
-            retained.kind == landing::Displaced::Withdraw && retained.ours.is_none(),
-            (&retained.id, &retained.target, &retained.kept),
-        )
+    pub(super) fn outside(&self) -> bool {
+        outside(&self.dir, &self.aside)
     }
 }
 
-/// Why recovery leaves a file outside the folder, moved from `from`.
-pub(super) fn outside_reason(from: &str, shaped: bool) -> String {
-    let why = if shaped {
-        "the directory now at this path is not the one Marfa moved it in, so the file may be on the volume that was here"
-    } else {
-        "Marfa's record of it is not one it can act on"
-    };
+/// How the owner ends a record Marfa keeps and acts on no file for.
+pub(super) const END_RECORD: &str = "To end the record, make the directory stop following its folder with `marfa folders remove <DIR>`";
+
+/// Why Marfa keeps a record of a file it moved from `from` into a directory
+/// outside the folder.
+pub(super) fn outside_reason(from: &str) -> String {
     format!(
-        "Marfa moved {from} here as it took the file into this folder, and {why}. Marfa leaves the file; check it, and put it back yourself if it holds a change. Once nothing is at this path, `marfa folders kept <DIR> --discard` forgets the record"
+        "Marfa moved {from} here as it took the file into this folder, and its record cannot show that the directory at this path is the one it moved the file in, so Marfa leaves the file and keeps the record. Check the file, and put it back yourself if it holds a change; where the directory is on a volume that is not mounted, mount it to reach the file. {END_RECORD}"
+    )
+}
+
+/// Why Marfa keeps a record of a file it moved out of its path that does
+/// not read, where it cannot tell the record names the folder's directories.
+pub(super) fn unread_displaced_reason() -> String {
+    format!(
+        "Marfa moved a file out of its path and cannot read its record of it, so it cannot tell which directory the file is in and acts on nothing for it. Check this path, and put the file back yourself if it holds a change. {END_RECORD}"
     )
 }
 
@@ -1735,7 +1693,6 @@ impl Folder {
     fn displaced_dir(&self, place: &str, at: (u64, u64)) -> std::io::Result<Directory> {
         let directory = self.place_dir(place)?;
         if !same_directory(
-            place,
             landing::identity(&directory.metadata()?),
             at,
             device(&self.root_dir),
@@ -1774,16 +1731,6 @@ impl Folder {
             .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
     }
 
-    /// Whether recovery leaves an `outside` row as it is: one not shaped as a
-    /// take-in wrote it, or whose directory is not the one recorded.
-    pub(super) fn left_outside(&self, outside: &Outside<'_>) -> bool {
-        !outside.shaped
-            || self
-                .displaced_dir(outside.dir.0, outside.dir.1)
-                .and_then(|_| self.displaced_dir(outside.aside.0, outside.aside.1))
-                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-    }
-
     /// The bound paths of rows whose directory is not where it was, whose
     /// write a crash cut off is settled only once the row settles, against
     /// the file wherever its directory went.
@@ -1791,7 +1738,7 @@ impl Folder {
         Ok(state::displaced(&*self.core.conn()?)?
             .into_iter()
             .flatten()
-            .filter(|row| row.outside().is_none() && self.displaced_away(row))
+            .filter(|row| !row.outside() && self.displaced_away(row))
             .map(|row| joined(&row.dir, &row.displacement.target))
             .collect())
     }
@@ -1811,17 +1758,16 @@ impl Folder {
         let root_device = device(&self.root_dir);
         for row in state::displaced(&conn)? {
             let row = match row {
-                Ok(row) => row,
+                Ok(row) if !row.outside() => row,
                 // What it moved stays under its reserved name, which every
-                // scan reports.
-                Err(id) => {
-                    state::clear_displaced(&conn, &id)?;
+                // scan of the folder reports.
+                Err(row) if row.inside => {
+                    state::clear_displaced(&conn, &row.id)?;
                     continue;
                 }
+                // Kept and listed.
+                Ok(_) | Err(_) => continue,
             };
-            if row.outside().is_some_and(|outside| !outside.shaped) {
-                continue;
-            }
             match self
                 .displaced_dir(&row.dir, row.dir_at)
                 .and_then(|dir| Ok((dir, self.displaced_dir(&row.aside, row.aside_at)?)))
@@ -1854,7 +1800,7 @@ impl Folder {
         let root_device = device(&self.root_dir);
         let mut settled = false;
         for row in state::displaced(&conn)?.into_iter().flatten() {
-            if row.outside().is_some()
+            if row.outside()
                 || row.dir != row.aside
                 || self.displaced_dir(&row.aside, row.aside_at).is_ok()
             {
@@ -1866,7 +1812,7 @@ impl Folder {
                 .find_map(|(route, path)| {
                     let dir = route.open().ok()?;
                     let at = landing::identity(&dir.metadata().ok()?);
-                    same_directory(&row.aside, at, row.aside_at, root_device).then_some((dir, path))
+                    same_directory(at, row.aside_at, root_device).then_some((dir, path))
                 });
             let Some((dir, path)) = found else {
                 continue;
@@ -1890,43 +1836,73 @@ impl Folder {
 
     /// Each file a row holds under its reserved name in a directory that is
     /// not where it was, and that the walk did not meet: one the walk met is
-    /// reported where it met it. Each comes with whether the row is outside
-    /// the folder, which no walk of it settles.
+    /// reported where it met it. Each comes with whether it is a record no
+    /// walk of the folder settles or ends: one naming a directory outside the
+    /// folder, or one that does not read and cannot show it names none.
     fn unsettled(&self, walked: &[(WalkRoute, String)]) -> Result<Vec<(String, Flagged, bool)>> {
         let conn = self.core.conn()?;
-        Ok(state::displaced(&conn)?
-            .into_iter()
-            .flatten()
-            .filter_map(|row| {
-                let from = joined(&row.dir, &row.displacement.target);
-                let (reason, outside) = match row.outside() {
-                    Some(outside) => (
-                        self.left_outside(&outside)
-                            .then(|| outside_reason(&from, outside.shaped))?,
-                        true,
-                    ),
-                    None => {
-                        let away = self.displaced_away(&row)
-                            && !walked
-                                .iter()
-                                .any(|(_, path)| named_as(path, &row.displacement.kept));
-                        (away.then(|| format!(
-                            "Marfa moved {from} here while it wrote or removed it, and this directory is no longer in the folder, so Marfa cannot put it back; the file stays under this name wherever the directory now is"
-                        ))?, false)
-                    }
-                };
-                Some((
+        let kept = |id: String, path: String, reason: String, held: bool| {
+            (
+                id,
+                Flagged {
+                    path,
+                    flag: "kept",
+                    reason,
+                    item: None,
+                },
+                held,
+            )
+        };
+        let mut unsettled = Vec::new();
+        for row in state::displaced(&conn)? {
+            match row {
+                Ok(row) if row.outside() => unsettled.push(kept(
                     row.displacement.id.clone(),
-                    Flagged {
-                        path: joined(&row.aside, &row.displacement.kept),
-                        flag: "kept",
-                        reason,
-                        item: None,
-                    },
-                    outside,
-                ))
-            })
-            .collect())
+                    joined(&row.aside, &row.displacement.kept),
+                    outside_reason(&joined(&row.dir, &row.displacement.target)),
+                    true,
+                )),
+                Ok(row) => {
+                    if self.displaced_away(&row)
+                        && !walked
+                            .iter()
+                            .any(|(_, path)| named_as(path, &row.displacement.kept))
+                    {
+                        unsettled.push(kept(
+                            row.displacement.id.clone(),
+                            joined(&row.aside, &row.displacement.kept),
+                            format!(
+                                "Marfa moved {} here while it wrote or removed it, and this directory is no longer in the folder, so Marfa cannot put it back; the file stays under this name wherever the directory now is",
+                                joined(&row.dir, &row.displacement.target)
+                            ),
+                            false,
+                        ));
+                    }
+                }
+                Err(row) if !row.inside => {
+                    unsettled.push(kept(row.id, row.path, unread_displaced_reason(), true));
+                }
+                Err(_) => {}
+            }
+        }
+        for row in state::retained(&conn)? {
+            match row {
+                Ok(row) if row.outside() => unsettled.push(kept(
+                    row.retained.id.clone(),
+                    joined(&row.aside, &row.retained.kept),
+                    outside_reason(&joined(&row.dir, &row.retained.target)),
+                    true,
+                )),
+                Err(row) if Path::new(&row.aside).is_absolute() => unsettled.push(kept(
+                    row.id.clone(),
+                    joined(&row.aside, &row.kept),
+                    retained::unread_reason(&row),
+                    true,
+                )),
+                Ok(_) | Err(_) => {}
+            }
+        }
+        Ok(unsettled)
     }
 
     /// Ends each row whose directory a complete walk of the whole folder
@@ -1937,7 +1913,7 @@ impl Folder {
         let unfound: Vec<_> = self
             .unsettled(walked)?
             .into_iter()
-            .filter(|(_, _, outside)| !outside)
+            .filter(|(_, _, held)| !held)
             .collect();
         if unfound.is_empty() {
             return Ok(());
