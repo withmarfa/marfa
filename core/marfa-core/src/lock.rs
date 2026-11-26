@@ -300,7 +300,7 @@ fn name_moved(
 /// device and inode. Asked of SQLite, because opening the file again to
 /// compare and closing it would drop this process's locks on it.
 #[cfg(unix)]
-fn moved(claim: &Connection) -> Result<bool, CoreError> {
+pub(crate) fn moved(claim: &Connection) -> Result<bool, CoreError> {
     let mut moved: std::ffi::c_int = 0;
     // SAFETY: `claim.handle()` is live for the borrow, and SQLite writes one
     // `int` through the pointer for `SQLITE_FCNTL_HAS_MOVED`.
@@ -314,7 +314,7 @@ fn moved(claim: &Connection) -> Result<bool, CoreError> {
     };
     if rc != rusqlite::ffi::SQLITE_OK {
         return Err(CoreError::Store(format!(
-            "the writer lock's file could not be checked against its name (SQLite code {rc})"
+            "the database file could not be checked against its name (SQLite code {rc})"
         )));
     }
     Ok(moved != 0)
@@ -323,7 +323,7 @@ fn moved(claim: &Connection) -> Result<bool, CoreError> {
 /// Windows refuses to remove a file SQLite holds open, so its name cannot
 /// move while it is locked.
 #[cfg(not(unix))]
-fn moved(_claim: &Connection) -> Result<bool, CoreError> {
+pub(crate) fn moved(_claim: &Connection) -> Result<bool, CoreError> {
     Ok(false)
 }
 

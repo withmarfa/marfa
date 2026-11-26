@@ -56,7 +56,9 @@ pub use every::{
     Every, EveryFolder, Followed, HANDED_OVER, MISSING, PAUSED, RETRY_HANDED, Unwatched, followed,
     follows, watch_every,
 };
-pub use forget::{Forgotten, ForgottenIn, NotRead, Remembered, Remembering};
+pub use forget::{
+    Forgotten, ForgottenIn, NotRead, Remembered, Remembering, StillHeld, WaitingHold,
+};
 pub use handover::{HANDOVER_WAIT, held_by_another, not_handed_over};
 pub use held::{HeldFile, Settle, Settled};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};

@@ -44,9 +44,19 @@ pub struct Remembering {
     /// opaque: compare it for equality and do not parse it.
     #[serde(skip)]
     pub store: String,
-    /// Its held deletes that wait on the directory, decided again at its next
-    /// pass once it forgets.
-    pub held: Vec<HeldFile>,
+    /// Its held deletes that wait on the directory.
+    pub held: Vec<WaitingHold>,
+}
+
+/// A held delete that waits on the directory being forgotten.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WaitingHold {
+    #[serde(flatten)]
+    pub file: HeldFile,
+    /// The other directories it waits on, which keep it held once the
+    /// directory is forgotten. Where there are none, the forget releases it
+    /// and the folder's next pass decides it again.
+    pub still_waits_on: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -73,12 +83,21 @@ pub struct ForgottenIn {
     pub folder: String,
     /// Paths of its held deletes no longer held, which its next pass decides.
     pub released: Vec<String>,
+    /// Its held deletes that waited on the directory and still wait on
+    /// others.
+    pub still_held: Vec<StillHeld>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StillHeld {
+    pub path: String,
+    pub still_waits_on: Vec<PathBuf>,
 }
 
 impl Folder {
     /// Which listed folders remember `dir` or hold a delete that waits on it,
-    /// and which of those held deletes forgetting it lets be decided again. Reads only, and asks no watch for
-    /// a folder. `dir` is matched as spelled, made absolute, and never
+    /// and for each such held delete, the other directories it still waits
+    /// on once `dir` is forgotten. Reads only, and asks no watch for a folder. `dir` is matched as spelled, made absolute, and never
     /// through the file system, so a link standing in a parent leads nowhere
     /// else. A remembered path that differs from it only in case is pointed
     /// out, in `alike`. Refused where anything but an empty directory stands
@@ -120,8 +139,9 @@ impl Folder {
         Ok(shown)
     }
 
-    /// Forgets the directory in each folder `shown` names, and releases the
-    /// held deletes it showed that still wait on it, unchanged. A watch
+    /// Forgets the directory in each folder `shown` names, and takes it off
+    /// each held delete it showed that still waits on it, unchanged,
+    /// releasing the hold where it waits on nothing else. A watch
     /// holding a folder lets it go while this runs. A folder is changed only
     /// while the registry lists it at its path, its store is the one shown,
     /// the registry does not list the directory and nothing stands there but
@@ -145,10 +165,11 @@ impl Folder {
                 forget_in(holder, &shown.dir, wait)
             };
             match changed {
-                Ok(released) => done.forgotten.push(ForgottenIn {
+                Ok((released, still_held)) => done.forgotten.push(ForgottenIn {
                     dir: holder.dir.clone(),
                     folder: holder.folder.clone(),
                     released,
+                    still_held,
                 }),
                 Err(left) => {
                     done.listed |= matches!(left, Left::Listed);
@@ -285,14 +306,17 @@ fn read(
         .filter(|other| other.dir != target && alike(&other.dir, target))
         .map(|other| other.dir.clone())
         .collect();
-    let waiting: Vec<HeldFile> = held
+    let waiting: Vec<WaitingHold> = held
         .into_iter()
         .filter_map(|row| match row.kept {
-            Some(state::Kept::Unsure(unsure)) if unsure.waits_on(target) => Some(HeldFile {
-                path: row.path,
-                item: row.item_id,
-                missing_since: row.missing_since,
-                reason: unsure.reason,
+            Some(state::Kept::Unsure(unsure)) if unsure.waits_on(target) => Some(WaitingHold {
+                still_waits_on: without(&unsure, target),
+                file: HeldFile {
+                    path: row.path,
+                    item: row.item_id,
+                    missing_since: row.missing_since,
+                    reason: unsure.reason,
+                },
             }),
             _ => None,
         })
@@ -316,6 +340,7 @@ fn read(
 
 const NOT_SHOWN: &str =
     "its saved state is not the one that was shown, so nothing in it was changed";
+const MOVED: &str = "its saved state moved out of its directory while it was being changed, so nothing in it was changed";
 const NOT_LISTED: &str =
     "the registry no longer lists it as the folder that was shown, so nothing in it was changed";
 
@@ -372,12 +397,13 @@ fn still_at_path(
 }
 
 /// Forgets `target` in the folder `holder` names, under its writer lock,
-/// and answers the paths released; or why nothing in it changed.
+/// and answers the paths released and the holds still waiting on others; or
+/// why nothing in it changed.
 fn forget_in(
     holder: &Remembering,
     target: &Path,
     wait: Duration,
-) -> std::result::Result<Vec<String>, Left> {
+) -> std::result::Result<(Vec<String>, Vec<StillHeld>), Left> {
     let registry_read =
         || listed().map_err(|error| because("the folder registry cannot be read")(&error));
     let entry = registry_read()?
@@ -405,7 +431,7 @@ fn forget_in(
     }
     let core = Core::open_claimed(&state_dir, &label, None, Arc::new(lock))
         .map_err(|error| because("its saved state cannot be opened")(&error))?;
-    (|| -> Result<std::result::Result<Vec<String>, Left>> {
+    (|| -> Result<std::result::Result<(Vec<String>, Vec<StillHeld>), Left>> {
         let (folder, store, _) = bound_store(&core, &state_dir)?;
         if folder.as_deref() != Some(holder.folder.as_str()) || store != holder.store {
             return Ok(Err(NOT_SHOWN.into()));
@@ -437,20 +463,47 @@ fn forget_in(
                 store::meta_set(&tx, META_OTHERS, &json)?;
             }
             let mut released: Vec<String> = Vec::new();
-            for file in &holder.held {
-                let still = state::journaled_at(&tx, &file.path, &file.item)?.is_some_and(|row| {
-                    row.missing_since == file.missing_since
-                        && matches!(row.kept, Some(state::Kept::Unsure(unsure)) if unsure.waits_on(target))
-                });
-                if still {
+            let mut still_held: Vec<StillHeld> = Vec::new();
+            for WaitingHold { file, .. } in &holder.held {
+                let Some(row) = state::journaled_at(&tx, &file.path, &file.item)? else {
+                    continue;
+                };
+                let Some(state::Kept::Unsure(unsure)) = row.kept else {
+                    continue;
+                };
+                if row.missing_since != file.missing_since || !unsure.waits_on(target) {
+                    continue;
+                }
+                let rest = without(&unsure, target);
+                if rest.is_empty() {
                     state::journal_keep(&tx, &file.path, &file.item, None)?;
                     if !released.contains(&file.path) {
                         released.push(file.path.clone());
                     }
+                } else {
+                    let narrowed = state::Unsure::on(unsure.reason, rest.clone());
+                    state::journal_keep(
+                        &tx,
+                        &file.path,
+                        &file.item,
+                        Some(&state::Kept::Unsure(narrowed)),
+                    )?;
+                    let still = StillHeld {
+                        path: file.path.clone(),
+                        still_waits_on: rest,
+                    };
+                    if !still_held.contains(&still) {
+                        still_held.push(still);
+                    }
                 }
             }
+            // The checks above read the state directory, not the open file,
+            // which can move out of it while the registry is awaited.
+            if crate::lock::moved(&tx)? {
+                return Ok(Err(MOVED.into()));
+            }
             tx.commit()?;
-            Ok(Ok(released))
+            Ok(Ok((released, still_held)))
         };
         match Registry::located() {
             Some(registry) => registry.while_written(commit)?,
@@ -472,6 +525,17 @@ fn remembered_in(conn: &Connection) -> Result<Vec<Registered>> {
 /// Which store was read: its state directory, its file and the id it holds.
 fn store_key(place: &str, mark: (u64, u64), id: Option<&str>) -> String {
     format!("{place}/{}:{}/{}", mark.0, mark.1, id.unwrap_or_default())
+}
+
+/// The directories `unsure` waits on but `target`.
+fn without(unsure: &state::Unsure, target: &Path) -> Vec<PathBuf> {
+    unsure
+        .waits_on
+        .iter()
+        .flatten()
+        .filter(|dir| dir.as_path() != target)
+        .cloned()
+        .collect()
 }
 
 fn alike(one: &Path, other: &Path) -> bool {

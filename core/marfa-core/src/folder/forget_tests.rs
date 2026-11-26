@@ -68,7 +68,7 @@ fn forgetting_a_gone_folder_lets_its_held_delete_be_decided_again_and_sent_with_
     let held: Vec<&str> = shown.folders[0]
         .held
         .iter()
-        .map(|file| file.path.as_str())
+        .map(|waiting| waiting.file.path.as_str())
         .collect();
     assert_eq!(held, ["held.txt"], "{shown:?}");
 
@@ -387,7 +387,7 @@ fn a_hold_for_a_folder_with_an_unreadable_part_is_released_by_forgetting_it() {
     let held: Vec<&str> = shown.folders[0]
         .held
         .iter()
-        .map(|file| file.path.as_str())
+        .map(|waiting| waiting.file.path.as_str())
         .collect();
     assert_eq!(held, ["held.txt"], "{shown:?}");
     drop(a);
@@ -530,7 +530,10 @@ fn a_hold_that_does_not_wait_on_the_directory_is_not_released_when_passed_back()
         .find(|file| file.path == "own.txt")
         .unwrap();
     let mut shown = Folder::remembering(other.path()).unwrap();
-    shown.folders[0].held.push(own);
+    shown.folders[0].held.push(forget::WaitingHold {
+        file: own,
+        still_waits_on: Vec::new(),
+    });
     drop(a);
     let forgotten = Folder::forget_remembered(&shown).unwrap();
     assert_eq!(
@@ -864,7 +867,7 @@ fn a_hold_waiting_on_a_directory_no_longer_remembered_is_released_by_forgetting_
     let held: Vec<&str> = shown.folders[0]
         .held
         .iter()
-        .map(|file| file.path.as_str())
+        .map(|waiting| waiting.file.path.as_str())
         .collect();
     assert_eq!(held, ["held.txt"], "{shown:?}");
     drop(a);
@@ -901,4 +904,126 @@ fn a_mount_point_holding_only_machine_files_is_forgotten() {
         ["held.txt"],
         "{forgotten:?}"
     );
+}
+
+/// A hold that waits on two directories is narrowed by forgetting one, and
+/// released only once the other is forgotten too: the other may hold the
+/// file, and the hold is the only record of it once no folder remembers it.
+#[test]
+fn forgetting_one_directory_a_hold_waits_on_keeps_it_held_on_the_other() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (from, a, other) = holding_for_a_gone_folder([
+        "01a00000-0000-7000-8000-000000357853",
+        "01a00000-0000-7000-8000-000000357854",
+    ]);
+    let second = from.path().with_file_name(format!(
+        "{}-second",
+        from.path().file_name().unwrap().to_string_lossy()
+    ));
+    let waits = serde_json::to_string(&[other.path(), second.as_path()]).unwrap();
+    set_journal(
+        &a,
+        &format!("UPDATE folder_journal SET waits_on = '{waits}' WHERE path = ?1"),
+        "held.txt",
+    );
+    remembers(&a, &[]);
+    let shown = Folder::remembering(other.path()).unwrap();
+    assert_eq!(shown.folders.len(), 1, "{shown:?}");
+    assert_eq!(shown.folders[0].held.len(), 1, "{shown:?}");
+    assert_eq!(shown.folders[0].held[0].still_waits_on, [second.clone()]);
+    drop(a);
+    let forgotten = Folder::forget_remembered(&shown).unwrap();
+    assert_eq!(forgotten.not_changed, [], "{forgotten:?}");
+    assert_eq!(
+        forgotten.forgotten[0].released,
+        Vec::<String>::new(),
+        "{forgotten:?}"
+    );
+    assert_eq!(
+        forgotten.forgotten[0].still_held,
+        [forget::StillHeld {
+            path: "held.txt".into(),
+            still_waits_on: vec![second.clone()],
+        }],
+    );
+    assert_eq!(held_in(from.path()), ["held.txt"]);
+    let a = Folder::open(from.path(), None).unwrap();
+    let kept = a.scan().unwrap();
+    assert!(kept.trashed.is_empty(), "{kept:?}");
+    assert_eq!(held_paths(&kept), ["held.txt"], "{kept:?}");
+    drop(a);
+
+    let shown = Folder::remembering(&second).unwrap();
+    assert_eq!(shown.folders.len(), 1, "{shown:?}");
+    assert_eq!(
+        shown.folders[0].held[0].still_waits_on,
+        Vec::<PathBuf>::new()
+    );
+    let forgotten = Folder::forget_remembered(&shown).unwrap();
+    assert_eq!(
+        forgotten.forgotten[0].released,
+        ["held.txt"],
+        "{forgotten:?}"
+    );
+    let a = Folder::open(from.path(), None).unwrap();
+    assert_eq!(a.scan().unwrap().trashed, ["held.txt"]);
+}
+
+/// A store moved out of its state directory while the forget waits for the
+/// registry is not the folder's store any longer, so nothing in it changes.
+#[test]
+fn a_store_moved_out_of_its_state_directory_while_the_forget_waits_is_left_as_it_was() {
+    let (registry, _guard) = registry::tests::own_registry();
+    let (from, a, other) = holding_for_a_gone_folder([
+        "01a00000-0000-7000-8000-000000357855",
+        "01a00000-0000-7000-8000-000000357856",
+    ]);
+    let shown = Folder::remembering(other.path()).unwrap();
+    drop(a);
+    let lock = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(registry.path().with_extension("lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let state = from.path().join(STATE_DIR);
+    let park = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let (state_at, park_at) = (state.clone(), park.path().to_path_buf());
+    let mover = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        for name in ["core.sqlite", "core.sqlite-wal", "core.sqlite-shm"] {
+            if state_at.join(name).exists() {
+                std::fs::rename(state_at.join(name), park_at.join(name)).unwrap();
+            }
+        }
+        drop(lock);
+    });
+    let forgotten = Folder::forget_remembered(&shown).unwrap();
+    mover.join().unwrap();
+    assert_eq!(forgotten.forgotten, [], "{forgotten:?}");
+    let left: Vec<&Path> = forgotten
+        .not_changed
+        .iter()
+        .map(|left| left.dir.as_path())
+        .collect();
+    assert_eq!(left, [from.path()], "{forgotten:?}");
+    assert!(
+        forgotten.not_changed[0]
+            .reason
+            .contains("moved out of its directory"),
+        "{forgotten:?}"
+    );
+    let moved = park.path().join("core.sqlite");
+    assert!(remembered_at(&moved).contains(&other.path().to_path_buf()));
+    let kept: Option<String> = rusqlite::Connection::open(&moved)
+        .unwrap()
+        .query_row(
+            "SELECT kept FROM folder_journal WHERE path = 'held.txt'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(kept.as_deref(), Some("unsure"));
 }
