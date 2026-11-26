@@ -345,6 +345,14 @@ stays because that thing is what it checks.
   owner discards it, where its record %s" and "lists through a binding a file
   kept under a record it cannot read, and discards it only %s as set aside"
   also use an unreadable record. No operation or fault produces one.
+- In the same file, "lists both files two stopped discards left under one
+  record it cannot read" spoils a retained-file record. "forgets a record of
+  a stopped discard it cannot read once its file is gone, when the owner
+  discards" spoils a discard record.
+- `device/folders-unmatched.test.ts`, "lists a stopped removal whose record
+  it cannot read once its file is gone, and ends it with --remove, keeping
+  the item", spoils a removal record. The crash faults leave readable
+  records, so they cannot produce these cases on their own.
 - `compliance/mcp-sign-in-acts.test.ts`, "refuses a confirmation once a new
   approval added a destination since the preview, with a new preview", adds a
   redirect URI to an app's stored registration while the server runs. Only a
