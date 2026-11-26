@@ -494,6 +494,16 @@ export class BindingDevice {
     return this.folderCall("list");
   }
 
+  /** The listed folders that remember a directory (`folder-files/forget-remembered`). */
+  remembering(dir: string): Call<BindingRemembered> {
+    return this.folderCall("remembering", dir);
+  }
+
+  /** Forgets the directory in each folder `remembered` names. */
+  forgetRemembered(remembered: BindingRemembered): Call<BindingForgotten> {
+    return this.folderCall("forgetRemembered", remembered);
+  }
+
   folder(dir: string): BindingFolder {
     return new BindingFolder(this, dir);
   }
@@ -1010,6 +1020,33 @@ export type BindingFolderEvent =
         | "removed"
         | "unlisted";
     };
+
+/** What `remembering` read, passed back unchanged to `forgetRemembered`. */
+export interface BindingRemembered {
+  dir: string;
+  listed: boolean;
+  folders: Array<{
+    dir: string;
+    folder: string;
+    store: string;
+    held: Array<{
+      path: string;
+      item: string;
+      missingSince: string;
+      reason: string;
+    }>;
+  }>;
+  notRead: Array<{ dir: string; reason: string }>;
+  alike: string[];
+}
+
+/** What `forgetRemembered` changed. */
+export interface BindingForgotten {
+  dir: string;
+  listed: boolean;
+  forgotten: Array<{ dir: string; folder: string; released: string[] }>;
+  notChanged: Array<{ dir: string; reason: string }>;
+}
 
 /** What `trashHeld` or `keepHeld` did. */
 export interface BindingHeldSettled {

@@ -1745,6 +1745,29 @@ export interface HeldSettled {
   declined: boolean;
 }
 
+/** A folder `folders forget` did not read or change, and why. */
+export interface FolderLeft {
+  dir: string;
+  reason: string;
+}
+
+/**
+ * What `folders forget` showed and, once confirmed, did
+ * (`folder-files/forget-remembered`). `exit` is 3 where it named a folder it
+ * could not read or change.
+ */
+export interface ForgetReport {
+  dir: string;
+  listed: boolean;
+  folders: Array<{ dir: string; folder: string; held: HeldFile[] }>;
+  not_read: FolderLeft[];
+  alike: string[];
+  declined: boolean;
+  forgotten: Array<{ dir: string; folder: string; released: string[] }>;
+  not_changed: FolderLeft[];
+  exit: number;
+}
+
 /** What `folders unmatched --remove` did (`folder-guards/unmatched-remove-file`). */
 export interface UnmatchedRemoval {
   removed: UnmatchedFile[];
@@ -2014,6 +2037,36 @@ export class CliFolder {
       "--keep",
       ...paths,
       ...(options.writeBack === true ? ["--write-back"] : []),
+    ]);
+  }
+
+  /**
+   * Has the folders this folder's registry lists forget a directory they
+   * remember (`folder-files/forget-remembered`). Without `yes` and without a
+   * terminal the command only shows what it would do.
+   */
+  async forget(
+    dir: string,
+    options: { yes?: boolean } = {},
+  ): Promise<Outcome<ForgetReport>> {
+    return this.device().rootReport<Omit<ForgetReport, "exit">>([
+      "folders",
+      "forget",
+      dir,
+      ...(options.yes === true ? ["--yes"] : []),
+    ]);
+  }
+
+  /** `forget`, printed for a person. */
+  async forgetText(
+    dir: string,
+    options: { yes?: boolean } = {},
+  ): Promise<Outcome<{ text: string; exit: number }>> {
+    return this.device().rootReportText([
+      "folders",
+      "forget",
+      dir,
+      ...(options.yes === true ? ["--yes"] : []),
     ]);
   }
 
