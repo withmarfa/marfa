@@ -179,13 +179,13 @@ pub(crate) fn settle_landings(
                         .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
                     {
                         unbind(conn, &left.path)?;
-                        journal_clear(conn, &left.path)?;
+                        journal_clear(conn, &left.path, &left.item_id)?;
                     }
                 }
             }
             Some(None) => {
                 unbind(conn, &row.path)?;
-                journal_clear(conn, &row.path)?;
+                journal_clear(conn, &row.path, &row.item_id)?;
             }
         }
     }
@@ -1044,8 +1044,10 @@ pub fn copy_moment(conn: &Connection) -> Result<String, CoreError> {
 /// still reaches the grace.
 pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
     conn.execute_cached(
-        "INSERT OR IGNORE INTO folder_journal (path, item_id, missing_since)
-         VALUES (?1, ?2, ?3)",
+        "INSERT OR IGNORE INTO folder_journal
+           (path, item_id, missing_since, identity, content_hash)
+         SELECT ?1, ?2, ?3, f.identity, f.content_hash
+         FROM (SELECT 1) LEFT JOIN folder_files f ON f.path = ?1 AND f.item_id = ?2",
         params![
             path,
             item_id,
@@ -1056,12 +1058,7 @@ pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(
 }
 
 /// A row that outlives its question becomes a delete nobody asked for.
-pub fn journal_clear(conn: &Connection, path: &str) -> Result<(), CoreError> {
-    conn.execute_cached("DELETE FROM folder_journal WHERE path = ?1", [path])?;
-    Ok(())
-}
-
-pub fn journal_clear_for(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
+pub fn journal_clear(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
     conn.execute_cached(
         "DELETE FROM folder_journal WHERE path = ?1 AND item_id = ?2",
         [path, item_id],
@@ -1094,10 +1091,14 @@ pub fn journal_carried(
         )?;
     }
     conn.execute_cached(
-        "INSERT INTO folder_journal (path, item_id, missing_since, kept, reason)
-         VALUES (?1, ?2, ?3, 'carried', ?4)
-         ON CONFLICT (path) DO UPDATE SET
-           item_id = excluded.item_id, kept = 'carried', reason = excluded.reason",
+        "INSERT INTO folder_journal
+           (path, item_id, missing_since, kept, reason, identity, content_hash)
+         SELECT ?1, ?2, ?3, 'carried', ?4, f.identity, f.content_hash
+         FROM (SELECT 1) LEFT JOIN folder_files f ON f.path = ?1 AND f.item_id = ?2
+         WHERE true
+         ON CONFLICT (path, item_id) DO UPDATE SET
+           kept = 'carried', reason = excluded.reason,
+           identity = coalesce(excluded.identity, identity)",
         params![
             path,
             item_id,
@@ -1111,8 +1112,8 @@ pub fn journal_carried(
 /// Journals as missing from now a file no other file carries any longer.
 pub fn journal_uncarried(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
     conn.execute_cached(
-        "DELETE FROM folder_journal WHERE path = ?1 AND kept = 'carried'",
-        [path],
+        "DELETE FROM folder_journal WHERE path = ?1 AND item_id = ?2 AND kept = 'carried'",
+        [path, item_id],
     )?;
     journal_missing(conn, path, item_id)
 }
@@ -1141,6 +1142,8 @@ pub struct Journaled {
     pub missing_since: String,
     /// What the last sweep that looked decided, where it kept the binding.
     pub kept: Option<Kept>,
+    pub identity: Option<String>,
+    pub content_hash: Option<String>,
 }
 
 impl Journaled {
@@ -1180,25 +1183,44 @@ pub fn journal_keep(
     Ok(())
 }
 
-/// Every journaled delete, by path.
+pub fn journaled_at(
+    conn: &Connection,
+    path: &str,
+    item_id: &str,
+) -> Result<Option<Journaled>, CoreError> {
+    Ok(conn
+        .prepare_cached(&format!(
+            "SELECT {JOURNALED} FROM folder_journal WHERE path = ?1 AND item_id = ?2"
+        ))?
+        .query_row([path, item_id], journaled_row)
+        .optional()?)
+}
+
+const JOURNALED: &str = "path, item_id, missing_since, kept, reason, identity, content_hash";
+
+fn journaled_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Journaled> {
+    let reason: Option<String> = row.get(4)?;
+    Ok(Journaled {
+        path: row.get(0)?,
+        item_id: row.get(1)?,
+        missing_since: row.get(2)?,
+        kept: match row.get::<_, Option<String>>(3)?.as_deref() {
+            Some("arriving") => Some(Kept::Arriving),
+            Some("carried") => Some(Kept::Carried(reason.unwrap_or_default())),
+            Some(_) => Some(Kept::Unsure(reason.unwrap_or_default())),
+            None => None,
+        },
+        identity: row.get(5)?,
+        content_hash: row.get(6)?,
+    })
+}
+
+/// Every journaled delete, by path and item.
 pub fn journaled(conn: &Connection) -> Result<Vec<Journaled>, CoreError> {
-    let mut statement = conn.prepare(
-        "SELECT path, item_id, missing_since, kept, reason FROM folder_journal ORDER BY path",
-    )?;
-    let rows = statement.query_map([], |row| {
-        let reason: Option<String> = row.get(4)?;
-        Ok(Journaled {
-            path: row.get(0)?,
-            item_id: row.get(1)?,
-            missing_since: row.get(2)?,
-            kept: match row.get::<_, Option<String>>(3)?.as_deref() {
-                Some("arriving") => Some(Kept::Arriving),
-                Some("carried") => Some(Kept::Carried(reason.unwrap_or_default())),
-                Some(_) => Some(Kept::Unsure(reason.unwrap_or_default())),
-                None => None,
-            },
-        })
-    })?;
+    let mut statement = conn.prepare(&format!(
+        "SELECT {JOURNALED} FROM folder_journal ORDER BY path, item_id"
+    ))?;
+    let rows = statement.query_map([], journaled_row)?;
     let mut journaled = Vec::new();
     for row in rows {
         journaled.push(row?);
@@ -1240,7 +1262,8 @@ pub fn record_digest(conn: &Connection) -> Result<[u8; 32], CoreError> {
         &[],
     )?;
     take(
-        "SELECT path, item_id, missing_since, kept, reason FROM folder_journal ORDER BY path",
+        "SELECT path, item_id, missing_since, kept, reason, identity, content_hash
+         FROM folder_journal ORDER BY path, item_id",
         &[],
     )?;
     take(

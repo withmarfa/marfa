@@ -580,8 +580,10 @@ CREATE TABLE IF NOT EXISTS folder_unheld (
   content_hash TEXT NOT NULL
 ) WITHOUT ROWID;
 
+-- One row for each item that went missing at a path, so another item bound
+-- at the path, or missing there too, leaves the row as it is.
 CREATE TABLE IF NOT EXISTS folder_journal (
-  path TEXT PRIMARY KEY,
+  path TEXT NOT NULL,
   item_id TEXT NOT NULL,
   missing_since TEXT NOT NULL,
   -- Why a sweep kept the file's binding: `arriving`, until the folder the
@@ -590,7 +592,12 @@ CREATE TABLE IF NOT EXISTS folder_journal (
   -- skips, carries its identity or its item's ID. A pull writes no file over
   -- any of them.
   kept TEXT CHECK (kept IN ('arriving', 'unsure', 'carried')),
-  reason TEXT
+  reason TEXT,
+  -- The missing file's identity and bytes, as its binding last recorded
+  -- them, which a later look for it reads once the binding is gone.
+  identity TEXT,
+  content_hash TEXT,
+  PRIMARY KEY (path, item_id)
 ) WITHOUT ROWID;
 
 -- What each link and embed in a body written through this copy names: the

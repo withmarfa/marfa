@@ -54,13 +54,19 @@ impl Folder {
                 state::journaled(&conn)?,
             )
         };
-        let journaled: HashMap<String, String> = journaled
-            .into_iter()
-            .map(|row| (row.path, row.item_id))
-            .collect();
+        let mut by_path: HashMap<String, Vec<String>> = HashMap::new();
+        for row in journaled {
+            by_path.entry(row.path).or_default().push(row.item_id);
+        }
         let paused: Vec<(String, String)> = disk
             .iter()
-            .filter_map(|path| Some((path.clone(), journaled.get(path)?.clone())))
+            .flat_map(|path| {
+                by_path
+                    .get(path)
+                    .into_iter()
+                    .flatten()
+                    .map(|item_id| (path.clone(), item_id.clone()))
+            })
             .collect();
         let mut confirmed = Confirmed::default();
         let mut waiting = Vec::new();
@@ -158,8 +164,9 @@ impl Folder {
                 continue;
             }
             let since = journaled.get(&(path.clone(), item_id.clone()));
+            let in_grace = matches!(since, Some((since, None))
+                if !super::scan::elapsed_past(since, now, super::RENAME_GRACE));
             let reason = match self.file_at(&self.root.join(path)) {
-                Err(error) => format!("its path cannot be checked ({error})"),
                 Ok(true) => continue,
                 // Paused, it stays in view for a confirm that reads it all.
                 Ok(false) if !scanned.swept => {
@@ -170,20 +177,20 @@ impl Folder {
                     });
                     continue;
                 }
+                // A rename takes as long to show here as a sweep waits,
+                // whether or not its path can be read.
+                _ if in_grace => {
+                    waiting.push(path.clone());
+                    confirmed.unsure.push(Unsure {
+                        path: path.clone(),
+                        reason: "it went missing less than the rename grace ago, so its removal stays paused for a later confirm or scan to decide".into(),
+                    });
+                    continue;
+                }
+                Err(error) => format!("its path cannot be checked ({error})"),
                 Ok(false) => match since {
                     // The person settles a held file with `folders held`.
                     Some((_, Some(reason))) => reason.clone(),
-                    // A rename takes as long to show here as a sweep waits.
-                    Some((since, None))
-                        if !super::scan::elapsed_past(since, now, super::RENAME_GRACE) =>
-                    {
-                        waiting.push(path.clone());
-                        confirmed.unsure.push(Unsure {
-                            path: path.clone(),
-                            reason: "it went missing less than the rename grace ago, so its removal stays paused for a later confirm or scan to decide".into(),
-                        });
-                        continue;
-                    }
                     Some(_) => {
                         missing.push((path.clone(), item_id.clone()));
                         continue;
@@ -279,7 +286,7 @@ impl Folder {
                 // The file leaves for good, so its placement ends before its binding.
                 self.end_placement(&bound.item_id, path)?;
                 let conn = self.core.conn()?;
-                state::journal_clear(&conn, path)?;
+                state::journal_clear(&conn, path, &bound.item_id)?;
                 state::unbind(&conn, path)?;
                 continue;
             }
@@ -290,7 +297,7 @@ impl Folder {
                 continue;
             }
             let conn = self.core.conn()?;
-            state::journal_clear(&conn, path)?;
+            state::journal_clear(&conn, path, &bound.item_id)?;
             marked.push((path, bound.item_id.clone()));
             state::bind(
                 &conn,

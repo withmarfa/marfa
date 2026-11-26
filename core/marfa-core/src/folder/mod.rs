@@ -1358,6 +1358,7 @@ fn follow_binding(
         Err(error) => return Err(io(error)),
     };
     let metadata = file.metadata().map_err(io)?;
+    let item_id = bound.item_id.clone();
     let settled = match bound.writes.landing.clone() {
         None => Some(bound),
         Some(landing) => {
@@ -1383,7 +1384,7 @@ fn follow_binding(
         ),
         None => {
             state::unbind(conn, &follow.from)?;
-            state::journal_clear(conn, &follow.from)
+            state::journal_clear(conn, &follow.from, &item_id)
         }
     }
 }

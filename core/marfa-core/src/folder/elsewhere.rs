@@ -471,8 +471,19 @@ pub(super) struct Lost<'a> {
     pub path: &'a str,
     pub item_id: &'a str,
     pub identity: Option<&'a str>,
-    /// `None` where its binding is gone, which leaves no bytes to match.
+    /// `None` where neither its binding nor its journal row recorded bytes.
     pub content_hash: Option<&'a str>,
+}
+
+impl<'a> From<&'a state::Journaled> for Lost<'a> {
+    fn from(row: &'a state::Journaled) -> Lost<'a> {
+        Lost {
+            path: &row.path,
+            item_id: &row.item_id,
+            identity: row.identity.as_deref(),
+            content_hash: row.content_hash.as_deref(),
+        }
+    }
 }
 
 impl<'a> From<&'a state::Bound> for Lost<'a> {
@@ -624,16 +635,47 @@ impl<'a> Peers<'a> {
                 "the list of folders on this computer cannot be read ({why}), so Marfa cannot tell its delete from a move into another folder"
             ));
         }
-        match self.all() {
-            [] => None,
-            [peer] => Some(format!(
-                "another folder is on this computer, at {}, so Marfa cannot tell its delete from a move into it",
-                peer.root.display()
-            )),
-            peers => Some(format!(
-                "{} other folders are on this computer, so Marfa cannot tell its delete from a move into one of them",
-                peers.len()
-            )),
+        let roots: Vec<&Path> = self.all().iter().map(|peer| peer.root.as_path()).collect();
+        others_withhold(&roots)
+    }
+
+    /// Runs `delete` only while this computer still has no other folder,
+    /// listed or remembered, read again under the registry's lock so that no
+    /// folder is listed between the check and the delete; otherwise answers
+    /// why the delete is withheld.
+    pub(super) fn while_alone<T>(
+        &self,
+        delete: impl FnOnce() -> Result<T>,
+    ) -> Result<std::result::Result<T, String>> {
+        let Some(registry) = Registry::located() else {
+            return delete().map(Ok);
+        };
+        let own = &self.of.root;
+        let alone = registry.while_listed(|listed| {
+            let remembered: Vec<Registered> = {
+                let conn = self.of.core.conn()?;
+                store::meta_get(&conn, META_OTHERS)?
+                    .and_then(|json| serde_json::from_str(&json).ok())
+                    .unwrap_or_default()
+            };
+            let roots: Vec<&Path> = listed
+                .iter()
+                .chain(&remembered)
+                .filter(|entry| &entry.dir != own)
+                .map(|entry| entry.dir.as_path())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            match others_withhold(&roots) {
+                Some(why) => Ok(Err(why)),
+                None => delete().map(Ok),
+            }
+        });
+        match alone {
+            Ok(decided) => decided,
+            Err(error) => Ok(Err(format!(
+                "the list of folders on this computer cannot be read ({error}), so Marfa cannot tell its delete from a move into another folder"
+            ))),
         }
     }
 
@@ -777,6 +819,20 @@ impl<'a> Peers<'a> {
                 peer.root.display()
             ));
         }
+        // Unread, part of a folder may hold the moved file or a second one.
+        if let Some(why) = peers.iter().find_map(|peer| peer.walked().partial.clone()) {
+            return Look::Unsure(why);
+        }
+        // Where both folders hold the item, the other's file of it is its
+        // own, not this one moved.
+        let theirs = |peer: &Peer, file: &OnDisk| {
+            held_here
+                && peer.holds(item) == Some(true)
+                && peer
+                    .bound()
+                    .get(&file.key)
+                    .is_some_and(|bound| bound.item == item)
+        };
         if let Some(identity) = lost.identity {
             let same: Vec<(&Peer, &OnDisk)> = peers
                 .iter()
@@ -792,18 +848,41 @@ impl<'a> Peers<'a> {
                 // A file it bound before is its own, unless it took it in by
                 // this identity, as a move it read first.
                 [(peer, file)] => {
-                    return match peer.bound().get(&file.key) {
-                        Some(bound)
-                            if bound.item != item
-                                || bound.identity.as_deref() != Some(identity) =>
-                        {
-                            Look::Unsure(format!(
-                                "{} is the same file on the disk, and the folder there already holds it as a file of its own",
-                                file.path.display()
-                            ))
-                        }
-                        _ => arrival(peer, file),
-                    };
+                    if let Some(bound) = peer.bound().get(&file.key)
+                        && (bound.item != item || bound.identity.as_deref() != Some(identity))
+                    {
+                        return Look::Unsure(format!(
+                            "{} is the same file on the disk, and the folder there already holds it as a file of its own",
+                            file.path.display()
+                        ));
+                    }
+                    // Another file with its id could be the one it became.
+                    let also = peers
+                        .iter()
+                        .flat_map(|other| {
+                            other
+                                .files()
+                                .iter()
+                                .filter(move |also| {
+                                    also.id.as_deref() == Some(item) && !theirs(other, also)
+                                })
+                                .map(move |also| (*other, also))
+                        })
+                        .filter(|(other, also)| {
+                            !(std::ptr::eq(*other, *peer) && also.key == file.key)
+                        })
+                        .count();
+                    if also > 0 {
+                        let others = match also {
+                            1 => "another file in the other folders carries".to_string(),
+                            also => format!("{also} other files in the other folders carry"),
+                        };
+                        return Look::Unsure(format!(
+                            "{} is the same file on the disk, and {others} its id, so which it became cannot be told",
+                            file.path.display()
+                        ));
+                    }
+                    return arrival(peer, file);
                 }
                 _ => {
                     return Look::Unsure(format!(
@@ -813,19 +892,6 @@ impl<'a> Peers<'a> {
                 }
             }
         }
-        if let Some(why) = peers.iter().find_map(|peer| peer.walked().partial.clone()) {
-            return Look::Unsure(why);
-        }
-        // Where both folders hold the item, the other's file of it is its
-        // own, not this one moved.
-        let theirs = |peer: &Peer, file: &OnDisk| {
-            held_here
-                && peer.holds(item) == Some(true)
-                && peer
-                    .bound()
-                    .get(&file.key)
-                    .is_some_and(|bound| bound.item == item)
-        };
         if !file_item && carries_frontmatter(Path::new(lost.path)) {
             let found = peers
                 .iter()
@@ -846,26 +912,6 @@ impl<'a> Peers<'a> {
         let Some(lost_hash) = lost.content_hash else {
             return Look::Nowhere;
         };
-        // A file with bytes two of this folder's files had could be either.
-        match self
-            .of
-            .core
-            .conn()
-            .and_then(|conn| state::bound_with_hash(&conn, lost_hash))
-        {
-            Ok(sources) if sources.len() > 1 => {
-                return Look::Unsure(format!(
-                    "{} files in this folder have its bytes, and which of them a file with them is cannot be told",
-                    sources.len()
-                ));
-            }
-            Ok(_) => {}
-            Err(error) => {
-                return Look::Unsure(format!(
-                    "which of this folder's files have its bytes cannot be read ({error})"
-                ));
-            }
-        }
         // Bytes another folder knows as another item could be either's.
         if let Some(peer) = peers.iter().find(|peer| {
             peer.bound()
@@ -908,13 +954,52 @@ impl<'a> Peers<'a> {
             }
         }
         match (matches, last) {
-            (1, Some((peer, file))) => arrival(peer, file),
+            (1, Some((peer, file))) => {
+                // A file with bytes two of this folder's files had could be
+                // either; with no such file, those bytes tell nothing.
+                match self
+                    .of
+                    .core
+                    .conn()
+                    .and_then(|conn| state::bound_with_hash(&conn, lost_hash))
+                {
+                    Ok(sources) => match sources
+                        .iter()
+                        .filter(|source| source.path != lost.path || source.item_id != item)
+                        .count()
+                    {
+                        0 => arrival(peer, file),
+                        others => Look::Unsure(format!(
+                            "{} files in this folder have its bytes, and which of them a file with them is cannot be told",
+                            others + 1
+                        )),
+                    },
+                    Err(error) => Look::Unsure(format!(
+                        "which of this folder's files have its bytes cannot be read ({error})"
+                    )),
+                }
+            }
             (0, _) => Look::Nowhere,
             _ => Look::Unsure(format!(
                 "{} files in other folders have its bytes, and which it became cannot be told",
                 matches
             )),
         }
+    }
+}
+
+/// Why the other folders at `roots` withhold a delete, `None` where there are none.
+fn others_withhold(roots: &[&Path]) -> Option<String> {
+    match roots {
+        [] => None,
+        [root] => Some(format!(
+            "another folder is on this computer, at {}, so Marfa cannot tell its delete from a move into it",
+            root.display()
+        )),
+        roots => Some(format!(
+            "{} other folders are on this computer, so Marfa cannot tell its delete from a move into one of them",
+            roots.len()
+        )),
     }
 }
 

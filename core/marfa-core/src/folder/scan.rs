@@ -1131,10 +1131,10 @@ impl Folder {
     /// not look at the carrier; so does a walk that could not read every file
     /// that may carry it.
     fn still_carried(&self, scan: &ScanState) -> Result<HashMap<String, HeldCarried>> {
-        let recorded: HashMap<String, (String, String)> = state::journaled(&*self.core.conn()?)?
+        let recorded: HashMap<(String, String), String> = state::journaled(&*self.core.conn()?)?
             .into_iter()
             .filter_map(|row| match row.kept {
-                Some(state::Kept::Carried(carrier)) => Some((row.path, (row.item_id, carrier))),
+                Some(state::Kept::Carried(carrier)) => Some(((row.path, row.item_id), carrier)),
                 _ => None,
             })
             .collect();
@@ -1145,9 +1145,8 @@ impl Folder {
             .collect();
         let recorded_for = |bound: &state::Bound| {
             recorded
-                .get(&bound.path)
-                .filter(|(item_id, _)| *item_id == bound.item_id)
-                .map(|(_, carrier)| carrier.as_str())
+                .get(&(bound.path.clone(), bound.item_id.clone()))
+                .map(String::as_str)
         };
         let candidates: Vec<&state::Bound> = scan
             .snapshot
@@ -1785,7 +1784,7 @@ impl Folder {
             if matches!(kept, Some(state::Kept::Carried(_)))
                 && !bound.contains(&(path.clone(), item_id.clone()))
             {
-                state::journal_clear_for(&*self.core.conn()?, path, item_id)?;
+                state::journal_clear(&*self.core.conn()?, path, item_id)?;
             }
         }
         for (path, item_id) in bound {
@@ -1802,7 +1801,7 @@ impl Folder {
             }
             if let Some(why) = removing.get(&path) {
                 if held {
-                    state::journal_clear(&*self.core.conn()?, &path)?;
+                    state::journal_clear(&*self.core.conn()?, &path, &item_id)?;
                 }
                 report.flagged.push(Flagged {
                     path: path.clone(),
@@ -1821,7 +1820,7 @@ impl Folder {
                     continue;
                 }
                 // Back inside the grace, so the server never hears of it.
-                state::journal_clear(&conn, &path)?;
+                state::journal_clear(&conn, &path, &item_id)?;
                 continue;
             }
             // Not reached is not gone: the item of a file the lists stopped
@@ -1830,7 +1829,7 @@ impl Folder {
                 // A hold waits for the person, whatever a pass can read.
                 if held && !matches!(row, Some(Some(state::Kept::Unsure(_)))) {
                     let conn = self.core.conn()?;
-                    state::journal_clear(&conn, &path)?;
+                    state::journal_clear(&conn, &path, &item_id)?;
                 }
                 report.unreached += 1;
                 continue;
@@ -1839,7 +1838,7 @@ impl Folder {
             if present.contains(&item_id) {
                 let conn = self.core.conn()?;
                 state::unbind(&conn, &path)?;
-                state::journal_clear(&conn, &path)?;
+                state::journal_clear(&conn, &path, &item_id)?;
                 continue;
             }
             // An unread part of the inventory may hold a file moved from
@@ -2533,6 +2532,7 @@ impl Folder {
         let recorded = file.recorded_mark();
         if bound.path != file.key || bound.identity != recorded {
             let conn = self.core.conn()?;
+            let item_id = bound.item_id.clone();
             state::bind(
                 &conn,
                 &state::Bound {
@@ -2542,7 +2542,7 @@ impl Folder {
                     ..bound
                 },
             )?;
-            state::journal_clear(&conn, &file.key)?;
+            state::journal_clear(&conn, &file.key, &item_id)?;
         }
         Ok(())
     }
@@ -2957,7 +2957,7 @@ impl Folder {
                 ..bound.clone()
             },
         )?;
-        state::journal_clear(&conn, &file.key)
+        state::journal_clear(&conn, &file.key, &bound.item_id)
     }
 
     fn follow_refused_state(&self, mut bound: state::Bound, file: &Scanned) -> Result<()> {
@@ -2988,7 +2988,7 @@ impl Folder {
     fn unbind_item_at(conn: &rusqlite::Connection, path: &str, item_id: &str) -> Result<()> {
         if state::bound_at(conn, path)?.is_some_and(|row| row.item_id == item_id) {
             state::unbind(conn, path)?;
-            state::journal_clear(conn, path)?;
+            state::journal_clear(conn, path, item_id)?;
         }
         Ok(())
     }
@@ -3194,7 +3194,7 @@ impl Folder {
     ) -> Result<Missing> {
         // Only a row gone or in the bin sends nothing; anything else the store
         // says is an error, not a reason to skip the delete.
-        let (held, bound) = {
+        let (held, bound, journaled) = {
             let conn = self.core.conn()?;
             if state::journal_is_carried(&conn, path, item_id)? {
                 return Ok(Missing::Carried);
@@ -3202,6 +3202,7 @@ impl Folder {
             (
                 crate::store::items_by_ids(&conn, &[item_id.to_string()])?.pop(),
                 state::bound_at(&conn, path)?.filter(|bound| bound.item_id == item_id),
+                state::journaled_at(&conn, path, item_id)?,
             )
         };
         // An item already in the bin is where the delete would put it, and the
@@ -3211,16 +3212,17 @@ impl Folder {
             let holds = self.holds(item_id, settings, &sweep.members);
             let catalog = crate::catalog::load(&*self.core.conn()?)?;
             let file_item = bytes_of(&item, &catalog).is_some();
-            // Another item's file at the path leaves only the item's id.
-            let lost = bound.as_ref().map_or(
-                Lost {
+            // Another item's file at the path leaves what the journal recorded.
+            let lost = match (&bound, &journaled) {
+                (Some(bound), _) => Lost::from(bound),
+                (None, Some(row)) => Lost::from(row),
+                (None, None) => Lost {
                     path,
                     item_id,
                     identity: None,
                     content_hash: None,
                 },
-                Lost::from,
-            );
+            };
             let trash = letting == Letting::Trash;
             let among = if trash { Among::Readable } else { Among::Every };
             let look = match peers.moved_to(&lost, holds, file_item, among) {
@@ -3270,7 +3272,7 @@ impl Folder {
                                 // No longer missing, so a scan that moves the
                                 // file elsewhere finds no row to delete the
                                 // item by.
-                                state::journal_clear_for(&*self.core.conn()?, path, item_id)?;
+                                state::journal_clear(&*self.core.conn()?, path, item_id)?;
                                 Ok(Some(Missing::Changed("a file is at its path again")))
                             }
                             Err(error) => {
@@ -3349,11 +3351,31 @@ impl Folder {
                         if let Some(missing) = put_back()? {
                             return Ok(missing);
                         }
-                        state::note_left(&*self.core.conn()?, &self.folder, item_id, path)?;
                         // Queued only while the item is as the decision read
                         // it, so a change heard meanwhile is decided again
                         // rather than trashed.
-                        if self.core.delete_item_at(item_id, &seen)?.is_some() {
+                        let delete = || -> Result<bool> {
+                            state::note_left(&*self.core.conn()?, &self.folder, item_id, path)?;
+                            Ok(self.core.delete_item_at(item_id, &seen)?.is_some())
+                        };
+                        let deleted = if trash {
+                            delete()?
+                        } else {
+                            match peers.while_alone(delete)? {
+                                Ok(deleted) => deleted,
+                                Err(reason) => {
+                                    let kept = state::Kept::Unsure(reason.clone());
+                                    state::journal_keep(
+                                        &*self.core.conn()?,
+                                        path,
+                                        item_id,
+                                        Some(&kept),
+                                    )?;
+                                    return Ok(Missing::Unsure(reason));
+                                }
+                            }
+                        };
+                        if deleted {
                             break Missing::Deleted;
                         }
                         attempts += 1;
@@ -3369,12 +3391,8 @@ impl Folder {
         }
         let conn = self.core.conn()?;
         let tx = conn.unchecked_transaction()?;
-        if bound.is_some() {
-            state::journal_clear(&tx, path)?;
-            state::unbind(&tx, path)?;
-        } else {
-            state::journal_clear_for(&tx, path, item_id)?;
-        }
+        state::journal_clear(&tx, path, item_id)?;
+        Self::unbind_item_at(&tx, path, item_id)?;
         tx.commit()?;
         Ok(missing)
     }

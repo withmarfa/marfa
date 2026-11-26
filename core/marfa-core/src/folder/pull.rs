@@ -64,9 +64,7 @@ struct Renaming<'a> {
 }
 
 fn journaled_for(conn: &rusqlite::Connection, path: &str, item_id: &str) -> Result<bool> {
-    Ok(state::journaled(conn)?
-        .iter()
-        .any(|row| row.path == path && row.item_id == item_id))
+    Ok(state::journaled_at(conn, path, item_id)?.is_some())
 }
 
 struct Rendering<'a> {
@@ -633,9 +631,9 @@ impl Folder {
             .filter(|row| matches!(row.kept, Some(state::Kept::Unsure(_))))
             .map(|row| row.item_id.clone())
             .collect();
-        let kept: HashMap<String, (String, state::Kept)> = journal
+        let kept: HashMap<(String, String), state::Kept> = journal
             .into_iter()
-            .filter_map(|row| Some((row.path, (row.item_id, row.kept?))))
+            .filter_map(|row| Some(((row.path, row.item_id), row.kept?)))
             .collect();
         for (item, unmatched) in &work {
             // This device's own create, not yet landed: the id goes back
@@ -674,8 +672,7 @@ impl Folder {
             }
             // Recreating the file before the receiving scan can turn a move into a copy.
             if let Some(bound) = &bound
-                && let Some((kept_for, why)) = kept.get(&bound.path)
-                && *kept_for == item.id
+                && let Some(why) = kept.get(&(bound.path.clone(), item.id.clone()))
                 && (matches!(why, state::Kept::Carried(_))
                     || !self.exists(self.root.join(&bound.path)))
             {
@@ -1283,7 +1280,7 @@ impl Folder {
                     writes: state::Writes::default(),
                 },
             )?;
-            state::journal_clear_for(&conn, &want, &item.id)?;
+            state::journal_clear(&conn, &want, &item.id)?;
             report.unchanged += 1;
             if let Some(pick) = rendering.pick {
                 pick.settle(&item.id);
@@ -1446,7 +1443,7 @@ impl Folder {
             // Only this item's row: another's is a delete this write does not answer.
             if journaled_for(&conn, &want, &item.id)? {
                 report.revived += 1;
-                state::journal_clear_for(&conn, &want, &item.id)?;
+                state::journal_clear(&conn, &want, &item.id)?;
             }
         }
         if let Some(bound) = &bound
@@ -1474,7 +1471,7 @@ impl Folder {
             if journaled_for(&conn, &bound.path, &item.id)? {
                 report.revived += 1;
             }
-            state::journal_clear(&conn, &bound.path)?;
+            state::journal_clear(&conn, &bound.path, &bound.item_id)?;
             report.moved += 1;
         }
         report.placed += usize::from(self.place(&item.id, &want, withheld)?);
@@ -1618,8 +1615,8 @@ impl Folder {
         let swap = conn.unchecked_transaction()?;
         rendering.bind(&swap, &moved)?;
         rendering.unbind(&swap, &bound.path)?;
-        state::journal_clear(&swap, &bound.path)?;
-        state::journal_clear_for(&swap, want, &item.id)?;
+        state::journal_clear(&swap, &bound.path, &bound.item_id)?;
+        state::journal_clear(&swap, want, &item.id)?;
         state::set_moved_from(
             &swap,
             &item.id,
@@ -2047,7 +2044,7 @@ impl Folder {
         }
         let tx = conn.unchecked_transaction()?;
         context.change_pins(&tx, || state::unbind(&tx, &row.path))?;
-        state::journal_clear(&tx, &row.path)?;
+        state::journal_clear(&tx, &row.path, &row.item_id)?;
         state::clear_taken(&tx, &row.path)?;
         tx.commit()?;
         Ok(TakenAway::Ended(ended))
@@ -2154,7 +2151,7 @@ impl Folder {
                             .is_some_and(|bound| bound.item_id == record.item_id)
                     {
                         state::unbind(&tx, &path)?;
-                        state::journal_clear(&tx, &path)?;
+                        state::journal_clear(&tx, &path, &record.item_id)?;
                     }
                     state::clear_taken(&tx, &path)?;
                     tx.commit()?;

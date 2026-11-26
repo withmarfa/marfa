@@ -77,11 +77,11 @@ impl Folder {
     pub fn settle_held(&self, paths: &[String], settle: Settle) -> Result<Settled> {
         self.refuse_if_gone()?;
         self.refuse_while_paused()?;
-        let held: HashMap<String, String> = self
-            .held_files()?
-            .into_iter()
-            .map(|file| (file.path, file.item))
-            .collect();
+        // Several items can be held at one path, and each is settled.
+        let mut held: HashMap<String, Vec<String>> = HashMap::new();
+        for file in self.held_files()? {
+            held.entry(file.path).or_default().push(file.item);
+        }
         let mut settled = Settled::default();
         let mut chosen = Vec::new();
         for path in paths {
@@ -89,23 +89,28 @@ impl Folder {
                 path: path.clone(),
                 reason: reason.into(),
             };
-            let Some(item_id) = held.get(path) else {
+            let Some(items) = held.get(path) else {
                 settled.not_settled.push(not("its deletion is not held"));
                 continue;
             };
-            // A file at a path another item's binding holds is that item's.
-            let taken = state::bound_at(&*self.core.conn()?, path)?
-                .is_some_and(|bound| &bound.item_id != item_id);
-            match self.file_at(&self.root.join(path)) {
-                Ok(false) => chosen.push((path.clone(), item_id.clone())),
-                Ok(true) if taken => chosen.push((path.clone(), item_id.clone())),
-                Ok(true) => settled.not_settled.push(not(
-                    "a file is at its path again, so Marfa leaves it, and the next scan reads it",
-                )),
-                Err(error) => settled.not_settled.push(Unsure {
-                    path: path.clone(),
-                    reason: format!("its path cannot be checked ({error})"),
-                }),
+            let at = self.file_at(&self.root.join(path));
+            let bound = state::bound_at(&*self.core.conn()?, path)?;
+            for item_id in items {
+                // A file at a path another item's binding holds is that item's.
+                let taken = bound
+                    .as_ref()
+                    .is_some_and(|bound| &bound.item_id != item_id);
+                match &at {
+                    Ok(false) => chosen.push((path.clone(), item_id.clone())),
+                    Ok(true) if taken => chosen.push((path.clone(), item_id.clone())),
+                    Ok(true) => settled.not_settled.push(not(
+                        "a file is at its path again, so Marfa leaves it, and the next scan reads it",
+                    )),
+                    Err(error) => settled.not_settled.push(Unsure {
+                        path: path.clone(),
+                        reason: format!("its path cannot be checked ({error})"),
+                    }),
+                }
             }
         }
         match settle {
@@ -185,7 +190,7 @@ impl Folder {
                         },
                     )?;
                 }
-                state::journal_clear_for(&tx, path, item_id)?;
+                state::journal_clear(&tx, path, item_id)?;
                 tx.commit()?;
                 marked.push((path, item_id));
                 continue;
@@ -207,7 +212,7 @@ impl Folder {
             if state::bound_at(&tx, path)?.is_some_and(|bound| &bound.item_id == item_id) {
                 state::unbind(&tx, path)?;
             }
-            state::journal_clear_for(&tx, path, item_id)?;
+            state::journal_clear(&tx, path, item_id)?;
             tx.commit()?;
         }
         if marked.is_empty() {
