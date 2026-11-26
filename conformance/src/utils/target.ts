@@ -2,12 +2,28 @@
  * Registers each value with GitHub Actions as a secret, so no later line of
  * the job shows it. The values reach `GITHUB_ENV`, and Actions prints that
  * file's variables at the head of every later step's log.
+ *
+ * Actions reads a workflow command to the end of its line and unescapes `%`,
+ * so the value is escaped, and each of its lines is registered too, since a
+ * log prints a value with a line break one line at a time.
  */
 export function maskInActions(...values: string[]): void {
   if (process.env.GITHUB_ACTIONS !== "true") return;
-  for (const value of new Set(values)) {
-    if (value.length > 0) console.log(`::add-mask::${value}`);
+  const masks = new Set<string>();
+  for (const value of values) {
+    masks.add(value);
+    for (const line of value.split(/\r\n|\r|\n/)) masks.add(line);
   }
+  for (const mask of masks) {
+    if (mask.length > 0) console.log(`::add-mask::${escapeCommandData(mask)}`);
+  }
+}
+
+function escapeCommandData(value: string): string {
+  return value
+    .replaceAll("%", "%25")
+    .replaceAll("\r", "%0D")
+    .replaceAll("\n", "%0A");
 }
 
 export const TEST_OWNER = {

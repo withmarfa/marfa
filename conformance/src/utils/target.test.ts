@@ -54,6 +54,17 @@ describe("maskInActions", () => {
     ]);
   });
 
+  it("escapes a value and registers each of its lines too", () => {
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    maskInActions("first%25\r\nsecond\nfirst%25");
+    expect(log.mock.calls).toEqual([
+      ["::add-mask::first%2525%0D%0Asecond%0Afirst%2525"],
+      ["::add-mask::first%2525"],
+      ["::add-mask::second"],
+    ]);
+  });
+
   it("prints nothing outside GitHub Actions", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.stubEnv("GITHUB_ACTIONS", "true");
