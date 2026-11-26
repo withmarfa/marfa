@@ -8796,6 +8796,59 @@ describe("an edit behind an edit of the same item", () => {
         "the body the edit carried was not kept in a copy beside the item",
       ).toEqual(["mine"]);
     });
+
+    it("queues an exact edit read at version 0 of its own unanswered create on the version that create made, which the server refuses once another device has changed the item", async () => {
+      const later: SseFrame[] = [];
+      const { run, device, door, id } = await madeAndUnanswered(
+        "edit-as-read-own-create-unanswered-exact",
+        later,
+      );
+      elsewhere(door, id, { body: "theirs" });
+      const { edges: _edges, ...atTwo } = door.wire(id);
+      later.push(copyItemEvent("12", "item.updated", atTwo));
+      expect((await device.catchUp()).ok).toBe(true);
+      const caught = await device.get(id);
+      expect(caught.ok && caught.value.version).toBe(2);
+
+      const queued = await device.update(id, {
+        properties: { body: "mine" },
+        version: 0,
+        asRead: true,
+        exact: true,
+      });
+      expect(
+        queued.ok,
+        `an exact edit read from the new item while its create waited was refused before it was queued: ${JSON.stringify(queued)}`,
+      ).toBe(true);
+      const report = await drained(device);
+
+      const sent = run.server.requests.filter(
+        (request) =>
+          request.method === "PATCH" && request.pathname === `/items/${id}`,
+      );
+      expect(
+        sent.map((request) => {
+          const body = JSON.parse(request.body) as Record<string, unknown>;
+          return [body.version, body.version_match];
+        }),
+        "the exact edit did not go out on the version its create made with version_match exact",
+      ).toEqual([[1, "exact"]]);
+      const row = report.verdicts.find(
+        (entry) => entry.kind === "update_item" && entry.item_id === id,
+      );
+      expect([row?.verdict, row?.reason]).toEqual([
+        "refused",
+        "version_conflict",
+      ]);
+      expect(
+        door.rows.get(id)?.properties.body,
+        "an exact edit read before its create was answered overwrote the body another device wrote since",
+      ).toBe("theirs");
+      expect(
+        copies(door),
+        "an exact edit that was refused left a copy of what it carried",
+      ).toEqual([]);
+    });
   });
 });
 

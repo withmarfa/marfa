@@ -1031,7 +1031,10 @@ pub struct UpdateArgs {
     pub as_read: bool,
     /// The server refuses the edit with `version_conflict`, merging nothing,
     /// if the item has moved past the version since. An earlier version than
-    /// the copy holds is refused before anything is queued.
+    /// the copy holds is refused before anything is queued, unless it is 0
+    /// with `--as-read` on an item this copy created and the server has yet to
+    /// answer: it is queued on the version that create made, and the server
+    /// refuses it if the item has moved since.
     #[arg(long)]
     pub exact: bool,
     /// The type to move the item to. The server holds its properties to the

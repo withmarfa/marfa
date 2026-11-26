@@ -2440,6 +2440,14 @@ When a caller queues an update said to be read at version 0 of an item this devi
 
 **Tests:** `device/queue.test.ts › sends an edit read at version 0 of its own create on the version that create made`, `› keeps both where another device changed the property an edit read at version 0 of its own create changed`, `› holds an edit read at version 0 of its own create that a catch-up brought before its answer, and sends it on the version that create made`, `› keeps both where another device changed the property an edit read at version 0 of its own create changed before the create was answered`.
 
+### `queue-and-verdicts/as-read-own-create-exact`
+
+When a caller queues an update exact and said to be read at version 0 of an item whose create this device has yet to see answered, and the copy holds a later version, a device MUST queue it on the version that create made with `version_match` `exact`.
+
+**Reason:** the server refuses it `409 version_conflict`, merging none of it, if the item has moved past that version, which a catch-up that brought another device's change before the create's answer has already done (`queue-and-verdicts/exact-update-refused`). Where nothing moved the item, the server takes it.
+
+**Tests:** `device/queue.test.ts › queues an exact edit read at version 0 of its own unanswered create on the version that create made, which the server refuses once another device has changed the item`.
+
 ### `queue-and-verdicts/as-read-held-ordinary`
 
 When a caller queues an update said to be read at the version the copy holds, a device MUST queue and move it as it does any update.
@@ -2492,9 +2500,9 @@ When the server answers an update queued exact `409 version_conflict` and a read
 
 ### `queue-and-verdicts/exact-update-held`
 
-If a caller queues an update exact on a version earlier than the one the copy holds, then a device MUST refuse it `version_conflict`, queueing nothing.
+If a caller queues an update exact on a version earlier than the one the copy holds, then a device MUST refuse it `version_conflict`, queueing nothing, but where `queue-and-verdicts/as-read-own-create-exact` queues it on the version this device's own unanswered create made.
 
-**Reason:** the copy has already heard of the change the server would refuse it for, so the person can be told before the update is queued. A version the copy has not reached is `queue-and-verdicts/as-read-bounds`.
+**Reason:** the copy has already heard of the change the server would refuse it for, so the person can be told before the update is queued. Behind this device's own unanswered create, the copy cannot tell what the item holds beyond that create, so the server decides. A version the copy has not reached is `queue-and-verdicts/as-read-bounds`.
 
 **Tests:** `device/update-exact-live.test.ts › refuses, queueing nothing, an exact edit on a version older than the copy holds`.
 

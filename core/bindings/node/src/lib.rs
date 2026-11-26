@@ -867,7 +867,9 @@ pub struct Edit {
     /// moved past `baseVersion`: the queued write is refused with the reason
     /// `version_conflict`, and the copy shows the item as the server holds
     /// it. A `baseVersion` older than the copy holds throws `version_conflict`
-    /// and queues nothing.
+    /// and queues nothing, except `0` read behind this copy's own create that
+    /// the server has yet to answer: it is queued on the version that create
+    /// made, and the server refuses it if the item has moved since.
     pub exact: Option<bool>,
 }
 
