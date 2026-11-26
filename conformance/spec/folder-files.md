@@ -2456,7 +2456,7 @@ While a missing file is found in another registered directory, by its identity, 
 
 When a file bound to an item moves to another registered directory and that directory binds no other file to the item, a device MUST bind the moved file to that item, whether or not the receiving folder's query holds it, except where `folder-files/moved-arrival-markdown-new` or `folder-files/cross-folder-hidden-item` admits the file as a new item.
 
-**Reason:** the person moved a file, not the note it carries. The directory the file left trashes the item only once no registered directory holds the file (`folder-files/missing-file-trashed`). A file whose ID is still in a file left in the first directory is a copy (`folder-files/cross-folder-copy`) and is not a move. An item the server will not show to the receiving directory cannot be bound there, so its file is a new item (`folder-files/cross-folder-hidden-item`).
+**Reason:** moving a file preserves its item. If the file later disappears from the receiving directory before the source can identify the move, the source holds the item for the person (`folder-files/missing-file-held`). If the original directory still has a file with the ID, the arriving file is a copy (`folder-files/cross-folder-copy`). If the server hides the item from the receiving directory, that directory admits the file as a new item (`folder-files/cross-folder-hidden-item`).
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item, and every edit made before and after the move, of a bound file moved to another folder`, `device/folders-one-mac.test.ts › tells a copy into another folder from a move`.
 
