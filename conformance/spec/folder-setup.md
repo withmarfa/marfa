@@ -444,6 +444,48 @@ When machines follow the same `system.folder`, a device MUST keep each machine�
 
 **Tests:** `device/folders.test.ts › asks of each machine's folder for itself`.
 
+## A store an earlier build made
+
+A build upgrades in place a store that an earlier build made at a schema version no earlier than the first version this build upgrades (`device/schema-upgrade`). A folder's store at such a version is never refused to the folder's writer and never replaced, so the folder keeps everything its record holds.
+
+### `folder-setup/older-store-upgraded`
+
+When a device opens a folder's store as the folder's writer, and the store records an earlier schema version than the one this build makes and no earlier than the first version this build upgrades, a device MUST upgrade the store in place rather than refuse or replace it.
+
+**Reason:** a release that changes the store's shape would otherwise stop every folder until the person removed it and added it again.
+
+**Tests:** `device/folders-refused-store-live.test.ts › upgrades a folder's store at schema 11 in place, keeping each held file, and only says so to a command that reads it`.
+
+### `folder-setup/older-store-held-kept`
+
+When a device upgrades a folder's store, a device MUST keep each file the folder's record holds as missing, with the item it is bound to and how it is held.
+
+**Reason:** a file held for the person would otherwise be written back or its deletion sent without the person deciding.
+
+**Tests:** `device/folders-refused-store-live.test.ts › upgrades a folder's store at schema 11 in place, keeping each held file, and only says so to a command that reads it`.
+
+### `folder-setup/older-store-watched`
+
+When a device watches every folder on the machine and a folder's store is one `folder-setup/older-store-upgraded` upgrades, a device MUST upgrade the store and watch the folder rather than report it not watched.
+
+**Reason:** a watch reads each folder's store before it opens it as the writer, and a store this build upgrades would otherwise never reach the writer.
+
+**Tests:** `device/folders-refused-store-live.test.ts › upgrades a folder's store at schema 11 in place, keeping each held file, and only says so to a command that reads it`.
+
+### `folder-setup/older-store-read-advice`
+
+When a device refuses to read `wrong_schema` a folder's store that `folder-setup/older-store-upgraded` upgrades, a device MUST say that the folder's next push, pull, scan or watch upgrades it in place, rather than to remove the folder or add it again.
+
+**Reason:** `folders status` and `folders held` only read, so they never upgrade a store, and removing the folder would lose the files its record holds for the person.
+
+**Tests:** `device/folders-refused-store-live.test.ts › upgrades a folder's store at schema 11 in place, keeping each held file, and only says so to a command that reads it`.
+
+### `folder-setup/older-store-peer-advice`
+
+When a device holds a missing file because another folder on the machine has a store that `folder-setup/older-store-upgraded` upgrades, a device MUST say that the other folder is read once its next push, pull, scan or watch upgrades it, rather than to remove that folder.
+
+**Tests:** `device/folders-refused-store-live.test.ts › upgrades a folder's store at schema 11 in place, keeping each held file, and only says so to a command that reads it`.
+
 ## A store another build made
 
 A directory's store holds a copy of the server's items, the writes still to be sent, and the folder's record of its files: which file is which item, what the folder last read and wrote there, which files went missing, which writes and placements the server refused, and which items were purged. An answer the folder has yet to record is an answer a file's state still waits on, a write the server gave up on, or a write the server refused, unless it is the delete of an edge already gone, or an edit, a tag, a state change or an edge of an item a file in the folder is bound to, which the folder records against the file or its placements, or no longer needs once a later save is taken. Where the store holds no write still to be sent and no answer the folder has yet to record, a hydration brings the copy back and the record carried into the new store keeps each file where it was (`folder-setup/refused-store-record-kept`), so this build can replace a store that another build of the core made (`device/wrong-schema`) without losing anything.
