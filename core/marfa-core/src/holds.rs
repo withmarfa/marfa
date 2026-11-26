@@ -210,8 +210,7 @@ impl Core {
         Ok(pinned)
     }
 
-    /// Chooses matching tables and fills them while it holds the stream,
-    /// leaving them to the call that holds or takes it.
+    /// A choice persists even when the copy cannot fill it yet.
     pub fn hold_table(&self, type_id: &str, table: &str) -> Result<TableHold> {
         self.hold_table_until(type_id, table, &NEVER_STOPPED)
     }
@@ -258,9 +257,7 @@ impl Core {
         Ok(self.fill_from(streaming, stop, false)?.unwrap_or_default())
     }
 
-    /// Fills under `streaming`, then again while a choice made after a pass's
-    /// last look finds the stream free. `None` where a hold's stream was taken
-    /// before its first pass, or its copy is not hydrated.
+    /// Compare after releasing the claim so a hold refused during the pass can be picked up.
     fn fill_from<'a>(
         &'a self,
         mut streaming: StreamClaim<'a>,
@@ -299,8 +296,7 @@ impl Core {
         Ok(fill)
     }
 
-    /// Fills what a hold chose after `seen` once the stream is free, as the
-    /// hold found it taken.
+    /// Call after releasing the cursor mover's claim.
     pub(crate) fn fill_chosen_since(
         &self,
         seen: u64,

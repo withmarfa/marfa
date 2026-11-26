@@ -12,8 +12,7 @@ pub struct TableFill {
     pub whole: u64,
     /// Tables past the cap, which are read from the server.
     pub online: u64,
-    /// Tables the call was asked to fill and did not, the failed and the
-    /// handed among them.
+    /// Tables left unfilled, including failed and handed-over tables.
     pub unfilled: u64,
     pub pages: u64,
     pub rows: u64,
@@ -61,8 +60,7 @@ pub struct TableHold {
     pub r#type: String,
     pub table: String,
     pub was_held: bool,
-    /// `None` where another call held the stream, or took it before the
-    /// hold's first pass; that call fills the table.
+    /// `nil` if the hold started no fill pass.
     pub fill: Option<TableFill>,
 }
 
