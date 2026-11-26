@@ -269,7 +269,18 @@ pub struct RememberingFolder {
     pub folder: String,
     /// Opaque: compare it for equality and do not parse it.
     pub store: String,
-    pub held: Vec<HeldFile>,
+    pub held: Vec<WaitingHeldFile>,
+}
+/// A held file that waits on the directory being forgotten.
+#[napi(object)]
+pub struct WaitingHeldFile {
+    pub path: String,
+    pub item: String,
+    pub missing_since: String,
+    pub reason: String,
+    /// The other directories that keep it held once the directory is
+    /// forgotten; empty where the forget releases it.
+    pub still_waits_on: Vec<String>,
 }
 #[napi(object)]
 pub struct FolderLeft {
@@ -288,6 +299,12 @@ pub struct ForgottenIn {
     pub dir: String,
     pub folder: String,
     pub released: Vec<String>,
+    pub still_held: Vec<StillHeldFile>,
+}
+#[napi(object)]
+pub struct StillHeldFile {
+    pub path: String,
+    pub still_waits_on: Vec<String>,
 }
 #[napi(object)]
 pub struct SettledHeld {
@@ -488,15 +505,17 @@ impl Folders {
     }
 
     /// Which listed folders remember `dir` or hold a file that waits on it,
-    /// and which of those held files forgetting it lets be decided again. Reads only, and asks no watch.
+    /// and for each such held file the other directories that still keep it
+    /// held once `dir` is forgotten. Reads only, and asks no watch.
     #[napi(ts_return_type = "Promise<Remembered>")]
     pub fn remembering(&self, dir: String) -> AsyncTask<ReadRemembering> {
         AsyncTask::new(ReadRemembering { dir, failed: None })
     }
 
-    /// Forgets the directory in each folder `remembered` names and lets the
-    /// held files shown be decided again at each folder's next sync. Changes
-    /// nothing while the registry lists `dir`. Asks a watch that holds a
+    /// Forgets the directory in each folder `remembered` names and takes it
+    /// off each held file shown: one that waits on nothing else is decided
+    /// again at its folder's next sync. Changes nothing while the registry
+    /// lists `dir`. Asks a watch that holds a
     /// folder to let it go.
     #[napi(ts_return_type = "Promise<Forgotten>")]
     pub fn forget_remembered(&self, remembered: Remembered) -> AsyncTask<ForgetRemembered> {
@@ -1086,6 +1105,14 @@ impl Task for ForgetRemembered {
                         dir: done.dir.display().to_string(),
                         folder: done.folder,
                         released: done.released,
+                        still_held: done
+                            .still_held
+                            .into_iter()
+                            .map(|held| StillHeldFile {
+                                path: held.path,
+                                still_waits_on: displayed(held.still_waits_on),
+                            })
+                            .collect(),
                     })
                     .collect(),
                 not_changed: done.not_changed.into_iter().map(folder_left).collect(),
@@ -1124,7 +1151,17 @@ fn remembered(shown: marfa_core::Remembered) -> Remembered {
                 dir: folder.dir.display().to_string(),
                 folder: folder.folder,
                 store: folder.store,
-                held: folder.held.into_iter().map(held_file).collect(),
+                held: folder
+                    .held
+                    .into_iter()
+                    .map(|held| WaitingHeldFile {
+                        path: held.file.path,
+                        item: held.file.item,
+                        missing_since: held.file.missing_since,
+                        reason: held.file.reason,
+                        still_waits_on: displayed(held.still_waits_on),
+                    })
+                    .collect(),
             })
             .collect(),
         not_read: shown.not_read.into_iter().map(folder_left).collect(),
@@ -1134,6 +1171,12 @@ fn remembered(shown: marfa_core::Remembered) -> Remembered {
             .map(|dir| dir.display().to_string())
             .collect(),
     }
+}
+
+fn displayed(dirs: Vec<std::path::PathBuf>) -> Vec<String> {
+    dirs.into_iter()
+        .map(|dir| dir.display().to_string())
+        .collect()
 }
 
 /// The value an app was shown, back as the core reads it.
@@ -1151,11 +1194,14 @@ fn shown(remembered: Remembered) -> marfa_core::Remembered {
                 held: folder
                     .held
                     .into_iter()
-                    .map(|file| marfa_core::HeldFile {
-                        path: file.path,
-                        item: file.item,
-                        missing_since: file.missing_since,
-                        reason: file.reason,
+                    .map(|held| marfa_core::WaitingHold {
+                        file: marfa_core::HeldFile {
+                            path: held.path,
+                            item: held.item,
+                            missing_since: held.missing_since,
+                            reason: held.reason,
+                        },
+                        still_waits_on: held.still_waits_on.into_iter().map(Into::into).collect(),
                     })
                     .collect(),
             })

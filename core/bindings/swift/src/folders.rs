@@ -484,9 +484,21 @@ pub struct RememberingFolder {
     /// The store read, which the forget finds again before it writes.
     /// Compare it for equality and do not parse it.
     pub store: String,
-    /// Its held files that wait on the directory, decided again at its next
-    /// sync once it forgets.
-    pub held: Vec<HeldFile>,
+    /// Its held files that wait on the directory.
+    pub held: Vec<WaitingHeldFile>,
+}
+
+/// A held file that waits on the directory being forgotten.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct WaitingHeldFile {
+    pub path: String,
+    pub item: String,
+    pub missing_since: String,
+    pub reason: String,
+    /// The other directories that keep it held once the directory is
+    /// forgotten. Where there are none, the forget releases it and the
+    /// folder's next sync decides it again.
+    pub still_waits_on: Vec<String>,
 }
 
 /// A folder the call did not read or change, and why.
@@ -513,6 +525,15 @@ pub struct ForgottenIn {
     pub folder: String,
     /// Paths of its held files no longer held, which its next sync decides.
     pub released: Vec<String>,
+    /// Its held files that waited on the directory and still wait on others.
+    pub still_held: Vec<StillHeldFile>,
+}
+
+/// A held file that still waits on other directories after a forget.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct StillHeldFile {
+    pub path: String,
+    pub still_waits_on: Vec<String>,
 }
 
 /// What cancelling a paused removal did.
@@ -808,20 +829,23 @@ guarded! {
         }
 
         /// Which listed folders remember `dir`, a folder the registry may no
-        /// longer list, or hold a file that waits on it, and which of those
-        /// held files forgetting it lets be decided again. Show the person this before `forget_remembered`.
+        /// longer list, or hold a file that waits on it, and for each such
+        /// held file the other directories that still keep it held once `dir`
+        /// is forgotten. Show the person this before `forget_remembered`.
         /// Reads only, and asks no watch for a folder.
         pub fn remembering(&self, dir: String) -> Result<Remembered, MarfaError> {
             Ok(remembered(marfa_core::Folder::remembering(&dir)?))
         }
 
         /// Forgets the directory in each folder `remembered` names, once the
-        /// person confirms it is gone for good, and lets the held files shown
-        /// be decided again at each folder's next sync. Trashes and keeps
-        /// nothing itself, and changes nothing while the registry lists `dir`.
-        /// A folder another process does not let go, whose store is not the
-        /// one shown, or that is no longer at its listed path, is left as it
-        /// was and named in `not_changed`. Asks a watch that holds a folder to let it go, as
+        /// person confirms it is gone for good, and takes it off each held
+        /// file shown: one that waits on nothing else is decided again at its
+        /// folder's next sync, and one that waits on other directories stays
+        /// held on those. Trashes and keeps nothing itself, and changes
+        /// nothing while the registry lists `dir`. A folder another process
+        /// does not let go, whose store is not the one shown or has moved, or
+        /// that is no longer at its listed path, is left as it was and named
+        /// in `not_changed`. Asks a watch that holds a folder to let it go, as
         /// `add` does.
         pub fn forget_remembered(&self, remembered: Remembered) -> Result<Forgotten, MarfaError> {
             let done = marfa_core::Folder::forget_remembered(&shown(remembered))?;
@@ -835,6 +859,14 @@ guarded! {
                         dir: done.dir.display().to_string(),
                         folder: done.folder,
                         released: done.released,
+                        still_held: done
+                            .still_held
+                            .into_iter()
+                            .map(|held| StillHeldFile {
+                                path: held.path,
+                                still_waits_on: displayed(held.still_waits_on),
+                            })
+                            .collect(),
                     })
                     .collect(),
                 not_changed: done.not_changed.into_iter().map(folder_left).collect(),
@@ -1430,7 +1462,17 @@ fn remembered(shown: marfa_core::Remembered) -> Remembered {
                 dir: folder.dir.display().to_string(),
                 folder: folder.folder,
                 store: folder.store,
-                held: folder.held.into_iter().map(held_file).collect(),
+                held: folder
+                    .held
+                    .into_iter()
+                    .map(|held| WaitingHeldFile {
+                        path: held.file.path,
+                        item: held.file.item,
+                        missing_since: held.file.missing_since,
+                        reason: held.file.reason,
+                        still_waits_on: displayed(held.still_waits_on),
+                    })
+                    .collect(),
             })
             .collect(),
         not_read: shown.not_read.into_iter().map(folder_left).collect(),
@@ -1440,6 +1482,12 @@ fn remembered(shown: marfa_core::Remembered) -> Remembered {
             .map(|dir| dir.display().to_string())
             .collect(),
     }
+}
+
+fn displayed(dirs: Vec<std::path::PathBuf>) -> Vec<String> {
+    dirs.into_iter()
+        .map(|dir| dir.display().to_string())
+        .collect()
 }
 
 /// The value an app was shown, back as the core reads it.
@@ -1457,11 +1505,14 @@ fn shown(remembered: Remembered) -> marfa_core::Remembered {
                 held: folder
                     .held
                     .into_iter()
-                    .map(|file| marfa_core::HeldFile {
-                        path: file.path,
-                        item: file.item,
-                        missing_since: file.missing_since,
-                        reason: file.reason,
+                    .map(|held| marfa_core::WaitingHold {
+                        file: marfa_core::HeldFile {
+                            path: held.path,
+                            item: held.item,
+                            missing_since: held.missing_since,
+                            reason: held.reason,
+                        },
+                        still_waits_on: held.still_waits_on.into_iter().map(Into::into).collect(),
                     })
                     .collect(),
             })
@@ -1515,11 +1566,14 @@ mod tests {
                 dir: "/work/notes".into(),
                 folder: "01a00000-0000-7000-8000-000000357821".into(),
                 store: "1:2:01a00000-0000-7000-8000-000000357822".into(),
-                held: vec![marfa_core::HeldFile {
-                    path: "held.md".into(),
-                    item: "01a00000-0000-7000-8000-000000357823".into(),
-                    missing_since: "2026-01-01T00:00:00Z".into(),
-                    reason: "the folder /volumes/old/notes cannot be reached".into(),
+                held: vec![marfa_core::WaitingHold {
+                    file: marfa_core::HeldFile {
+                        path: "held.md".into(),
+                        item: "01a00000-0000-7000-8000-000000357823".into(),
+                        missing_since: "2026-01-01T00:00:00Z".into(),
+                        reason: "the folder /volumes/old/notes cannot be reached".into(),
+                    },
+                    still_waits_on: vec!["/volumes/other/notes".into()],
                 }],
             }],
             not_read: vec![marfa_core::NotRead {
