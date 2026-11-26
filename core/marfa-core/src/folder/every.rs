@@ -321,13 +321,26 @@ fn stored_origin(dir: &Path) -> crate::Result<Option<String>> {
             let conn = core.conn()?;
             store::meta_get(&conn, store::META_SERVER_ORIGIN)
         }
-        Err(CoreError::WrongSchema {
+        Err(error) if opened_by_writer(&error) => Ok(super::refused::recorded(&state_dir)?.origin),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether a store refused to read is one the folder's writer opens: it
+/// upgrades it in place (`folder-setup/older-store-upgraded`) or replaces it
+/// (`folder-setup/refused-store-replaced`).
+fn opened_by_writer(error: &CoreError) -> bool {
+    matches!(
+        error,
+        CoreError::WrongSchema {
+            folder: Some(crate::FolderStore::Upgradable),
+            ..
+        } | CoreError::WrongSchema {
             unsent: Some(0),
             folder: Some(crate::FolderStore::Replaceable),
             ..
-        }) => Ok(super::refused::recorded(&state_dir)?.0),
-        Err(error) => Err(error),
-    }
+        }
+    )
 }
 
 fn recorded(dir: &Path) -> crate::Result<Recorded> {
@@ -342,14 +355,9 @@ fn recorded(dir: &Path) -> crate::Result<Recorded> {
                     super::paused(&conn)?,
                 )
             }
-            // The open replaces it (`folder-setup/refused-store-replaced`).
-            Err(CoreError::WrongSchema {
-                unsent: Some(0),
-                folder: Some(crate::FolderStore::Replaceable),
-                ..
-            }) => {
-                let (origin, waiting) = super::refused::recorded(&state_dir)?;
-                (origin, waiting, false)
+            Err(error) if opened_by_writer(&error) => {
+                let held = super::refused::recorded(&state_dir)?;
+                (held.origin, held.first_sync_waiting, held.paused)
             }
             Err(error) => return Err(error),
         };

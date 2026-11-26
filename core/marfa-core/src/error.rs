@@ -633,6 +633,10 @@ fn contract_mismatch(
 /// another build of the core made, once it holds nothing unsent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FolderStore {
+    /// It names the folder and is at a version this build's writer upgrades
+    /// in place, so the folder's next push, pull, scan or watch upgrades it,
+    /// keeping everything it holds.
+    Upgradable,
     /// It names the folder and every table of the folder's own is of this
     /// build's shape, so the folder's next push, pull, scan or watch replaces
     /// it, carrying them.
@@ -770,6 +774,7 @@ fn refused_directory(
     let changes = |count: u64| if count == 1 { "change" } else { "changes" };
     let build = saved.build();
     let holds = match (unsent, folder) {
+        (_, FolderStore::Upgradable) => "The directory's next push, pull, scan or watch upgrades it in place to the shape this build reads, keeping everything it records and changing none of the directory's files, so nothing needs to be removed or added again; until then, a command that only reads the directory, such as `marfa folders status`, cannot read it".to_string(),
         (Some(0), FolderStore::Replaceable) => "Nothing in it waits to be sent and no answer from the server is yet to be recorded, so the next push, pull, scan or watch replaces it with saved state this build reads, keeps what is recorded of each file, and fills it again from the server; the replacement changes none of the directory's files".to_string(),
         (Some(0), FolderStore::Unnamed) => "Nothing in it waits to be sent, but it does not say which folder the directory follows, so no push, pull, scan or watch replaces it: add the directory again (`marfa folders add`), which replaces it".to_string(),
         (Some(0), FolderStore::Uncarried(table)) => format!(
@@ -969,6 +974,8 @@ mod tests {
             refused_folder(Some(1), FolderStore::Replaceable),
             refused_folder(Some(2), FolderStore::Unnamed),
             refused_folder(None, FolderStore::Replaceable),
+            refused_folder(Some(3), FolderStore::Upgradable),
+            refused_folder(None, FolderStore::Upgradable),
         ];
         for said in &folders {
             assert!(
@@ -988,6 +995,15 @@ mod tests {
         assert!(folders[3].contains("It holds 1 change still to be sent"));
         assert!(folders[4].contains("It holds 2 changes still to be sent"));
         assert!(folders[5].contains("cannot be read"));
+        for said in &folders[6..] {
+            assert!(
+                said.contains("next push, pull, scan or watch upgrades it in place"),
+                "{said}"
+            );
+            for advice in ["folders remove", "folders add", "folders push", "MARFA_VERSION"] {
+                assert!(!said.contains(advice), "{advice}: {said}");
+            }
+        }
         // The witness: a store that is no folder's keeps the device's words.
         let device = CoreError::WrongSchema {
             path: "/notes/.marfa/core.sqlite".into(),

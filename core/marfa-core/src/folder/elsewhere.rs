@@ -65,6 +65,9 @@ pub(super) struct Peer {
     root: PathBuf,
     /// Found in an earlier pass, though the registry no longer lists it.
     remembered: bool,
+    /// Its store is at a version its own writer upgrades, so it is not
+    /// read until then.
+    upgradable: bool,
     root_dir: Option<Directory>,
     /// Its store, read only; `None` where it cannot be opened.
     folder: Option<Folder>,
@@ -120,10 +123,23 @@ impl Peer {
         let mut root_dir = Directory::open(&root)
             .ok()
             .filter(|root| super::admitted_root(root).is_ok());
+        let mut upgradable = false;
         let folder = root_dir.as_ref().and_then(|root_dir| {
             let state_dir = root_dir.child(Path::new(STATE_DIR), false).ok()?;
             let core =
-                Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite")).ok()?;
+                match Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite")) {
+                    Ok(core) => core,
+                    Err(error) => {
+                        upgradable = matches!(
+                            error,
+                            crate::CoreError::WrongSchema {
+                                folder: Some(crate::FolderStore::Upgradable),
+                                ..
+                            }
+                        );
+                        return None;
+                    }
+                };
             let folder = super::settings_file::bound(&core).ok()??;
             if folder != entry.folder
                 || entry.store.as_ref().is_some_and(|expected| {
@@ -167,6 +183,7 @@ impl Peer {
         Peer {
             root,
             remembered,
+            upgradable,
             root_dir,
             folder,
             members: OnceCell::new(),
@@ -303,6 +320,11 @@ impl Peer {
                     }
                     Err(error) => Some(error.to_string()),
                 }
+            } else if self.upgradable {
+                Some(format!(
+                    "the folder {} cannot be read until its next push, pull, scan or watch upgrades its saved state to this build's shape",
+                    self.root.display()
+                ))
             } else if self.remembered {
                 Some(format!(
                     "the folder {} cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it",
@@ -1062,6 +1084,7 @@ mod tests {
         let peer = || Peer {
             root: to.clone(),
             remembered: false,
+            upgradable: false,
             root_dir: Some(Directory::open(&to).unwrap()),
             folder: None,
             members: OnceCell::new(),
@@ -1193,6 +1216,7 @@ mod tests {
         let peer = Peer {
             root: root.clone(),
             remembered: false,
+            upgradable: false,
             root_dir: Some(Directory::open(&root).unwrap()),
             folder: None,
             members: OnceCell::new(),
@@ -1241,6 +1265,7 @@ mod tests {
         let peer = Peer {
             root: root.clone(),
             remembered: false,
+            upgradable: false,
             root_dir: Some(Directory::open(&root).unwrap()),
             folder: None,
             members: OnceCell::new(),
