@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::fs::Metadata;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::CoreError;
 
 /// Private fields, so `from_parts` is the only way to make an `Identity` and
@@ -50,6 +52,53 @@ pub fn unshared(metadata: &Metadata) -> Option<Identity> {
         return None;
     }
     of(metadata)
+}
+
+/// A file or directory as Marfa found it: its device, its inode and, where
+/// the file system keeps one, its birth time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Seen {
+    pub(crate) device: u64,
+    pub(crate) inode: u64,
+    /// Nanoseconds since the epoch.
+    pub(crate) born: Option<u128>,
+}
+
+/// What comparing a found file with a recorded one shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Compared {
+    /// Device, inode and birth time agree.
+    Same,
+    /// Device and inode agree, and one side has no birth time, so a reused
+    /// inode cannot be told from the file recorded.
+    Weaker,
+    /// Another file.
+    Other,
+}
+
+impl Seen {
+    pub(crate) fn of(metadata: &Metadata) -> Seen {
+        Seen {
+            device: device_of(metadata),
+            inode: inode_of(metadata),
+            born: born(metadata),
+        }
+    }
+
+    /// `found` against this record. A volume mounted again has another
+    /// device number, so where the root's device, `root_device`, is not the
+    /// one recorded, the inode stands for both.
+    pub(crate) fn compare(&self, found: &Seen, root_device: Option<u64>) -> Compared {
+        let device = found.device == self.device || root_device != Some(self.device);
+        if found.inode != self.inode || !device {
+            return Compared::Other;
+        }
+        match (self.born.filter(|born| *born > 0), found.born) {
+            (Some(recorded), Some(found)) if recorded == found => Compared::Same,
+            (Some(_), Some(_)) => Compared::Other,
+            _ => Compared::Weaker,
+        }
+    }
 }
 
 /// Whether the file has another name on the disk.
@@ -155,6 +204,45 @@ mod tests {
                 (*path, metadata.is_file().then(|| of(metadata)).flatten())
             }),
         )
+    }
+
+    #[test]
+    fn a_reused_inode_is_another_file_and_a_missing_birth_time_is_weaker() {
+        let recorded = Seen {
+            device: 1,
+            inode: 2,
+            born: Some(10),
+        };
+        let found = |device, inode, born| Seen {
+            device,
+            inode,
+            born,
+        };
+        assert_eq!(recorded.compare(&found(1, 2, Some(10)), Some(1)), Compared::Same);
+        assert_eq!(
+            recorded.compare(&found(1, 2, Some(11)), Some(1)),
+            Compared::Other,
+            "a file that took a reused inode was called the file recorded"
+        );
+        assert_eq!(recorded.compare(&found(1, 3, Some(10)), Some(1)), Compared::Other);
+        assert_eq!(recorded.compare(&found(1, 2, None), Some(1)), Compared::Weaker);
+        for born in [None, Some(0)] {
+            assert_eq!(
+                found(1, 2, born).compare(&found(1, 2, Some(10)), Some(1)),
+                Compared::Weaker,
+                "a missing birth time was taken as a match"
+            );
+        }
+        assert_eq!(
+            recorded.compare(&found(9, 2, Some(10)), Some(1)),
+            Compared::Other,
+            "a file on another volume was called the file recorded"
+        );
+        assert_eq!(
+            recorded.compare(&found(9, 2, Some(10)), Some(9)),
+            Compared::Same,
+            "a volume mounted again lost its files' identity"
+        );
     }
 
     #[test]

@@ -1146,4 +1146,94 @@ mod tests {
             );
         }
     }
+
+    /// Stops a discard of the kept file once it is under its private name.
+    #[cfg(debug_assertions)]
+    fn discard_stopped(folder: Folder, root: &Path) -> Folder {
+        {
+            let _stop = crate::fault::fail_on_this_thread("crash-after-private-rename");
+            let stopped =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| folder.discard_kept()));
+            assert!(stopped.is_err(), "it did not stop");
+        }
+        drop(folder);
+        Folder::open(root, None).unwrap()
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_kept_file_a_discard_stopped_on_stays_listed_while_another_directory_has_its_name() {
+        for unread in [false, true] {
+            let (_dir, folder, root, _) = kept_aside(unread);
+            let folder = discard_stopped(folder, &root);
+            let elsewhere = tempfile::tempdir_in(root.parent().unwrap()).unwrap();
+            std::fs::rename(root.join("Notes"), elsewhere.path().join("Notes")).unwrap();
+            std::fs::create_dir(root.join("Notes")).unwrap();
+            folder.scan().unwrap();
+            folder.discard_kept().unwrap();
+            std::fs::remove_dir_all(root.join("Notes")).unwrap();
+            std::fs::rename(elsewhere.path().join("Notes"), root.join("Notes")).unwrap();
+
+            let kept = listed(&root, &folder.kept_files().unwrap());
+
+            assert_eq!(kept.len(), 1, "unread {unread}: {kept:?}");
+            assert!(kept[0].1, "unread {unread}: {kept:?} names no file");
+            assert!(
+                std::fs::read_to_string(root.join(&kept[0].0))
+                    .unwrap()
+                    .contains("as it was"),
+                "unread {unread}"
+            );
+            assert_eq!(reserved_in(&root.join("Notes")).len(), 1, "unread {unread}");
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn two_discards_stopped_on_one_unread_record_list_both_files() {
+        let (_dir, folder, root, path) = kept_aside(true);
+        let folder = discard_stopped(folder, &root);
+        let private = reserved_in(&root.join("Notes"));
+        assert_eq!(private.len(), 1);
+        std::fs::copy(root.join("Notes").join(&private[0]), root.join(&path)).unwrap();
+        let folder = discard_stopped(folder, &root);
+        assert_eq!(
+            reserved_in(&root.join("Notes")).len(),
+            2,
+            "the second discard did not leave a second file, so nothing below is about it"
+        );
+
+        let kept = listed(&root, &Folder::kept_of(&root).unwrap());
+
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        assert!(kept.iter().all(|(_, there)| *there), "{kept:?}");
+        drop(folder);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn an_unreadable_discard_record_whose_file_is_gone_is_forgotten_by_discarding() {
+        let (_dir, folder, root, _) = kept_aside(false);
+        let folder = discard_stopped(folder, &root);
+        let private = reserved_in(&root.join("Notes"));
+        assert_eq!(private.len(), 1);
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE meta SET value = 'unreadable' WHERE key LIKE 'folder_discarding:%'",
+                [],
+            )
+            .unwrap();
+        // The witness: while its file is there, it is listed.
+        assert!(listed(&root, &folder.kept_files().unwrap()).iter().any(|(_, there)| *there));
+        std::fs::remove_file(root.join("Notes").join(&private[0])).unwrap();
+        folder.scan().unwrap();
+
+        folder.discard_kept().unwrap();
+
+        let kept = listed(&root, &folder.kept_files().unwrap());
+        assert!(kept.is_empty(), "{kept:?}");
+    }
 }

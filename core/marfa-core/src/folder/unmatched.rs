@@ -794,4 +794,152 @@ mod tests {
         assert!(state::taken(&conn).unwrap().is_empty());
         assert!(state::bound_at(&conn, "sub/new.md").unwrap().is_some());
     }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_file_an_editor_replaced_as_its_removal_went_stays_held_until_it_is_gone() {
+        let (dir, folder, _) = removable();
+        let done = {
+            let _save = crate::fault::fail_on_this_thread("save-after-last-look");
+            folder.remove_unmatched(&["new.md".into()]).unwrap()
+        };
+        assert!(done.removed.is_empty(), "{done:?}");
+        assert_eq!(done.kept.len(), 1, "{done:?}");
+        assert!(
+            std::fs::read_to_string(dir.path().join("new.md"))
+                .unwrap()
+                .contains("saved after the last look"),
+            "the editor's save was not at the path, so nothing below is about it"
+        );
+
+        held_until_removed(&folder, dir.path(), "new.md");
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_removal_stopped_before_the_move_aside_stays_held_while_its_directory_is_away() {
+        for replaced in [true, false] {
+            let (dir, folder, _) = removable_at("sub/new.md");
+            let root = dir.path().to_path_buf();
+            let folder = stopped_at(folder, &root, "sub/new.md", "crash-before-take-away");
+            let elsewhere = tempfile::tempdir_in(root.parent().unwrap()).unwrap();
+            std::fs::rename(root.join("sub"), elsewhere.path().join("sub")).unwrap();
+            if replaced {
+                std::fs::create_dir(root.join("sub")).unwrap();
+            }
+
+            scanned_past_the_grace(&folder, "sub/new.md");
+
+            assert!(deletes_queued(&folder).is_empty(), "replaced {replaced}");
+            let conn = folder.core.conn().unwrap();
+            assert!(
+                state::bound_at(&conn, "sub/new.md").unwrap().is_some(),
+                "replaced {replaced}: the binding of a file that is still on disk ended"
+            );
+            assert_eq!(state::taken(&conn).unwrap().len(), 1, "replaced {replaced}");
+            drop(conn);
+            assert!(held_in_status(&folder, "sub/new.md"), "replaced {replaced}");
+
+            if replaced {
+                std::fs::remove_dir(root.join("sub")).unwrap();
+            }
+            std::fs::rename(elsewhere.path().join("sub"), root.join("sub")).unwrap();
+            folder.scan().unwrap();
+            if !births_kept(&root, "sub/new.md") {
+                held_until_removed(&folder, &root, "sub/new.md");
+                continue;
+            }
+            let conn = folder.core.conn().unwrap();
+            assert!(state::taken(&conn).unwrap().is_empty(), "replaced {replaced}");
+            assert!(state::bound_at(&conn, "sub/new.md").unwrap().is_some());
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_scan_that_read_a_replacement_never_sends_it_once_the_original_is_back() {
+        let (dir, folder, _) = removable();
+        let root = dir.path().to_path_buf();
+        let folder = stopped_at(folder, &root, "new.md", "crash-before-take-away");
+        let elsewhere = tempfile::tempdir_in(root.parent().unwrap()).unwrap();
+        let original = elsewhere.path().join("new.md");
+        std::fs::rename(root.join("new.md"), &original).unwrap();
+        std::fs::write(root.join("new.md"), "---\ntitle: new\nstate: archived\n---\nreplaced\n").unwrap();
+        let inode = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(root.join("new.md")).unwrap().ino()
+        };
+        let point = format!("folder-scan-read-inode:{inode}");
+        crate::fault::arm(&point);
+        let restorer = {
+            let (point, original, at) = (point.clone(), original.clone(), root.join("new.md"));
+            std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                while crate::fault::waiting(&point) == 0 {
+                    if std::time::Instant::now() > deadline {
+                        crate::fault::release(&point);
+                        return false;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                std::fs::rename(&original, &at).unwrap();
+                crate::fault::release(&point);
+                true
+            })
+        };
+
+        folder.scan().unwrap();
+
+        assert!(
+            restorer.join().unwrap(),
+            "the scan never read the replacement, so nothing below is about it"
+        );
+        let updates = |folder: &Folder| {
+            folder
+                .core
+                .queue()
+                .unwrap()
+                .iter()
+                .filter(|write| write.kind == crate::model::WriteKind::UpdateItem)
+                .count()
+        };
+        assert_eq!(updates(&folder), 0, "the replacement's text was sent");
+        folder.scan().unwrap();
+        assert_eq!(updates(&folder), 0, "the replacement's text was sent");
+        if births_kept(&root, "new.md") {
+            let conn = folder.core.conn().unwrap();
+            assert!(state::taken(&conn).unwrap().is_empty());
+            assert!(state::bound_at(&conn, "new.md").unwrap().is_some());
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn an_unreadable_removal_record_whose_file_is_gone_is_ended_by_removing_unmatched_files() {
+        let (dir, folder, id) = removable();
+        let root = dir.path().to_path_buf();
+        let folder = stopped_at(folder, &root, "new.md", "crash-before-take-away");
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE meta SET value = 'unreadable' WHERE key LIKE 'folder_taken:%'",
+                [],
+            )
+            .unwrap();
+        std::fs::remove_file(root.join("new.md")).unwrap();
+        scanned_past_the_grace(&folder, "new.md");
+        assert!(held_in_status(&folder, "new.md"));
+
+        let done = folder.remove_unmatched(&["new.md".into()]).unwrap();
+
+        assert!(deletes_queued(&folder).is_empty(), "{done:?}");
+        assert!(folder.core.get(&id).unwrap().is_some());
+        let conn = folder.core.conn().unwrap();
+        assert!(state::taken(&conn).unwrap().is_empty(), "{done:?}");
+        assert!(state::bound_at(&conn, "new.md").unwrap().is_none(), "{done:?}");
+        drop(conn);
+        assert!(!held_in_status(&folder, "new.md"));
+    }
 }

@@ -2295,6 +2295,11 @@ impl Captured {
         file.read_to_end(&mut bytes)?;
         #[cfg(debug_assertions)]
         crate::fault::hold(|| "folder-scan-read");
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| {
+            let inode = landing::identity(&self.metadata.borrow()).1;
+            format!("folder-scan-read-inode:{inode}")
+        });
         Ok(Some(bytes))
     }
 
