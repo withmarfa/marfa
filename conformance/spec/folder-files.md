@@ -2456,7 +2456,7 @@ When a device keeps holding a missing file under `folder-files/forget-narrows-he
 
 ### `folder-files/forget-keeps-shown-held`
 
-When a device forgets a directory, a device MUST keep holding each missing file it showed as staying held, with its hold still recording that directory, also where its hold records no other directory by then.
+When a device forgets a directory and a missing file it showed as staying held records no other directory by then, a device MUST keep holding that file, with its hold still recording that directory.
 
 **Reason:** the person agreed only to what they were shown. Another forget can take the other directories the hold recorded while the person reads the preview, and releasing the file then would let the next pass send its item to the bin with no warning. Its hold still records the directory, so a new preview shows it as released.
 
