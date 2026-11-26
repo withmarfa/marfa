@@ -64,17 +64,30 @@ pub(super) fn opened(
     Ok((core, Some(reason)))
 }
 
-/// The origin the folder's store was hydrated from and whether its first
-/// sync waits, read from a store this build refuses `wrong_schema` while it
-/// holds nothing unsent, which the folder's writer replaces on open.
-pub(super) fn recorded(state: &Directory) -> Result<(Option<String>, bool)> {
+/// What a folder's store this build refuses to read says of the folder, read
+/// from its meta, for a store the folder's writer upgrades or replaces on open.
+pub(super) struct Recorded {
+    /// The server the store was hydrated from.
+    pub(super) origin: Option<String>,
+    pub(super) first_sync_waiting: bool,
+    pub(super) paused: bool,
+}
+
+pub(super) fn recorded(state: &Directory) -> Result<Recorded> {
     let vfs = crate::directory_vfs::DirectoryVfs::new(state.file())?;
-    let mut held =
-        store::refused_folder_meta(&vfs, &[store::META_SERVER_ORIGIN, first::META_FIRST_SYNC])?;
-    Ok((
-        held.remove(store::META_SERVER_ORIGIN),
-        held.contains_key(first::META_FIRST_SYNC),
-    ))
+    let mut held = store::refused_folder_meta(
+        &vfs,
+        &[
+            store::META_SERVER_ORIGIN,
+            first::META_FIRST_SYNC,
+            super::paused::META_PAUSED,
+        ],
+    )?;
+    Ok(Recorded {
+        origin: held.remove(store::META_SERVER_ORIGIN),
+        first_sync_waiting: held.contains_key(first::META_FIRST_SYNC),
+        paused: held.contains_key(super::paused::META_PAUSED),
+    })
 }
 
 #[cfg(test)]

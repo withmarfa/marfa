@@ -914,6 +914,20 @@ fn the_shape_this_build_makes_is_the_one_its_version_names() {
 }
 
 #[test]
+fn a_store_given_schema_11_for_a_test_has_the_shape_schema_11_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    drop(open(&path).unwrap());
+    as_schema_11(&path);
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(version(&conn).unwrap(), 11);
+    assert_eq!(
+        crate::folder::state::hash(shape_of(&conn).as_bytes()),
+        SHAPES[10]
+    );
+}
+
+#[test]
 fn a_store_at_an_earlier_version_is_upgraded_in_place_with_its_queue_kept() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("core.sqlite");

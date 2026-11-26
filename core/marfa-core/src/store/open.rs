@@ -141,11 +141,14 @@ pub(crate) const FOLDER_TABLES: [&str; 4] =
     ["folder_files", "folder_journal", "folder_stats", "pins"];
 
 /// What this build's folder commands can do with the folder store `conn`
-/// opened, which this build refuses `wrong_schema`.
+/// opened, which this build refuses `wrong_schema` to read or as a writer.
 #[cfg(unix)]
 fn folder_store(conn: &Connection) -> Result<crate::FolderStore, CoreError> {
     if meta_get(conn, crate::folder::settings_file::META_FOLDER)?.is_none() {
         return Ok(crate::FolderStore::Unnamed);
+    }
+    if upgraded(version(conn)?) {
+        return Ok(crate::FolderStore::Upgradable);
     }
     Ok(match uncarried(conn)? {
         Some(table) => crate::FolderStore::Uncarried(table.to_string()),

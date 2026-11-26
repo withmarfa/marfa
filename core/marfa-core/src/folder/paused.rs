@@ -30,9 +30,10 @@ impl Folder {
 
     /// Whether the directory at `root` is paused, read without claiming it.
     pub fn paused_at(root: impl AsRef<std::path::Path>) -> bool {
-        Folder::reading(root.as_ref())
-            .and_then(|folder| folder.is_paused())
-            .unwrap_or(false)
+        match Folder::reading(root.as_ref()) {
+            Ok(folder) => folder.is_paused().unwrap_or(false),
+            Err(error) => super::every::paused_unopened(root.as_ref(), &error),
+        }
     }
 
     /// Waits, holding no folder, until the directory at `root` is no longer

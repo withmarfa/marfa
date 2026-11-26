@@ -24,9 +24,9 @@ import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A folder's store that another build of the core made, at another schema
- * version: the folder's own commands replace it
- * where it holds nothing unsent, and leave it, and the folder's files, where
- * it does.
+ * version: the folder's own commands upgrade it in place where this build
+ * upgrades its version, replace it where it holds nothing unsent, and leave
+ * it, and the folder's files, where it does.
  */
 
 const WAIT = { timeout: 30_000, interval: 100 };
@@ -954,4 +954,132 @@ it("leaves a refused store whose record of its files is of another shape, and sa
   expect(refused.stderr).not.toContain(REPLACED);
   expect(filesOf(folder.dir)).toEqual(files);
   expect(storeBytes(folder)).toBe(state);
+});
+
+/** Gives the folder's store the shape release 0.0.111 made, schema version
+ *  11, keeping each row of its record of missing files; callers must first
+ *  close every writer. */
+function asSchema11(folder: CliFolder): void {
+  const db = new DatabaseSync(folder.store);
+  try {
+    db.exec(`
+      CREATE TEMP TABLE journal_kept AS
+        SELECT path, item_id, missing_since, kept, reason FROM folder_journal;
+      DROP TABLE folder_journal;
+      CREATE TABLE folder_journal (
+        path TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL,
+        missing_since TEXT NOT NULL,
+        kept TEXT CHECK (kept IN ('arriving', 'unsure', 'carried')),
+        reason TEXT
+      ) WITHOUT ROWID;
+      INSERT INTO folder_journal SELECT * FROM journal_kept;
+      DROP TABLE journal_kept;
+      PRAGMA user_version = 11;
+    `);
+  } finally {
+    db.close();
+  }
+}
+
+function schemaVersion(folder: CliFolder): number {
+  const db = new DatabaseSync(folder.store, { readOnly: true });
+  try {
+    const row = db.prepare("PRAGMA user_version").get() as {
+      user_version: number;
+    };
+    return Number(row.user_version);
+  } finally {
+    db.close();
+  }
+}
+
+/** Each file the folder's record holds as missing, with its item and how it
+ *  is held. */
+function journaled(folder: CliFolder): string[] {
+  const db = new DatabaseSync(folder.store, { readOnly: true });
+  try {
+    const rows = db
+      .prepare(
+        "SELECT path, item_id, missing_since, kept FROM folder_journal ORDER BY path",
+      )
+      .all();
+    return rows.map((row) => JSON.stringify(row));
+  } finally {
+    db.close();
+  }
+}
+
+it("upgrades a folder's store at schema 11 in place, keeping each held file, and only says so to a command that reads it", async () => {
+  const at = machine("older-store");
+  const own = ownTag("older");
+  const folder = await added(
+    at,
+    "notes",
+    own.query,
+    {
+      "Held.md": note(`Older held ${ctx.runId}`, "body"),
+      "Later.md": note(`Older later ${ctx.runId}`, "body"),
+    },
+    own.defaults,
+  );
+  const peerTag = ownTag("older-peer");
+  const peer = await added(at, "peer", peerTag.query, {}, peerTag.defaults);
+  value(await folder.push());
+  rmSync(join(folder.dir, "Held.md"));
+  expect(value(await folder.scan()).missing).toBe(1);
+  await pastRenameGrace();
+  // Another folder is on the machine, so the delete is held for the person.
+  expect(value(await folder.scan()).unsure.map((file) => file.path)).toEqual([
+    "Held.md",
+  ]);
+  const before = journaled(folder);
+  expect(before).toHaveLength(1);
+  asSchema11(folder);
+  asSchema11(peer);
+  const state = storeBytes(folder);
+
+  for (const read of [await folder.status(), await folder.held()]) {
+    expect(read.ok).toBe(false);
+    if (read.ok) return;
+    expect(read.refusal.code, read.refusal.raw).toBe("wrong_schema");
+    expect(read.refusal.raw).toContain(
+      "next push, pull, scan or watch upgrades it in place",
+    );
+    for (const advice of ["folders remove", "folders add", "MARFA_VERSION"]) {
+      expect(read.refusal.raw).not.toContain(advice);
+    }
+  }
+  expect(storeBytes(folder)).toBe(state);
+
+  rmSync(join(folder.dir, "Later.md"));
+  const scan = await exited(folder.hold(["folders", "scan", folder.dir]));
+  expect(scan.exitCode(), scan.stderr).toBe(0);
+  expect(scan.stderr).not.toContain(REPLACED);
+  expect(schemaVersion(folder)).toBe(12);
+  expect(journaled(folder)).toEqual(expect.arrayContaining(before));
+  await pastRenameGrace();
+  // The peer, not yet upgraded, cannot be read, so this delete is held too.
+  const swept = value(await folder.scan());
+  const later = swept.unsure.find((file) => file.path === "Later.md");
+  expect(later?.reason, JSON.stringify(swept)).toContain(peer.dir);
+  expect(later?.reason).toContain("upgrades");
+  expect(later?.reason).not.toContain("folders remove");
+  expect(schemaVersion(peer)).toBe(11);
+  expect(
+    value(await folder.held())
+      .held.map((file) => file.path)
+      .sort(),
+  ).toEqual(["Held.md", "Later.md"]);
+
+  const watch = peer.watchEveryText();
+  held.push(watch);
+  await vi.waitFor(() => {
+    expect(watch.stdout, watch.stderr).toContain(`${folder.dir}: watching`);
+    expect(watch.stdout, watch.stderr).toContain(`${peer.dir}: watching`);
+  }, WAIT);
+  expect(watch.stdout).not.toContain("not watched");
+  expect(watch.stderr).not.toContain(REPLACED);
+  await watch.stop();
+  expect(schemaVersion(peer)).toBe(12);
 });

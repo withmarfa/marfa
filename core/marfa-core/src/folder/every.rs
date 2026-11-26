@@ -321,13 +321,32 @@ fn stored_origin(dir: &Path) -> crate::Result<Option<String>> {
             let conn = core.conn()?;
             store::meta_get(&conn, store::META_SERVER_ORIGIN)
         }
-        Err(CoreError::WrongSchema {
+        Err(error) if opened_by_writer(&error) => Ok(super::refused::recorded(&state_dir)?.origin),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether a store refused to read is one the folder's writer opens: it
+/// upgrades it in place (`folder-setup/older-store-upgraded`) or replaces it
+/// (`folder-setup/refused-store-replaced`).
+fn opened_by_writer(error: &CoreError) -> bool {
+    matches!(
+        error,
+        CoreError::WrongSchema {
+            folder: Some(crate::FolderStore::Upgradable),
+            ..
+        } | CoreError::WrongSchema {
             unsent: Some(0),
             folder: Some(crate::FolderStore::Replaceable),
             ..
-        }) => Ok(super::refused::recorded(&state_dir)?.0),
-        Err(error) => Err(error),
-    }
+        }
+    )
+}
+
+/// Whether the person paused a folder whose store, refused to read with
+/// `error`, only its writer opens.
+pub(super) fn paused_unopened(dir: &Path, error: &CoreError) -> bool {
+    opened_by_writer(error) && recorded(dir).is_ok_and(|held| held.paused)
 }
 
 fn recorded(dir: &Path) -> crate::Result<Recorded> {
@@ -342,14 +361,9 @@ fn recorded(dir: &Path) -> crate::Result<Recorded> {
                     super::paused(&conn)?,
                 )
             }
-            // The open replaces it (`folder-setup/refused-store-replaced`).
-            Err(CoreError::WrongSchema {
-                unsent: Some(0),
-                folder: Some(crate::FolderStore::Replaceable),
-                ..
-            }) => {
-                let (origin, waiting) = super::refused::recorded(&state_dir)?;
-                (origin, waiting, false)
+            Err(error) if opened_by_writer(&error) => {
+                let held = super::refused::recorded(&state_dir)?;
+                (held.origin, held.first_sync_waiting, held.paused)
             }
             Err(error) => return Err(error),
         };
@@ -2112,6 +2126,43 @@ mod tests {
         // A folder with no recorded origin takes whichever server is kept.
         stored(&registry, temp.path(), "fresh", None);
         assert!(follows(&registry, "https://two.test"));
+    }
+
+    #[test]
+    fn the_watch_reads_a_folder_at_schema_11_and_a_kept_credential_still_reaches_it() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let registry = Registry::at(temp.path().join("folders.json"));
+        let dir = temp.path().join("older");
+        std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
+        let path = dir.join(STATE_DIR).join(store::FOLDER_STORE);
+        let core = Core::open(&path, None).unwrap();
+        store::meta_set(
+            &core.conn().unwrap(),
+            store::META_SERVER_ORIGIN,
+            "https://one.test",
+        )
+        .unwrap();
+        super::super::settings_file::bind(&core, "01a00000-0000-7000-8000-0000000036b1").unwrap();
+        drop(core);
+        registry
+            .add(&dir, &Directory::open(&dir).unwrap(), "older", None)
+            .unwrap();
+        store::testing::as_schema_11(&path);
+
+        let read = recorded(&dir).unwrap();
+        assert_eq!(read.origin.as_deref(), Some("https://one.test"));
+        assert!(!read.first_sync_waiting && !read.paused);
+        assert!(follows(&registry, "https://one.test"));
+        assert!(!follows(&registry, "https://two.test"));
+
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(
+                "INSERT INTO meta (key, value) VALUES (?1, '2026-01-01T00:00:00.000Z')",
+                [super::super::paused::META_PAUSED],
+            )
+            .unwrap();
+        assert!(recorded(&dir).unwrap().paused, "a pause was not read");
     }
 
     #[test]
