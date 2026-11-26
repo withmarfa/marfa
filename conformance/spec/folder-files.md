@@ -2360,7 +2360,7 @@ While a device remembers a directory that the machine's folder registry no longe
 
 When a device holds a missing file because a folder the registry no longer lists cannot be read, a device MUST name `folders forget` in the hold's reason.
 
-**Reason:** the person needs the step that ends the hold: mounting the folder's volume where it is not mounted, or forgetting the folder where it is gone for good.
+**Reason:** mounting the volume lets the device look for moved files when the person settles the hold with `folders held`. If the folder is gone for good, the person can forget its directory.
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete as a held file while a folder no longer listed cannot be read or is gone`, `device/folders-one-mac.test.ts › holds a delete for a folder no longer listed whose directory is gone until the person forgets that exact directory, then sends it with no other folder on the Mac`.
 
@@ -2442,7 +2442,7 @@ When a device forgets a directory the registry does not list, a device MUST stop
 
 When a device forgets a directory, a device MUST NOT stop holding a missing file that `folder-files/forget-releases-held` does not name.
 
-**Reason:** a hold's reason is words for the person, and may name another directory whose path starts the same or only the part of a folder it could not read, so a device records the folders a hold waits on apart from its reason and selects by that. A hold saved by a release that did not record them waits for `folders held`, and its reason says so. A file that came back and went missing again since it was shown is not the one the person agreed to.
+**Reason:** a hold's message can name a subdirectory or a different directory with a similar path. The device uses the recorded directories to identify the holds to release. The person can settle a hold that predates this record with `folders held`. If the file returned and then went missing again, the preview describes an earlier disappearance.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps through the binding a hold made after the record it was given was read, and releases none from it`.
 
@@ -2450,7 +2450,7 @@ When a device forgets a directory, a device MUST NOT stop holding a missing file
 
 If anything but an empty directory stands at the directory the person names, including a directory that cannot be read, then a device MUST refuse to forget it and change nothing.
 
-**Reason:** what stands there may still be the folder, or hold a file moved into it, and forgetting it would let the next pass send that file's delete. Nothing at the path, or an empty directory such as an unmounted volume's mount point, is forgotten. The refusal says to unmount the volume, or to remove what is there or make it readable, first.
+**Reason:** the directory may still contain a file moved from another folder. Forgetting it could let the next pass send that file's item to the bin. The command accepts a missing path or an empty directory, such as an empty mount point. The refusal tells the person they can unmount the volume, remove the contents or make the directory readable before trying again.
 
 **Tests:** `device/folders-one-mac.test.ts › refuses to forget a directory where something stands that may still be the folder, and forgets it once only an empty directory is there`.
 

@@ -713,8 +713,7 @@ it("replaces a store whose record of missing files has the same columns and othe
   expect(await serverNote(titles.deleted)).toBeDefined();
   rmSync(join(folder.dir, "Deleted.md"));
   expect(value(await folder.scan()).missing).toBe(1);
-  // The journal as an earlier build made it: the same columns, with a
-  // check that allows fewer values.
+  // Model a journal with this build's columns and a narrower check.
   const db = new DatabaseSync(folder.store);
   try {
     db.exec(`
@@ -728,6 +727,7 @@ it("replaces a store whose record of missing files has the same columns and othe
         reason TEXT,
         identity TEXT,
         content_hash TEXT,
+        waits_on TEXT,
         PRIMARY KEY (path, item_id)
       ) WITHOUT ROWID;
       INSERT INTO folder_journal SELECT * FROM journal_rows;
@@ -1035,6 +1035,7 @@ it("upgrades a folder's store at schema 11 in place, keeping each held file, and
   ]);
   const before = journaled(folder);
   expect(before).toHaveLength(1);
+  const currentSchema = schemaVersion(folder);
   asSchema11(folder);
   asSchema11(peer);
   const state = storeBytes(folder);
@@ -1056,7 +1057,7 @@ it("upgrades a folder's store at schema 11 in place, keeping each held file, and
   const scan = await exited(folder.hold(["folders", "scan", folder.dir]));
   expect(scan.exitCode(), scan.stderr).toBe(0);
   expect(scan.stderr).not.toContain(REPLACED);
-  expect(schemaVersion(folder)).toBe(12);
+  expect(schemaVersion(folder)).toBe(currentSchema);
   expect(journaled(folder)).toEqual(expect.arrayContaining(before));
   await pastRenameGrace();
   // The peer, not yet upgraded, cannot be read, so this delete is held too.
@@ -1081,5 +1082,5 @@ it("upgrades a folder's store at schema 11 in place, keeping each held file, and
   expect(watch.stdout).not.toContain("not watched");
   expect(watch.stderr).not.toContain(REPLACED);
   await watch.stop();
-  expect(schemaVersion(peer)).toBe(12);
+  expect(schemaVersion(peer)).toBe(currentSchema);
 });

@@ -189,7 +189,7 @@ Past the rename grace, a folder sends the delete of a missing file only where th
 Use `remembering(dir:)` to show what would change if the person forgot a directory. This call works offline. It reads the listed folders that remember the directory and returns a `Remembered` record with these fields.
 
 - `dir` is the path as given, made absolute. It is matched exactly as a folder records it, without following symbolic links. `listed` says whether the registry still lists it.
-- `folders` contains each `RememberingFolder`, with its directory (`dir`), folder ID (`folder`), opaque store identifier (`store`), and the `held` files the next sync would reconsider: those held because that directory could not be read or held the file.
+- `folders` contains each `RememberingFolder`, with its directory (`dir`), folder ID (`folder`), opaque store identifier (`store`), and the `held` files the next sync would reconsider. Each of those holds records the requested directory as one it waits on.
 - `notRead` contains a `FolderLeft` with the directory and reason for each folder the call could not read.
 - `alike` contains remembered paths that differ only in case from the requested path.
 
