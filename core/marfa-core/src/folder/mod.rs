@@ -1308,6 +1308,8 @@ struct Rows<'a> {
     dir_at: (u64, u64),
     aside: String,
     aside_at: (u64, u64),
+    /// The aside directory's full identity, for a discard's mark.
+    aside_seen: Option<identity::Seen>,
     /// Where a settled row's directory moved within the folder: the binding
     /// at its recorded path takes the file now at its path there.
     follow: Option<Follow<'a>>,
@@ -1432,9 +1434,13 @@ impl landing::Ledger for Rows<'_> {
         private: &Path,
         mark: landing::Mark<'_>,
     ) -> std::io::Result<()> {
+        let aside_at = self
+            .aside_seen
+            .ok_or_else(|| std::io::Error::other("Marfa could not read the directory"))?;
         let discarding = state::Discarding {
             id: retained.id.clone(),
             aside: self.aside.clone(),
+            aside_at,
             kept: retained.kept.clone(),
             private: private.to_string_lossy().into_owned(),
             from: joined(&self.dir, &retained.target),
@@ -1488,6 +1494,10 @@ fn settle_row(
         dir_at: row.dir_at,
         aside: aside_place.to_string(),
         aside_at: row.aside_at,
+        aside_seen: aside
+            .metadata()
+            .ok()
+            .map(|found| identity::Seen::of(&found)),
         // An absolute `dir` is another folder's, with no binding here to follow.
         follow: (dir_place != row.dir && !Path::new(&row.dir).is_absolute()).then(|| Follow {
             from: joined(&row.dir, &row.displacement.target),
@@ -1630,6 +1640,7 @@ impl Folder {
                 dir_at: landing::identity(&directory.metadata()?),
                 aside: aside_place,
                 aside_at: landing::identity(&aside.metadata()?),
+                aside_seen: Some(identity::Seen::of(&aside.metadata()?)),
                 follow: None,
             },
             directory,

@@ -653,6 +653,8 @@ pub(crate) struct Unread {
     pub(crate) from: String,
     /// The hash of the bytes set aside, where the row still holds one.
     pub(crate) hash: Option<String>,
+    /// The identity of `aside` the row recorded, where it still reads.
+    pub(crate) aside_at: Option<(u64, u64)>,
 }
 
 impl Unread {
@@ -670,6 +672,7 @@ impl Unread {
             .unwrap_or_default();
         Unread {
             hash: text(&row["retained"]["read"]["hash"]),
+            aside_at: serde_json::from_value(row["aside_at"].clone()).ok(),
             aside: text(&row["aside"]).unwrap_or_default(),
             kept,
             from,
@@ -708,6 +711,9 @@ pub(crate) struct Discarding {
     pub(crate) id: String,
     /// The directory both names are in, as in [`Retained`].
     pub(crate) aside: String,
+    /// That directory as the discard found it, so another put at its name
+    /// is never taken for it.
+    pub(crate) aside_at: super::identity::Seen,
     /// Its reserved name, which it goes back to where that is free.
     pub(crate) kept: String,
     pub(crate) private: String,
