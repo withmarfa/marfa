@@ -164,3 +164,23 @@ fn a_folder_at_schema_11_is_listed_paused_only_while_its_sync_is_paused() {
     assert!(!Folder::paused_at(running.path()));
     assert_eq!(version(paused.path()), 11, "a read changed the store");
 }
+
+/// Gives the folder store at `root`, which no connection holds open, the
+/// records of stopped removals and discards in the shape v0.0.113 wrote
+/// them, at the schema version it wrote.
+pub(super) fn as_written_by_v0_0_113(root: &Path) {
+    rusqlite::Connection::open(store_of(root))
+        .unwrap()
+        .execute_batch(
+            "UPDATE meta SET value = json_object(
+                'item_id', json_extract(value, '$.item_id'),
+                'at', json_array(json_extract(value, '$.file.device'), json_extract(value, '$.file.inode')),
+                'born', json_extract(value, '$.file.born'),
+                'hash', json_extract(value, '$.hash'))
+             WHERE key >= 'folder_taken:' AND key < 'folder_taken;' AND json_valid(value);
+             UPDATE meta SET value = json_remove(value, '$.aside_at')
+             WHERE key >= 'folder_discarding:' AND key < 'folder_discarding;' AND json_valid(value);
+             PRAGMA user_version = 12;",
+        )
+        .unwrap();
+}

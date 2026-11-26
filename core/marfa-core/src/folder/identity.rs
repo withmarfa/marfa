@@ -78,10 +78,17 @@ pub(crate) enum Compared {
 
 impl Seen {
     pub(crate) fn of(metadata: &Metadata) -> Seen {
+        let born = born(metadata);
+        // A file system that keeps no birth time, as a fixture asks.
+        #[cfg(debug_assertions)]
+        let born = born.filter(|_| {
+            !crate::fault::fails(|| "no-birth-time")
+                && crate::fault::named("no-birth-time").is_none()
+        });
         Seen {
             device: device_of(metadata),
             inode: inode_of(metadata),
-            born: born(metadata),
+            born,
         }
     }
 

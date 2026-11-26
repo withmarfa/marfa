@@ -1275,4 +1275,212 @@ pub(super) mod tests {
             "ending one removal looked at another's file"
         );
     }
+
+    /// A folder whose files at `paths` are unmatched and may be removed.
+    #[cfg(debug_assertions)]
+    fn removable_all(paths: &[&str]) -> (super::super::tests::ScannedDir, Folder) {
+        let (dir, folder) = scanned_folder_with(
+            serde_json::json!({ "query": { "state": ["active"] } }),
+            None,
+        );
+        for path in paths {
+            std::fs::write(
+                dir.path().join(path),
+                format!("---\ntitle: {path}\nstate: archived\n---\nbody\n"),
+            )
+            .unwrap();
+        }
+        assert_eq!(folder.scan().unwrap().created, paths.len());
+        folder.scan().unwrap();
+        let ids: Vec<String> = paths.iter().map(|path| landed(&folder, path)).collect();
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        for id in &ids {
+            set_item_state(&folder, id, "archived");
+        }
+        assert_eq!(folder.pull().unwrap().unmatched, paths.len());
+        let conn = folder.core.conn().unwrap();
+        for path in paths {
+            let mut row = state::bound_at(&conn, path).unwrap().unwrap();
+            row.writes.queued.clear();
+            state::bind(&conn, &row).unwrap();
+        }
+        drop(conn);
+        (dir, folder)
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_byte_identical_save_as_the_placement_ends_is_never_removed() {
+        let (dir, folder, _) = removable();
+        let path = dir.path().join("new.md");
+        let swap = meanwhile_at("folder-take-away-ended", {
+            let path = path.clone();
+            move || replaced_by_a_copy(&path)
+        });
+
+        let done = folder.remove_unmatched(&["new.md".into()]).unwrap();
+
+        assert!(
+            swap.join().unwrap(),
+            "the removal never ended the placement, so nothing below is about it"
+        );
+        assert!(path.exists(), "the replacement was removed: {done:?}");
+        assert!(done.removed.is_empty(), "{done:?}");
+        assert!(held_in_status(&folder, "new.md"));
+        assert!(deletes_queued(&folder).is_empty());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_file_with_no_birth_time_is_removed_while_its_descriptor_is_held() {
+        let (dir, folder, id) = removable();
+        let path = dir.path().join("new.md");
+        let seen = |metadata| super::super::identity::Seen::of(&metadata).born;
+        // The witness: the fault takes the birth time away.
+        assert!(seen(std::fs::metadata(&path).unwrap()).is_some());
+        let done = {
+            let _none = crate::fault::fail_on_this_thread("no-birth-time");
+            assert!(seen(std::fs::metadata(&path).unwrap()).is_none());
+            folder.remove_unmatched(&["new.md".into()]).unwrap()
+        };
+
+        assert_eq!(done.removed.len(), 1, "{done:?}");
+        assert!(!path.exists());
+        let conn = folder.core.conn().unwrap();
+        assert!(state::taken(&conn).unwrap().is_empty(), "{done:?}");
+        assert!(state::bound_at(&conn, "new.md").unwrap().is_none());
+        drop(conn);
+        assert!(folder.core.get(&id).unwrap().is_some());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn settling_a_stopped_removal_never_stops_the_next_file_in_the_batch() {
+        let (dir, folder) = removable_all(&["A.md", "Z.md"]);
+        let root = dir.path().to_path_buf();
+        let folder = stopped_at(folder, &root, "A.md", "crash-before-take-away");
+        std::fs::remove_file(root.join("A.md")).unwrap();
+
+        let done = folder
+            .remove_unmatched(&["A.md".into(), "Z.md".into()])
+            .unwrap();
+
+        let settled: Vec<&str> = done.settled.iter().map(|file| file.path.as_str()).collect();
+        let removed: Vec<&str> = done.removed.iter().map(|file| file.path.as_str()).collect();
+        assert_eq!(settled, ["A.md"], "{done:?}");
+        assert_eq!(removed, ["Z.md"], "{done:?}");
+        assert!(!root.join("Z.md").exists());
+    }
+
+    /// Copies `from` into `to`, which does not exist yet.
+    #[cfg(debug_assertions)]
+    fn copied(from: &Path, to: &Path) {
+        std::fs::create_dir(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                copied(&entry.path(), &to.join(entry.file_name()));
+            } else {
+                std::fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+            }
+        }
+    }
+
+    /// Moves the folder at `root` aside and puts a copy of its store alone
+    /// in a new directory at its path. Answers where the original went.
+    #[cfg(debug_assertions)]
+    pub(in crate::folder) fn store_in_a_new_directory(root: &Path) -> std::path::PathBuf {
+        let original = root.with_extension("original");
+        std::fs::rename(root, &original).unwrap();
+        std::fs::create_dir(root).unwrap();
+        copied(
+            &original.join(super::super::STATE_DIR),
+            &root.join(super::super::STATE_DIR),
+        );
+        original
+    }
+
+    /// Puts the original folder back at `root`.
+    #[cfg(debug_assertions)]
+    pub(in crate::folder) fn original_back(root: &Path, original: &Path) {
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::rename(original, root).unwrap();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_store_in_another_directory_proves_no_stopped_removal_gone() {
+        for unread in [false, true] {
+            let (dir, folder, _) = removable();
+            let root = dir.path().to_path_buf();
+            let folder = stopped_at(folder, &root, "new.md", "crash-before-take-away");
+            if unread {
+                spoiled_removal_records(&folder);
+            }
+            drop(folder);
+            let original = store_in_a_new_directory(&root);
+            let folder = Folder::open(&root, None).unwrap();
+
+            folder.scan().unwrap();
+            let done = folder.remove_unmatched(&["new.md".into()]).unwrap();
+
+            assert!(done.settled.is_empty(), "unread {unread}: {done:?}");
+            let conn = folder.core.conn().unwrap();
+            assert_eq!(state::taken(&conn).unwrap().len(), 1, "unread {unread}");
+            assert!(
+                state::bound_at(&conn, "new.md").unwrap().is_some(),
+                "unread {unread}: the binding ended while the file is in the original"
+            );
+            drop(conn);
+            assert!(held_in_status(&folder, "new.md"), "unread {unread}");
+            drop(folder);
+            original_back(&root, &original);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_removal_v0_0_113_stopped_on_whose_file_is_gone_is_held_with_the_way_out() {
+        for path in ["new.md", "sub/new.md"] {
+            let (dir, folder, id) = removable_at(path);
+            let root = dir.path().to_path_buf();
+            let folder = stopped_at(folder, &root, path, "crash-before-take-away");
+            drop(folder);
+            super::super::upgraded_tests::as_written_by_v0_0_113(&root);
+            std::fs::remove_file(root.join(path)).unwrap();
+            let folder = Folder::open(&root, None).unwrap();
+
+            scanned_past_the_grace(&folder, path);
+
+            assert!(deletes_queued(&folder).is_empty(), "{path}");
+            let conn = folder.core.conn().unwrap();
+            assert_eq!(state::taken(&conn).unwrap().len(), 1, "{path}");
+            assert!(state::bound_at(&conn, path).unwrap().is_some(), "{path}");
+            drop(conn);
+            let listed = folder
+                .status()
+                .unwrap()
+                .files
+                .into_iter()
+                .find(|file| file.path == path);
+            assert!(
+                listed.as_ref().is_some_and(|file| file.status == "held"
+                    && file.flag == Some(super::super::pull::REMOVING)
+                    && file
+                        .reason
+                        .as_deref()
+                        .is_some_and(|reason| reason.contains("folders unmatched"))),
+                "{path}: {listed:?}"
+            );
+            let done = folder.remove_unmatched(&[path.into()]).unwrap();
+            assert!(done.settled.is_empty(), "{path}: settled unasked: {done:?}");
+            assert_eq!(done.kept.len(), 1, "{path}: {done:?}");
+            assert!(folder.core.get(&id).unwrap().is_some());
+        }
+    }
 }

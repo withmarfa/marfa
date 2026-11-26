@@ -842,10 +842,17 @@ mod tests {
     /// A folder whose `Notes/Plan.md` is bound to an item the server has
     /// changed since, so the next pull replaces it. Answers the item's id.
     fn changed_on_the_server(dir: &Path, folder: &Folder) -> String {
-        std::fs::create_dir(dir.join("Notes")).unwrap();
-        std::fs::write(dir.join("Notes/Plan.md"), "as it was\n").unwrap();
+        changed_on_the_server_in(dir, folder, "Notes")
+    }
+
+    /// The same, for `Plan.md` in `place`, or directly in the folder where
+    /// `place` is empty.
+    fn changed_on_the_server_in(dir: &Path, folder: &Folder, place: &str) -> String {
+        let path = super::super::joined(place, "Plan.md");
+        std::fs::create_dir_all(dir.join(place)).unwrap();
+        std::fs::write(dir.join(&path), "as it was\n").unwrap();
         assert_eq!(folder.scan().unwrap().created, 1);
-        let id = landed(folder, "Notes/Plan.md");
+        let id = landed(folder, &path);
         folder.pull().unwrap();
         changed_elsewhere(folder, &id, "changed elsewhere\n");
         id
@@ -1150,14 +1157,29 @@ mod tests {
         std::path::PathBuf,
         String,
     ) {
+        kept_aside_in("Notes", unread)
+    }
+
+    /// The same, for a file in `place`, or directly in the folder where
+    /// `place` is empty.
+    #[cfg(debug_assertions)]
+    fn kept_aside_in(
+        place: &str,
+        unread: bool,
+    ) -> (
+        super::super::tests::ScannedDir,
+        Folder,
+        std::path::PathBuf,
+        String,
+    ) {
         let (dir, folder) = scanned_folder();
         let root = dir.path().canonicalize().unwrap();
-        changed_on_the_server(&root, &folder);
+        changed_on_the_server_in(&root, &folder, place);
         {
             let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
             folder.pull().unwrap();
         }
-        let reserved = reserved_in(&root.join("Notes"));
+        let reserved = reserved_in(&root.join(place));
         assert_eq!(reserved.len(), 1);
         if unread {
             folder
@@ -1170,7 +1192,8 @@ mod tests {
                 )
                 .unwrap();
         }
-        (dir, folder, root, format!("Notes/{}", reserved[0]))
+        let path = super::super::joined(place, &reserved[0]);
+        (dir, folder, root, path)
     }
 
     /// Each kept path listed, and whether a file is there.
@@ -1512,5 +1535,138 @@ mod tests {
             );
             assert!(!folder.kept_files().unwrap().is_empty(), "{spoil}");
         }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_discard_v0_0_113_stopped_on_keeps_the_path_its_file_came_from() {
+        for place in ["Notes", ""] {
+            let (_dir, folder, root, _) = kept_aside_in(place, false);
+            let folder = discard_stopped(folder, &root);
+            drop(folder);
+            super::super::upgraded_tests::as_written_by_v0_0_113(&root);
+            let folder = Folder::open(&root, None).unwrap();
+
+            folder.scan().unwrap();
+
+            let kept = folder.kept_files().unwrap();
+            assert_eq!(kept.len(), 1, "{place:?}: {kept:?}");
+            assert_eq!(
+                kept[0].from,
+                super::super::joined(place, "Plan.md"),
+                "{place:?}: {kept:?}"
+            );
+            assert!(root.join(&kept[0].path).is_file(), "{place:?}: {kept:?}");
+            assert_eq!(
+                state::retained(&folder.core.conn().unwrap())
+                    .unwrap()
+                    .len(),
+                1,
+                "{place:?}: the record linking the kept file to its path went"
+            );
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_discard_v0_0_113_stopped_on_whose_file_is_gone_is_listed_with_the_way_out() {
+        for place in ["Notes", ""] {
+            let (_dir, folder, root, _) = kept_aside_in(place, false);
+            let folder = discard_stopped(folder, &root);
+            let private = reserved_in(&root.join(place));
+            assert_eq!(private.len(), 1);
+            drop(folder);
+            super::super::upgraded_tests::as_written_by_v0_0_113(&root);
+            std::fs::remove_file(root.join(place).join(&private[0])).unwrap();
+            let folder = Folder::open(&root, None).unwrap();
+
+            folder.scan().unwrap();
+
+            let path = super::super::joined(place, &private[0]);
+            let listed = folder
+                .status()
+                .unwrap()
+                .files
+                .into_iter()
+                .find(|file| file.path == path);
+            assert!(
+                listed.as_ref().is_some_and(|file| file.status == "held"
+                    && file
+                        .reason
+                        .as_deref()
+                        .is_some_and(|reason| reason.contains("folders kept"))),
+                "{place:?}: {listed:?}"
+            );
+            let done = folder.discard_kept().unwrap();
+            assert!(done.forgotten.is_empty(), "{place:?}: {done:?}");
+            assert_eq!(
+                state::discarding(&folder.core.conn().unwrap())
+                    .unwrap()
+                    .len(),
+                1,
+                "{place:?}: a record that cannot be proved gone was settled unasked"
+            );
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn an_unreadable_kept_record_that_names_no_directory_is_never_settled_on_absence() {
+        let (_dir, folder, root, path) = kept_aside_in("Notes", true);
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE meta SET value = json_remove(value, '$.aside', '$.aside_at') WHERE key LIKE 'folder_retained:%'",
+                [],
+            )
+            .unwrap();
+        // The witness: its file is there, in a directory the record does not name.
+        assert!(root.join(&path).is_file());
+
+        folder.discard_kept().unwrap();
+
+        assert!(root.join(&path).is_file());
+        assert_eq!(
+            state::retained(&folder.core.conn().unwrap())
+                .unwrap()
+                .len(),
+            1,
+            "the record went after a look in a directory it does not name"
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_store_in_another_directory_settles_no_kept_record_on_absence() {
+        let (dir, folder, root, path) = kept_aside_in("", true);
+        let _ = &dir;
+        // A record that names its directory but not its identity.
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE meta SET value = json_remove(value, '$.aside_at') WHERE key LIKE 'folder_retained:%'",
+                [],
+            )
+            .unwrap();
+        drop(folder);
+        let original = super::super::unmatched::tests::store_in_a_new_directory(&root);
+        let folder = Folder::open(&root, None).unwrap();
+
+        folder.discard_kept().unwrap();
+
+        assert_eq!(
+            state::retained(&folder.core.conn().unwrap())
+                .unwrap()
+                .len(),
+            1,
+            "the record went while its file is in the original directory"
+        );
+        drop(folder);
+        super::super::unmatched::tests::original_back(&root, &original);
+        assert!(root.join(&path).is_file());
     }
 }
