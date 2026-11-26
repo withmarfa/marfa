@@ -29,7 +29,7 @@ pub struct Remembered {
     /// Listed folders whose memory could not be read, each with why.
     pub not_read: Vec<NotRead>,
     /// Directories remembered that differ from `dir` only in case. They are
-    /// other paths, and are not forgotten.
+    /// not forgotten.
     pub alike: Vec<PathBuf>,
 }
 
@@ -38,7 +38,9 @@ pub struct Remembered {
 pub struct Remembering {
     pub dir: PathBuf,
     pub folder: String,
-    /// The store read, which the forget finds again before it writes.
+    /// The store read, which the forget finds again before it writes. It is
+    /// opaque: compare it for equality and do not parse it.
+    #[serde(skip)]
     pub store: String,
     /// Its held deletes that wait on the directory, decided again at its next
     /// pass once it forgets.
@@ -73,9 +75,10 @@ pub struct ForgottenIn {
 impl Folder {
     /// Which listed folders remember `dir`, and which of their held deletes
     /// forgetting it lets be decided again. Reads only, and asks no watch for
-    /// a folder. `dir` is matched as a folder records a path, so another
-    /// spelling of a remembered path through a link or in another case is
-    /// another path.
+    /// a folder. `dir` is matched as a folder records a path: its parent
+    /// directories as the file system names them, once links are followed.
+    /// A remembered path that differs from it in case otherwise is only
+    /// pointed out, in `alike`.
     pub fn remembering(dir: impl AsRef<Path>) -> Result<Remembered> {
         let dir = registry::resolved(&registry::absolute(dir.as_ref()));
         let entries = listed()?;

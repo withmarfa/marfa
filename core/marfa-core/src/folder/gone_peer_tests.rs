@@ -74,7 +74,7 @@ fn a_delete_stays_held_as_a_held_file_for_a_remembered_folder_that_cannot_be_rea
         let reasons = unsure_reasons(&unread);
         assert_eq!(reasons.len(), 1, "{unread:?}");
         let mount = format!(
-            "the folder {} cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it",
+            "the folder {} cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it, and if it is gone, `folders forget` it",
             other.path().display()
         );
         assert!(
@@ -108,6 +108,35 @@ fn a_delete_stays_held_as_a_held_file_for_a_remembered_folder_that_cannot_be_rea
     assert_eq!(unsure_reasons(&missing).len(), 1, "{missing:?}");
     let status = a.status().unwrap();
     assert_eq!(held(&status, "held.txt"), Some(("held", Some("unsure"))));
+}
+
+#[test]
+fn a_delete_held_for_a_listed_folder_that_cannot_be_read_names_the_steps_that_end_it() {
+    let (_, _registry) = registry::tests::own_registry();
+    let query = json!({ "query": {} });
+    let (from, a) = folder_with("01a00000-0000-7000-8000-000000357819", query.clone(), None);
+    let (other, b) = folder_with("01a00000-0000-7000-8000-000000357820", query, None);
+    b.scan().unwrap();
+    std::fs::write(from.path().join("held.txt"), "held words\n").unwrap();
+    assert_eq!(a.scan().unwrap().created, 1);
+    landed(&a, "held.txt");
+    std::fs::remove_file(from.path().join("held.txt")).unwrap();
+    assert_eq!(a.scan().unwrap().missing, 1);
+    past_the_grace(&a, "held.txt");
+    let _sealed = crate::test_folders::locked(other.path(), 0o000);
+    let held = a.scan().unwrap();
+    assert_eq!(held.deleted, 0, "{held:?}");
+    let reasons = unsure_reasons(&held);
+    assert_eq!(reasons.len(), 1, "{held:?}");
+    let steps = format!(
+        "the folder {} cannot be reached; if it is gone, `folders remove` it, then `folders forget` it",
+        other.path().display()
+    );
+    assert!(
+        reasons[0].contains(&steps),
+        "the advice names no step that ends the hold: {}",
+        reasons[0]
+    );
 }
 
 /// Another folder's state at the remembered path, as when volumes holding

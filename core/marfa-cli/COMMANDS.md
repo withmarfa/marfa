@@ -31,7 +31,7 @@ Every command accepts these.
 | 0 | Done. |
 | 1 | The server refused the request (a wrong or spent setup code included), the CLI refused it before sending, the answer came from another contract, a docs page does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it. |
 | 2 | The command line or the profile file was wrong, or named no store or server. |
-| 3 | The environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a working copy another program was writing to, a docs site that cannot be read, a new build installed under `folders watch --exit-on-new-build`, a sign-in code that is no longer valid); try again. |
+| 3 | The environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a working copy another program was writing to, a folder `folders forget` could not read or change, a docs site that cannot be read, a new build installed under `folders watch --exit-on-new-build`, a sign-in code that is no longer valid); try again. |
 | 4 | The working copy or the queue refused under the device rules, a folder's server answers as another Marfa instance, the keychain cannot be used (locked, missing, unreadable, or none on this system), or the core stopped on a fault of its own. |
 | 5 | There is no credential, a profile's key command gave none, the credential was refused, or the sign-in ended; run `marfa login` to start one. |
 | 130 | You ended a long-lived command (`folders watch`, `events`, `device changes`, `cloud link`) with Ctrl-C, or ended one that was still stopping with a second Ctrl-C. |
@@ -5230,6 +5230,22 @@ marfa folders held [OPTIONS] <DIR>
 | `--keep <PATH>...` | Keep the items of these held files, by their paths in the directory. |
 | `--write-back` | Write each kept file again at once where the folder's query holds its item. A file whose path another item's file took stays held. |
 | `--yes` | Confirm the trash without asking, for scripts. Without it, a trash asks at a terminal, and is refused with `--json` or anywhere else. |
+
+### marfa folders forget
+
+Make the folders on this computer forget a directory they remember. A folder remembers each other folder it has found, also once the registry stops listing it, and holds the delete of a missing file that may have moved there until it can read that directory. Nothing at the directory's path shows the folder is gone for good, so only this ends that memory. It changes nothing else: no folder leaves the list, and no file is trashed or kept. A held delete that waited on the directory is decided again at the folder's next pass, as any missing file is. The directory is matched as a folder records it: made absolute, with links in its parent directories followed; a trailing slash makes no difference, and another case is another path. Without `--yes`, says which folders remember it and which held deletes it would let be decided again, then asks at a terminal, and elsewhere or with `--json` changes nothing. A folder that cannot be read, that another program does not let go, or whose saved state is not the one shown is named and left as it was, and the command exits 3. A watch holding a folder lets it go while this runs. With `--json`, the result has `dir`, `listed`, `folders` (each with `dir`, `folder` and `held`), `not_read`, `alike` (remembered directories that differ only in case), `declined`, `forgotten` (each with `dir`, `folder` and `released`) and `not_changed`.
+
+```text
+marfa folders forget [OPTIONS] <DIR>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<DIR>` | The directory the folders remember. |
+
+| Option | Description |
+| --- | --- |
+| `--yes` | Forget it without asking, for scripts. |
 
 ### marfa folders create
 

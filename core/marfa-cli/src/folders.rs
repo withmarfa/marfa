@@ -257,6 +257,35 @@ pub enum FoldersCommand {
         #[arg(long, requires = "trash")]
         yes: bool,
     },
+    /// Make the folders on this computer forget a directory they remember.
+    /// A folder remembers each other folder it has found, also once the
+    /// registry stops listing it, and holds the delete of a missing file that
+    /// may have moved there until it can read that directory. Nothing at the
+    /// directory's path shows the folder is gone for good, so only this ends
+    /// that memory. It changes nothing else: no folder leaves the list, and no
+    /// file is trashed or kept. A held delete that waited on the directory is
+    /// decided again at the folder's next pass, as any missing file is. The
+    /// directory is matched as a folder records it: made absolute, with its
+    /// parent directories as the file system names them once links are
+    /// followed. A trailing slash makes no difference; a remembered path that
+    /// differs only in case is pointed out and not forgotten. Without `--yes`, says
+    /// which folders remember it and which held deletes it would let be
+    /// decided again, then asks at a terminal, and elsewhere or with `--json`
+    /// changes nothing. A folder that cannot be read, that another program
+    /// does not let go, or whose saved state is not the one shown is named
+    /// and left as it was, and the command exits 3. A watch holding a folder
+    /// lets it go while this runs. With `--json`, the result has `dir`,
+    /// `listed`, `folders` (each with `dir`, `folder` and `held`), `not_read`,
+    /// `alike` (remembered directories that differ only in case), `declined`,
+    /// `forgotten` (each with `dir`, `folder` and `released`) and
+    /// `not_changed`.
+    Forget {
+        /// The directory the folders remember.
+        dir: PathBuf,
+        /// Forget it without asking, for scripts.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Create a folder's settings on the server, as a `system.folder`.
     /// Needs write on `system.folder`.
     Create(folder_settings::CreateArgs),
@@ -790,6 +819,11 @@ pub fn run(
             write_back,
             yes,
         } => held_files(&dir, &trash, &keep, write_back, yes, named, json),
+        FoldersCommand::Forget { dir, yes } => forget_remembered(&dir, yes, json).map(|left| {
+            if left {
+                exit = Exit::Environment;
+            }
+        }),
         FoldersCommand::Watch {
             dir,
             r#for,
@@ -1084,6 +1118,157 @@ fn held_files(
             }
         },
     )
+}
+
+/// Answers whether a folder was left as it was, so the command exits 3.
+fn forget_remembered(dir: &Path, yes: bool, json: bool) -> Result<bool, CliError> {
+    let shown = Folder::remembering(dir)?;
+    let at_terminal =
+        !json && std::io::stdin().is_terminal() && crate::output::stderr_is_terminal();
+    let asking = !shown.folders.is_empty();
+    let agreed = asking && (yes || at_terminal && asks_to_forget(&shown)?);
+    let done = if agreed {
+        Some(Folder::forget_remembered(&shown)?)
+    } else {
+        None
+    };
+    let (forgotten, not_changed) = done
+        .map(|done| (done.forgotten, done.not_changed))
+        .unwrap_or_default();
+    let left = if agreed {
+        !not_changed.is_empty()
+    } else {
+        !shown.not_read.is_empty()
+    };
+    output::report(
+        &serde_json::json!({
+            "dir": shown.dir,
+            "listed": shown.listed,
+            "folders": shown.folders,
+            "not_read": shown.not_read,
+            "alike": shown.alike,
+            "declined": asking && !agreed,
+            "forgotten": forgotten,
+            "not_changed": not_changed,
+        }),
+        json,
+        || {
+            let mut lines = Vec::new();
+            if agreed {
+                lines.extend(forgotten.iter().map(|done| {
+                    let mut line = format!(
+                        "{} forgot {}",
+                        shown_path(&done.dir),
+                        shown_path(&shown.dir)
+                    );
+                    if !done.released.is_empty() {
+                        line.push_str(&format!(
+                            "; its next pass decides {} held delete(s) again",
+                            done.released.len()
+                        ));
+                    }
+                    line
+                }));
+                lines.extend(not_changed.iter().map(|left| {
+                    format!(
+                        "{} was left as it was: {}",
+                        shown_path(&left.dir),
+                        printable(&left.reason)
+                    )
+                }));
+            } else {
+                // At a terminal the question already showed what it would do.
+                if !(asking && at_terminal) {
+                    lines.extend(describe_remembered(&shown));
+                }
+                if asking {
+                    lines.push(if at_terminal {
+                        "nothing was forgotten".into()
+                    } else {
+                        "nothing was forgotten; pass --yes to forget it".into()
+                    });
+                }
+            }
+            lines.join("\n")
+        },
+    )?;
+    Ok(left)
+}
+
+fn shown_path(path: &Path) -> String {
+    printable(&path.display().to_string())
+}
+
+fn describe_remembered(shown: &marfa_core::Remembered) -> Vec<String> {
+    let mut lines = Vec::new();
+    if shown.folders.is_empty() {
+        lines.push(format!(
+            "no folder on this computer {}remembers {}",
+            if shown.not_read.is_empty() {
+                ""
+            } else {
+                "that could be read "
+            },
+            shown_path(&shown.dir)
+        ));
+    } else {
+        lines.push(format!(
+            "{} folder(s) on this computer remember {}:",
+            shown.folders.len(),
+            shown_path(&shown.dir)
+        ));
+        for folder in &shown.folders {
+            if folder.held.is_empty() {
+                lines.push(format!("  {}", shown_path(&folder.dir)));
+            } else {
+                lines.push(format!(
+                    "  {}, whose next pass would decide {} held delete(s) again:",
+                    shown_path(&folder.dir),
+                    folder.held.len()
+                ));
+                lines.extend(
+                    folder
+                        .held
+                        .iter()
+                        .map(|file| format!("    {}", printable(&file.path))),
+                );
+            }
+        }
+    }
+    if shown.listed {
+        lines.push(format!(
+            "{} is also a folder the registry lists, so each folder finds it again at its next pass and decides no held delete again; `folders remove` it first",
+            shown_path(&shown.dir)
+        ));
+    }
+    lines.extend(shown.not_read.iter().map(|left| {
+        format!(
+            "{} could not be read: {}",
+            shown_path(&left.dir),
+            printable(&left.reason)
+        )
+    }));
+    lines.extend(shown.alike.iter().map(|dir| {
+        format!(
+            "{} is remembered too, and differs only in case: it is another path, which this leaves alone",
+            shown_path(dir)
+        )
+    }));
+    lines
+}
+
+/// Asks at a terminal; the caller has already made sure there is one.
+fn asks_to_forget(shown: &marfa_core::Remembered) -> Result<bool, CliError> {
+    use std::io::{BufRead, Write};
+    let mut question = crate::output::stderr();
+    for line in describe_remembered(shown) {
+        writeln!(question, "{line}")?;
+    }
+    write!(question, "Forget it? [y/N] ")?;
+    question.flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
 fn describe_held(files: &[marfa_core::HeldFile]) -> String {

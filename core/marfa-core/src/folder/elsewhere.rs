@@ -327,12 +327,12 @@ impl Peer {
                 ))
             } else if self.remembered {
                 Some(format!(
-                    "the folder {} cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it",
+                    "the folder {} cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it, and if it is gone, `folders forget` it",
                     self.root.display()
                 ))
             } else {
                 Some(format!(
-                    "the folder {} cannot be reached; if it is gone, `folders remove` it",
+                    "the folder {} cannot be reached; if it is gone, `folders remove` it, then `folders forget` it",
                     self.root.display()
                 ))
             };

@@ -4489,7 +4489,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         "Held.md",
       ]);
       expect(kept.value.scan.unsure[0]?.reason).toContain(
-        `the folder ${there} cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it`,
+        `the folder ${there} cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it, and if it is gone, \`folders forget\` it`,
       );
       await heldUnsure(a);
       expect(lastReport(a).problems).toContainEqual({

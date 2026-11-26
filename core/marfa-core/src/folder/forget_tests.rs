@@ -246,8 +246,9 @@ fn a_listed_directory_is_forgotten_only_from_what_folders_remember() {
     drop(b);
 }
 
-/// A trailing slash names the same path; another case is another path, even
-/// on a volume that ignores case, and is only pointed out.
+/// A trailing slash names the same path. Another case in the part of the
+/// path that is gone is another path, even on a volume that ignores case, and
+/// is only pointed out.
 #[test]
 fn a_path_is_matched_exactly_as_remembered() {
     let (_, _registry) = registry::tests::own_registry();
