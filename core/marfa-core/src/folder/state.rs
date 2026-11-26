@@ -1135,8 +1135,7 @@ pub enum Kept {
     Carried(String),
 }
 
-/// Why a missing file is held, and the other folders' directories whose
-/// state made it so, which forgetting one of them lets be decided again.
+/// Why a missing file was held and which other directories it still waits on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unsure {
     pub reason: String,
