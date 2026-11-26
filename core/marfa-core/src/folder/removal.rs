@@ -159,7 +159,7 @@ impl Folder {
     ) -> Result<Vec<String>> {
         let mut waiting = Vec::new();
         // A file another file carries is no removal to confirm.
-        let journaled: HashMap<(String, String), (String, Option<String>)> =
+        let journaled: HashMap<(String, String), (String, Option<state::Unsure>)> =
             state::journaled(&*self.core.conn()?)?
                 .into_iter()
                 .filter(|row| !row.carried())
@@ -195,7 +195,7 @@ impl Folder {
             }
             .is_some_and(|since| !super::scan::elapsed_past(since, now, super::RENAME_GRACE));
             let unseen = since.is_none() && missing_since.is_none();
-            let reason = match self.file_at(&self.root.join(path)) {
+            let unsure = match self.file_at(&self.root.join(path)) {
                 Ok(true) => continue,
                 // Paused, it stays in view for a confirm that reads it all.
                 Ok(false) if !scanned.swept => {
@@ -227,10 +227,10 @@ impl Folder {
                     });
                     continue;
                 }
-                Err(error) => format!("its path cannot be checked ({error})"),
+                Err(error) => state::Unsure::why(format!("its path cannot be checked ({error})")),
                 Ok(false) => match since {
                     // The person settles a held file with `folders held`.
-                    Some((_, Some(reason))) => reason.clone(),
+                    Some((_, Some(unsure))) => unsure.clone(),
                     Some(_) => {
                         missing.push((path.clone(), item_id.clone()));
                         continue;
@@ -245,12 +245,8 @@ impl Folder {
             let conn = self.core.conn()?;
             let tx = conn.unchecked_transaction()?;
             state::journal_missing(&tx, path, item_id)?;
-            state::journal_keep(
-                &tx,
-                path,
-                item_id,
-                Some(&state::Kept::Unsure(reason.clone())),
-            )?;
+            let reason = unsure.reason.clone();
+            state::journal_keep(&tx, path, item_id, Some(&state::Kept::Unsure(unsure)))?;
             tx.commit()?;
             drop(conn);
             confirmed.unsure.push(Unsure {

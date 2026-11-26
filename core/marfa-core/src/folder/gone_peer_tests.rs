@@ -166,7 +166,9 @@ fn a_delete_stays_held_while_another_folder_stands_at_a_remembered_directory() {
 }
 
 /// The remembered folder's own store listed now at another directory is read
-/// there like any listed folder, and the hold waits for the person.
+/// there like any listed folder, and the hold waits for the person. Its old
+/// directory stays remembered, since a store listed elsewhere may be a copy,
+/// until the person forgets it.
 #[test]
 fn a_remembered_folder_listed_at_another_directory_is_read_there_and_the_hold_kept() {
     let (_, _registry) = registry::tests::own_registry();
@@ -195,7 +197,7 @@ fn a_remembered_folder_listed_at_another_directory_is_read_there_and_the_hold_ke
     assert_eq!(settled.trashed, ["held.txt"], "{settled:?}");
     let remembered: Vec<PathBuf> = elsewhere::remembered_dirs(&a);
     assert!(
-        !remembered.contains(&other.path().to_path_buf()),
+        remembered.contains(&other.path().to_path_buf()),
         "{remembered:?}"
     );
     assert!(remembered.contains(&moved), "{remembered:?}");

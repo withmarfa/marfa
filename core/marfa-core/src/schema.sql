@@ -597,6 +597,10 @@ CREATE TABLE IF NOT EXISTS folder_journal (
   -- them, which a later look for it reads once the binding is gone.
   identity TEXT,
   content_hash TEXT,
+  -- For an `unsure` row, a JSON array of the other folders' directories
+  -- whose state made it unsure, which forgetting one of them releases. NULL
+  -- for a row saved before holds recorded them, which no forget releases.
+  waits_on TEXT,
   PRIMARY KEY (path, item_id)
 ) WITHOUT ROWID;
 

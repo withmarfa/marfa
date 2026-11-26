@@ -3,8 +3,8 @@ use std::time::Duration;
 use serde_json::json;
 
 use super::gone_peer_tests::remembering;
-use super::registry::Registered;
-use super::tests::folder_with;
+use super::registry::{Registered, Registry};
+use super::tests::{folder_with, landed};
 use super::*;
 
 fn held_paths(report: &ScanReport) -> Vec<&str> {
@@ -225,6 +225,9 @@ fn a_listed_directory_is_forgotten_only_from_what_folders_remember() {
     a.scan().unwrap();
     b.scan().unwrap();
     remembers(&a, &[listed.path()]);
+    // Listed still, its volume is not mounted.
+    drop(b);
+    std::fs::remove_dir_all(listed.path()).unwrap();
     let shown = Folder::remembering(listed.path()).unwrap();
     assert!(shown.listed, "{shown:?}");
     assert_eq!(shown.folders.len(), 1, "{shown:?}");
@@ -243,7 +246,6 @@ fn a_listed_directory_is_forgotten_only_from_what_folders_remember() {
         .map(|entry| entry.dir)
         .collect();
     assert!(still.contains(&listed.path().to_path_buf()), "{still:?}");
-    drop(b);
 }
 
 /// A trailing slash names the same path. Another case in the part of the
@@ -274,4 +276,413 @@ fn a_path_is_matched_exactly_as_remembered() {
     let cased = Folder::remembering(&other_case).unwrap();
     assert_eq!(cased.folders, [], "{cased:?}");
     assert_eq!(cased.alike, [gone]);
+}
+
+/// Adds `entry` to the registry file as written, as another process would.
+fn list_raw(registry: &Registry, entry: Registered) {
+    let mut listing: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(registry.path()).unwrap()).unwrap();
+    listing["folders"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::to_value(entry).unwrap());
+    std::fs::write(
+        registry.path(),
+        serde_json::to_vec_pretty(&listing).unwrap(),
+    )
+    .unwrap();
+}
+
+/// Every file under `dir` and its bytes, but the files SQLite keeps beside a
+/// store for whoever has it open.
+fn tree(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut found = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in std::fs::read_dir(&at).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.to_string_lossy();
+            if path.is_dir() {
+                pending.push(path);
+            } else if name.ends_with("-shm") || name.ends_with("-wal") {
+                assert!(
+                    !name.ends_with("-wal") || std::fs::read(&path).unwrap().is_empty(),
+                    "{name} holds writes"
+                );
+            } else {
+                let bytes = std::fs::read(&path).unwrap();
+                found.push((path.strip_prefix(dir).unwrap().to_path_buf(), bytes));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+fn set_journal(folder: &Folder, sql: &str, path: &str) {
+    let changed = folder.core.conn().unwrap().execute(sql, [path]).unwrap();
+    assert!(changed > 0, "{path} is not journaled");
+}
+
+/// A copy of a remembered folder's state listed at another directory is not
+/// evidence that the folder is gone, so the folder stays one that a moved
+/// file is found in, and forgetting the copy sends no delete.
+#[test]
+fn a_copy_of_a_remembered_store_listed_elsewhere_leaves_the_folder_remembered() {
+    let (registry, _guard) = registry::tests::own_registry();
+    let (from, a, other) = remembering([
+        "01a00000-0000-7000-8000-000000357821",
+        "01a00000-0000-7000-8000-000000357822",
+    ]);
+    std::fs::write(other.path().join("held.txt"), "held.txt words\n").unwrap();
+    let json = crate::store::meta_get(&a.core.conn().unwrap(), elsewhere::META_OTHERS)
+        .unwrap()
+        .unwrap();
+    let entry = serde_json::from_str::<Vec<Registered>>(&json)
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.dir == other.path())
+        .unwrap();
+    assert!(entry.store.is_some(), "{entry:?}");
+    let copy = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    std::fs::create_dir(copy.path().join(STATE_DIR)).unwrap();
+    std::fs::copy(
+        other.path().join(STATE_DIR).join("core.sqlite"),
+        copy.path().join(STATE_DIR).join("core.sqlite"),
+    )
+    .unwrap();
+    list_raw(
+        &registry,
+        Registered {
+            dir: copy.path().to_path_buf(),
+            root: None,
+            ..entry
+        },
+    );
+    let found = a.scan().unwrap();
+    assert!(found.trashed.is_empty(), "{found:?}");
+    assert!(
+        elsewhere::remembered_dirs(&a).contains(&other.path().to_path_buf()),
+        "a copied store listed elsewhere dropped the folder it was copied from"
+    );
+    assert!(Folder::forget(copy.path()).unwrap());
+    let copied = copy.path().to_path_buf();
+    drop(copy);
+    let shown = Folder::remembering(&copied).unwrap();
+    drop(a);
+    Folder::forget_remembered(&shown).unwrap();
+    let a = Folder::open(from.path(), None).unwrap();
+    let after = a.scan().unwrap();
+    assert!(after.trashed.is_empty(), "{after:?}");
+    assert!(other.path().join("held.txt").exists());
+}
+
+/// A hold waits on the folder that made it unsure, whatever its reason's
+/// words: a path that starts another's does not select it.
+#[test]
+fn a_hold_for_another_directory_whose_path_starts_with_the_forgotten_one_is_not_shown() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (_from, a, other) = remembering([
+        "01a00000-0000-7000-8000-000000357823",
+        "01a00000-0000-7000-8000-000000357824",
+    ]);
+    let work = other.path().join("Work");
+    let archive = other.path().join("Work Archive");
+    remembers(&a, &[&archive]);
+    let held = a.scan().unwrap();
+    assert_eq!(held_paths(&held), ["held.txt"], "{held:?}");
+    remembers(&a, &[&archive, &work]);
+    let shown = Folder::remembering(&work).unwrap();
+    assert_eq!(shown.folders.len(), 1, "{shown:?}");
+    assert_eq!(shown.folders[0].held, [], "{shown:?}");
+}
+
+/// A folder that could not be read whole holds a delete for itself, even
+/// where the reason names only the part that could not be read.
+#[test]
+fn a_hold_for_a_folder_with_an_unreadable_part_is_released_by_forgetting_it() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (from, a, other) = remembering([
+        "01a00000-0000-7000-8000-000000357825",
+        "01a00000-0000-7000-8000-000000357826",
+    ]);
+    let shut = other.path().join("Shut");
+    std::fs::create_dir(&shut).unwrap();
+    std::fs::write(shut.join("inside.txt"), "inside\n").unwrap();
+    {
+        let _sealed = crate::test_folders::locked(&shut, 0o000);
+        let held = a.scan().unwrap();
+        assert_eq!(held_paths(&held), ["held.txt"], "{held:?}");
+    }
+    std::fs::remove_dir_all(other.path()).unwrap();
+    let shown = Folder::remembering(other.path()).unwrap();
+    let held: Vec<&str> = shown.folders[0]
+        .held
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    assert_eq!(held, ["held.txt"], "{shown:?}");
+    drop(a);
+    let forgotten = Folder::forget_remembered(&shown).unwrap();
+    assert_eq!(
+        forgotten.forgotten[0].released,
+        ["held.txt"],
+        "{forgotten:?}"
+    );
+    let a = Folder::open(from.path(), None).unwrap();
+    assert_eq!(a.scan().unwrap().trashed, ["held.txt"]);
+}
+
+/// A folder whose store was replaced since it was shown is not opened to
+/// write: nothing in its state directory changes.
+#[test]
+fn a_folder_whose_store_was_replaced_is_compared_before_any_write() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (from, a, other) = holding_for_a_gone_folder([
+        "01a00000-0000-7000-8000-000000357827",
+        "01a00000-0000-7000-8000-000000357828",
+    ]);
+    let shown = Folder::remembering(other.path()).unwrap();
+    drop(a);
+    let state = from.path().join(STATE_DIR);
+    let db = state.join("core.sqlite");
+    let copied = state.join("core.sqlite.copy");
+    std::fs::copy(&db, &copied).unwrap();
+    std::fs::rename(&copied, &db).unwrap();
+    let blobs = state.join("core.sqlite.blobs");
+    std::fs::create_dir_all(&blobs).unwrap();
+    let aged = blobs.join(".incoming-3578");
+    std::fs::write(&aged, "partial").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&aged)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - Duration::from_secs(86_400))
+        .unwrap();
+    let before = tree(&state);
+    let forgotten = Folder::forget_remembered(&shown).unwrap();
+    assert_eq!(forgotten.forgotten, [], "{forgotten:?}");
+    assert_eq!(forgotten.not_changed.len(), 1, "{forgotten:?}");
+    assert!(
+        aged.exists(),
+        "a write-capable open ran before the store was compared"
+    );
+    assert_eq!(tree(&state), before);
+}
+
+/// The directory listed while the forget waits for a watch to let a folder
+/// go is a folder every pass finds again, so no hold is released.
+#[test]
+fn a_directory_listed_while_the_forget_waits_releases_no_hold() {
+    let (registry, _guard) = registry::tests::own_registry();
+    let (from, a, other) = holding_for_a_gone_folder([
+        "01a00000-0000-7000-8000-000000357829",
+        "01a00000-0000-7000-8000-000000357830",
+    ]);
+    let shown = Folder::remembering(other.path()).unwrap();
+    assert!(!shown.listed);
+    let target = other.path().to_path_buf();
+    let registry_at = registry.clone();
+    let holder = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        list_raw(
+            &registry_at,
+            Registered {
+                dir: target,
+                folder: "01a00000-0000-7000-8000-000000357830".into(),
+                store: None,
+                root: None,
+            },
+        );
+        drop(a);
+    });
+    let forgotten = Folder::forget_waiting(&shown, Duration::from_secs(20)).unwrap();
+    holder.join().unwrap();
+    assert!(forgotten.listed, "{forgotten:?}");
+    assert_eq!(forgotten.forgotten.len(), 1, "{forgotten:?}");
+    assert_eq!(forgotten.forgotten[0].released, Vec::<String>::new());
+    let a = Folder::open_without_listing(from.path().to_path_buf(), None, None).unwrap();
+    let held: Vec<String> = a
+        .held_files()
+        .unwrap()
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
+    assert_eq!(held, ["held.txt"]);
+}
+
+/// A disappearance after the preview is not the one the person agreed to.
+#[test]
+fn a_hold_made_after_the_preview_is_not_released() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (from, a, other) = holding_for_a_gone_folder([
+        "01a00000-0000-7000-8000-000000357831",
+        "01a00000-0000-7000-8000-000000357832",
+    ]);
+    let shown = Folder::remembering(other.path()).unwrap();
+    assert_eq!(shown.folders[0].held.len(), 1, "{shown:?}");
+    std::fs::write(from.path().join("held.txt"), "held.txt words\n").unwrap();
+    a.scan().unwrap();
+    assert_eq!(a.held_files().unwrap(), []);
+    std::fs::remove_file(from.path().join("held.txt")).unwrap();
+    assert_eq!(a.scan().unwrap().missing, 1);
+    set_journal(
+        &a,
+        "UPDATE folder_journal SET missing_since = '2020-01-02T03:04:05.000Z' WHERE path = ?1",
+        "held.txt",
+    );
+    assert_eq!(held_paths(&a.scan().unwrap()), ["held.txt"]);
+    drop(a);
+    let forgotten = Folder::forget_remembered(&shown).unwrap();
+    assert_eq!(forgotten.forgotten[0].released, Vec::<String>::new());
+    let a = Folder::open(from.path(), None).unwrap();
+    assert_eq!(held_paths(&a.scan().unwrap()), ["held.txt"]);
+}
+
+/// A held file passed back that does not wait on the directory, such as one
+/// held for its own path, is not released.
+#[test]
+fn a_hold_that_does_not_wait_on_the_directory_is_not_released_when_passed_back() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (from, a, other) = holding_for_a_gone_folder([
+        "01a00000-0000-7000-8000-000000357833",
+        "01a00000-0000-7000-8000-000000357834",
+    ]);
+    std::fs::write(from.path().join("own.txt"), "own words\n").unwrap();
+    assert_eq!(a.scan().unwrap().created, 1);
+    landed(&a, "own.txt");
+    std::fs::remove_file(from.path().join("own.txt")).unwrap();
+    a.scan().unwrap();
+    set_journal(
+        &a,
+        "UPDATE folder_journal SET kept = 'unsure', reason = 'its path cannot be checked (sealed)' WHERE path = ?1",
+        "own.txt",
+    );
+    let own = a
+        .held_files()
+        .unwrap()
+        .into_iter()
+        .find(|file| file.path == "own.txt")
+        .unwrap();
+    let mut shown = Folder::remembering(other.path()).unwrap();
+    shown.folders[0].held.push(own);
+    drop(a);
+    let forgotten = Folder::forget_remembered(&shown).unwrap();
+    assert_eq!(
+        forgotten.forgotten[0].released,
+        ["held.txt"],
+        "{forgotten:?}"
+    );
+    let a = Folder::open_without_listing(from.path().to_path_buf(), None, None).unwrap();
+    let held: Vec<String> = a
+        .held_files()
+        .unwrap()
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
+    assert_eq!(held, ["own.txt"]);
+}
+
+/// The path is matched as spelled, never through a link that now stands in
+/// one of its parents.
+#[cfg(unix)]
+#[test]
+fn a_link_in_a_parent_does_not_redirect_the_forget() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (from, a) = folder_with(
+        "01a00000-0000-7000-8000-000000357835",
+        json!({ "query": {} }),
+        None,
+    );
+    a.scan().unwrap();
+    let base = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let (old, live) = (base.path().join("old"), base.path().join("live"));
+    std::fs::create_dir(&old).unwrap();
+    std::fs::create_dir(&live).unwrap();
+    remembers(&a, &[&old.join("notes"), &live.join("notes")]);
+    std::fs::remove_dir(&old).unwrap();
+    std::os::unix::fs::symlink(&live, &old).unwrap();
+    let shown = Folder::remembering(old.join("notes")).unwrap();
+    assert_eq!(shown.dir, old.join("notes"));
+    drop(a);
+    Folder::forget_remembered(&shown).unwrap();
+    let a = Folder::open(from.path(), None).unwrap();
+    let still = elsewhere::remembered_dirs(&a);
+    assert!(still.contains(&live.join("notes")), "{still:?}");
+    assert!(!still.contains(&old.join("notes")), "{still:?}");
+}
+
+/// A listed folder whose registry entry records no root, on a volume that
+/// is not mounted, may remember the directory, so it is named as not read.
+#[test]
+fn a_listed_folder_on_an_empty_mount_point_is_named_as_not_read() {
+    let (registry, _guard) = registry::tests::own_registry();
+    let (_from, a, other) = holding_for_a_gone_folder([
+        "01a00000-0000-7000-8000-000000357836",
+        "01a00000-0000-7000-8000-000000357837",
+    ]);
+    let (fourth, d) = folder_with(
+        "01a00000-0000-7000-8000-000000357838",
+        json!({ "query": {} }),
+        None,
+    );
+    d.scan().unwrap();
+    remembers(&d, &[other.path()]);
+    drop(d);
+    let mut listing: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(registry.path()).unwrap()).unwrap();
+    for entry in listing["folders"].as_array_mut().unwrap() {
+        if entry["dir"] == fourth.path().display().to_string() {
+            entry.as_object_mut().unwrap().remove("root");
+        }
+    }
+    std::fs::write(
+        registry.path(),
+        serde_json::to_vec_pretty(&listing).unwrap(),
+    )
+    .unwrap();
+    std::fs::remove_dir_all(fourth.path().join(STATE_DIR)).unwrap();
+    let shown = Folder::remembering(other.path()).unwrap();
+    let unread: Vec<&Path> = shown
+        .not_read
+        .iter()
+        .map(|left| left.dir.as_path())
+        .collect();
+    assert_eq!(unread, [fourth.path()], "{shown:?}");
+    drop(a);
+}
+
+/// Something standing at the path may hold the moved file, so only nothing
+/// or an empty directory there, as at an unmounted volume's mount point, is
+/// forgotten.
+#[cfg(unix)]
+#[test]
+fn a_path_where_something_stands_is_not_forgotten() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (from, a, other) = holding_for_a_gone_folder([
+        "01a00000-0000-7000-8000-000000357839",
+        "01a00000-0000-7000-8000-000000357840",
+    ]);
+    let shown = Folder::remembering(other.path()).unwrap();
+    drop(a);
+    std::fs::create_dir(other.path()).unwrap();
+    std::fs::write(other.path().join("held.txt"), "held.txt words\n").unwrap();
+    assert!(Folder::remembering(other.path()).is_err());
+    assert!(Folder::forget_remembered(&shown).is_err());
+    std::fs::remove_file(other.path().join("held.txt")).unwrap();
+    {
+        let _sealed = crate::test_folders::locked(other.path(), 0o000);
+        assert!(Folder::remembering(other.path()).is_err());
+        assert!(Folder::forget_remembered(&shown).is_err());
+    }
+    let a = Folder::open(from.path(), None).unwrap();
+    assert!(elsewhere::remembered_dirs(&a).contains(&other.path().to_path_buf()));
+    assert_eq!(held_paths(&a.scan().unwrap()), ["held.txt"]);
+    drop(a);
+    let forgotten = Folder::forget_remembered(&shown).unwrap();
+    assert_eq!(
+        forgotten.forgotten[0].released,
+        ["held.txt"],
+        "{forgotten:?}"
+    );
 }

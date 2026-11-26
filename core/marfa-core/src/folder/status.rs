@@ -236,7 +236,7 @@ impl Folder {
         let unsure: HashMap<&str, &str> = journaled
             .iter()
             .filter_map(|row| match &row.kept {
-                Some(state::Kept::Unsure(reason))
+                Some(state::Kept::Unsure(state::Unsure { reason, .. }))
                     if by_path
                         .get(row.path.as_str())
                         .is_some_and(|bound| bound.item_id == row.item_id) =>
@@ -414,7 +414,7 @@ impl Folder {
         // A hold whose path another item, or no item, now holds still waits
         // for the person.
         for row in &journaled {
-            if let Some(state::Kept::Unsure(reason)) = &row.kept
+            if let Some(state::Kept::Unsure(state::Unsure { reason, .. })) = &row.kept
                 && by_path
                     .get(row.path.as_str())
                     .is_none_or(|bound| bound.item_id != row.item_id)

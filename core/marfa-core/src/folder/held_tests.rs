@@ -60,7 +60,7 @@ fn deleted(dir: &tempfile::TempDir, folder: &Folder, names: &[&str]) -> ScanRepo
 
 fn held_reason(folder: &Folder, path: &str) -> String {
     match kept(folder, path) {
-        Some(state::Kept::Unsure(reason)) => reason,
+        Some(state::Kept::Unsure(unsure)) => unsure.reason,
         other => panic!("{path} is not held: {other:?}"),
     }
 }

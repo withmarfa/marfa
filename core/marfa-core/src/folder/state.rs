@@ -1,5 +1,6 @@
 use crate::store::Cached;
 use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -1128,10 +1129,42 @@ pub enum Kept {
     /// no delete and no file written, until the person settles it
     /// (`Folder::settle_held`), a file comes back at its path, or its item
     /// leaves. No pass that cannot read the file's directory ends it.
-    Unsure(String),
+    Unsure(Unsure),
     /// The file at this path, which the scan holds for its name or skips,
     /// carries its identity or its item's ID.
     Carried(String),
+}
+
+/// Why a missing file is held, and the other folders' directories whose
+/// state made it so, which forgetting one of them lets be decided again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unsure {
+    pub reason: String,
+    /// `None` for a hold saved before holds recorded them.
+    pub waits_on: Option<Vec<PathBuf>>,
+}
+
+impl Unsure {
+    /// Held for a reason no other folder's state gave.
+    pub fn why(reason: impl Into<String>) -> Unsure {
+        Unsure {
+            reason: reason.into(),
+            waits_on: Some(Vec::new()),
+        }
+    }
+
+    pub fn on(reason: impl Into<String>, waits_on: Vec<PathBuf>) -> Unsure {
+        Unsure {
+            reason: reason.into(),
+            waits_on: Some(waits_on),
+        }
+    }
+
+    pub fn waits_on(&self, dir: &Path) -> bool {
+        self.waits_on
+            .as_ref()
+            .is_some_and(|dirs| dirs.iter().any(|waited| waited == dir))
+    }
 }
 
 /// A journaled delete.
@@ -1170,15 +1203,25 @@ pub fn journal_keep(
     item_id: &str,
     kept: Option<&Kept>,
 ) -> Result<(), CoreError> {
-    let (kind, reason) = match kept {
-        Some(Kept::Arriving) => (Some("arriving"), None),
-        Some(Kept::Unsure(reason)) => (Some("unsure"), Some(reason.as_str())),
-        Some(Kept::Carried(carrier)) => (Some("carried"), Some(carrier.as_str())),
-        None => (None, None),
+    let (kind, reason, waits_on) = match kept {
+        Some(Kept::Arriving) => (Some("arriving"), None, None),
+        Some(Kept::Unsure(unsure)) => (
+            Some("unsure"),
+            Some(unsure.reason.as_str()),
+            unsure
+                .waits_on
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|error| CoreError::Store(error.to_string()))?,
+        ),
+        Some(Kept::Carried(carrier)) => (Some("carried"), Some(carrier.as_str()), None),
+        None => (None, None, None),
     };
     conn.execute_cached(
-        "UPDATE folder_journal SET kept = ?3, reason = ?4 WHERE path = ?1 AND item_id = ?2",
-        params![path, item_id, kind, reason],
+        "UPDATE folder_journal SET kept = ?3, reason = ?4, waits_on = ?5
+         WHERE path = ?1 AND item_id = ?2",
+        params![path, item_id, kind, reason, waits_on],
     )?;
     Ok(())
 }
@@ -1196,7 +1239,8 @@ pub fn journaled_at(
         .optional()?)
 }
 
-const JOURNALED: &str = "path, item_id, missing_since, kept, reason, identity, content_hash";
+const JOURNALED: &str =
+    "path, item_id, missing_since, kept, reason, identity, content_hash, waits_on";
 
 fn journaled_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Journaled> {
     let reason: Option<String> = row.get(4)?;
@@ -1207,7 +1251,13 @@ fn journaled_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Journaled> {
         kept: match row.get::<_, Option<String>>(3)?.as_deref() {
             Some("arriving") => Some(Kept::Arriving),
             Some("carried") => Some(Kept::Carried(reason.unwrap_or_default())),
-            Some(_) => Some(Kept::Unsure(reason.unwrap_or_default())),
+            Some(_) => Some(Kept::Unsure(Unsure {
+                reason: reason.unwrap_or_default(),
+                // Unreadable, it waits on nothing a forget can name.
+                waits_on: row
+                    .get::<_, Option<String>>(7)?
+                    .map(|json| serde_json::from_str(&json).unwrap_or_default()),
+            })),
             None => None,
         },
         identity: row.get(5)?,
@@ -1262,7 +1312,7 @@ pub fn record_digest(conn: &Connection) -> Result<[u8; 32], CoreError> {
         &[],
     )?;
     take(
-        "SELECT path, item_id, missing_since, kept, reason, identity, content_hash
+        "SELECT path, item_id, missing_since, kept, reason, identity, content_hash, waits_on
          FROM folder_journal ORDER BY path, item_id",
         &[],
     )?;
