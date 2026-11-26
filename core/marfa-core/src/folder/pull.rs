@@ -2042,8 +2042,6 @@ impl Folder {
                 #[cfg(debug_assertions)]
                 crate::fault::hold(|| "folder-take-away-recorded");
                 landing::stop_if_asked(&path, "crash-before-take-away");
-                // Judged on the descriptor the removal holds open, so a file
-                // put at the path since the record was made is never removed.
                 let still = |metadata: &std::fs::Metadata, found: &[u8]| {
                     taken.file.compare(&identity::Seen::of(metadata)) == identity::Compared::Same
                         && row.written_hash.as_deref() == Some(state::hash(found).as_str())

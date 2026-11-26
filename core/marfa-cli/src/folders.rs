@@ -1150,10 +1150,7 @@ fn describe_kept(files: &[marfa_core::KeptFile]) -> String {
     if files.is_empty() {
         return "no kept files".into();
     }
-    let mut lines = vec![format!(
-        "{} kept file(s), which `folders kept --discard` deletes",
-        files.len()
-    )];
+    let mut lines = vec![format!("Kept files and discard records ({})", files.len())];
     lines.extend(
         files
             .iter()
@@ -1168,14 +1165,14 @@ fn asks_to_discard(dir: &Path, going: &[String]) -> Result<bool, CliError> {
     let mut question = crate::output::stderr();
     writeln!(
         question,
-        "{} kept file(s) in {} would be deleted. A file a program wrote to goes back to its path instead, or is kept where Marfa could not read its record. A record Marfa cannot read with no file at its path in the directory itself is forgotten, and no file is deleted for it; one in another directory stays listed:",
-        going.len(),
-        dir.display()
+        "Paths listed for discard in {} ({} total). Marfa deletes unchanged kept files and tries to put changed files back. If a stopped discard record is unreadable, Marfa forgets it only when its file is missing from the top level of this directory.",
+        dir.display(),
+        going.len()
     )?;
     for path in going {
         writeln!(question, "  {}", printable(path))?;
     }
-    write!(question, "Delete them? [y/N] ")?;
+    write!(question, "Proceed with the discard? [y/N] ")?;
     question.flush()?;
     let mut answer = String::new();
     std::io::stdin().lock().read_line(&mut answer)?;
@@ -1246,7 +1243,6 @@ fn asks_to_remove(dir: &Path, going: &[&marfa_core::Unmatched]) -> Result<bool, 
             writeln!(question, "  {}", printable(&file.path))?;
         }
     }
-    // Nothing is removed for a removal it ends, so the question says so.
     if ending.is_empty() {
         write!(question, "Remove them? [y/N] ")?;
     } else {

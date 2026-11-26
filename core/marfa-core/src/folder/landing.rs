@@ -1474,9 +1474,7 @@ pub(crate) fn remove_checked_at(
     ))
 }
 
-/// As [`remove_at`], where `still` also judges the file by its metadata, read
-/// from the descriptor the removal holds open until the file is gone, so the
-/// file judged is the file removed.
+/// The predicate reads metadata and bytes from the same open file.
 pub(crate) fn remove_judged_at(
     dir: &Directory,
     guard: Guard<'_>,
