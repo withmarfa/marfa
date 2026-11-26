@@ -1687,7 +1687,11 @@ mod tests {
 
             let done = folder.discard_kept(true).unwrap();
 
-            assert_eq!(done.forgotten, [path.clone()], "{place:?}: {done:?}");
+            assert_eq!(
+                done.forgotten,
+                std::slice::from_ref(&path),
+                "{place:?}: {done:?}"
+            );
             assert!(
                 folder.kept_files().unwrap().is_empty(),
                 "{place:?}: {:?}",

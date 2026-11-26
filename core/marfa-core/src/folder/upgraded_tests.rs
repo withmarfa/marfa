@@ -168,6 +168,7 @@ fn a_folder_at_schema_11_is_listed_paused_only_while_its_sync_is_paused() {
 /// Gives the folder store at `root`, which no connection holds open, the
 /// records of stopped removals and discards in the shape v0.0.113 wrote
 /// them, at the schema version it wrote.
+#[cfg(debug_assertions)]
 pub(super) fn as_written_by_v0_0_113(root: &Path) {
     rusqlite::Connection::open(store_of(root))
         .unwrap()

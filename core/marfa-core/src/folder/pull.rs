@@ -335,6 +335,10 @@ enum Opened {
     Absent,
 }
 
+/// A stopped removal's record, where it reads, and why it holds, or `None`
+/// where recovery ends it.
+pub(super) type Unsettled = (Option<state::Taken>, Option<HeldRemoval>);
+
 /// Why a stopped removal holds its file's binding.
 pub(super) struct HeldRemoval {
     pub(super) why: String,
@@ -2459,9 +2463,7 @@ impl Folder {
     /// Each record of a stopped removal recovery would not clear, with the
     /// record where it reads and why it holds, or `None` where recovery ends
     /// it.
-    pub(super) fn removals_unsettled(
-        &self,
-    ) -> Result<HashMap<String, (Option<state::Taken>, Option<HeldRemoval>)>> {
+    pub(super) fn removals_unsettled(&self) -> Result<HashMap<String, Unsettled>> {
         let taken = state::taken(&*self.core.conn()?)?;
         let gone = self.root_gone();
         Ok(taken
