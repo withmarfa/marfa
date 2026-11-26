@@ -21,7 +21,7 @@
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
     "check": "tsc -p tsconfig.json",
-    "test": "node --expose-gc --test test/*.test.mjs"
+    "test": "node --expose-gc --test --test-timeout=60000 --test-force-exit test/*.test.mjs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3",
