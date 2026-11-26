@@ -189,10 +189,10 @@ pub enum FoldersCommand {
     /// within 10 seconds. Use `--remove` to keep the item when removing its
     /// file. Deleting the file by hand can send the item to the bin. Also
     /// lists, with why, each removal Marfa stopped on and holds, and never
-    /// takes its file away. Where Marfa cannot read the record of one and no
-    /// file is at its path in the directory itself, `--remove` ends it: the
-    /// folder stops following the path, and its item stays in Marfa as it
-    /// was.
+    /// takes its file away. Where no file is at the path of one but Marfa
+    /// cannot prove the file is gone, `--remove` stops tracking the path only
+    /// once you confirm, or with `--yes --forget-unproved`: no file is
+    /// deleted, and its item stays in Marfa as it was.
     Unmatched {
         /// The directory.
         dir: PathBuf,
@@ -204,6 +204,12 @@ pub enum FoldersCommand {
         /// anywhere else.
         #[arg(long, requires = "remove")]
         yes: bool,
+        /// With `--yes`, also stop tracking each path of a removal Marfa
+        /// stopped on whose file it cannot prove is gone. No file is deleted,
+        /// and each item stays in Marfa as it is. At a terminal, Marfa asks
+        /// about these paths with the rest.
+        #[arg(long, requires = "remove")]
+        forget_unproved: bool,
     },
     /// List the files the directory keeps under a reserved name because a
     /// program might still write to them, and with `--discard` delete them.
@@ -217,9 +223,10 @@ pub enum FoldersCommand {
     /// while it holds the bytes Marfa set aside, and is listed still where it
     /// holds anything else. Every file a discard Marfa stopped on left under
     /// another reserved name is listed, and so is a record of one whose file
-    /// is not where it says. Where Marfa cannot read such a record and nothing
-    /// is at its path in the directory itself, `--discard` forgets it and
-    /// deletes no file for it. With `--discard`, a watch
+    /// is not where it says. Where nothing is at the path of such a record but
+    /// Marfa cannot prove the file is gone, `--discard` forgets the record
+    /// only once you confirm, or with `--yes --forget-unproved`, and deletes
+    /// no file for it. With `--discard`, a watch
     /// holding the directory lets it go while this runs, and this is refused
     /// if the process holding the directory does not let it go within 10
     /// seconds.
@@ -234,6 +241,11 @@ pub enum FoldersCommand {
         /// anywhere else.
         #[arg(long, requires = "discard")]
         yes: bool,
+        /// With `--yes`, also forget each record of a discard Marfa stopped
+        /// on whose file it cannot prove is gone. No file is deleted. At a
+        /// terminal, Marfa asks about these records with the rest.
+        #[arg(long, requires = "discard")]
+        forget_unproved: bool,
     },
     /// List the files whose deletion the directory holds because Marfa cannot
     /// tell whether each was deleted or moved into another folder on this
@@ -791,8 +803,18 @@ pub fn run(
                 },
             )
         }
-        FoldersCommand::Unmatched { dir, remove, yes } => unmatched(&dir, remove, yes, json),
-        FoldersCommand::Kept { dir, discard, yes } => kept(&dir, discard, yes, json),
+        FoldersCommand::Unmatched {
+            dir,
+            remove,
+            yes,
+            forget_unproved,
+        } => unmatched(&dir, remove, (yes, forget_unproved), json),
+        FoldersCommand::Kept {
+            dir,
+            discard,
+            yes,
+            forget_unproved,
+        } => kept(&dir, discard, (yes, forget_unproved), json),
         FoldersCommand::Held {
             dir,
             trash,
@@ -869,7 +891,13 @@ fn from_key_file(path: &Path, dir: Option<&Path>, named: &Named) -> Result<Named
     })
 }
 
-fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliError> {
+/// `(yes, forget_unproved)` as the command line gave them.
+fn unmatched(
+    dir: &Path,
+    remove: bool,
+    (yes, forget_unproved): (bool, bool),
+    json: bool,
+) -> Result<(), CliError> {
     if !remove {
         let files = Folder::unmatched_of(dir)?;
         return output::report(&serde_json::json!({ "unmatched": files }), json, || {
@@ -889,10 +917,13 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
         .iter()
         .filter(|file| file.kept.is_none() && file.held.is_none())
         .collect();
+    let asked = !going.is_empty() && !yes;
     let agreed = going.is_empty() || yes || asks_to_remove(dir, &going)?;
+    // A confirmation at a terminal names the paths Marfa cannot prove gone.
+    let forget = if asked { agreed } else { forget_unproved };
     let going: Vec<String> = going.into_iter().map(|file| file.path.clone()).collect();
     let done = if agreed {
-        folder.remove_unmatched(&going, false)?
+        folder.remove_unmatched(&going, forget)?
     } else {
         Default::default()
     };
@@ -925,7 +956,7 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
             }];
             lines.extend(done.settled.iter().map(|file| {
                 format!(
-                    "{}: the removal Marfa stopped on ended; its item is unchanged in Marfa",
+                    "{}: Marfa no longer tracks the removal it stopped on; no file was deleted, and its item is unchanged in Marfa",
                     printable(&file.path)
                 )
             }));
@@ -935,7 +966,13 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
     )
 }
 
-fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError> {
+/// `(yes, forget_unproved)` as the command line gave them.
+fn kept(
+    dir: &Path,
+    discard: bool,
+    (yes, forget_unproved): (bool, bool),
+    json: bool,
+) -> Result<(), CliError> {
     if !discard {
         let files = Folder::kept_of(dir)?;
         return output::report(&serde_json::json!({ "kept": files }), json, || {
@@ -951,10 +988,12 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
     }
     let folder = working(dir, None)?;
     let files = folder.kept_files()?;
-    let going: Vec<String> = files.iter().map(|file| file.path.clone()).collect();
-    let agreed = going.is_empty() || yes || asks_to_discard(dir, &going)?;
+    let asked = !files.is_empty() && !yes;
+    let agreed = files.is_empty() || yes || asks_to_discard(dir, &files)?;
+    // A confirmation at a terminal names the records Marfa cannot prove gone.
+    let forget = if asked { agreed } else { forget_unproved };
     let done = if agreed {
-        folder.discard_kept(false)?
+        folder.discard_kept(forget)?
     } else {
         marfa_core::KeptDiscarded {
             kept: files,
@@ -984,16 +1023,24 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
             }));
             lines.extend(done.forgotten.iter().map(|path| {
                 format!(
-                    "{}: no file is there, so Marfa forgot its record of the discard it stopped on",
+                    "{}: Marfa no longer tracks the discard it stopped on; no file was deleted",
                     printable(path)
                 )
             }));
             if agreed {
                 lines.extend(done.kept.iter().map(|file| {
-                    format!(
-                        "{} is still kept: Marfa could not reach it",
-                        printable(&file.path)
-                    )
+                    if file.unproved {
+                        format!(
+                            "{} is still kept: {}",
+                            printable(&file.path),
+                            printable(&file.reason)
+                        )
+                    } else {
+                        format!(
+                            "{} is still kept: Marfa could not reach it",
+                            printable(&file.path)
+                        )
+                    }
                 }));
             }
             lines.join("\n")
@@ -1160,17 +1207,32 @@ fn describe_kept(files: &[marfa_core::KeptFile]) -> String {
 }
 
 /// Asks at a terminal; the caller has already made sure there is one.
-fn asks_to_discard(dir: &Path, going: &[String]) -> Result<bool, CliError> {
+fn asks_to_discard(dir: &Path, files: &[marfa_core::KeptFile]) -> Result<bool, CliError> {
     use std::io::{BufRead, Write};
+    let (unproved, going): (Vec<&marfa_core::KeptFile>, Vec<&marfa_core::KeptFile>) =
+        files.iter().partition(|file| file.unproved);
     let mut question = crate::output::stderr();
-    writeln!(
-        question,
-        "Paths listed for discard in {} ({} total). Marfa deletes unchanged kept files and tries to put changed files back. If a stopped discard record is unreadable, Marfa forgets it only when its file is missing from the top level of this directory.",
-        dir.display(),
-        going.len()
-    )?;
-    for path in going {
-        writeln!(question, "  {}", printable(path))?;
+    if !going.is_empty() {
+        writeln!(
+            question,
+            "Paths listed for discard in {} ({} total). Marfa deletes unchanged kept files and tries to put changed files back.",
+            dir.display(),
+            going.len()
+        )?;
+        for file in &going {
+            writeln!(question, "  {}", printable(&file.path))?;
+        }
+    }
+    if !unproved.is_empty() {
+        writeln!(
+            question,
+            "No file is at these paths in {}, but Marfa cannot prove the files are gone. If you go ahead, Marfa stops tracking them and deletes no file ({} total):",
+            dir.display(),
+            unproved.len()
+        )?;
+        for file in &unproved {
+            writeln!(question, "  {}", printable(&file.path))?;
+        }
     }
     write!(question, "Proceed with the discard? [y/N] ")?;
     question.flush()?;
@@ -1195,7 +1257,7 @@ fn describe_unmatched(files: &[marfa_core::Unmatched]) -> String {
     }
     let removable = files
         .iter()
-        .filter(|file| file.kept.is_none() && file.held.is_none())
+        .filter(|file| file.kept.is_none() && file.held.is_none() && !file.unproved)
         .count();
     let mut lines = vec![format!(
         "{} unmatched file(s), {removable} of them removable with `folders unmatched --remove`",
@@ -1218,8 +1280,8 @@ fn describe_unmatched(files: &[marfa_core::Unmatched]) -> String {
 /// Asks at a terminal; the caller has already made sure there is one.
 fn asks_to_remove(dir: &Path, going: &[&marfa_core::Unmatched]) -> Result<bool, CliError> {
     use std::io::{BufRead, Write};
-    let (ending, removing): (Vec<&marfa_core::Unmatched>, Vec<&marfa_core::Unmatched>) =
-        going.iter().partition(|file| file.removing.is_some());
+    let (unproved, removing): (Vec<&marfa_core::Unmatched>, Vec<&marfa_core::Unmatched>) =
+        going.iter().partition(|file| file.unproved);
     let mut question = crate::output::stderr();
     if !removing.is_empty() {
         writeln!(
@@ -1232,18 +1294,18 @@ fn asks_to_remove(dir: &Path, going: &[&marfa_core::Unmatched]) -> Result<bool, 
             writeln!(question, "  {}", printable(&file.path))?;
         }
     }
-    if !ending.is_empty() {
+    if !unproved.is_empty() {
         writeln!(
             question,
-            "{} removal(s) Marfa stopped on in {} would end. No file is at their paths, so no file is removed: the folder stops following each path, and its item stays in Marfa as it is:",
-            ending.len(),
+            "Marfa stopped while it removed {} file(s) in {}. No file is at their paths, but Marfa cannot prove the files are gone. If you go ahead, Marfa stops tracking each path: no file is deleted, and each item stays in Marfa as it is:",
+            unproved.len(),
             dir.display()
         )?;
-        for file in &ending {
+        for file in &unproved {
             writeln!(question, "  {}", printable(&file.path))?;
         }
     }
-    if ending.is_empty() {
+    if unproved.is_empty() {
         write!(question, "Remove them? [y/N] ")?;
     } else {
         write!(question, "Go ahead? [y/N] ")?;

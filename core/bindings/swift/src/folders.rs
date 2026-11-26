@@ -1180,6 +1180,10 @@ pub struct KeptUnmatched {
     pub item_id: Option<String>,
     /// Why it was kept, as a clause that follows "is kept:".
     pub reason: String,
+    /// Whether no file is at the path of a removal Marfa stopped on, but
+    /// Marfa cannot prove the file is gone. Pass `forget_unproved` once the
+    /// person confirms Marfa may stop tracking the path.
+    pub unproved: bool,
 }
 
 /// What `remove_unmatched` did.
@@ -1191,8 +1195,9 @@ pub struct UnmatchedRemoved {
     /// to be sent at the next sync.
     pub ended: u64,
     /// Removals Marfa stopped on that it ended, because it showed each file
-    /// gone or, where a record does not read, because no file is at its path
-    /// in the folder's own directory. Their items are unchanged.
+    /// gone or, with `forget_unproved`, because the person confirmed Marfa
+    /// may stop tracking a path whose file it cannot prove gone. No file was
+    /// deleted for them, and their items are unchanged.
     pub settled: Vec<UnmatchedFile>,
 }
 
@@ -1219,6 +1224,10 @@ pub struct KeptFile {
     /// The UTC discard date for an unchanged file, when set, as `YYYY-MM-DD`.
     pub until: Option<String>,
     pub reason: String,
+    /// Whether this is a record of a discard Marfa stopped on whose file is
+    /// not at its path, and Marfa cannot prove the file gone. Pass
+    /// `forget_unproved` once the person confirms Marfa may stop tracking it.
+    pub unproved: bool,
 }
 
 /// What `discard_kept` did.
@@ -1231,9 +1240,9 @@ pub struct KeptDiscarded {
     pub put_back: Vec<String>,
     /// The files whose records remain after the discard.
     pub kept: Vec<KeptFile>,
-    /// Records of a stopped discard that do not read, forgotten because no
-    /// file is at their paths in the folder's own directory. No file was
-    /// deleted for them.
+    /// Records of a stopped discard Marfa stopped tracking with
+    /// `forget_unproved`, because no file is at their paths and Marfa cannot
+    /// prove the file gone. No file was deleted for them.
     pub forgotten: Vec<String>,
 }
 
@@ -1248,13 +1257,17 @@ guarded! {
         /// is not plainly a file inside the folder; a path named twice is
         /// taken once. Needs no server. Refused while the first sync waits
         /// and while the directory is paused. Asks a watch that holds the
-        /// folder to let it go, as `add` does.
+        /// folder to let it go, as `add` does. With `forget_unproved`, set
+        /// only once the person confirms, it also stops tracking each named
+        /// path of a removal Marfa stopped on whose file it cannot prove
+        /// gone, deleting no file and keeping the item.
         pub fn remove_unmatched(
             &self,
             dir: String,
             paths: Vec<String>,
+            forget_unproved: bool,
         ) -> Result<UnmatchedRemoved, MarfaError> {
-            let done = working(&dir, None, None)?.remove_unmatched(&paths, false)?;
+            let done = working(&dir, None, None)?.remove_unmatched(&paths, forget_unproved)?;
             Ok(UnmatchedRemoved {
                 removed: done
                     .removed
@@ -1271,6 +1284,7 @@ guarded! {
                         reason: file.kept.or(file.held).unwrap_or_default(),
                         path: file.path,
                         item_id: file.item_id,
+                        unproved: file.unproved,
                     })
                     .collect(),
                 ended: done.ended as u64,
@@ -1297,9 +1311,16 @@ guarded! {
         /// aside, whatever programs hold it, as `folders kept --discard`
         /// does once the person agrees. One a program wrote to goes back to
         /// its path instead. Needs no server. Asks a watch that holds the
-        /// folder to let it go, as `add` does.
-        pub fn discard_kept(&self, dir: String) -> Result<KeptDiscarded, MarfaError> {
-            let done = working(&dir, None, None)?.discard_kept(false)?;
+        /// folder to let it go, as `add` does. With `forget_unproved`, set
+        /// only once the person confirms, it also forgets each record of a
+        /// discard Marfa stopped on whose file it cannot prove gone, deleting
+        /// no file.
+        pub fn discard_kept(
+            &self,
+            dir: String,
+            forget_unproved: bool,
+        ) -> Result<KeptDiscarded, MarfaError> {
+            let done = working(&dir, None, None)?.discard_kept(forget_unproved)?;
             Ok(KeptDiscarded {
                 discarded: done.discarded,
                 put_back: done.put_back,
@@ -1330,6 +1351,7 @@ fn kept_file(file: marfa_core::KeptFile) -> Result<KeptFile, MarfaError> {
         from: file.from,
         until: file.until,
         reason: file.reason,
+        unproved: file.unproved,
     })
 }
 
@@ -1907,7 +1929,7 @@ mod tests {
             }),
             ("discard_kept", {
                 let (folders, path) = (folders.clone(), path.clone());
-                Box::new(move || folders.discard_kept(path.clone()).map(drop))
+                Box::new(move || folders.discard_kept(path.clone(), false).map(drop))
             }),
         ];
         for (name, call) in calls {
@@ -2102,6 +2124,7 @@ mod tests {
                 writers,
                 until: until.map(str::to_string),
                 reason: "set aside".into(),
+                unproved: true,
             })
         };
         assert_eq!(
@@ -2112,6 +2135,7 @@ mod tests {
                 writers: KeptWriters::Unknown,
                 until: Some("2026-12-02".into()),
                 reason: "set aside".into(),
+                unproved: true,
             }
         );
         assert_eq!(crossed("open", None).unwrap().writers, KeptWriters::Open);
@@ -2138,7 +2162,7 @@ mod tests {
                 .is_err()
         );
         assert!(folders.kept(path.clone()).is_err());
-        assert!(folders.discard_kept(path).is_err());
+        assert!(folders.discard_kept(path, false).is_err());
         let left: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
@@ -2248,7 +2272,9 @@ mod tests {
 
         let (_, key) = booted();
         let offline = Folders::new(Some("http://127.0.0.1:9".into()), Some(key), None).unwrap();
-        let done = offline.remove_unmatched(path.clone(), named, false).unwrap();
+        let done = offline
+            .remove_unmatched(path.clone(), named, false)
+            .unwrap();
 
         assert_eq!(
             done.removed,
@@ -2360,7 +2386,9 @@ mod tests {
             .unwrap();
 
         let holder = marfa_core::Folder::open(&path, None).unwrap();
-        refused_while_held(&path, || folders.discard_kept(path.clone()).map(drop));
+        refused_while_held(&path, || {
+            folders.discard_kept(path.clone(), false).map(drop)
+        });
         drop(holder);
         assert_eq!(
             folders.kept(path.clone()).unwrap().len(),
@@ -2370,7 +2398,7 @@ mod tests {
 
         let (_, key) = booted();
         let offline = Folders::new(Some("http://127.0.0.1:9".into()), Some(key), None).unwrap();
-        let done = offline.discard_kept(path.clone()).unwrap();
+        let done = offline.discard_kept(path.clone(), false).unwrap();
 
         assert_eq!(
             done.discarded,

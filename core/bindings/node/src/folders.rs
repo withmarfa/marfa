@@ -282,12 +282,17 @@ pub struct KeptUnmatched {
     pub path: String,
     pub item_id: Option<String>,
     pub reason: String,
+    /// Whether no file is at the path of a removal Marfa stopped on, but
+    /// Marfa cannot prove the file is gone. Pass `forgetUnproved` once the
+    /// person confirms Marfa may stop tracking the path.
+    pub unproved: bool,
 }
 /// What `removeUnmatched` did. `ended` counts the folder's placements of the
 /// removed files' items, ended and queued to be sent at the next sync.
 /// `settled` lists the removals Marfa stopped on that it ended, because it
-/// showed each file gone or, where a record does not read, because no file is
-/// at its path in the folder's own directory; their items are unchanged.
+/// showed each file gone or, with `forgetUnproved`, because the person
+/// confirmed Marfa may stop tracking a path whose file it cannot prove gone;
+/// no file was deleted for them, and their items are unchanged.
 #[napi(object)]
 pub struct UnmatchedRemoved {
     pub removed: Vec<UnmatchedFile>,
@@ -313,11 +318,15 @@ pub struct KeptFile {
     pub writers: KeptWriters,
     pub until: Option<String>,
     pub reason: String,
+    /// Whether this is a record of a discard Marfa stopped on whose file is
+    /// not at its path, and Marfa cannot prove the file gone. Pass
+    /// `forgetUnproved` once the person confirms Marfa may stop tracking it.
+    pub unproved: bool,
 }
 /// What `discardKept` did: the kept files deleted, the paths a written kept
 /// file went back to or was kept beside, the records that remain, and the
-/// records of a stopped discard that do not read, forgotten because no file is
-/// at their paths in the folder's own directory.
+/// records of a stopped discard forgotten with `forgetUnproved`, because no
+/// file is at their paths and Marfa cannot prove the file gone.
 #[napi(object)]
 pub struct KeptDiscarded {
     pub discarded: Vec<String>,
@@ -491,12 +500,21 @@ impl Folders {
     }
 
     /// Takes away the named unmatched files and never their items. Needs no
-    /// server, and asks a watch that holds the folder to let it go.
+    /// server, and asks a watch that holds the folder to let it go. With
+    /// `forgetUnproved`, set only once the person confirms, it also stops
+    /// tracking each named path of a removal Marfa stopped on whose file it
+    /// cannot prove gone, deleting no file.
     #[napi(ts_return_type = "Promise<UnmatchedRemoved>")]
-    pub fn remove_unmatched(&self, dir: String, paths: Vec<String>) -> AsyncTask<RemoveUnmatched> {
+    pub fn remove_unmatched(
+        &self,
+        dir: String,
+        paths: Vec<String>,
+        forget_unproved: Option<bool>,
+    ) -> AsyncTask<RemoveUnmatched> {
         AsyncTask::new(RemoveUnmatched {
             dir,
             paths,
+            forget_unproved: forget_unproved.unwrap_or(false),
             failed: None,
         })
     }
@@ -509,10 +527,20 @@ impl Folders {
 
     /// Deletes each kept file unchanged since Marfa set it aside; one a
     /// program wrote to goes back instead. Needs no server, and asks a watch
-    /// that holds the folder to let it go.
+    /// that holds the folder to let it go. With `forgetUnproved`, set only
+    /// once the person confirms, it also forgets each record of a discard
+    /// Marfa stopped on whose file it cannot prove gone, deleting no file.
     #[napi(ts_return_type = "Promise<KeptDiscarded>")]
-    pub fn discard_kept(&self, dir: String) -> AsyncTask<DiscardKept> {
-        AsyncTask::new(DiscardKept { dir, failed: None })
+    pub fn discard_kept(
+        &self,
+        dir: String,
+        forget_unproved: Option<bool>,
+    ) -> AsyncTask<DiscardKept> {
+        AsyncTask::new(DiscardKept {
+            dir,
+            forget_unproved: forget_unproved.unwrap_or(false),
+            failed: None,
+        })
     }
 
     /// The callbacks share one event-loop queue, so the end follows every event.
@@ -860,6 +888,7 @@ impl Task for RestoreRemoval {
 pub struct RemoveUnmatched {
     dir: String,
     paths: Vec<String>,
+    forget_unproved: bool,
     failed: Option<CoreError>,
 }
 #[napi]
@@ -871,7 +900,8 @@ impl Task for RemoveUnmatched {
     }
     fn compute(&mut self) -> Result<Self::Output> {
         (|| -> marfa_core::Result<Self::Output> {
-            let done = working(&self.dir, None)?.remove_unmatched(&self.paths)?;
+            let done =
+                working(&self.dir, None)?.remove_unmatched(&self.paths, self.forget_unproved)?;
             Ok(UnmatchedRemoved {
                 removed: done
                     .removed
@@ -888,6 +918,7 @@ impl Task for RemoveUnmatched {
                         reason: file.kept.or(file.held).unwrap_or_default(),
                         path: file.path,
                         item_id: file.item_id,
+                        unproved: file.unproved,
                     })
                     .collect(),
                 ended: count(done.ended as u64),
@@ -931,6 +962,7 @@ impl Task for ReadKept {
 
 pub struct DiscardKept {
     dir: String,
+    forget_unproved: bool,
     failed: Option<CoreError>,
 }
 #[napi]
@@ -942,7 +974,7 @@ impl Task for DiscardKept {
     }
     fn compute(&mut self) -> Result<Self::Output> {
         (|| -> marfa_core::Result<Self::Output> {
-            let done = working(&self.dir, None)?.discard_kept(false)?;
+            let done = working(&self.dir, None)?.discard_kept(self.forget_unproved)?;
             Ok(KeptDiscarded {
                 discarded: done.discarded,
                 put_back: done.put_back,
@@ -977,6 +1009,7 @@ fn kept_file(file: marfa_core::KeptFile) -> marfa_core::Result<KeptFile> {
         from: file.from,
         until: file.until,
         reason: file.reason,
+        unproved: file.unproved,
     })
 }
 
