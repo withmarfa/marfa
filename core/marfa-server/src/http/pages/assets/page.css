@@ -298,6 +298,23 @@ code {
   outline: none;
 }
 
+/* Safari centers these below the label's padding; one rule each, as an unknown pseudo-element voids a list. */
+.in::-webkit-credentials-auto-fill-button {
+  transform: translateY(calc(var(--field-down) / -2));
+}
+
+.in::-webkit-contacts-auto-fill-button {
+  transform: translateY(calc(var(--field-down) / -2));
+}
+
+.in::-webkit-strong-password-auto-fill-button {
+  transform: translateY(calc(var(--field-down) / -2));
+}
+
+.in::-webkit-caps-lock-indicator {
+  transform: translateY(calc(var(--field-down) / -2));
+}
+
 .in[type="password"]:not(:placeholder-shown) {
   letter-spacing: 0.14em;
 }
