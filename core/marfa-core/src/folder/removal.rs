@@ -314,25 +314,29 @@ impl Folder {
             .pop() else {
                 continue;
             };
-            if item.state == ItemState::Trashed {
-                self.core.restore_item(&item.id)?;
-                restored += 1;
-            } else if let Some(state) = [ItemState::Active, ItemState::Archived]
+            if settings.holds_state(item.state) {
+                continue;
+            }
+            let state = if item.state == ItemState::Trashed {
+                ItemState::Active
+            } else if let Some(held) = [ItemState::Active, ItemState::Archived]
                 .into_iter()
-                .find(|state| *state != item.state && settings.holds_state(*state))
-                && !settings.holds_state(item.state)
+                .find(|state| settings.holds_state(*state))
             {
-                #[cfg(debug_assertions)]
-                crate::fault::hold(|| format!("folder-restore-decided:{}", item.id));
-                match self
-                    .core
-                    .transition_item_from(&item.id, state, Some(item.state))
-                {
-                    Err(error) if state_conflict(&error) => {}
-                    other => {
-                        other?;
-                        restored += 1;
-                    }
+                held
+            } else {
+                continue;
+            };
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| format!("folder-restore-decided:{}", item.id));
+            match self
+                .core
+                .transition_item_from(&item.id, state, Some(item.state))
+            {
+                Err(error) if state_conflict(&error) => {}
+                other => {
+                    other?;
+                    restored += 1;
                 }
             }
         }
@@ -1600,6 +1604,7 @@ mod tests {
     #[cfg(debug_assertions)]
     fn restore_while_changed(
         folder_id: &str,
+        initial: ItemState,
         change: impl Fn(&Folder, &str) + Sync,
     ) -> (tempfile::TempDir, Folder, String, Restored) {
         let (dir, folder) = folder_with(
@@ -1620,12 +1625,11 @@ mod tests {
             .execute("DELETE FROM queue", [])
             .unwrap();
         folder.pull().unwrap();
-        folder
-            .core
-            .conn()
-            .unwrap()
-            .execute("UPDATE items SET state = 'archived' WHERE id = ?1", [&id])
-            .unwrap();
+        if initial == ItemState::Trashed {
+            trashed_elsewhere(&folder, &id);
+        } else {
+            super::super::tests::set_item_state(&folder, &id, "archived");
+        }
         assert_eq!(folder.pull().unwrap().paused, 1);
 
         let point = &format!("folder-restore-decided:{id}");
@@ -1655,16 +1659,22 @@ mod tests {
     #[test]
     fn a_restore_of_a_paused_removal_brings_back_no_item_trashed_elsewhere_while_it_decides() {
         let (_, _registry) = registry::tests::own_registry();
-        let (_dir, folder, id, restored) =
-            restore_while_changed("01a00000-0000-7000-8000-00000000e7b1", |_, _| {});
+        let (_dir, folder, id, restored) = restore_while_changed(
+            "01a00000-0000-7000-8000-00000000e7b1",
+            ItemState::Archived,
+            |_, _| {},
+        );
         assert_eq!(restored.restored, 1, "{restored:?}");
         assert_eq!(
             transitions_queued(&folder, &id),
             [serde_json::json!({ "state": "active", "from": "archived" })]
         );
 
-        let (_dir, folder, id, restored) =
-            restore_while_changed("01a00000-0000-7000-8000-00000000e7b2", trashed_elsewhere);
+        let (_dir, folder, id, restored) = restore_while_changed(
+            "01a00000-0000-7000-8000-00000000e7b2",
+            ItemState::Archived,
+            trashed_elsewhere,
+        );
         assert_eq!(
             transitions_queued(&folder, &id),
             Vec::<serde_json::Value>::new(),
@@ -1672,6 +1682,78 @@ mod tests {
         );
         assert_eq!(restored.restored, 0, "{restored:?}");
         assert_eq!(state_held(&folder, &id), ItemState::Trashed);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_paused_restore_brings_back_a_trashed_attachment_from_the_bin() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000e7c5",
+            serde_json::json!({
+                "query": { "types": ["core.note"], "state": ["active"] },
+                "removal_threshold": { "files": 0, "fraction": 0.0, "ceiling": 0 }
+            }),
+            Some(serde_json::json!([])),
+        );
+        std::fs::write(dir.path().join("photo.png"), [7, 7, 5]).unwrap();
+        std::fs::write(dir.path().join("note.md"), "![](photo.png)\n").unwrap();
+        assert_eq!(folder.scan().unwrap().created, 2);
+        let file = landed(&folder, "photo.png");
+        let note = landed(&folder, "note.md");
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        folder.pull().unwrap();
+        super::super::tests::set_item_state(&folder, &note, "archived");
+        trashed_elsewhere(&folder, &file);
+        let pulled = folder.pull().unwrap();
+        let paused = state::paused(&folder.core.conn().unwrap(), state::Removal::Pull).unwrap();
+        assert!(paused.iter().any(|path| path == "photo.png"), "{pulled:?}");
+        folder.restore().unwrap();
+        assert_eq!(
+            transitions_queued(&folder, &file),
+            [serde_json::json!({ "state": "active", "from": "trashed" })]
+        );
+        assert_eq!(state_held(&folder, &file), ItemState::Active);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_paused_restore_from_the_bin_respects_an_intervening_archive() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (_dir, folder, id, restored) = restore_while_changed(
+            "01a00000-0000-7000-8000-00000000e7c2",
+            ItemState::Trashed,
+            |folder, id| {
+                folder
+                    .core
+                    .conn()
+                    .unwrap()
+                    .execute(
+                        "UPDATE items SET state = 'archived', trashed_at = NULL WHERE id = ?1",
+                        [id],
+                    )
+                    .unwrap();
+            },
+        );
+        assert_eq!(restored.restored, 0);
+        assert_eq!(state_held(&folder, &id), ItemState::Archived);
+        assert!(folder.core.queue().unwrap().is_empty());
+
+        let (_dir, folder, id, restored) = restore_while_changed(
+            "01a00000-0000-7000-8000-00000000e7c4",
+            ItemState::Trashed,
+            |_, _| {},
+        );
+        assert_eq!(restored.restored, 1);
+        assert_eq!(
+            transitions_queued(&folder, &id),
+            [serde_json::json!({ "state": "active", "from": "trashed" })]
+        );
     }
 
     #[test]

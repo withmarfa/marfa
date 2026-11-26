@@ -788,7 +788,7 @@ While a file holds a default edge that the server refused, a device MUST NOT sen
 
 ### `folder-documents/default-edge-cleared`
 
-When a default edge's write is accepted, a document's file writes a line of the edge's type, the defaults stop naming the edge, the device holds the edge, or the file's item is gone or in the bin, a device MUST clear the file's refusal of that default edge.
+When a default edge's write is accepted, a document's file writes a line of the edge's type, the defaults stop naming the edge, the device holds the edge, or the file's item is gone or in the bin without a refused initial placement, a device MUST clear the file's refusal of that default edge.
 
 **Reason:** a file item has no lines, so only a document's file clears a refusal by writing one. An edge the person made in an app and the device pulled is the edge the default asked for: sending it again would draw a refusal as a duplicate and show the file refused for an edge it has.
 
@@ -925,6 +925,20 @@ When a held file is renamed, reformatted, or changed without replacing its refus
 While a refused document remains unchanged, a device MUST NOT send the same change again.
 
 **Tests:** `device/folders-frontmatter.test.ts › flags a refused retype and keeps the file`.
+
+### `folder-documents/refused-state-binding`
+
+While an item is in the bin and its file holds a refused state change, a device MUST keep the file's refused binding to that item through a rename or edit.
+
+**Tests:** `device/binding-folders-refused-state.test.ts › keeps a renamed and edited file bound to the item whose state change was refused`.
+
+### `folder-documents/refused-initial-archive`
+
+When a new document requests an archive and the device refuses that transition with `state_conflict`, a device MUST flag the file bound to the newly created item as `refused`.
+
+**Reason:** the archive is only one of the file's writes. Its default edges, placement with form, and edge lines are still judged. If the item went to the bin before placement, the binding retains those refusals so a scan can retry them after restoration.
+
+**Tests:** `device/binding-folders-refused-state.test.ts › binds a new file whose initial archive is refused and creates its item only once`.
 
 ### `folder-documents/refused-edit-replaced`
 

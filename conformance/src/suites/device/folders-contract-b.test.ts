@@ -185,14 +185,17 @@ it.each(["trashed", "archived"] as const)(
     const restored = await harness.folder.restore();
     expect(restored.ok && restored.value.restored).toBe(3);
     const queued = await harness.folder.device().queue();
-    expect(
-      queued.ok &&
-        queued.value.filter(
-          (r) =>
-            r.kind ===
-            (state === "trashed" ? "restore_item" : "transition_item"),
-        ),
-    ).toHaveLength(3);
+    const transitions =
+      queued.ok && queued.value.filter((r) => r.kind === "transition_item");
+    expect(transitions).toHaveLength(3);
+    for (const n of [0, 1, 2]) {
+      expect(transitions).toContainEqual(
+        expect.objectContaining({
+          item_id: row(n).item.id,
+          body: { state: "active", from: state },
+        }),
+      );
+    }
     const status = await harness.folder.status();
     expect(status.ok && status.value.paused).toEqual({
       disk: 0,
@@ -204,6 +207,59 @@ it.each(["trashed", "archived"] as const)(
       expect(existsSync(join(harness.dir, `Note ${String(n)}.md`))).toBe(true);
   },
 );
+
+it("keeps the server's newer state when a queued folder restore reaches it after an archive", async () => {
+  harness = await departing("contract-b-stale-bin-restore");
+  expect(await harness.folder.pull()).toMatchObject({
+    ok: true,
+    value: { paused: 3 },
+  });
+  expect(await harness.folder.restore()).toMatchObject({
+    ok: true,
+    value: { restored: 3 },
+  });
+  const device = harness.folder.device();
+  for (const n of [0, 1, 2]) {
+    const { item } = row(n);
+    harness.server.answer(
+      "POST",
+      `/items/${item.id}/transition`,
+      refusal(409, "state_conflict", "The item is archived, not trashed.", {
+        expected: "trashed",
+        actual: "archived",
+      }),
+    );
+    harness.server.copyAnswer(
+      "GET",
+      `/items/${item.id}`,
+      answers.updated(wireItem({ ...item, state: "archived" })),
+    );
+  }
+  const drained = await device.drain();
+  for (const n of [0, 1, 2]) {
+    const { id } = row(n).item;
+    const sent = harness.server.requests.find(
+      (r) => r.method === "POST" && r.pathname === `/items/${id}/transition`,
+    );
+    expect(JSON.parse(sent?.body ?? "null")).toEqual({
+      state: "active",
+      from: "trashed",
+    });
+    expect(
+      drained.ok &&
+        drained.value.verdicts.find(
+          (v) => v.item_id === id && v.kind === "transition_item",
+        ),
+    ).toMatchObject({
+      verdict: "refused",
+      reason: "state_conflict",
+    });
+    expect(await device.get(id)).toMatchObject({
+      ok: true,
+      value: { state: "archived" },
+    });
+  }
+});
 
 it("does not count a missing unmatched file as put back when restoring a removal", async () => {
   const rows = Array.from({ length: 6 }, (_, n) => row(n));

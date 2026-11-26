@@ -1327,12 +1327,22 @@ impl Folder {
                 ));
                 continue;
             }
-            // A binding to a row the copy no longer holds binds nothing.
-            let claim = match claim {
+            let mut claim = match claim {
                 Some(Claim {
                     item_id,
                     bound: Some(bound),
                 }) if self.core.get(&item_id)?.is_none() => {
+                    if let Some(refused) = bound.writes.refused_state() {
+                        report.flagged.push(Flagged {
+                            path: file.key.clone(),
+                            flag: "refused",
+                            reason: refused.reason.clone(),
+                            item: Some(item_id.clone()),
+                        });
+                        report.renamed += usize::from(bound.path != file.key);
+                        self.follow_refused_state(bound, file)?;
+                        continue;
+                    }
                     // The server has answered these bytes already; the file of
                     // an item purged or in the bin, of the folder's own bytes,
                     // is the pull's to take away (35).
@@ -1354,6 +1364,22 @@ impl Folder {
                 }
                 other => other,
             };
+            if let Some(Claim {
+                item_id,
+                bound: Some(bound),
+            }) = &mut claim
+                && bound.writes.placement_refused()
+            {
+                self.place_created_document(
+                    item_id,
+                    &file.key,
+                    &file.document(),
+                    edge_types,
+                    &withheld,
+                    &mut bound.writes,
+                )?;
+                state::bind(&*self.core.conn()?, bound)?;
+            }
             match claim {
                 None if held_outside.contains(&at) || held_back.contains(&at) => {
                     // Read again by the next pass, which counts the drop anew.
@@ -2934,12 +2960,35 @@ impl Folder {
         state::journal_clear(&conn, &file.key)
     }
 
+    fn follow_refused_state(&self, mut bound: state::Bound, file: &Scanned) -> Result<()> {
+        if bound.path == file.key && bound.identity == file.mark && bound.content_hash == file.hash
+        {
+            return Ok(());
+        }
+        let old_path = std::mem::replace(&mut bound.path, file.key.clone());
+        bound.identity = file.mark.clone();
+        bound.content_hash = file.hash.clone();
+        bound.presentation = Some(file.document().presentation());
+        bound.written_hash = None;
+        let mut conn = self.core.conn()?;
+        let tx = conn.transaction()?;
+        state::bind(&tx, &bound)?;
+        if old_path != file.key {
+            Self::unbind_item_at(&tx, &old_path, &bound.item_id)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Leaves the old path to another file bound there earlier in this scan.
     fn unbind_if_still(&self, bound: &state::Bound) -> Result<()> {
-        let conn = self.core.conn()?;
-        if state::bound_at(&conn, &bound.path)?.is_some_and(|row| row.item_id == bound.item_id) {
-            state::unbind(&conn, &bound.path)?;
-            state::journal_clear(&conn, &bound.path)?;
+        Self::unbind_item_at(&*self.core.conn()?, &bound.path, &bound.item_id)
+    }
+
+    fn unbind_item_at(conn: &rusqlite::Connection, path: &str, item_id: &str) -> Result<()> {
+        if state::bound_at(conn, path)?.is_some_and(|row| row.item_id == item_id) {
+            state::unbind(conn, path)?;
+            state::journal_clear(conn, path)?;
         }
         Ok(())
     }

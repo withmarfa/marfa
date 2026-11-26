@@ -77,6 +77,18 @@ pub struct Writes {
 }
 
 impl Writes {
+    pub fn refused_state(&self) -> Option<&Refused> {
+        self.refused
+            .iter()
+            .find(|entry| matches!(entry.change, Change::State(_)))
+    }
+
+    pub fn placement_refused(&self) -> bool {
+        self.refused
+            .iter()
+            .any(|entry| entry.change == Change::InitialPlacement)
+    }
+
     /// Keeps the newest refusal when changes supersede one another.
     pub fn keep_refused(&mut self, refused: Refused) {
         if self
@@ -235,6 +247,7 @@ pub enum Change {
     AddTag(String),
     RemoveTag(String),
     State(ItemState),
+    InitialPlacement,
     /// An edge a line made (`shown`) or took out.
     Edge {
         line: Line,
@@ -252,7 +265,9 @@ pub enum Change {
 impl Change {
     pub fn supersedes(&self, refused: &Change) -> bool {
         match (self, refused) {
-            (Change::Edit, Change::Edit) | (Change::State(_), Change::State(_)) => true,
+            (Change::Edit, Change::Edit)
+            | (Change::State(_), Change::State(_))
+            | (Change::InitialPlacement, Change::InitialPlacement) => true,
             (
                 Change::AddTag(tag) | Change::RemoveTag(tag),
                 Change::AddTag(was) | Change::RemoveTag(was),
