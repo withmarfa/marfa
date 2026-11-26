@@ -177,9 +177,7 @@ fn answer(value: serde_json::Value) -> Result<JsonObject, MarfaError> {
 guarded! {
     #[uniffi::export]
     impl Core {
-        /// Holds the table named `table` of every item of `type_id`, a pattern as
-        /// a hydration reads it, and fills it, or leaves it to the follow or
-        /// catch-up that holds the stream.
+        /// Chooses `table` for the types `type_id` names and reports any completed fill.
         pub fn hold_table(
             &self,
             type_id: String,

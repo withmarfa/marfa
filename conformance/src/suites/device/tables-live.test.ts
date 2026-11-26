@@ -597,8 +597,7 @@ describe("how a device fills a table", () => {
     const type = await tableType();
     const item = await itemOf(type);
     await filled(item, 3);
-    // The held fill takes one of two worker threads, so a call that waited
-    // for it would take the other and leave nothing to run on.
+    // The blocked fill occupies one of the two libuv workers.
     const device = await hydratedBinding(
       [type],
       "fill-taken",

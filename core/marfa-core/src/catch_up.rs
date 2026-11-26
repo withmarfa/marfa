@@ -5353,7 +5353,6 @@ mod tests {
         hold
     }
 
-    /// Lets the held fill go on, and answers that it left its work to the call that took the stream.
     #[cfg(debug_assertions)]
     fn table_hold_let_go(hold: thread::JoinHandle<Result<crate::TableHold>>) {
         assert_eq!(

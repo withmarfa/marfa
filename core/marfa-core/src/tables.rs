@@ -98,8 +98,7 @@ pub struct TableHold {
     pub type_id: String,
     pub table: String,
     pub was_held: bool,
-    /// `None` where another call held the stream or took it, whose fill takes
-    /// the tables left.
+    /// A report if the hold kept the stream through a fill pass.
     pub fill: Option<FillReport>,
 }
 
@@ -696,7 +695,6 @@ struct Retry {
 pub(crate) struct Pass<'a> {
     failed: HashMap<(String, String), Retry>,
     report: FillReport,
-    /// A fill's own claim, which another mover may take: no write goes in once it has.
     claim: Option<&'a StreamClaim<'a>>,
 }
 
@@ -787,6 +785,7 @@ fn advance(
     } = owed;
     let (item, table) = (item.as_str(), table.as_str());
     let http = context.http(core.http()?);
+    // The connection lock orders this write before the next mover's writes.
     let still = |conn: &Connection| -> Result<bool> {
         Ok(claim.is_none_or(StreamClaim::held)
             && state_of(conn, item, table)? == Some((state.clone(), cursor.clone())))
@@ -914,10 +913,6 @@ fn advance(
     Ok(())
 }
 
-/// The caller holds the stream, excluding events between a page's read and
-/// write. A fill's own `claim` is checked inside each write, since another
-/// mover may take the stream: the fill then ends, leaving what it did not
-/// fill to that mover.
 pub(crate) fn fill(
     core: &Core,
     context: &Context,

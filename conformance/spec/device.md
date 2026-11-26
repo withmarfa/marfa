@@ -6666,7 +6666,7 @@ When a catch-up has applied the events it read, when a follow has no frame waiti
 
 When a caller hydrates, catches up or follows a working copy while a fill that an app's hold of a table started is under way, a device MUST take up the call at once, neither refusing it nor waiting for the fill to end.
 
-**Reason:** an app that holds a table does not ask to move the copy's cursor, so a refusal would stop the follow or fail the hydration of an app that never ran two at once, and a wait would keep one of the app's worker threads for as long as the fill takes. The tables the fill had not filled stay owed to the call that took the stream.
+**Reason:** a table hold does not move the copy's cursor. Refusing a concurrent cursor operation interrupts sync, and waiting occupies one of the app's worker threads for the duration of the fill.
 
 **Tests:** `device/tables-live.test.ts › takes the stream from a table hold's fill for a follow, a catch-up or a hydration that starts during it`.
 

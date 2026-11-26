@@ -30,8 +30,7 @@ pub(crate) enum Mover {
     Hydration,
     CatchUp,
     Follow,
-    /// Fills held tables without moving the cursor. Any other mover takes
-    /// the stream from it rather than wait, and fills what it left.
+    /// Fills held tables without moving the cursor.
     Fill,
 }
 
@@ -521,8 +520,7 @@ impl Core {
         self.try_claim_stream(mover).map_err(|_| one_at_a_time())
     }
 
-    /// Refused with what holds the stream. A mover other than a fill takes
-    /// it from a fill, which ends at its next write.
+    /// A cursor mover takes the stream from an active fill without waiting.
     pub(crate) fn try_claim_stream(
         &self,
         mover: Mover,
