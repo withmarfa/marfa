@@ -318,8 +318,11 @@ impl Registry {
     /// and what it writes.
     pub(crate) fn while_listed<T>(&self, act: impl FnOnce(&[Registered]) -> T) -> Result<T> {
         self.while_written(|written| {
-            let listed: Vec<Registered> =
-                written.iter().filter(|entry| !gone(entry)).cloned().collect();
+            let listed: Vec<Registered> = written
+                .iter()
+                .filter(|entry| !gone(entry))
+                .cloned()
+                .collect();
             act(&listed)
         })
     }

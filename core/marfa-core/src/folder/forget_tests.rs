@@ -469,7 +469,10 @@ fn a_directory_listed_while_the_forget_waits_changes_nothing() {
     assert!(forgotten.listed, "{forgotten:?}");
     assert_eq!(forgotten.forgotten, [], "{forgotten:?}");
     assert_eq!(forgotten.not_changed.len(), 1, "{forgotten:?}");
-    assert!(remembered_at(&from.path().join(STATE_DIR).join("core.sqlite")).contains(&other.path().to_path_buf()));
+    assert!(
+        remembered_at(&from.path().join(STATE_DIR).join("core.sqlite"))
+            .contains(&other.path().to_path_buf())
+    );
     assert_eq!(held_in(from.path()), ["held.txt"]);
 }
 
@@ -691,13 +694,20 @@ fn a_directory_filled_while_the_forget_waits_is_not_forgotten() {
     let forgotten = Folder::forget_waiting(&shown, Duration::from_secs(20)).unwrap();
     holder.join().unwrap();
     assert_eq!(forgotten.forgotten, [], "{forgotten:?}");
-    let left: Vec<&Path> = forgotten.not_changed.iter().map(|left| left.dir.as_path()).collect();
+    let left: Vec<&Path> = forgotten
+        .not_changed
+        .iter()
+        .map(|left| left.dir.as_path())
+        .collect();
     assert_eq!(left, [from.path()], "{forgotten:?}");
     assert!(
         forgotten.not_changed[0].reason.contains("is not empty"),
         "{forgotten:?}"
     );
-    assert!(remembered_at(&from.path().join(STATE_DIR).join("core.sqlite")).contains(&other.path().to_path_buf()));
+    assert!(
+        remembered_at(&from.path().join(STATE_DIR).join("core.sqlite"))
+            .contains(&other.path().to_path_buf())
+    );
     assert_eq!(held_in(from.path()), ["held.txt"]);
 }
 
@@ -733,7 +743,10 @@ fn a_directory_listed_at_an_empty_mount_point_while_the_forget_waits_changes_not
     assert!(forgotten.listed, "{forgotten:?}");
     assert_eq!(forgotten.forgotten, [], "{forgotten:?}");
     assert_eq!(forgotten.not_changed.len(), 1, "{forgotten:?}");
-    assert!(remembered_at(&from.path().join(STATE_DIR).join("core.sqlite")).contains(&other.path().to_path_buf()));
+    assert!(
+        remembered_at(&from.path().join(STATE_DIR).join("core.sqlite"))
+            .contains(&other.path().to_path_buf())
+    );
     assert_eq!(held_in(from.path()), ["held.txt"]);
 }
 
@@ -777,7 +790,11 @@ fn a_folder_replaced_at_its_listed_path_while_the_forget_waits_is_left_as_it_was
     let forgotten = Folder::forget_waiting(&shown, Duration::from_secs(20)).unwrap();
     holder.join().unwrap();
     assert_eq!(forgotten.forgotten, [], "{forgotten:?}");
-    let left: Vec<&Path> = forgotten.not_changed.iter().map(|left| left.dir.as_path()).collect();
+    let left: Vec<&Path> = forgotten
+        .not_changed
+        .iter()
+        .map(|left| left.dir.as_path())
+        .collect();
     assert_eq!(left, [from.path()], "{forgotten:?}");
     let target = other.path().to_path_buf();
     assert!(remembered_at(&moved.join(STATE_DIR).join("core.sqlite")).contains(&target));
@@ -815,14 +832,21 @@ fn a_listed_directory_is_not_forgotten_until_it_is_removed() {
         forgotten.not_changed[0].reason.contains("`folders remove`"),
         "{forgotten:?}"
     );
-    assert!(remembered_at(&from.path().join(STATE_DIR).join("core.sqlite")).contains(&other.path().to_path_buf()));
+    assert!(
+        remembered_at(&from.path().join(STATE_DIR).join("core.sqlite"))
+            .contains(&other.path().to_path_buf())
+    );
     assert_eq!(held_in(from.path()), ["held.txt"]);
 
     assert!(Folder::forget(other.path()).unwrap());
     let shown = Folder::remembering(other.path()).unwrap();
     assert!(!shown.listed);
     let forgotten = Folder::forget_remembered(&shown).unwrap();
-    assert_eq!(forgotten.forgotten[0].released, ["held.txt"], "{forgotten:?}");
+    assert_eq!(
+        forgotten.forgotten[0].released,
+        ["held.txt"],
+        "{forgotten:?}"
+    );
 }
 
 /// A hold that waits on a directory no folder remembers any longer, as an
@@ -837,11 +861,19 @@ fn a_hold_waiting_on_a_directory_no_longer_remembered_is_released_by_forgetting_
     remembers(&a, &[]);
     let shown = Folder::remembering(other.path()).unwrap();
     assert_eq!(shown.folders.len(), 1, "{shown:?}");
-    let held: Vec<&str> = shown.folders[0].held.iter().map(|file| file.path.as_str()).collect();
+    let held: Vec<&str> = shown.folders[0]
+        .held
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
     assert_eq!(held, ["held.txt"], "{shown:?}");
     drop(a);
     let forgotten = Folder::forget_remembered(&shown).unwrap();
-    assert_eq!(forgotten.forgotten[0].released, ["held.txt"], "{forgotten:?}");
+    assert_eq!(
+        forgotten.forgotten[0].released,
+        ["held.txt"],
+        "{forgotten:?}"
+    );
     assert_eq!(held_in(from.path()), Vec::<String>::new());
 }
 
@@ -856,9 +888,17 @@ fn a_mount_point_holding_only_machine_files_is_forgotten() {
     std::fs::create_dir(other.path()).unwrap();
     std::fs::write(other.path().join(".DS_Store"), "finder").unwrap();
     std::fs::create_dir(other.path().join(".Spotlight-V100")).unwrap();
-    std::fs::write(other.path().join(".Spotlight-V100").join("store.db"), "index").unwrap();
+    std::fs::write(
+        other.path().join(".Spotlight-V100").join("store.db"),
+        "index",
+    )
+    .unwrap();
     let shown = Folder::remembering(other.path()).unwrap();
     drop(a);
     let forgotten = Folder::forget_remembered(&shown).unwrap();
-    assert_eq!(forgotten.forgotten[0].released, ["held.txt"], "{forgotten:?}");
+    assert_eq!(
+        forgotten.forgotten[0].released,
+        ["held.txt"],
+        "{forgotten:?}"
+    );
 }

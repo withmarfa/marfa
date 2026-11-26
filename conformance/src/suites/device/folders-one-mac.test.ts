@@ -4705,7 +4705,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, held)).toBe(1);
   });
 
-  it("refuses to forget a directory where something stands that may still be the folder, and forgets it once only an empty directory is there", async () => {
+  it("refuses to forget a directory where something stands that may still be the folder, and forgets it once it holds nothing but what the Mac writes by itself", async () => {
     const held = "01a00000-0000-7000-8000-0000000035ec";
     const { a, there } = await heldForGone("forget-occupied", [
       "01a00000-0000-7000-8000-0000000035eb",
@@ -4734,7 +4734,10 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(kept.ok && kept.value.scan.trashed).toEqual([]);
     expect(deletesOf(a.server, held)).toBe(0);
 
-    // An empty directory, as an unmounted volume's mount point leaves.
+    // An empty directory, as an unmounted volume's mount point leaves, but
+    // for what the Mac writes there by itself.
+    writeFileSync(join(there, ".DS_Store"), "finder\n");
+    mkdirSync(join(there, ".Spotlight-V100"));
     const forgotten = await a.folder.forget(there, { yes: true });
     expect(forgotten.ok, JSON.stringify(forgotten)).toBe(true);
     if (!forgotten.ok) return;
@@ -4874,7 +4877,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     }
   });
 
-  it("forgets a directory the registry still lists only from what folders remember, keeps it listed and releases no held delete", async () => {
+  it("changes nothing when forgetting a directory the registry still lists, names `folders remove` and exits 3, and releases the held delete once the directory is removed and forgotten", async () => {
     const held = "01a00000-0000-7000-8000-0000000035e6";
     const { a, b } = await remembering("forget-listed", [
       "01a00000-0000-7000-8000-0000000035e5",
@@ -4894,10 +4897,14 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(forgotten.ok, JSON.stringify(forgotten)).toBe(true);
     if (!forgotten.ok) return;
     expect(forgotten.value.listed).toBe(true);
-    expect(forgotten.value.exit).toBe(0);
+    expect(forgotten.value.exit).toBe(3);
+    expect(forgotten.value.forgotten).toEqual([]);
     expect(
-      forgotten.value.forgotten.map((folder) => [folder.dir, folder.released]),
-    ).toEqual([[realpathSync(a.dir), []]]);
+      forgotten.value.not_changed.map((left) => [
+        left.dir,
+        left.reason.includes("`folders remove` it first"),
+      ]),
+    ).toEqual([[realpathSync(a.dir), true]]);
     expect(await heldIn(a)).toEqual(["Held.md"]);
     const listed = await a.folder.list();
     expect(listed.ok && listed.value.map((entry) => entry.dir)).toContain(
@@ -4907,6 +4914,20 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(swept.ok && swept.value.scan.trashed).toEqual([]);
     expect(deletesOf(a.server, held)).toBe(0);
     await heldUnsure(a);
+
+    // As the hold and the refusal advise: remove it, then forget it.
+    expect((await b.folder.remove()).ok).toBe(true);
+    const again = await a.folder.forget(there, { yes: true });
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect(again.value.listed).toBe(false);
+    expect(again.value.exit).toBe(0);
+    expect(again.value.forgotten.map((folder) => folder.released)).toEqual([
+      ["Held.md"],
+    ]);
+    const sent = await a.folder.push();
+    expect(sent.ok && sent.value.scan.trashed).toEqual(["Held.md"]);
+    expect(deletesOf(a.server, held)).toBe(1);
   });
 
   it("forgets through the binding only in a folder whose store is still the one it showed, and the next sync sends the delete it released", async () => {
