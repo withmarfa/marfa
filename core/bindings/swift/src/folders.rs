@@ -457,6 +457,63 @@ pub struct SettledHeld {
     pub not_settled: Vec<UnsureFile>,
 }
 
+/// The folders on this computer that remember a directory, as
+/// `Folders::remembering` read them once. Pass it unchanged to
+/// `forget_remembered`.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct Remembered {
+    /// The directory, made absolute as a folder records it.
+    pub dir: String,
+    /// Whether the registry lists it too, so every folder finds it again at
+    /// its next pass and no held delete is decided again.
+    pub listed: bool,
+    pub folders: Vec<RememberingFolder>,
+    /// Listed folders whose memory could not be read, each with why.
+    pub not_read: Vec<FolderLeft>,
+    /// Remembered directories that differ from `dir` only in case, which are
+    /// not forgotten.
+    pub alike: Vec<String>,
+}
+
+/// A listed folder that remembers the directory.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RememberingFolder {
+    pub dir: String,
+    pub folder: String,
+    /// The store read, which the forget finds again before it writes.
+    /// Compare it for equality and do not parse it.
+    pub store: String,
+    /// Its held files that wait on the directory, decided again at its next
+    /// sync once it forgets.
+    pub held: Vec<HeldFile>,
+}
+
+/// A folder the call did not read or change, and why.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FolderLeft {
+    pub dir: String,
+    pub reason: String,
+}
+
+/// What forgetting a directory changed.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct Forgotten {
+    pub dir: String,
+    pub listed: bool,
+    pub forgotten: Vec<ForgottenIn>,
+    /// Folders left as they were, each with why.
+    pub not_changed: Vec<FolderLeft>,
+}
+
+/// A folder that forgot the directory.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ForgottenIn {
+    pub dir: String,
+    pub folder: String,
+    /// Paths of its held files no longer held, which its next sync decides.
+    pub released: Vec<String>,
+}
+
 /// What cancelling a paused removal did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RestoredRemoval {
@@ -745,13 +802,41 @@ guarded! {
         pub fn held(&self, dir: String) -> Result<Vec<HeldFile>, MarfaError> {
             Ok(marfa_core::Folder::held_of(&dir)?
                 .into_iter()
-                .map(|file| HeldFile {
-                    path: file.path,
-                    item: file.item,
-                    missing_since: file.missing_since,
-                    reason: file.reason,
-                })
+                .map(held_file)
                 .collect())
+        }
+
+        /// Which listed folders remember `dir`, a folder the registry may no
+        /// longer list, and which of their held files forgetting it lets be
+        /// decided again. Show the person this before `forget_remembered`.
+        /// Reads only, and asks no watch for a folder.
+        pub fn remembering(&self, dir: String) -> Result<Remembered, MarfaError> {
+            Ok(remembered(marfa_core::Folder::remembering(&dir)?))
+        }
+
+        /// Forgets the directory in each folder `remembered` names, once the
+        /// person confirms it is gone for good, and lets the held files shown
+        /// be decided again at each folder's next sync. Trashes and keeps
+        /// nothing itself. A folder another process does not let go, or whose
+        /// store is not the one shown, is left as it was and named in
+        /// `not_changed`. Asks a watch that holds a folder to let it go, as
+        /// `add` does.
+        pub fn forget_remembered(&self, remembered: Remembered) -> Result<Forgotten, MarfaError> {
+            let done = marfa_core::Folder::forget_remembered(&shown(remembered))?;
+            Ok(Forgotten {
+                dir: done.dir.display().to_string(),
+                listed: done.listed,
+                forgotten: done
+                    .forgotten
+                    .into_iter()
+                    .map(|done| ForgottenIn {
+                        dir: done.dir.display().to_string(),
+                        folder: done.folder,
+                        released: done.released,
+                    })
+                    .collect(),
+                not_changed: done.not_changed.into_iter().map(folder_left).collect(),
+            })
         }
 
         /// Sends the delete of each named held file's item, checked against
@@ -1316,6 +1401,81 @@ fn kept_file(file: marfa_core::KeptFile) -> Result<KeptFile, MarfaError> {
     })
 }
 
+fn held_file(file: marfa_core::HeldFile) -> HeldFile {
+    HeldFile {
+        path: file.path,
+        item: file.item,
+        missing_since: file.missing_since,
+        reason: file.reason,
+    }
+}
+
+fn folder_left(left: marfa_core::NotRead) -> FolderLeft {
+    FolderLeft {
+        dir: left.dir.display().to_string(),
+        reason: left.reason,
+    }
+}
+
+fn remembered(shown: marfa_core::Remembered) -> Remembered {
+    Remembered {
+        dir: shown.dir.display().to_string(),
+        listed: shown.listed,
+        folders: shown
+            .folders
+            .into_iter()
+            .map(|folder| RememberingFolder {
+                dir: folder.dir.display().to_string(),
+                folder: folder.folder,
+                store: folder.store,
+                held: folder.held.into_iter().map(held_file).collect(),
+            })
+            .collect(),
+        not_read: shown.not_read.into_iter().map(folder_left).collect(),
+        alike: shown
+            .alike
+            .into_iter()
+            .map(|dir| dir.display().to_string())
+            .collect(),
+    }
+}
+
+/// The value an app was shown, back as the core reads it.
+fn shown(remembered: Remembered) -> marfa_core::Remembered {
+    marfa_core::Remembered {
+        dir: remembered.dir.into(),
+        listed: remembered.listed,
+        folders: remembered
+            .folders
+            .into_iter()
+            .map(|folder| marfa_core::Remembering {
+                dir: folder.dir.into(),
+                folder: folder.folder,
+                store: folder.store,
+                held: folder
+                    .held
+                    .into_iter()
+                    .map(|file| marfa_core::HeldFile {
+                        path: file.path,
+                        item: file.item,
+                        missing_since: file.missing_since,
+                        reason: file.reason,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        not_read: remembered
+            .not_read
+            .into_iter()
+            .map(|left| marfa_core::NotRead {
+                dir: left.dir.into(),
+                reason: left.reason,
+            })
+            .collect(),
+        alike: remembered.alike.into_iter().map(Into::into).collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1342,6 +1502,31 @@ mod tests {
             Some("links by name wait")
         );
         assert_eq!(scan_of(Default::default()).lookup_refused, None);
+    }
+
+    #[test]
+    fn what_remembering_showed_comes_back_unchanged_to_forget() {
+        let read = marfa_core::Remembered {
+            dir: "/volumes/old/notes".into(),
+            listed: false,
+            folders: vec![marfa_core::Remembering {
+                dir: "/work/notes".into(),
+                folder: "01a00000-0000-7000-8000-000000357821".into(),
+                store: "1:2:01a00000-0000-7000-8000-000000357822".into(),
+                held: vec![marfa_core::HeldFile {
+                    path: "held.md".into(),
+                    item: "01a00000-0000-7000-8000-000000357823".into(),
+                    missing_since: "2026-01-01T00:00:00Z".into(),
+                    reason: "the folder /volumes/old/notes cannot be reached".into(),
+                }],
+            }],
+            not_read: vec![marfa_core::NotRead {
+                dir: "/work/locked".into(),
+                reason: "its saved state cannot be read".into(),
+            }],
+            alike: vec!["/volumes/old/Notes".into()],
+        };
+        assert_eq!(shown(remembered(read.clone())), read);
     }
 
     #[test]
