@@ -1172,13 +1172,13 @@ fn forget_remembered(dir: &Path, yes: bool, json: bool) -> Result<bool, CliError
                 for done in &forgotten {
                     if done.released.is_empty() {
                         lines.push(format!(
-                            "{} forgot {}",
+                            "{} no longer remembers {}",
                             shown_path(&done.dir),
                             shown_path(&shown.dir)
                         ));
                     } else {
                         lines.push(format!(
-                            "{} forgot {}; its next pass decides these held deletions again:",
+                            "{} no longer remembers {}. Its next pass reconsiders these held deletions:",
                             shown_path(&done.dir),
                             shown_path(&shown.dir)
                         ));
@@ -1233,9 +1233,9 @@ fn describe_remembered(shown: &marfa_core::Remembered) -> Vec<String> {
         ));
     } else {
         lines.push(format!(
-            "{} folder(s) on this computer remember {}:",
-            shown.folders.len(),
-            shown_path(&shown.dir)
+            "Folders that remember {} or have a deletion on hold for it ({})",
+            shown_path(&shown.dir),
+            shown.folders.len()
         ));
         for folder in &shown.folders {
             if folder.held.is_empty() {

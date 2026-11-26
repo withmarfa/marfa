@@ -4669,7 +4669,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     ).toEqual([[self, ["Held.md"]]]);
     const said = await a.folder.forgetText(there);
     expect(said.ok && said.value.text).toContain(
-      `1 folder(s) on this computer remember ${there}:`,
+      `Folders that remember ${there} or have a deletion on hold for it (1)`,
     );
     expect(said.ok && said.value.text).toContain("    Held.md");
     expect(said.ok && said.value.text).toContain("nothing was forgotten");
@@ -4683,10 +4683,10 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     if (!forgotten.ok) return;
     expect(forgotten.value.exit).toBe(0);
     expect(forgotten.value.text).toContain(
-      `1 folder(s) on this computer remember ${there}:`,
+      `Folders that remember ${there} or have a deletion on hold for it (1)`,
     );
     expect(forgotten.value.text).toContain(
-      `${self} forgot ${there}; its next pass decides these held deletions again:\n  Held.md`,
+      `${self} no longer remembers ${there}. Its next pass reconsiders these held deletions:\n  Held.md`,
     );
     expect(await heldIn(a)).toEqual([]);
     const queued = await a.folder.device().queue();
