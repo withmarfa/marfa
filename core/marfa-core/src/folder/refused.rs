@@ -239,6 +239,7 @@ mod tests {
           reason TEXT,
           identity TEXT,
           content_hash TEXT,
+          waits_on TEXT,
           PRIMARY KEY (path, item_id)
         ) WITHOUT ROWID;
     ";
@@ -288,6 +289,7 @@ mod tests {
                    reason TEXT,
                    identity TEXT,
                    content_hash TEXT,
+                   waits_on TEXT,
                    PRIMARY KEY (path, item_id)
                  ) WITHOUT ROWID;
                  INSERT INTO folder_journal (path, item_id, missing_since, kept)
