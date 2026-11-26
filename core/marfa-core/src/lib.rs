@@ -174,10 +174,11 @@ pub use filter::{
     FilterValue, SystemField,
 };
 pub use folder::{
-    CaughtUp, Confirmed, Drained, FOLDER_TYPE, FileStatus, FirstSync, Folder, HeldFile,
-    KeptDiscarded, KeptFile, Paused, PullReport, Removal, Restored, ScanReport, SendReport,
-    Settings, SettingsFileReport, Settle, Settled, StatusReport, StorageCause, SyncReport, Synced,
-    Unmatched, UnmatchedRemoved, WatchEnd, WatchError, WatchEvent, WatchPass,
+    CaughtUp, Confirmed, Drained, FOLDER_TYPE, FileStatus, FirstSync, Folder, Forgotten,
+    ForgottenIn, HeldFile, KeptDiscarded, KeptFile, NotRead, Paused, PullReport, Remembered,
+    Remembering, Removal, Restored, ScanReport, SendReport, Settings, SettingsFileReport, Settle,
+    Settled, StatusReport, StillHeld, StorageCause, SyncReport, Synced, Unmatched,
+    UnmatchedRemoved, WaitingHold, WatchEnd, WatchError, WatchEvent, WatchPass,
 };
 pub use folder_settings::FolderRow;
 pub use instance::{InstanceDescription, instance_description};

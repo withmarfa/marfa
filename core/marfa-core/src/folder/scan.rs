@@ -1899,7 +1899,7 @@ impl Folder {
             }
             drop(conn);
             if !held && let Err(why) = peers.remember() {
-                let kept = state::Kept::Unsure(why);
+                let kept = state::Kept::Unsure(state::Unsure::why(why));
                 state::journal_keep(&*self.core.conn()?, &path, &item_id, Some(&kept))?;
             }
             report.missing += 1;
@@ -3030,7 +3030,7 @@ impl Folder {
         let sweep = Sweep::default();
         let mut due = Vec::new();
         for row in held {
-            let Some(state::Kept::Unsure(reason)) = row.kept else {
+            let Some(state::Kept::Unsure(state::Unsure { reason, .. })) = row.kept else {
                 continue;
             };
             // An item already in the bin or gone lets its held file go.
@@ -3249,8 +3249,9 @@ impl Folder {
                     return Ok(Missing::Arriving);
                 }
                 // Held as a delete is while offline, until it can be told.
-                Look::Unsure(reason) => {
-                    let kept = state::Kept::Unsure(reason.clone());
+                Look::Unsure(unsure) => {
+                    let reason = unsure.reason.clone();
+                    let kept = state::Kept::Unsure(unsure);
                     state::journal_keep(&*self.core.conn()?, path, item_id, Some(&kept))?;
                     return Ok(Missing::Unsure(reason));
                 }
@@ -3279,7 +3280,7 @@ impl Folder {
                             Err(error) => {
                                 let reason = format!("its path cannot be checked ({error})");
                                 if !trash {
-                                    let kept = state::Kept::Unsure(reason.clone());
+                                    let kept = state::Kept::Unsure(state::Unsure::why(&reason));
                                     state::journal_keep(
                                         &*self.core.conn()?,
                                         path,
@@ -3299,9 +3300,10 @@ impl Folder {
                         }
                         if attempts == 0
                             && !trash
-                            && let Some(reason) = peers.withheld()
+                            && let Some(unsure) = peers.withheld()
                         {
-                            let kept = state::Kept::Unsure(reason.clone());
+                            let reason = unsure.reason.clone();
+                            let kept = state::Kept::Unsure(unsure);
                             state::journal_keep(&*self.core.conn()?, path, item_id, Some(&kept))?;
                             return Ok(Missing::Unsure(reason));
                         }
@@ -3364,8 +3366,9 @@ impl Folder {
                         } else {
                             match peers.while_alone(delete)? {
                                 Ok(deleted) => deleted,
-                                Err(reason) => {
-                                    let kept = state::Kept::Unsure(reason.clone());
+                                Err(unsure) => {
+                                    let reason = unsure.reason.clone();
+                                    let kept = state::Kept::Unsure(unsure);
                                     state::journal_keep(
                                         &*self.core.conn()?,
                                         path,

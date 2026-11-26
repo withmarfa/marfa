@@ -597,6 +597,9 @@ CREATE TABLE IF NOT EXISTS folder_journal (
   -- them, which a later look for it reads once the binding is gone.
   identity TEXT,
   content_hash TEXT,
+  -- The directories an `unsure` row still waits on. NULL means the hold
+  -- predates this record and cannot be released by forgetting a directory.
+  waits_on TEXT,
   PRIMARY KEY (path, item_id)
 ) WITHOUT ROWID;
 

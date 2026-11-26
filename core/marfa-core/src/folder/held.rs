@@ -9,7 +9,7 @@ use crate::Result;
 
 /// A missing file whose deletion is held because Marfa cannot tell whether
 /// it was deleted or moved into another folder.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HeldFile {
     pub path: String,
     pub item: String,
@@ -58,7 +58,7 @@ impl Folder {
         let conn = self.core.conn()?;
         let mut files = Vec::new();
         for row in state::journaled(&conn)? {
-            let Some(state::Kept::Unsure(reason)) = row.kept else {
+            let Some(state::Kept::Unsure(state::Unsure { reason, .. })) = row.kept else {
                 continue;
             };
             files.push(HeldFile {

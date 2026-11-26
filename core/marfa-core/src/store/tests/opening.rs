@@ -855,7 +855,7 @@ fn a_store_from_before_tags_were_replaced_by_their_own_kind_is_refused_with_its_
 }
 
 /// Append one hash per schema version; never change an existing entry.
-const SHAPES: [&str; 12] = [
+const SHAPES: [&str; 13] = [
     "9a505dc1b14cecc6",
     "115c1d4def4a3d91",
     "2d4e4e1e76ec61dc",
@@ -868,6 +868,7 @@ const SHAPES: [&str; 12] = [
     "03d2b1a62ad045a9",
     "19191f94ade9938b",
     "07e2ec7950f2fc14",
+    "47ecdbba73bd9575",
 ];
 
 /// Every table, index and trigger `conn` holds, as SQLite records them.
@@ -1015,6 +1016,80 @@ fn a_store_at_the_oldest_upgraded_version_keeps_every_missing_file_it_journaled(
             // Another item's binding at the path says nothing of this one.
             "b.bin b 2026-01-02T00:00:00Z unsure offline - -",
             "c.md c 2026-01-03T00:00:00Z carried d.md - -",
+        ]
+    );
+}
+
+#[test]
+fn a_hold_saved_at_schema_12_keeps_its_reason_waits_on_nothing_and_names_the_forget() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    drop(open(&path).unwrap());
+    let made = shape_of(&Connection::open(&path).unwrap());
+    let remembered = "the folder /Volumes/Gone cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it";
+    let listed = "the folder /Volumes/Away cannot be reached; if it is gone, `folders remove` it";
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "DROP TABLE folder_journal;
+             CREATE TABLE folder_journal (
+               path TEXT NOT NULL,
+               item_id TEXT NOT NULL,
+               missing_since TEXT NOT NULL,
+               kept TEXT CHECK (kept IN ('arriving', 'unsure', 'carried')),
+               reason TEXT,
+               identity TEXT,
+               content_hash TEXT,
+               PRIMARY KEY (path, item_id)
+             ) WITHOUT ROWID;",
+        )
+        .unwrap();
+        for (path, reason) in [
+            ("a.md", remembered),
+            ("b.md", listed),
+            (
+                "c.md",
+                "2 files in other folders carry its id, and which it became cannot be told",
+            ),
+        ] {
+            conn.execute(
+                "INSERT INTO folder_journal (path, item_id, missing_since, kept, reason)
+                 VALUES (?1, ?1, '2026-01-01T00:00:00Z', 'unsure', ?2)",
+                [path, reason],
+            )
+            .unwrap();
+        }
+    }
+    at_version(&path, 12);
+    let conn = open(&path).unwrap();
+    assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
+    assert_eq!(shape_of(&conn), made, "the upgrade made another shape");
+    let journal: Vec<(String, Option<String>)> = conn
+        .prepare("SELECT reason, waits_on FROM folder_journal ORDER BY path")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        journal,
+        [
+            (
+                format!(
+                    "{remembered}, and if it is gone, `folders forget` it and settle this file with `folders held`"
+                ),
+                None
+            ),
+            (
+                format!(
+                    "{listed}, then `folders forget` it and settle this file with `folders held`"
+                ),
+                None
+            ),
+            (
+                "2 files in other folders carry its id, and which it became cannot be told".into(),
+                None
+            ),
         ]
     );
 }

@@ -14,7 +14,7 @@ fn held(status: &StatusReport, path: &str) -> Option<(&'static str, Option<&'sta
 
 /// A folder that remembers another, no longer listed, with `held.txt` gone
 /// past the grace, and the other folder's directory.
-fn remembering(ids: [&str; 2]) -> (tempfile::TempDir, Folder, tempfile::TempDir) {
+pub(super) fn remembering(ids: [&str; 2]) -> (tempfile::TempDir, Folder, tempfile::TempDir) {
     let query = json!({ "query": {} });
     let (from, a) = folder_with(ids[0], query.clone(), None);
     let (other, b) = folder_with(ids[1], query, None);
@@ -74,7 +74,7 @@ fn a_delete_stays_held_as_a_held_file_for_a_remembered_folder_that_cannot_be_rea
         let reasons = unsure_reasons(&unread);
         assert_eq!(reasons.len(), 1, "{unread:?}");
         let mount = format!(
-            "the folder {} cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it",
+            "the folder {} cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it, and if it is gone, `folders forget` it",
             other.path().display()
         );
         assert!(
@@ -110,6 +110,35 @@ fn a_delete_stays_held_as_a_held_file_for_a_remembered_folder_that_cannot_be_rea
     assert_eq!(held(&status, "held.txt"), Some(("held", Some("unsure"))));
 }
 
+#[test]
+fn a_delete_held_for_a_listed_folder_that_cannot_be_read_names_the_steps_that_end_it() {
+    let (_, _registry) = registry::tests::own_registry();
+    let query = json!({ "query": {} });
+    let (from, a) = folder_with("01a00000-0000-7000-8000-000000357819", query.clone(), None);
+    let (other, b) = folder_with("01a00000-0000-7000-8000-000000357820", query, None);
+    b.scan().unwrap();
+    std::fs::write(from.path().join("held.txt"), "held words\n").unwrap();
+    assert_eq!(a.scan().unwrap().created, 1);
+    landed(&a, "held.txt");
+    std::fs::remove_file(from.path().join("held.txt")).unwrap();
+    assert_eq!(a.scan().unwrap().missing, 1);
+    past_the_grace(&a, "held.txt");
+    let _sealed = crate::test_folders::locked(other.path(), 0o000);
+    let held = a.scan().unwrap();
+    assert_eq!(held.deleted, 0, "{held:?}");
+    let reasons = unsure_reasons(&held);
+    assert_eq!(reasons.len(), 1, "{held:?}");
+    let steps = format!(
+        "the folder {} cannot be reached; if it is gone, `folders remove` it, then `folders forget` it",
+        other.path().display()
+    );
+    assert!(
+        reasons[0].contains(&steps),
+        "the advice names no step that ends the hold: {}",
+        reasons[0]
+    );
+}
+
 /// Another folder's state at the remembered path, as when volumes holding
 /// different folders are mounted in turn at one mount point.
 #[test]
@@ -137,7 +166,9 @@ fn a_delete_stays_held_while_another_folder_stands_at_a_remembered_directory() {
 }
 
 /// The remembered folder's own store listed now at another directory is read
-/// there like any listed folder, and the hold waits for the person.
+/// there like any listed folder, and the hold waits for the person. Its old
+/// directory stays remembered, since a store listed elsewhere may be a copy,
+/// until the person forgets it.
 #[test]
 fn a_remembered_folder_listed_at_another_directory_is_read_there_and_the_hold_kept() {
     let (_, _registry) = registry::tests::own_registry();
@@ -166,7 +197,7 @@ fn a_remembered_folder_listed_at_another_directory_is_read_there_and_the_hold_ke
     assert_eq!(settled.trashed, ["held.txt"], "{settled:?}");
     let remembered: Vec<PathBuf> = elsewhere::remembered_dirs(&a);
     assert!(
-        !remembered.contains(&other.path().to_path_buf()),
+        remembered.contains(&other.path().to_path_buf()),
         "{remembered:?}"
     );
     assert!(remembered.contains(&moved), "{remembered:?}");

@@ -257,6 +257,57 @@ pub enum FoldersCommand {
         #[arg(long, requires = "trash")]
         yes: bool,
     },
+    /// Forget a directory that other folders on this computer remember.
+    ///
+    /// Confirm only when the directory is gone for good. If its volume is
+    /// offline, mount it so Marfa can look for moved files. A held file
+    /// whose hold also waits on other directories stays held, waiting on
+    /// those. Forgetting the last directory a hold waits on lets the next
+    /// sync decide the file again, which can send its item to the bin. The
+    /// command leaves the folder registry unchanged. While the registry lists
+    /// the directory, it changes nothing and exits 3: `folders remove` it
+    /// first.
+    ///
+    /// It matches the path as spelled, made absolute, without following
+    /// symbolic links: name it as `folders held` or `folders status` shows
+    /// it. A trailing slash makes no difference. It reports remembered paths
+    /// that differ only in case.
+    ///
+    /// It refuses a path where anything but an empty directory stands, such
+    /// as a directory that holds files or cannot be read, since that may
+    /// still be the folder. Files a computer leaves by itself, such as
+    /// `.DS_Store`, do not count. Unmount the volume, or remove what is there
+    /// or make it readable, first.
+    ///
+    /// Without `--yes`, the command shows the affected folders and held
+    /// files. It asks for confirmation at a terminal. With `--json` or
+    /// outside a terminal, pass `--yes` to confirm.
+    ///
+    /// A watch can hand a folder over while the command runs. If a folder
+    /// cannot be read or claimed, is no longer listed at its path, or its
+    /// store has changed or moved since the preview, or the registry listed
+    /// the directory at the preview or lists it by then, or something stands
+    /// there by then, the command names the folder in `not_changed` and exits
+    /// 3. It releases only the held files the preview showed it would.
+    ///
+    /// With `--json`, the result has `dir`, `listed` (whether the registry
+    /// lists the directory, read again as the folders are changed), `folders`
+    /// (each with `dir`, `folder` and `held`, each held file with `path`,
+    /// `item`, `missing_since`, `reason` and `still_waits_on`, the other
+    /// directories that keep it held, empty where the forget releases it),
+    /// `not_read`, `alike` (remembered directories that differ only in case),
+    /// `declined`, `forgotten` (each with `dir`, `folder`, `released`,
+    /// `still_held`, each with `path` and `still_waits_on`, and
+    /// `not_released`, held files shown as staying held that wait on nothing
+    /// else by now, which stay held for another `folders forget` or
+    /// `folders held`) and `not_changed`.
+    Forget {
+        /// The directory the folders remember.
+        dir: PathBuf,
+        /// Forget it without asking, for scripts.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Create a folder's settings on the server, as a `system.folder`.
     /// Needs write on `system.folder`.
     Create(folder_settings::CreateArgs),
@@ -790,6 +841,11 @@ pub fn run(
             write_back,
             yes,
         } => held_files(&dir, &trash, &keep, write_back, yes, named, json),
+        FoldersCommand::Forget { dir, yes } => forget_remembered(&dir, yes, json).map(|left| {
+            if left {
+                exit = Exit::Environment;
+            }
+        }),
         FoldersCommand::Watch {
             dir,
             r#for,
@@ -1084,6 +1140,246 @@ fn held_files(
             }
         },
     )
+}
+
+/// Answers whether a folder was left as it was, so the command exits 3.
+fn forget_remembered(dir: &Path, yes: bool, json: bool) -> Result<bool, CliError> {
+    let shown = Folder::remembering(dir)?;
+    let at_terminal =
+        !json && std::io::stdin().is_terminal() && crate::output::stderr_is_terminal();
+    let remembered = !shown.folders.is_empty();
+    // Forgetting a listed directory changes nothing, so there is no question.
+    let asking = remembered && !shown.listed;
+    let asked = asking && !yes && at_terminal;
+    let agreed = remembered && (yes || asked && asks_to_forget(&shown)?);
+    let done = if agreed {
+        Some(Folder::forget_remembered(&shown)?)
+    } else {
+        None
+    };
+    let outcome = ForgetOutcome::of(&shown, done);
+    let left = outcome.left();
+    let ForgetOutcome {
+        listed,
+        forgotten,
+        not_changed,
+    } = outcome;
+    output::report(
+        &serde_json::json!({
+            "dir": shown.dir,
+            "listed": listed,
+            "folders": shown.folders,
+            "not_read": shown.not_read,
+            "alike": shown.alike,
+            "declined": asking && !agreed,
+            "forgotten": forgotten,
+            "not_changed": not_changed,
+        }),
+        json,
+        || {
+            let mut lines = Vec::new();
+            // The question already showed what it would do.
+            if !asked {
+                lines.extend(describe_remembered(&shown));
+            }
+            if agreed {
+                for done in &forgotten {
+                    if done.released.is_empty() {
+                        lines.push(format!(
+                            "{} no longer remembers {}",
+                            shown_path(&done.dir),
+                            shown_path(&shown.dir)
+                        ));
+                    } else {
+                        lines.push(format!(
+                            "{} no longer remembers {}. Its next pass reconsiders these held deletions:",
+                            shown_path(&done.dir),
+                            shown_path(&shown.dir)
+                        ));
+                        lines.extend(
+                            done.released
+                                .iter()
+                                .map(|path| format!("  {}", printable(path))),
+                        );
+                    }
+                    if !done.still_held.is_empty() {
+                        lines.push(format!(
+                            "{} keeps these held deletions, which still wait on other folders:",
+                            shown_path(&done.dir)
+                        ));
+                        lines.extend(
+                            done.still_held
+                                .iter()
+                                .map(|held| still_waiting(&held.path, &held.still_waits_on, "  ")),
+                        );
+                    }
+                    if !done.not_released.is_empty() {
+                        lines.push(format!(
+                            "{} keeps these held deletions, which were shown as staying held and now wait on nothing else; run `folders forget` again or settle them with `folders held`:",
+                            shown_path(&done.dir)
+                        ));
+                        lines.extend(
+                            done.not_released
+                                .iter()
+                                .map(|path| format!("  {}", printable(path))),
+                        );
+                    }
+                }
+                // Those not read are named once, above.
+                lines.extend(
+                    not_changed
+                        .iter()
+                        .filter(|left| !shown.not_read.contains(left))
+                        .map(|left| {
+                            format!(
+                                "{} was left as it was: {}",
+                                shown_path(&left.dir),
+                                printable(&left.reason)
+                            )
+                        }),
+                );
+            } else if asking {
+                lines.push(if asked {
+                    "nothing was forgotten".into()
+                } else {
+                    "nothing was forgotten; pass --yes to forget it".into()
+                });
+            }
+            lines.join("\n")
+        },
+    )?;
+    Ok(left)
+}
+
+/// What `folders forget` reports.
+#[derive(Debug, PartialEq)]
+struct ForgetOutcome {
+    listed: bool,
+    forgotten: Vec<marfa_core::ForgottenIn>,
+    not_changed: Vec<marfa_core::NotRead>,
+}
+
+impl ForgetOutcome {
+    fn of(shown: &marfa_core::Remembered, done: Option<marfa_core::Forgotten>) -> ForgetOutcome {
+        match done {
+            Some(done) => ForgetOutcome {
+                listed: done.listed,
+                forgotten: done.forgotten,
+                not_changed: done.not_changed,
+            },
+            None => ForgetOutcome {
+                listed: shown.listed,
+                forgotten: Vec::new(),
+                not_changed: shown.not_read.clone(),
+            },
+        }
+    }
+
+    /// Whether the command exits 3: a listed directory is never forgotten,
+    /// whether or not a folder remembers it.
+    fn left(&self) -> bool {
+        self.listed || !self.not_changed.is_empty()
+    }
+}
+
+fn still_waiting(path: &str, dirs: &[PathBuf], indent: &str) -> String {
+    let dirs: Vec<String> = dirs.iter().map(|dir| shown_path(dir)).collect();
+    format!(
+        "{indent}{} (still waits on {})",
+        printable(path),
+        dirs.join(", ")
+    )
+}
+
+fn shown_path(path: &Path) -> String {
+    printable(&path.display().to_string())
+}
+
+fn describe_remembered(shown: &marfa_core::Remembered) -> Vec<String> {
+    let mut lines = Vec::new();
+    if shown.folders.is_empty() {
+        lines.push(format!(
+            "no folder on this computer {}remembers {}",
+            if shown.not_read.is_empty() {
+                ""
+            } else {
+                "that could be read "
+            },
+            shown_path(&shown.dir)
+        ));
+    } else {
+        lines.push(format!(
+            "Folders that remember {} or have a deletion on hold for it ({})",
+            shown_path(&shown.dir),
+            shown.folders.len()
+        ));
+        for folder in &shown.folders {
+            let (released, kept): (Vec<_>, Vec<_>) = folder
+                .held
+                .iter()
+                .partition(|held| held.still_waits_on.is_empty());
+            if released.is_empty() && kept.is_empty() {
+                lines.push(format!("  {}", shown_path(&folder.dir)));
+            }
+            if !released.is_empty() {
+                lines.push(format!(
+                    "  {} would reconsider {} held deletion(s). The next sync can send these items to the bin if this was the last other folder:",
+                    shown_path(&folder.dir),
+                    released.len()
+                ));
+                lines.extend(
+                    released
+                        .iter()
+                        .map(|held| format!("    {}", printable(&held.file.path))),
+                );
+            }
+            if !kept.is_empty() {
+                lines.push(format!(
+                    "  {} would keep {} held deletion(s), which still wait on other folders:",
+                    shown_path(&folder.dir),
+                    kept.len()
+                ));
+                lines.extend(
+                    kept.iter()
+                        .map(|held| still_waiting(&held.file.path, &held.still_waits_on, "    ")),
+                );
+            }
+        }
+    }
+    if shown.listed {
+        lines.push(format!(
+            "{} is a folder the registry lists, so each folder finds it again at its next pass and forgetting it changes nothing; `folders remove` it first, then forget it",
+            shown_path(&shown.dir)
+        ));
+    }
+    lines.extend(shown.not_read.iter().map(|left| {
+        format!(
+            "{} could not be read: {}",
+            shown_path(&left.dir),
+            printable(&left.reason)
+        )
+    }));
+    lines.extend(shown.alike.iter().map(|dir| {
+        format!(
+            "{} is remembered too, and differs only in case: it is another path, which this leaves alone",
+            shown_path(dir)
+        )
+    }));
+    lines
+}
+
+/// Asks at a terminal; the caller has already made sure there is one.
+fn asks_to_forget(shown: &marfa_core::Remembered) -> Result<bool, CliError> {
+    use std::io::{BufRead, Write};
+    let mut question = crate::output::stderr();
+    for line in describe_remembered(shown) {
+        writeln!(question, "{line}")?;
+    }
+    write!(question, "Forget it? [y/N] ")?;
+    question.flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
 fn describe_held(files: &[marfa_core::HeldFile]) -> String {
@@ -2305,6 +2601,41 @@ impl Conflicts {
 
 #[cfg(test)]
 mod tests {
+    use super::ForgetOutcome;
+
+    fn shown_listed(listed: bool) -> marfa_core::Remembered {
+        marfa_core::Remembered {
+            dir: "/gone".into(),
+            listed,
+            folders: Vec::new(),
+            not_read: Vec::new(),
+            alike: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn forgetting_a_listed_directory_no_folder_remembers_exits_3() {
+        let outcome = ForgetOutcome::of(&shown_listed(true), None);
+        assert!(outcome.listed);
+        assert!(outcome.left(), "{outcome:?}");
+    }
+
+    #[test]
+    fn a_directory_listed_by_the_time_it_is_forgotten_is_reported_listed() {
+        let done = marfa_core::Forgotten {
+            dir: "/gone".into(),
+            listed: true,
+            forgotten: Vec::new(),
+            not_changed: vec![marfa_core::NotRead {
+                dir: "/folder".into(),
+                reason: "the registry lists /gone".into(),
+            }],
+        };
+        let outcome = ForgetOutcome::of(&shown_listed(false), Some(done));
+        assert!(outcome.listed, "{outcome:?}");
+        assert!(outcome.left());
+    }
+
     #[test]
     fn remote_health_is_a_folder_command() {
         use clap::Parser;

@@ -14,13 +14,13 @@ pub const SCHEMA: &str = include_str!("../schema.sql");
 
 /// SQLite's `user_version`; a shape change increments it, appends to `SHAPES`
 /// and appends its step to `UPGRADES`.
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 13;
 
 /// The oldest version a writer upgrades in place; it refuses an older store.
 pub(super) const OLDEST_UPGRADED: i64 = 11;
 
 /// One SQL step per version, starting at `OLDEST_UPGRADED`.
-pub(super) const UPGRADES: &[&str] = &[JOURNAL_BY_ITEM];
+pub(super) const UPGRADES: &[&str] = &[JOURNAL_BY_ITEM, HOLDS_WAIT_ON];
 
 /// Keys `folder_journal` by path and item, and keeps with each row the
 /// identity and bytes of the binding the item still has at its path.
@@ -41,6 +41,35 @@ INSERT INTO folder_journal
   FROM folder_journal_before j
   LEFT JOIN folder_files f ON f.path = j.path AND f.item_id = j.item_id;
 DROP TABLE folder_journal_before;
+";
+
+/// Keeps with each held row the folders it waits on. A row held before has
+/// none recorded, so its advice to forget an unreachable folder also says
+/// that `folders held` settles the file.
+const HOLDS_WAIT_ON: &str = "
+ALTER TABLE folder_journal RENAME TO folder_journal_before;
+CREATE TABLE folder_journal (
+  path TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  missing_since TEXT NOT NULL,
+  kept TEXT CHECK (kept IN ('arriving', 'unsure', 'carried')),
+  reason TEXT,
+  identity TEXT,
+  content_hash TEXT,
+  waits_on TEXT,
+  PRIMARY KEY (path, item_id)
+) WITHOUT ROWID;
+INSERT INTO folder_journal
+  SELECT path, item_id, missing_since, kept, reason, identity, content_hash, NULL
+  FROM folder_journal_before;
+DROP TABLE folder_journal_before;
+UPDATE folder_journal
+  SET reason = reason || ', and if it is gone, `folders forget` it and settle this file with `folders held`'
+  WHERE kept = 'unsure'
+    AND reason LIKE '% cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it';
+UPDATE folder_journal
+  SET reason = reason || ', then `folders forget` it and settle this file with `folders held`'
+  WHERE kept = 'unsure' AND reason LIKE '% cannot be reached; if it is gone, `folders remove` it';
 ";
 
 fn upgraded(found: i64) -> bool {

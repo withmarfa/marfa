@@ -243,6 +243,18 @@ impl Lists {
     }
 }
 
+/// Whether `name` is one a computer leaves in a directory by itself, such
+/// as `.DS_Store`, which no folder takes whatever its lists say.
+pub(super) fn machine_name(name: &str) -> bool {
+    static MACHINE: OnceLock<Patterns> = OnceLock::new();
+    let machine = MACHINE.get_or_init(|| {
+        let lines: Vec<String> = JUNK.iter().map(|line| line.to_string()).collect();
+        built("built-in", &lines).expect("the built-in lines are patterns")
+    });
+    let name: String = name.nfc().collect();
+    hit(machine, &name, &marfa_rules::names::folded(&name), false)
+}
+
 fn hit(list: &Patterns, path: &str, folded: &str, mut is_dir: bool) -> bool {
     let (mut path, mut folded) = (path, folded);
     loop {

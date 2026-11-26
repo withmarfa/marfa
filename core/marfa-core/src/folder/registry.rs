@@ -317,6 +317,18 @@ impl Registry {
     /// registration takes, so no folder is listed between what `act` reads
     /// and what it writes.
     pub(crate) fn while_listed<T>(&self, act: impl FnOnce(&[Registered]) -> T) -> Result<T> {
+        self.while_written(|written| {
+            let listed: Vec<Registered> = written
+                .iter()
+                .filter(|entry| !gone(entry))
+                .cloned()
+                .collect();
+            act(&listed)
+        })
+    }
+
+    /// Runs `act` on every entry as the file holds it, under the same lock.
+    pub(crate) fn while_written<T>(&self, act: impl FnOnce(&[Registered]) -> T) -> Result<T> {
         let (directory, name, _lock) = self.locked()?;
         let listed = match directory.read(&name) {
             Ok(bytes) => {
@@ -332,7 +344,6 @@ impl Registry {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(error) => return Err(self.failed("read", &error)),
         };
-        let listed: Vec<Registered> = listed.into_iter().filter(|entry| !gone(entry)).collect();
         Ok(act(&listed))
     }
 
