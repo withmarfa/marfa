@@ -85,12 +85,10 @@ impl Seen {
         }
     }
 
-    /// `found` against this record. A volume mounted again has another
-    /// device number, so where the root's device, `root_device`, is not the
-    /// one recorded, the inode stands for both.
-    pub(crate) fn compare(&self, found: &Seen, root_device: Option<u64>) -> Compared {
-        let device = found.device == self.device || root_device != Some(self.device);
-        if found.inode != self.inode || !device {
+    /// `found` against this record. Another device is another file, even
+    /// where the volume was only mounted again.
+    pub(crate) fn compare(&self, found: &Seen) -> Compared {
+        if found.inode != self.inode || found.device != self.device {
             return Compared::Other;
         }
         match (self.born.filter(|born| *born > 0), found.born) {
@@ -218,39 +216,25 @@ mod tests {
             inode,
             born,
         };
+        assert_eq!(recorded.compare(&found(1, 2, Some(10))), Compared::Same);
         assert_eq!(
-            recorded.compare(&found(1, 2, Some(10)), Some(1)),
-            Compared::Same
-        );
-        assert_eq!(
-            recorded.compare(&found(1, 2, Some(11)), Some(1)),
+            recorded.compare(&found(1, 2, Some(11))),
             Compared::Other,
             "a file that took a reused inode was called the file recorded"
         );
-        assert_eq!(
-            recorded.compare(&found(1, 3, Some(10)), Some(1)),
-            Compared::Other
-        );
-        assert_eq!(
-            recorded.compare(&found(1, 2, None), Some(1)),
-            Compared::Weaker
-        );
+        assert_eq!(recorded.compare(&found(1, 3, Some(10))), Compared::Other);
+        assert_eq!(recorded.compare(&found(1, 2, None)), Compared::Weaker);
         for born in [None, Some(0)] {
             assert_eq!(
-                found(1, 2, born).compare(&found(1, 2, Some(10)), Some(1)),
+                found(1, 2, born).compare(&found(1, 2, Some(10))),
                 Compared::Weaker,
                 "a missing birth time was taken as a match"
             );
         }
         assert_eq!(
-            recorded.compare(&found(9, 2, Some(10)), Some(1)),
+            recorded.compare(&found(9, 2, Some(10))),
             Compared::Other,
-            "a file on another volume was called the file recorded"
-        );
-        assert_eq!(
-            recorded.compare(&found(9, 2, Some(10)), Some(9)),
-            Compared::Same,
-            "a volume mounted again lost its files' identity"
+            "a file on another volume, or on one mounted again, was called the file recorded"
         );
     }
 

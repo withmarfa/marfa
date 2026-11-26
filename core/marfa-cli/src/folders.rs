@@ -188,9 +188,11 @@ pub enum FoldersCommand {
     /// this is refused if the process holding the directory does not let it go
     /// within 10 seconds. Use `--remove` to keep the item when removing its
     /// file. Deleting the file by hand can send the item to the bin. Also
-    /// lists, with why, a removal Marfa stopped on where no file is at its
-    /// path but Marfa cannot tell the file is gone; `--remove` ends it, and
-    /// its item stays in Marfa as it was.
+    /// lists, with why, each removal Marfa stopped on and holds, and never
+    /// takes its file away. Where Marfa cannot read the record of one and no
+    /// file is at its path in the directory itself, `--remove` ends it: the
+    /// folder stops following the path, and its item stays in Marfa as it
+    /// was.
     Unmatched {
         /// The directory.
         dir: PathBuf,
@@ -215,8 +217,9 @@ pub enum FoldersCommand {
     /// while it holds the bytes Marfa set aside, and is listed still where it
     /// holds anything else. Every file a discard Marfa stopped on left under
     /// another reserved name is listed, and so is a record of one whose file
-    /// is not where it says; `--discard` forgets such a record where nothing
-    /// is at its path, and deletes no file for it. With `--discard`, a watch
+    /// is not where it says. Where Marfa cannot read such a record and nothing
+    /// is at its path in the directory itself, `--discard` forgets it and
+    /// deletes no file for it. With `--discard`, a watch
     /// holding the directory lets it go while this runs, and this is refused
     /// if the process holding the directory does not let it go within 10
     /// seconds.
@@ -882,12 +885,12 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
     }
     let folder = working(dir, None)?;
     let files = folder.unmatched_files()?;
-    let going: Vec<String> = files
+    let going: Vec<&marfa_core::Unmatched> = files
         .iter()
         .filter(|file| file.kept.is_none() && file.held.is_none())
-        .map(|file| file.path.clone())
         .collect();
     let agreed = going.is_empty() || yes || asks_to_remove(dir, &going)?;
+    let going: Vec<String> = going.into_iter().map(|file| file.path.clone()).collect();
     let done = if agreed {
         folder.remove_unmatched(&going)?
     } else {
@@ -1165,7 +1168,7 @@ fn asks_to_discard(dir: &Path, going: &[String]) -> Result<bool, CliError> {
     let mut question = crate::output::stderr();
     writeln!(
         question,
-        "{} kept file(s) in {} would be deleted. A file a program wrote to goes back to its path instead, or is kept where Marfa could not read its record:",
+        "{} kept file(s) in {} would be deleted. A file a program wrote to goes back to its path instead, or is kept where Marfa could not read its record. A record Marfa cannot read with no file at its path in the directory itself is forgotten, and no file is deleted for it; one in another directory stays listed:",
         going.len(),
         dir.display()
     )?;
@@ -1216,19 +1219,39 @@ fn describe_unmatched(files: &[marfa_core::Unmatched]) -> String {
 }
 
 /// Asks at a terminal; the caller has already made sure there is one.
-fn asks_to_remove(dir: &Path, going: &[String]) -> Result<bool, CliError> {
+fn asks_to_remove(dir: &Path, going: &[&marfa_core::Unmatched]) -> Result<bool, CliError> {
     use std::io::{BufRead, Write};
+    let (ending, removing): (Vec<&marfa_core::Unmatched>, Vec<&marfa_core::Unmatched>) =
+        going.iter().partition(|file| file.removing.is_some());
     let mut question = crate::output::stderr();
-    writeln!(
-        question,
-        "{} unmatched file(s) in {} would be removed; their items stay in Marfa as they are:",
-        going.len(),
-        dir.display()
-    )?;
-    for path in going {
-        writeln!(question, "  {}", printable(path))?;
+    if !removing.is_empty() {
+        writeln!(
+            question,
+            "{} unmatched file(s) in {} would be removed; their items stay in Marfa as they are:",
+            removing.len(),
+            dir.display()
+        )?;
+        for file in &removing {
+            writeln!(question, "  {}", printable(&file.path))?;
+        }
     }
-    write!(question, "Remove them? [y/N] ")?;
+    if !ending.is_empty() {
+        writeln!(
+            question,
+            "{} removal(s) Marfa stopped on in {} would end. No file is at their paths, so no file is removed: the folder stops following each path, and its item stays in Marfa as it is:",
+            ending.len(),
+            dir.display()
+        )?;
+        for file in &ending {
+            writeln!(question, "  {}", printable(&file.path))?;
+        }
+    }
+    // Nothing is removed for a removal it ends, so the question says so.
+    if ending.is_empty() {
+        write!(question, "Remove them? [y/N] ")?;
+    } else {
+        write!(question, "Go ahead? [y/N] ")?;
+    }
     question.flush()?;
     let mut answer = String::new();
     std::io::stdin().lock().read_line(&mut answer)?;

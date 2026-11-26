@@ -1469,9 +1469,24 @@ pub(crate) fn remove_checked_at(
     still: impl FnOnce(&[u8]) -> bool,
 ) -> Result<bool, RemoveError> {
     Ok(matches!(
-        withdraw_at(dir, guard, target, still, || Ok(()))?,
+        withdraw_at(dir, guard, target, |_, bytes| still(bytes), || Ok(()))?,
         Withdrawal::Removed
     ))
+}
+
+/// As [`remove_at`], where `still` also judges the file by its metadata, read
+/// from the descriptor the removal holds open until the file is gone, so the
+/// file judged is the file removed.
+pub(crate) fn remove_judged_at(
+    dir: &Directory,
+    guard: Guard<'_>,
+    target: &Path,
+    still: impl FnOnce(&Metadata, &[u8]) -> bool,
+) -> io::Result<bool> {
+    match withdraw_at(dir, guard, target, still, || Ok(())) {
+        Ok(withdrawn) => Ok(matches!(withdrawn, Withdrawal::Removed)),
+        Err(RemoveError::Read(error) | RemoveError::Remove(error)) => Err(error),
+    }
 }
 
 #[derive(Debug)]
@@ -1497,7 +1512,7 @@ pub(crate) fn withdraw_at(
     dir: &Directory,
     guard: Guard<'_>,
     target: &Path,
-    still: impl FnOnce(&[u8]) -> bool,
+    still: impl FnOnce(&Metadata, &[u8]) -> bool,
     then: impl FnOnce() -> io::Result<()>,
 ) -> Result<Withdrawal, RemoveError> {
     save_meanwhile(dir, target);
@@ -1506,7 +1521,7 @@ pub(crate) fn withdraw_at(
         Ok(None) => return Ok(Withdrawal::Absent),
         Err(error) => return Err(RemoveError::Read(error)),
     };
-    if !still(&read.bytes) {
+    if !still(&read.metadata, &read.bytes) {
         return Ok(Withdrawal::Kept(None));
     }
     if guard.writers.of(&read.file) == Writers::Open {

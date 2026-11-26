@@ -2139,7 +2139,7 @@ impl Folder {
             &place.directory,
             place.guard(),
             to_name,
-            |found| state::hash(found) == bound.content_hash,
+            |_, found| state::hash(found) == bound.content_hash,
             place_save,
         );
         Ok(match withdrawn {

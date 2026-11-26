@@ -455,6 +455,13 @@ pub(crate) fn clear_taken(conn: &Connection, path: &str) -> Result<(), CoreError
     crate::store::meta_delete(conn, &format!("{TAKEN}{path}"))
 }
 
+/// The record of a removal at `path`, where there is one: `Some(None)` where
+/// it does not read.
+pub(crate) fn taken_at(conn: &Connection, path: &str) -> Result<Option<Option<Taken>>, CoreError> {
+    Ok(crate::store::meta_get(conn, &format!("{TAKEN}{path}"))?
+        .map(|value| serde_json::from_str(&value).ok()))
+}
+
 /// An unreadable record still identifies its path by its key.
 pub(crate) fn taken(conn: &Connection) -> Result<Vec<(String, Option<Taken>)>, CoreError> {
     Ok(under(conn, TAKEN)?

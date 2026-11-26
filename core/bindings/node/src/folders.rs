@@ -285,8 +285,9 @@ pub struct KeptUnmatched {
 }
 /// What `removeUnmatched` did. `ended` counts the folder's placements of the
 /// removed files' items, ended and queued to be sent at the next sync.
-/// `settled` lists the removals Marfa stopped on that it ended because no
-/// file is at their paths; their items are unchanged.
+/// `settled` lists the removals Marfa stopped on that it ended, because it
+/// showed each file gone or, where a record does not read, because no file is
+/// at its path in the folder's own directory; their items are unchanged.
 #[napi(object)]
 pub struct UnmatchedRemoved {
     pub removed: Vec<UnmatchedFile>,
@@ -315,7 +316,8 @@ pub struct KeptFile {
 }
 /// What `discardKept` did: the kept files deleted, the paths a written kept
 /// file went back to or was kept beside, the records that remain, and the
-/// records of a stopped discard forgotten because no file is at their paths.
+/// records of a stopped discard that do not read, forgotten because no file is
+/// at their paths in the folder's own directory.
 #[napi(object)]
 pub struct KeptDiscarded {
     pub discarded: Vec<String>,
