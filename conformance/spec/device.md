@@ -6662,13 +6662,21 @@ When a catch-up has applied the events it read, when a follow has no frame waiti
 
 **Tests:** `device/tables-live.test.ts › fills a table whole across pages, and answers it from the copy with the server out of reach`, `› applies each rows.changed a follow reads, rows put, patched and deleted`, `› fills a table again each time a follow sees it come back within the cap`, `› fills a table held while a follow holds the stream, with no event to wake the follow, and tells the follow's caller it filled it`.
 
-### `device/table-fill-waited`
+### `device/table-fill-yields`
 
-When a caller hydrates, catches up or follows a working copy while a fill that an app's hold of a table started is under way, a device MUST wait for the fill to end rather than refuse the call.
+When a caller hydrates, catches up or follows a working copy while a fill that an app's hold of a table started is under way, a device MUST take up the call at once, neither refusing it nor waiting for the fill to end.
 
-**Reason:** an app that holds a table does not ask to move the copy's cursor, so a refusal would stop the follow or fail the hydration of an app that never ran two at once.
+**Reason:** an app that holds a table does not ask to move the copy's cursor, so a refusal would stop the follow or fail the hydration of an app that never ran two at once, and a wait would keep one of the app's worker threads for as long as the fill takes. The tables the fill had not filled stay owed to the call that took the stream.
 
-**Tests:** `device/tables-live.test.ts › waits out a table hold's fill rather than refuse a follow, a catch-up or a hydration that starts during it`.
+**Tests:** `device/tables-live.test.ts › takes the stream from a table hold's fill for a follow, a catch-up or a hydration that starts during it`.
+
+### `device/table-hold-fills-chosen`
+
+When a hold of a table commits while another hold's fill is under way, and no hydration, catch-up or follow takes the stream, a device MUST have filled the table by the time the fill that was under way ends.
+
+**Reason:** the later hold finds the stream taken and leaves its table to that fill, so a fill that let go without a second look would leave the table owed with nothing to fill it.
+
+**Tests:** `device/tables-live.test.ts › fills a table one hold chooses while another hold's fill lets go of the stream, with no follow or catch-up running`.
 
 ### `device/table-fill-failed`
 

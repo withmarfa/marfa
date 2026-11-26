@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::error::CoreError;
 use crate::http::Http;
 use crate::reach::Context;
+use crate::streams::StreamClaim;
 use crate::wire::RowsEvent;
 use crate::{Core, Result};
 
@@ -56,6 +57,19 @@ pub struct FillReport {
     pub failure: Option<String>,
 }
 
+impl FillReport {
+    /// Adds a later pass's counts; what it left unfilled is what is left.
+    pub(crate) fn absorb(&mut self, later: FillReport) {
+        self.whole += later.whole;
+        self.online += later.online;
+        self.unfilled = later.unfilled;
+        self.pages += later.pages;
+        self.rows += later.rows;
+        self.failed += later.failed;
+        self.failure = later.failure.or(self.failure.take());
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TableChoice {
     #[serde(rename = "type")]
@@ -84,7 +98,8 @@ pub struct TableHold {
     pub type_id: String,
     pub table: String,
     pub was_held: bool,
-    /// `None` where another call held the stream, whose fill takes it.
+    /// `None` where another call held the stream or took it, whose fill takes
+    /// the tables left.
     pub fill: Option<FillReport>,
 }
 
@@ -678,12 +693,14 @@ struct Retry {
 /// One pass over the tables not yet whole, in which a table whose read fails
 /// is not asked for again until its wait has passed.
 #[derive(Default)]
-pub(crate) struct Pass {
+pub(crate) struct Pass<'a> {
     failed: HashMap<(String, String), Retry>,
     report: FillReport,
+    /// A fill's own claim, which another mover may take: no write goes in once it has.
+    claim: Option<&'a StreamClaim<'a>>,
 }
 
-impl Pass {
+impl Pass<'_> {
     /// Whether a table is owed that may be read now. Forgets the failures
     /// whose wait has passed when none of them is still owed.
     pub(crate) fn owes(&mut self, conn: &Connection, now: Instant) -> Result<bool> {
@@ -715,7 +732,7 @@ impl Pass {
         };
         let key = (owed.item.clone(), owed.table.clone());
         let settled = self.report.whole + self.report.online;
-        match advance(core, context, &owed, &mut self.report, stop) {
+        match advance(core, context, &owed, &mut self.report, stop, self.claim) {
             Ok(()) => {
                 self.failed.remove(&key);
                 if self.report.whole + self.report.online > settled {
@@ -760,6 +777,7 @@ fn advance(
     owed: &Owed,
     report: &mut FillReport,
     stop: &AtomicBool,
+    claim: Option<&StreamClaim<'_>>,
 ) -> Result<()> {
     let Owed {
         item,
@@ -770,7 +788,8 @@ fn advance(
     let (item, table) = (item.as_str(), table.as_str());
     let http = context.http(core.http()?);
     let still = |conn: &Connection| -> Result<bool> {
-        Ok(state_of(conn, item, table)? == Some((state.clone(), cursor.clone())))
+        Ok(claim.is_none_or(StreamClaim::held)
+            && state_of(conn, item, table)? == Some((state.clone(), cursor.clone())))
     };
     let write = |change: &dyn Fn(&Connection) -> Result<()>| {
         crate::busy::transaction(core, context, stop, |tx| {
@@ -895,15 +914,30 @@ fn advance(
     Ok(())
 }
 
-// The caller holds the stream, excluding events between a page's read and write.
-pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<FillReport> {
-    let filled = || -> Result<FillReport> {
+/// The caller holds the stream, excluding events between a page's read and
+/// write. A fill's own `claim` is checked inside each write, since another
+/// mover may take the stream: the fill then ends, leaving what it did not
+/// fill to that mover.
+pub(crate) fn fill(
+    core: &Core,
+    context: &Context,
+    stop: &AtomicBool,
+    claim: Option<&StreamClaim<'_>>,
+) -> Result<FillReport> {
+    let held = || claim.is_none_or(StreamClaim::held);
+    let mut pass = Pass {
+        claim,
+        ..Pass::default()
+    };
+    let mut filled = || -> Result<()> {
         crate::busy::transaction(core, context, stop, |tx| {
-            reconcile_all(tx)?;
-            crate::restored_rows::let_go_unheld(tx)
+            if held() {
+                reconcile_all(tx)?;
+                crate::restored_rows::let_go_unheld(tx)?;
+            }
+            Ok(())
         })?;
-        let mut pass = Pass::default();
-        loop {
+        while held() {
             crate::catch_up::refuse_if_stopped(stop)?;
             if matches!(
                 pass.step(core, context, crate::clock::now(), stop)?,
@@ -912,17 +946,23 @@ pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<
                 break;
             }
         }
-        pass.report.unfilled = core
-            .conn()?
-            .query_row(
-                "SELECT COUNT(*) FROM item_tables WHERE state IN ('owed', 'filling')",
-                [],
-                |row| row.get::<_, i64>(0),
-            )?
-            .max(0) as u64;
-        Ok(pass.report)
+        Ok(())
     };
-    filled().map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+    match filled() {
+        Err(_) if !held() => {}
+        other => {
+            other.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?
+        }
+    }
+    pass.report.unfilled = core
+        .conn()?
+        .query_row(
+            "SELECT COUNT(*) FROM item_tables WHERE state IN ('owed', 'filling')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?
+        .max(0) as u64;
+    Ok(pass.report)
 }
 
 /// What the server holds of rows the device asked for by id.

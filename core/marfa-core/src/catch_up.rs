@@ -714,7 +714,7 @@ pub(crate) fn catch_up(
     )
     .or_else(read_only::contained)
     .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?;
-    report.tables = crate::tables::fill(core, &context, stop)?;
+    report.tables = crate::tables::fill(core, &context, stop, None)?;
     report.changed_tables = crate::tables::ChangedTable::of(
         store::tables_changed_since(&*core.conn()?, tables_before, usize::MAX)?.unwrap_or_default(),
     );
@@ -5353,23 +5353,28 @@ mod tests {
         hold
     }
 
+    /// Lets the held fill go on, and answers that it left its work to the call that took the stream.
     #[cfg(debug_assertions)]
-    fn table_hold_filled(hold: thread::JoinHandle<Result<crate::TableHold>>) {
+    fn table_hold_let_go(hold: thread::JoinHandle<Result<crate::TableHold>>) {
+        assert_eq!(
+            crate::fault::waiting("table-hold-filling"),
+            1,
+            "the hold's fill went on before it was let go"
+        );
         crate::fault::release("table-hold-filling");
         let held = hold.join().unwrap().unwrap();
-        assert!(
-            held.fill.is_some(),
-            "the hold left its fill to another: {held:?}"
+        assert_eq!(
+            held.fill, None,
+            "the hold filled from a stream another call took: {held:?}"
         );
     }
 
     #[cfg(debug_assertions)]
     #[test]
-    fn a_follow_that_starts_while_a_table_hold_fills_waits_for_the_fill_and_keeps_following() {
+    fn a_follow_that_starts_while_a_table_hold_fills_takes_the_stream_and_follows() {
         let server = Scripted::start();
         let (_dir, core) =
             hydrated_with_a_table(&server, vec![stream(vec![created("n1", "11")], held())]);
-        let hydration_asked = server.seen("/events").len();
         let hold = table_hold_filling(&core);
         let flag = Arc::new(AtomicBool::new(false));
         let (ended, done) = mpsc::channel();
@@ -5382,21 +5387,10 @@ mod tests {
                 }));
             });
         }
-        let early = done.recv_timeout(MS(400));
-        assert!(
-            matches!(early, Err(RecvTimeoutError::Timeout)),
-            "a follow that started while a table hold filled ended rather than waiting: {early:?}"
-        );
-        assert_eq!(
-            server.seen("/events").len(),
-            hydration_asked,
-            "a follow waiting for a fill asked for a stream"
-        );
-        table_hold_filled(hold);
         let applied = loop {
             let change = changes
                 .recv_timeout(Duration::from_secs(5))
-                .expect("the follow did not follow once the fill ended");
+                .expect("the follow did not follow while a table hold's fill was under way");
             if change.item_id.is_some() {
                 break change;
             }
@@ -5405,6 +5399,7 @@ mod tests {
             (applied.item_id.as_deref(), applied.cursor.as_str()),
             (Some("n1"), "11")
         );
+        table_hold_let_go(hold);
         flag.store(true, Ordering::Relaxed);
         let report = done
             .recv_timeout(Duration::from_secs(5))
@@ -5415,22 +5410,7 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn a_hydration_waiting_for_a_table_hold_fill_is_canceled_by_its_stop() {
-        let server = Scripted::start();
-        let (_dir, core) = hydrated_with_a_table(&server, hydration_streams());
-        let hold = table_hold_filling(&core);
-        let stop = AtomicBool::new(true);
-        assert_eq!(
-            core.hydrate_until(&[NOTE.into()], SliceTier::Library, &[], &stop)
-                .map(drop),
-            Err(CoreError::Canceled)
-        );
-        table_hold_filled(hold);
-    }
-
-    #[cfg(debug_assertions)]
-    #[test]
-    fn a_catch_up_or_hydration_that_starts_while_a_table_hold_fills_waits_for_the_fill() {
+    fn a_catch_up_or_hydration_that_starts_while_a_table_hold_fills_takes_the_stream() {
         for hydrating in [false, true] {
             let what = if hydrating {
                 "a hydration"
@@ -5447,7 +5427,6 @@ mod tests {
                 )]
             };
             let (_dir, core) = hydrated_with_a_table(&server, after);
-            let hydration_asked = server.seen("/events").len();
             let hold = table_hold_filling(&core);
             let (ended, done) = mpsc::channel();
             {
@@ -5460,25 +5439,47 @@ mod tests {
                     });
                 });
             }
-            let early = done.recv_timeout(MS(400));
-            assert!(
-                matches!(early, Err(RecvTimeoutError::Timeout)),
-                "{what} that started while a table hold filled ended rather than waiting: {early:?}"
-            );
-            assert_eq!(
-                server.seen("/events").len(),
-                hydration_asked,
-                "{what} waiting for a fill asked for a stream"
-            );
-            table_hold_filled(hold);
             let finished = done
                 .recv_timeout(Duration::from_secs(5))
-                .unwrap_or_else(|_| panic!("{what} did not end once the fill ended"));
+                .unwrap_or_else(|_| {
+                    panic!("{what} did not end while a table hold's fill was under way")
+                });
             assert_eq!(finished, Ok(()), "{what}");
             if !hydrating {
                 assert_eq!(stored_cursor(&core), Some("11".to_string()));
             }
+            table_hold_let_go(hold);
         }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_call_whose_stop_is_raised_ends_canceled_where_another_call_holds_the_stream() {
+        let server = Scripted::start();
+        let (_dir, core) = hydrated_with_a_table(&server, hydration_streams());
+        let _held = core
+            .claim_stream(crate::Mover::CatchUp, &AtomicBool::new(false))
+            .unwrap();
+        let running = AtomicBool::new(false);
+        assert!(
+            matches!(
+                core.catch_up_until(&running).map_err(|failed| failed.error),
+                Err(CoreError::Invalid(_))
+            ),
+            "a second catch-up was not refused while one held the stream"
+        );
+        let stop = AtomicBool::new(true);
+        assert_eq!(
+            core.hydrate_until(&[NOTE.into()], SliceTier::Library, &[], &stop)
+                .map(drop),
+            Err(CoreError::Canceled)
+        );
+        assert_eq!(
+            core.catch_up_until(&stop)
+                .map(drop)
+                .map_err(|failed| failed.error),
+            Err(CoreError::Canceled)
+        );
     }
 
     #[test]

@@ -210,7 +210,9 @@ impl Core {
         Ok(pinned)
     }
 
-    /// Holds matching tables and fills them if the copy is hydrated and it can claim the stream.
+    /// Holds matching tables and fills them, if the copy is hydrated and no
+    /// other call moves its cursor. A hydration, catch-up or follow that
+    /// starts meanwhile takes the stream and fills what is left.
     pub fn hold_table(&self, type_id: &str, table: &str) -> Result<TableHold> {
         self.hold_table_until(type_id, table, &NEVER_STOPPED)
     }
@@ -225,18 +227,32 @@ impl Core {
         let was_held = busy::retrying(&self.conn, stop, || {
             tables::choose(&mut *self.conn()?, type_id, table)
         })?;
-        let fill = match self.try_claim_stream(Mover::Fill) {
-            Ok(_streaming) if store::hydration_complete(&*self.conn()?)? => {
-                #[cfg(debug_assertions)]
-                crate::fault::hold(|| "table-hold-filling");
-                let context = reach::Context::capture(&*self.conn()?)?;
-                Some(tables::fill(self, &context, stop)?)
+        // Raised before the claim: a fill that lets go of the stream after
+        // this claim fails finds it raised and fills again.
+        self.tables_owed.store(true, Ordering::SeqCst);
+        let mut fill: Option<FillReport> = None;
+        while let Ok(streaming) = self.try_claim_stream(Mover::Fill) {
+            if !store::hydration_complete(&*self.conn()?)?
+                || !self.tables_owed.swap(false, Ordering::SeqCst)
+            {
+                break;
             }
-            _ => {
-                self.tables_owed.store(true, Ordering::SeqCst);
-                None
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "table-hold-filling");
+            let context = reach::Context::capture(&*self.conn()?);
+            let filled =
+                context.and_then(|context| tables::fill(self, &context, stop, Some(&streaming)));
+            if !streaming.held() {
+                break;
             }
-        };
+            let report = filled.inspect_err(|_| self.tables_owed.store(true, Ordering::SeqCst))?;
+            match &mut fill {
+                Some(before) => before.absorb(report),
+                None => fill = Some(report),
+            }
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "table-hold-filled");
+        }
         Ok(TableHold {
             type_id: type_id.into(),
             table: table.into(),
@@ -257,12 +273,14 @@ impl Core {
         tables::held(&*self.conn()?)
     }
 
-    /// Fills each table the copy holds that is not whole.
+    /// Fills each table the copy holds that is not whole. A hydration,
+    /// catch-up or follow that starts meanwhile takes the stream, and the
+    /// report counts the tables left to it as unfilled.
     pub fn fill_tables(&self, stop: &AtomicBool) -> Result<FillReport> {
         self.lock.refuse_unless_writer()?;
-        let _streaming = self.claim_stream(Mover::Fill, stop)?;
+        let streaming = self.claim_stream(Mover::Fill, stop)?;
         let context = reach::Context::capture(&*self.conn()?)?;
-        tables::fill(self, &context, stop)
+        tables::fill(self, &context, stop, Some(&streaming))
     }
 
     /// Reads rows from the copy when held whole, marking the answer with `held`.

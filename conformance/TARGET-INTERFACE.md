@@ -763,7 +763,10 @@ device is judged by the binding fixtures when it supplies what follows.
     request remains in flight.
   - `follow-waiting`: a follow that waits for a first hydration.
   - `table-hold-filling`: a hold has claimed the copy's stream and is about
-    to fill held tables.
+    to fill held tables. A hydration, catch-up or follow that starts while it
+    is held takes the stream.
+  - `table-hold-filled`: a hold's fill has filled the held tables and not yet
+    let go of the stream.
   - `answer-dropped`: an answer reached a request that nobody waited for.
   - `catalog-replacing`: a refresh of the catalog has written the item types
     and not yet the edge types, inside the transaction that replaces both. A

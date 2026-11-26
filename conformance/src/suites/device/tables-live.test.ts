@@ -204,6 +204,7 @@ async function hydratedBinding(
   types: string[],
   label: string,
   key = server.workingKey,
+  env?: NodeJS.ProcessEnv,
 ): Promise<BindingDevice> {
   counter += 1;
   const device = await BindingDevice.start({
@@ -211,6 +212,7 @@ async function hydratedBinding(
     store: newStore(`tables-${label}-${String(counter)}`),
     url: server.apiUrl,
     key,
+    env,
   });
   bindings.push(device);
   value(await device.hydrate(types, "library"));
@@ -591,11 +593,18 @@ describe("how a device fills a table", () => {
     }
   });
 
-  it("waits out a table hold's fill rather than refuse a follow, a catch-up or a hydration that starts during it", async () => {
+  it("takes the stream from a table hold's fill for a follow, a catch-up or a hydration that starts during it", async () => {
     const type = await tableType();
     const item = await itemOf(type);
     await filled(item, 3);
-    const device = await hydratedBinding([type], "fill-waited");
+    // The held fill takes one of two worker threads, so a call that waited
+    // for it would take the other and leave nothing to run on.
+    const device = await hydratedBinding(
+      [type],
+      "fill-taken",
+      server.workingKey,
+      { UV_THREADPOOL_SIZE: "2" },
+    );
     // Returning the thenable directly would await the fill before releasing it.
     const fillHeld = async (): Promise<{
       holding: Call<{ fill: unknown }>;
@@ -609,43 +618,76 @@ describe("how a device fills a table", () => {
       await untilHeld(device, "table-hold-filling");
       return { holding };
     };
-    const fillEnds = async ({
+    const fillLetGo = async ({
       holding,
     }: {
       holding: Call<{ fill: unknown }>;
     }): Promise<void> => {
+      expect(
+        await device.hooks.waiting("table-hold-filling"),
+        "the hold's fill went on before it was let go",
+      ).toBe(1);
       await device.hooks.release("table-hold-filling");
       expect(
         value(await holding).fill,
-        "the hold left its fill to another",
-      ).not.toBeNull();
+        "the hold filled from a stream another call took",
+      ).toBeNull();
     };
 
     const followed = await fillHeld();
     const follow = await device.follow();
     try {
-      await fillEnds(followed);
       const later = await itemOf(type);
       await until(
         () =>
           follow.changes.some(
             (change) => change.kind === "applied" && change.itemId === later,
           ),
-        "the follow applying an event written after the fill",
+        "the follow applying an event while a table hold's fill was under way",
+      );
+      await fillLetGo(followed);
+      await until(
+        () =>
+          follow.changes.some(
+            (change) =>
+              change.kind === "tableFilled" &&
+              change.itemId === item &&
+              change.table === "steps",
+          ),
+        "the follow filling the table the hold left to it",
       );
     } finally {
       expect(await follow.stop()).toBeNull();
     }
 
     const caughtUp = await fillHeld();
-    const catchUp = device.catchUp();
-    await fillEnds(caughtUp);
-    value(await catchUp);
+    value(await device.catchUp());
+    await fillLetGo(caughtUp);
 
     const rehydrated = await fillHeld();
-    const hydration = device.hydrate([type], "library");
-    await fillEnds(rehydrated);
-    value(await hydration);
+    value(await device.hydrate([type], "library"));
+    await fillLetGo(rehydrated);
+  });
+
+  it("fills a table one hold chooses while another hold's fill lets go of the stream, with no follow or catch-up running", async () => {
+    const first = await tableType();
+    const second = await tableType();
+    const item = await itemOf(second);
+    await filled(item, 3);
+    const device = await hydratedBinding([first, second], "fill-let-go");
+    await device.hooks.hold("table-hold-filled");
+    const holding = device.call<{ fill: unknown }>("holdTable", first, "steps");
+    await untilHeld(device, "table-hold-filled");
+    expect(
+      value(await device.call<{ fill: unknown }>("holdTable", second, "steps"))
+        .fill,
+      "the first hold's fill holds the stream",
+    ).toBeNull();
+    await device.hooks.release("table-hold-filled");
+    expect(value(await holding).fill).not.toBeNull();
+    expect(
+      stateOf(value(await device.call<HeldTables>("heldTables")), item),
+    ).toMatchObject({ state: "whole", rows: 3 });
   });
 
   it("fills every other table, and ends no catch-up or follow, while one table's page read keeps failing", async () => {

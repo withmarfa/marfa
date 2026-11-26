@@ -163,6 +163,7 @@ Limits: a server that withholds a purge's event from the key reads as one that l
 
 - `tableRows`, `tableRow` and `tableTotals` answer in the server's shapes, with `held` set where the copy answered from a table it holds whole and unset where it asked the server. Node answers a plain object, and Swift a `JsonObject`.
 - `writeRows` queues one write of kind `write_rows` for each call, and `undoRows` one of kind `undo_rows` for the batch named. A drain sends consecutive row writes to the same table in one request and gives each write its own verdict.
+- `holdTable` fills the table before it returns only where the copy is hydrated and no other call moves its cursor; otherwise its `fill` is null and the follow or catch-up that holds the stream fills it. A hydration, catch-up or follow that starts while the fill runs takes the stream at once, and the fill ends with its `fill` null (`device/table-fill-yields`). `fillTables` ends the same way, counting the tables left as unfilled.
 - A hold's and a fill's counts cross as numbers. In Swift, a held table's `state` is the enum `TableState` (`owed`, `filling`, `whole` and `online` in Node), its item is `itemId` (`item` in Node), and a read's options are the record `RowsAsked`, whose `direction` is `SortDirection` and whose `limit` is a `UInt32`.
 - When a follow finishes filling a table or finds it over the cap, it emits one `tableFilled` change with the item ID and table name. Read the table again when you receive this change (`device/follow-table-filled`).
 
