@@ -2122,6 +2122,7 @@ describe("catch-up replays from the cursor", () => {
       rows: 0,
       failed: 0,
       failure: null,
+      handed: [],
     });
     expect(complete.ok ? complete.value.changed_tables : undefined).toEqual([]);
   });

@@ -6656,15 +6656,15 @@ When a device starts to hold a table of an item, a device MUST read the table's 
 
 ### `device/table-fill-when`
 
-When a catch-up has applied the events it read, when a follow has no frame waiting, and when an app holds a table, a device MUST fill each table it holds that is not whole.
+When a hydration has completed, when a catch-up has applied the events it read, when a follow has no frame waiting, and when an app holds a table, a device MUST fill each table it holds that is not whole.
 
-**Reason:** a hydration reports once its items are whole; the tables of those items fill at the catch-up or follow after it.
+**Reason:** a hydration, catch-up or follow can take the stream from a fill that an app started (`device/table-fill-yields`), so each fills what that fill left.
 
-**Tests:** `device/tables-live.test.ts › fills a table whole across pages, and answers it from the copy with the server out of reach`, `› applies each rows.changed a follow reads, rows put, patched and deleted`, `› fills a table again each time a follow sees it come back within the cap`, `› fills a table held while a follow holds the stream, with no event to wake the follow, and tells the follow's caller it filled it`.
+**Tests:** `device/tables-live.test.ts › fills a table whole across pages, and answers it from the copy with the server out of reach`, `› applies each rows.changed a follow reads, rows put, patched and deleted`, `› fills a table again each time a follow sees it come back within the cap`, `› fills a table held while a follow holds the stream, with no event to wake the follow, and tells the follow's caller it filled it`, `› fills a table one hold chooses while a follow holds the stream, though a fill the follow took the stream from ends after the choice`, `› fills the tables a fill left to a hydration by the time the hydration ends, and the fill names them as handed on`.
 
 ### `device/table-fill-yields`
 
-When a caller hydrates, catches up or follows a working copy while a fill that an app's hold of a table started is under way, a device MUST take up the call at once, neither refusing it nor waiting for the fill to end.
+When a caller hydrates, catches up or follows a working copy while a fill that an app started, by holding a table or asking for a fill, is under way, a device MUST take up the call at once, neither refusing it nor waiting for the fill to end.
 
 **Reason:** a table hold does not move the copy's cursor. Refusing a concurrent cursor operation interrupts sync, and waiting occupies one of the app's worker threads for the duration of the fill.
 
@@ -6672,11 +6672,35 @@ When a caller hydrates, catches up or follows a working copy while a fill that a
 
 ### `device/table-hold-fills-chosen`
 
-When a hold of a table commits while another hold's fill is under way, and no hydration, catch-up or follow takes the stream, a device MUST have filled the table by the time the fill that was under way ends.
+When a hold of a table commits while another hold's fill is under way, and no hydration, catch-up or follow takes the stream, a device MUST have filled the table, or left it unfilled under `device/table-fill-failed`, by the time the fill that was under way ends.
 
 **Reason:** the later hold finds the stream taken and leaves its table to that fill, so a fill that let go without a second look would leave the table owed with nothing to fill it.
 
 **Tests:** `device/tables-live.test.ts › fills a table one hold chooses while another hold's fill lets go of the stream, with no follow or catch-up running`.
+
+### `device/table-fill-page-taken`
+
+If a hydration, catch-up or follow takes the stream after a fill that an app started has read a page of a table and before it writes that page, then a device MUST NOT write the page.
+
+**Reason:** the call that took the stream can apply a later change to a row of that page, which the earlier page would overwrite.
+
+**Tests:** `device/tables-live.test.ts › discards a page a hold's fill read before a catch-up took the stream, keeping the row the catch-up applied`.
+
+### `device/table-fill-reports-whole`
+
+When a hydration, catch-up or follow takes the stream from a fill that an app started, a device MUST count in that fill's report each table the fill made whole or found past the cap before the stream was taken.
+
+**Reason:** an app reads a table again when the fill it asked for reports one made whole, and the call that took the stream reports only the tables it fills itself.
+
+**Tests:** `device/tables-live.test.ts › reports the tables a hold's fill made whole before a catch-up took the stream`.
+
+### `device/table-fill-reports-handed`
+
+When a hydration, catch-up or follow takes the stream from a fill that an app started, a device MUST name in that fill's report each table the fill was asked to fill and did not, and count each in its tables still to fill.
+
+**Reason:** by the time the fill ends, the call that took the stream may have filled or replaced those tables, so the copy's own count no longer says what the fill left.
+
+**Tests:** `device/tables-live.test.ts › fills the tables a fill left to a hydration by the time the hydration ends, and the fill names them as handed on`, `› reports the tables a hold's fill made whole before a catch-up took the stream`.
 
 ### `device/table-fill-failed`
 

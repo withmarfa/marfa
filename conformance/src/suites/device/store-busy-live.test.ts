@@ -533,6 +533,7 @@ it("makes a fill's page write again from its reads when another program wrote to
     rows: 1_500,
     failed: 0,
     failure: null,
+    handed: [],
   });
   const tables = value(await device.heldTables()).tables;
   expect(tables.map((one) => [one.item, one.state, one.rows])).toEqual([

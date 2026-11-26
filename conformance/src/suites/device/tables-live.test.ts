@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { BindingDevice, type Call } from "../../device/binding-adapter.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
-import type { HeldTables, Outcome } from "../../device/protocol.js";
+import type { HeldTables, Outcome, TableFill } from "../../device/protocol.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -351,6 +351,7 @@ describe("how a device fills a table", () => {
       rows: 2500,
       failed: 0,
       failure: null,
+      handed: [],
     });
     const expected = await serverRows(item);
 
@@ -417,6 +418,7 @@ describe("how a device fills a table", () => {
       rows: 2500,
       failed: 0,
       failure: null,
+      handed: [],
     });
     expect(stateOf(value(await device.heldTables()), item)?.rows).toBe(3500);
     expect((await deviceRows(device, item)).rows).toEqual(
@@ -686,6 +688,133 @@ describe("how a device fills a table", () => {
     expect(value(await holding).fill).not.toBeNull();
     expect(
       stateOf(value(await device.call<HeldTables>("heldTables")), item),
+    ).toMatchObject({ state: "whole", rows: 3 });
+  });
+
+  it("fills a table one hold chooses while a follow holds the stream, though a fill the follow took the stream from ends after the choice", async () => {
+    const first = await tableType();
+    const second = await tableType();
+    const item = await itemOf(second);
+    await filled(item, 3);
+    const device = await hydratedBinding([first, second], "fill-taken-chosen");
+    await device.hooks.hold("table-hold-filling");
+    const taken = device.call<{ fill: unknown }>("holdTable", first, "steps");
+    await untilHeld(device, "table-hold-filling");
+    const follow = await device.follow();
+    try {
+      await until(
+        async () => (await device.hooks.reached("follow-stream-had")) >= 1,
+        "the follow having its stream",
+      );
+      expect(
+        value(
+          await device.call<{ fill: unknown }>("holdTable", second, "steps"),
+        ).fill,
+        "the follow holds the stream",
+      ).toBeNull();
+      await device.hooks.release("table-hold-filling");
+      expect(value(await taken).fill).toBeNull();
+      await until(
+        () =>
+          follow.changes.some(
+            (change) =>
+              change.kind === "tableFilled" &&
+              change.itemId === item &&
+              change.table === "steps",
+          ),
+        "the follow filling the table the second hold chose",
+      );
+    } finally {
+      expect(await follow.stop()).toBeNull();
+    }
+    expect(
+      stateOf(value(await device.call<HeldTables>("heldTables")), item),
+    ).toMatchObject({ state: "whole", rows: 3 });
+  });
+
+  it("fills the tables a fill left to a hydration by the time the hydration ends, and the fill names them as handed on", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    await filled(item, 3);
+    const device = await hydratedBinding([type], "fill-to-hydration");
+    await server.setFault("fail:table-rows-page=steps@always");
+    try {
+      expect(
+        value(
+          await device.call<{ fill: TableFill }>("holdTable", type, "steps"),
+        ).fill,
+      ).toMatchObject({ whole: 0, unfilled: 1, failed: 1 });
+    } finally {
+      await server.clearFault();
+    }
+    await device.hooks.hold("table-fill-page-read");
+    const filling = device.call<TableFill>("fillTables");
+    await untilHeld(device, "table-fill-page-read");
+    const hydration = value(await device.hydrate([type], "library"));
+    expect(hydration.tables).toMatchObject({ whole: 1, unfilled: 0 });
+    expect(
+      stateOf(value(await device.call<HeldTables>("heldTables")), item),
+    ).toMatchObject({ state: "whole", rows: 3 });
+    await device.hooks.release("table-fill-page-read");
+    expect(value(await filling)).toMatchObject({
+      whole: 0,
+      unfilled: 1,
+      handed: [{ item, table: "steps" }],
+    });
+  });
+
+  it("discards a page a hold's fill read before a catch-up took the stream, keeping the row the catch-up applied", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const [row] = await write(item, [{ op: "put", values: { count: 1 } }]);
+    const device = await hydratedBinding([type], "page-taken");
+    await device.hooks.hold("table-fill-page-read");
+    const holding = device.call<{ fill: unknown }>("holdTable", type, "steps");
+    await untilHeld(device, "table-fill-page-read");
+    await write(item, [{ op: "patch", id: row.id, values: { count: 2 } }]);
+    // The catch-up applies the patch and leaves the table as the page found it.
+    await server.setFault("fail:table-rows-page=steps@always");
+    try {
+      expect(value(await device.catchUp()).applied).toBeGreaterThanOrEqual(1);
+    } finally {
+      await server.clearFault();
+    }
+    await device.hooks.release("table-fill-page-read");
+    value(await holding);
+    value(await device.call<TableFill>("fillTables"));
+    const held = value(
+      await device.call<Page & { held: boolean }>("tableRows", item, "steps", {
+        limit: 10,
+      }),
+    );
+    expect(held.held).toBe(true);
+    expect(held.data.map((answered) => answered.values.count)).toEqual([2]);
+  });
+
+  it("reports the tables a hold's fill made whole before a catch-up took the stream", async () => {
+    const type = await tableType();
+    const [early, late] = [await itemOf(type), await itemOf(type)].sort();
+    await filled(late, 3);
+    const device = await hydratedBinding([type], "whole-then-taken");
+    await device.hooks.hold("table-fill-page-read");
+    const holding = device.call<{ fill: TableFill | null }>(
+      "holdTable",
+      type,
+      "steps",
+    );
+    await untilHeld(device, "table-fill-page-read");
+    expect(
+      stateOf(value(await device.call<HeldTables>("heldTables")), early),
+    ).toMatchObject({ state: "whole", rows: 0 });
+    value(await device.catchUp());
+    await device.hooks.release("table-fill-page-read");
+    expect(value(await holding).fill).toMatchObject({
+      whole: 1,
+      unfilled: 1,
+      handed: [{ item: late, table: "steps" }],
+    });
+    expect(
+      stateOf(value(await device.call<HeldTables>("heldTables")), late),
     ).toMatchObject({ state: "whole", rows: 3 });
   });
 

@@ -5,6 +5,7 @@ import type {
   Refusal,
   ServerAnswer,
   SliceTier,
+  TableFill,
   Tier,
 } from "./protocol.js";
 import type { FolderRemovalJson } from "./cli-adapter.js";
@@ -45,6 +46,8 @@ export interface BindingHydrateReport {
   edges: number;
   pages: number;
   cursor: string;
+  /** The fill the hydration ran at its end. */
+  tables: TableFill;
 }
 
 export interface BindingCatchUpReport {

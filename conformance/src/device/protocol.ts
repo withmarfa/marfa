@@ -147,6 +147,8 @@ export interface TableFill {
   /** Tables whose read failed, each left to the next pass. */
   failed: number;
   failure: string | null;
+  /** Tables left to the call that took the stream, counted in `unfilled`. */
+  handed: { item: string; table: string }[];
 }
 
 /** `marfa device tables hold`: the choice, and the fill it ran, if any. */
