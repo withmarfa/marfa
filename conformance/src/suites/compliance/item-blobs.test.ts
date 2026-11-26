@@ -1,9 +1,3 @@
-/**
- * Conformance for POST /items/blobs: the items whose `blob_ref` is each of
- * many hashes, what the answer leaves out, and the caps. Every absence is held
- * beside a witness that finds the same bytes through a reader that may.
- */
-
 import { createHash, randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -42,7 +36,6 @@ afterAll(async () => {
 
 let minted = 0;
 
-/** A client for a new key of this file, minted by `by`. */
 async function keyed(
   typePermissions: Record<string, string>,
   by: MarfaClient = client,
@@ -58,7 +51,6 @@ async function keyed(
   return new MarfaClient({ baseUrl: apiUrl, apiKey: res.data.key });
 }
 
-/** Bytes no other test of any run sends, uploaded by `by`. */
 async function upload(by: MarfaClient = client): Promise<string> {
   const res = await by.uploadBlob(
     new TextEncoder().encode(`item-blobs ${randomUUID()}`),
@@ -68,7 +60,6 @@ async function upload(by: MarfaClient = client): Promise<string> {
   return res.data.hash;
 }
 
-/** A hash of bytes nobody uploaded. */
 function absent(): string {
   return `sha256:${createHash("sha256").update(randomUUID()).digest("hex")}`;
 }

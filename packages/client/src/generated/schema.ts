@@ -227,7 +227,7 @@ export interface paths {
         put?: never;
         /**
          * Find items by blob
-         * @description Finds the active and archived items whose `blob_ref` is each of up to 200 blob hashes, so you can tell whether a file is already kept before you add it. `system.*` and `app.*` items and items you can't read are left out.
+         * @description For each blob hash, finds active and archived items whose `blob_ref` matches. Only items you can list are eligible. Marfa omits `system.*` and `app.*` items.
          */
         post: operations["findItemsByBlob"];
         delete?: never;
@@ -13875,7 +13875,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns one result for each hash. A hash no item you can read holds has no items, whether or not Marfa holds its bytes. */
+            /** @description Returns one result for each hash. If there are no matches, `items` is empty and `more` is `false`, whether or not Marfa stores the bytes. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13908,9 +13908,9 @@ export interface operations {
                              * @example sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
                              */
                             hash: string;
-                            /** @description The active and archived items you can read whose `blob_ref` is the hash, by ID, at most 20. */
+                            /** @description Up to 20 matching items, sorted by ID. */
                             items: components["schemas"]["BlobHolder"][];
-                            /** @description `true` if more than 20 items hold the hash and `items` holds the first 20. */
+                            /** @description `true` if another matching item follows the 20 returned. */
                             more: boolean;
                         }[];
                     };
