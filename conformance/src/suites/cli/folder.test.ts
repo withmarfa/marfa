@@ -1891,7 +1891,7 @@ describe("a folder round trip", () => {
   });
 
   it.each(["a heading", "no header"])(
-    "holds the original item of a new note moved to another folder before its ID line, where the file showed less than the item holds, and writes it back once the person keeps it (%s)",
+    "writes back the original item of a new note moved to another folder before its ID line, where the file showed less than the item holds (%s)",
     async (shape) => {
       await onOwnRegistry(async () => {
         const word = unique("moved-bare");
@@ -1900,17 +1900,12 @@ describe("a folder round trip", () => {
           word,
         );
         expect(made.trashed).toEqual([]);
-        expect(made.held).toEqual(["Fresh.md"]);
+        // A note whose file showed all its item holds is held instead, as
+        // the test before this one shows.
+        expect(made.held).toEqual([]);
         expect(made.original.state).toBe("active");
         expect(made.fresh.state).toBe("active");
         expect(String(made.original.properties.body)).not.toContain("Added");
-        const settled = await settleHeld(made.left, [
-          "--keep",
-          "Fresh.md",
-          "--write-back",
-        ]);
-        expect(settled.written_back).toEqual(["Fresh.md"]);
-        for (const folder of [made.reached, made.left]) await sync(folder);
         for (const folder of [made.left, made.reached]) {
           const held = filesHolding(folder, word);
           expect(
