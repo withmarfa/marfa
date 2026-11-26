@@ -5295,8 +5295,7 @@ mod tests {
     #[cfg(debug_assertions)]
     const LEDGER: &str = "app.acme.ledger";
 
-    /// A hydrated copy whose catalog declares the table `log` on `LEDGER`,
-    /// with `after` answering the streams asked for once it is hydrated.
+    /// The catalog declares `LEDGER`'s table even though the slice holds only notes.
     #[cfg(debug_assertions)]
     fn hydrated_with_a_table(
         server: &Scripted,
@@ -5343,8 +5342,6 @@ mod tests {
         ]
     }
 
-    /// Holds `LEDGER`'s table on a thread of its own, stopped where its fill
-    /// holds the stream until `table_hold_filled`.
     #[cfg(debug_assertions)]
     fn table_hold_filling(core: &Arc<Core>) -> thread::JoinHandle<Result<crate::TableHold>> {
         crate::fault::arm("table-hold-filling");

@@ -210,9 +210,7 @@ impl Core {
         Ok(pinned)
     }
 
-    /// Holds matching tables and fills them, or leaves them to the follow or
-    /// catch-up that holds the stream. A hydration, catch-up or follow that
-    /// starts during the fill waits for it.
+    /// Holds matching tables and fills them if the copy is hydrated and it can claim the stream.
     pub fn hold_table(&self, type_id: &str, table: &str) -> Result<TableHold> {
         self.hold_table_until(type_id, table, &NEVER_STOPPED)
     }

@@ -596,8 +596,7 @@ describe("how a device fills a table", () => {
     const item = await itemOf(type);
     await filled(item, 3);
     const device = await hydratedBinding([type], "fill-waited");
-    // A `Call` is thenable, so it is handed back inside an object: awaited
-    // bare, it would wait for the held call itself.
+    // Returning the thenable directly would await the fill before releasing it.
     const fillHeld = async (): Promise<{
       holding: Call<{ fill: unknown }>;
     }> => {
