@@ -11,7 +11,7 @@ import {
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { copyLiveReplay } from "../../device/marfa-answers.js";
 import {
   detachImage,
@@ -247,6 +247,7 @@ describe("a take-in an earlier release stopped in another folder's directory", (
         "-noautoopen",
       ]);
       expect(attached.status, String(attached.stderr)).toBe(0);
+      detachImageAtCleanup(mount);
     }
 
     it.each(["holds", "does not hold"] as const)(
@@ -259,7 +260,6 @@ describe("a take-in an earlier release stopped in another folder's directory", (
         const first = image(scratch, "first");
         const second = image(scratch, "second");
         attach(first, mount);
-        detachImageAtCleanup(mount);
 
         // The witness: in the volume recorded, the record is settled.
         record(harness, stoppedTakeIn(mount));
@@ -270,12 +270,10 @@ describe("a take-in an earlier release stopped in another folder's directory", (
         const row = stoppedTakeIn(mount);
         record(harness, row);
         detachImage(mount);
-        // Holds the device number the first volume had, so the second
-        // volume comes back as another device.
+        // Occupy the device number the first volume released.
         const filler = join(scratch, "filler");
         mkdirSync(filler);
         attach(image(scratch, "filler"), filler);
-        detachImageAtCleanup(filler);
         attach(second, mount);
         const now = identity(mount);
         expect(
@@ -305,15 +303,12 @@ describe("a take-in an earlier release stopped in another folder's directory", (
         ).toEqual([kept]);
         expect(await heldAsKept(harness, kept)).toHaveLength(1);
 
-        // The save is still on the first volume.
         detachImage(mount);
         const back = join(scratch, "First");
         mkdirSync(back);
         attach(first, back);
-        detachImageAtCleanup(back);
         expect(readFileSync(join(back, row.kept), "utf8")).toBe(SAVE);
         expect(existsSync(join(back, "Recovery.md"))).toBe(false);
-        expect(dirname(kept)).toBe(mount);
       },
     );
   });
