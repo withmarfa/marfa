@@ -259,7 +259,7 @@ impl Core {
         Ok(self.fill_from(streaming, stop, false)?.unwrap_or_default())
     }
 
-    /// Compare after releasing the claim so a hold refused during the pass can be picked up.
+    /// A hold can record a new choice before it finds the stream taken.
     fn fill_from<'a>(
         &'a self,
         mut streaming: StreamClaim<'a>,

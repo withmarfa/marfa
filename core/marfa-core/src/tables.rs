@@ -60,8 +60,7 @@ pub struct FillReport {
 }
 
 impl FillReport {
-    /// Adds a later pass's counts; what it left unfilled, failed or handed
-    /// on is what is left.
+    /// Only the latest pass can say what remains unfilled.
     pub(crate) fn absorb(&mut self, later: FillReport) {
         self.whole += later.whole;
         self.online += later.online;
@@ -972,8 +971,7 @@ pub(crate) fn fill(
     if claim.is_some() {
         crate::fault::hold(|| "table-fill-ending");
     }
-    // The next mover writes only under the connection's lock, so while this
-    // holds it a claim still held means the tables read are as this fill left them.
+    // The connection lock excludes writes by a mover that takes the claim.
     let now = {
         let conn = core.conn()?;
         held().then(|| unfilled(&conn)).transpose()?

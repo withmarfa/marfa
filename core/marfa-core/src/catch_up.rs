@@ -5500,8 +5500,6 @@ mod tests {
         );
     }
 
-    /// A copy whose slice holds the ledger `l1`, whose tables `log`, with
-    /// `log_rows` rows, and `other`, empty, the server lists.
     #[cfg(debug_assertions)]
     fn hydrated_with_a_ledger(
         server: &Scripted,
@@ -5572,7 +5570,6 @@ mod tests {
         ))
     }
 
-    /// The catch-up's stream sends `n1` at 11, waits for `ready`, then goes live.
     #[cfg(debug_assertions)]
     fn catch_up_held(entered: &Arc<AtomicBool>, ready: &Arc<AtomicBool>) -> Answer {
         stream(
@@ -5599,8 +5596,7 @@ mod tests {
         );
         let (_dir, core) =
             hydrated_with_a_ledger(&server, vec![catch_up_held(&entered, &ready)], 1);
-        // The catch-up's own fill fails the table; the fill after it cannot
-        // reach the server.
+        // A table-specific error leaves the table for the later fill.
         server.on(
             "/items/l1/tables/log/rows",
             vec![failing_rows(), crate::scripted::unnamed(502, "bad_gateway")],

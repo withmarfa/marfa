@@ -185,8 +185,7 @@ impl Core {
         Ok(report)
     }
 
-    /// A fill after the cursor moved: its failure is reported as the fill's
-    /// own, never as the call's, and leaves what is not whole unfilled.
+    /// Keep fill errors in the report after the cursor has moved.
     fn filled_after(
         &self,
         before: &mut FillReport,
@@ -431,7 +430,7 @@ impl Core {
     /// when it ends, however it ends, so no write goes out after either:
     /// give each follow a flag of its own.
     ///
-    /// A table chosen after its last look is filled before it returns.
+    /// When the follow ends, it tries to fill tables chosen during the follow.
     pub fn follow(
         &self,
         stop: &AtomicBool,
@@ -550,8 +549,7 @@ impl Core {
                     }
                     match self.try_claim_stream(Mover::Follow) {
                         Ok(claim) => return Ok(Some(claim)),
-                        // The hydration waited for holds it until it has
-                        // settled, and a catch-up may have taken it since.
+                        // Readiness can become visible before the mover releases its claim.
                         Err(Mover::Hydration | Mover::CatchUp) if waited => {}
                         Err(_) => return Err(one_at_a_time()),
                     }
@@ -599,8 +597,7 @@ impl Core {
         #[cfg(debug_assertions)]
         fault::hold(|| "follow-ending");
         drop(streaming);
-        // The follow's own stop is raised by now, and a table chosen after
-        // its last look would otherwise wait for the next call.
+        // The follow may already have raised its drain's stop flag.
         let after = self.fill_chosen_since(seen, &NEVER_STOPPED);
         let after = self.filled_after(&mut FillReport::default(), after);
         result.map(|mut report| {
