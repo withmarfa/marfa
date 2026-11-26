@@ -260,11 +260,13 @@ pub enum FoldersCommand {
     /// Forget a directory that other folders on this computer remember.
     ///
     /// Confirm only when the directory is gone for good. If its volume is
-    /// offline, mount it so Marfa can look for moved files. Forgetting the
-    /// last other directory can send a missing file's item to the bin on the
-    /// next sync. The command leaves the folder registry unchanged, and
-    /// changes nothing while the registry lists the directory: `folders
-    /// remove` it first.
+    /// offline, mount it so Marfa can look for moved files. A held file
+    /// whose hold also waits on other directories stays held, waiting on
+    /// those. Forgetting the last directory a hold waits on lets the next
+    /// sync decide the file again, which can send its item to the bin. The
+    /// command leaves the folder registry unchanged. While the registry lists
+    /// the directory, it changes nothing and exits 3: `folders remove` it
+    /// first.
     ///
     /// It matches the path as spelled, made absolute, without following
     /// symbolic links: name it as `folders held` or `folders status` shows
@@ -283,14 +285,18 @@ pub enum FoldersCommand {
     ///
     /// A watch can hand a folder over while the command runs. If a folder
     /// cannot be read or claimed, is no longer listed at its path, or its
-    /// store has changed since the preview, or the registry lists the
+    /// store has changed or moved since the preview, or the registry lists the
     /// directory or something stands there by then, the command names the
     /// folder in `not_changed` and exits 3.
     ///
-    /// With `--json`, the result has `dir`,
-    /// `listed`, `folders` (each with `dir`, `folder` and `held`), `not_read`,
-    /// `alike` (remembered directories that differ only in case), `declined`,
-    /// `forgotten` (each with `dir`, `folder` and `released`) and
+    /// With `--json`, the result has `dir`, `listed` (whether the registry
+    /// lists the directory, read again as the folders are changed), `folders`
+    /// (each with `dir`, `folder` and `held`, each held file with `path`,
+    /// `item`, `missing_since`, `reason` and `still_waits_on`, the other
+    /// directories that keep it held, empty where the forget releases it),
+    /// `not_read`, `alike` (remembered directories that differ only in case),
+    /// `declined`, `forgotten` (each with `dir`, `folder`, `released` and
+    /// `still_held`, each with `path` and `still_waits_on`) and
     /// `not_changed`.
     Forget {
         /// The directory the folders remember.
@@ -1143,17 +1149,22 @@ fn forget_remembered(dir: &Path, yes: bool, json: bool) -> Result<bool, CliError
     let asking = remembered && !shown.listed;
     let asked = asking && !yes && at_terminal;
     let agreed = remembered && (yes || asked && asks_to_forget(&shown)?);
-    let (forgotten, not_changed) = if agreed {
-        let done = Folder::forget_remembered(&shown)?;
-        (done.forgotten, done.not_changed)
+    let done = if agreed {
+        Some(Folder::forget_remembered(&shown)?)
     } else {
-        (Vec::new(), shown.not_read.clone())
+        None
     };
-    let left = !not_changed.is_empty();
+    let outcome = ForgetOutcome::of(&shown, done);
+    let left = outcome.left();
+    let ForgetOutcome {
+        listed,
+        forgotten,
+        not_changed,
+    } = outcome;
     output::report(
         &serde_json::json!({
             "dir": shown.dir,
-            "listed": shown.listed,
+            "listed": listed,
             "folders": shown.folders,
             "not_read": shown.not_read,
             "alike": shown.alike,
@@ -1188,6 +1199,17 @@ fn forget_remembered(dir: &Path, yes: bool, json: bool) -> Result<bool, CliError
                                 .map(|path| format!("  {}", printable(path))),
                         );
                     }
+                    if !done.still_held.is_empty() {
+                        lines.push(format!(
+                            "{} keeps these held deletions, which still wait on other folders:",
+                            shown_path(&done.dir)
+                        ));
+                        lines.extend(
+                            done.still_held
+                                .iter()
+                                .map(|held| still_waiting(&held.path, &held.still_waits_on, "  ")),
+                        );
+                    }
                 }
                 // Those not read are named once, above.
                 lines.extend(
@@ -1215,6 +1237,46 @@ fn forget_remembered(dir: &Path, yes: bool, json: bool) -> Result<bool, CliError
     Ok(left)
 }
 
+/// What `folders forget` reports.
+#[derive(Debug, PartialEq)]
+struct ForgetOutcome {
+    listed: bool,
+    forgotten: Vec<marfa_core::ForgottenIn>,
+    not_changed: Vec<marfa_core::NotRead>,
+}
+
+impl ForgetOutcome {
+    fn of(shown: &marfa_core::Remembered, done: Option<marfa_core::Forgotten>) -> ForgetOutcome {
+        match done {
+            Some(done) => ForgetOutcome {
+                listed: done.listed,
+                forgotten: done.forgotten,
+                not_changed: done.not_changed,
+            },
+            None => ForgetOutcome {
+                listed: shown.listed,
+                forgotten: Vec::new(),
+                not_changed: shown.not_read.clone(),
+            },
+        }
+    }
+
+    /// Whether the command exits 3: a listed directory is never forgotten,
+    /// whether or not a folder remembers it.
+    fn left(&self) -> bool {
+        self.listed || !self.not_changed.is_empty()
+    }
+}
+
+fn still_waiting(path: &str, dirs: &[PathBuf], indent: &str) -> String {
+    let dirs: Vec<String> = dirs.iter().map(|dir| shown_path(dir)).collect();
+    format!(
+        "{indent}{} (still waits on {})",
+        printable(path),
+        dirs.join(", ")
+    )
+}
+
 fn shown_path(path: &Path) -> String {
     printable(&path.display().to_string())
 }
@@ -1238,19 +1300,34 @@ fn describe_remembered(shown: &marfa_core::Remembered) -> Vec<String> {
             shown.folders.len()
         ));
         for folder in &shown.folders {
-            if folder.held.is_empty() {
+            let (released, kept): (Vec<_>, Vec<_>) = folder
+                .held
+                .iter()
+                .partition(|held| held.still_waits_on.is_empty());
+            if released.is_empty() && kept.is_empty() {
                 lines.push(format!("  {}", shown_path(&folder.dir)));
-            } else {
+            }
+            if !released.is_empty() {
                 lines.push(format!(
                     "  {} would reconsider {} held deletion(s). The next sync can send these items to the bin if this was the last other folder:",
                     shown_path(&folder.dir),
-                    folder.held.len()
+                    released.len()
                 ));
                 lines.extend(
-                    folder
-                        .held
+                    released
                         .iter()
-                        .map(|file| format!("    {}", printable(&file.path))),
+                        .map(|held| format!("    {}", printable(&held.file.path))),
+                );
+            }
+            if !kept.is_empty() {
+                lines.push(format!(
+                    "  {} would keep {} held deletion(s), which still wait on other folders:",
+                    shown_path(&folder.dir),
+                    kept.len()
+                ));
+                lines.extend(
+                    kept.iter()
+                        .map(|held| still_waiting(&held.file.path, &held.still_waits_on, "    ")),
                 );
             }
         }
@@ -2510,6 +2587,41 @@ impl Conflicts {
 
 #[cfg(test)]
 mod tests {
+    use super::ForgetOutcome;
+
+    fn shown_listed(listed: bool) -> marfa_core::Remembered {
+        marfa_core::Remembered {
+            dir: "/gone".into(),
+            listed,
+            folders: Vec::new(),
+            not_read: Vec::new(),
+            alike: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn forgetting_a_listed_directory_no_folder_remembers_exits_3() {
+        let outcome = ForgetOutcome::of(&shown_listed(true), None);
+        assert!(outcome.listed);
+        assert!(outcome.left(), "{outcome:?}");
+    }
+
+    #[test]
+    fn a_directory_listed_by_the_time_it_is_forgotten_is_reported_listed() {
+        let done = marfa_core::Forgotten {
+            dir: "/gone".into(),
+            listed: true,
+            forgotten: Vec::new(),
+            not_changed: vec![marfa_core::NotRead {
+                dir: "/folder".into(),
+                reason: "the registry lists /gone".into(),
+            }],
+        };
+        let outcome = ForgetOutcome::of(&shown_listed(false), Some(done));
+        assert!(outcome.listed, "{outcome:?}");
+        assert!(outcome.left());
+    }
+
     #[test]
     fn remote_health_is_a_folder_command() {
         use clap::Parser;

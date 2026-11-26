@@ -5235,7 +5235,7 @@ marfa folders held [OPTIONS] <DIR>
 
 Forget a directory that other folders on this computer remember.
 
-Confirm only when the directory is gone for good. If its volume is offline, mount it so Marfa can look for moved files. Forgetting the last other directory can send a missing file's item to the bin on the next sync. The command leaves the folder registry unchanged, and changes nothing while the registry lists the directory: `folders remove` it first.
+Confirm only when the directory is gone for good. If its volume is offline, mount it so Marfa can look for moved files. A held file whose hold also waits on other directories stays held, waiting on those. Forgetting the last directory a hold waits on lets the next sync decide the file again, which can send its item to the bin. The command leaves the folder registry unchanged. While the registry lists the directory, it changes nothing and exits 3: `folders remove` it first.
 
 It matches the path as spelled, made absolute, without following symbolic links: name it as `folders held` or `folders status` shows it. A trailing slash makes no difference. It reports remembered paths that differ only in case.
 
@@ -5243,9 +5243,9 @@ It refuses a path where anything but an empty directory stands, such as a direct
 
 Without `--yes`, the command shows the affected folders and held files. It asks for confirmation at a terminal. With `--json` or outside a terminal, pass `--yes` to confirm.
 
-A watch can hand a folder over while the command runs. If a folder cannot be read or claimed, is no longer listed at its path, or its store has changed since the preview, or the registry lists the directory or something stands there by then, the command names the folder in `not_changed` and exits 3.
+A watch can hand a folder over while the command runs. If a folder cannot be read or claimed, is no longer listed at its path, or its store has changed or moved since the preview, or the registry lists the directory or something stands there by then, the command names the folder in `not_changed` and exits 3.
 
-With `--json`, the result has `dir`, `listed`, `folders` (each with `dir`, `folder` and `held`), `not_read`, `alike` (remembered directories that differ only in case), `declined`, `forgotten` (each with `dir`, `folder` and `released`) and `not_changed`.
+With `--json`, the result has `dir`, `listed` (whether the registry lists the directory, read again as the folders are changed), `folders` (each with `dir`, `folder` and `held`, each held file with `path`, `item`, `missing_since`, `reason` and `still_waits_on`, the other directories that keep it held, empty where the forget releases it), `not_read`, `alike` (remembered directories that differ only in case), `declined`, `forgotten` (each with `dir`, `folder`, `released` and `still_held`, each with `path` and `still_waits_on`) and `not_changed`.
 
 ```text
 marfa folders forget [OPTIONS] <DIR>
