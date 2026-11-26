@@ -1000,7 +1000,12 @@ mod tests {
                 said.contains("next push, pull, scan or watch upgrades it in place"),
                 "{said}"
             );
-            for advice in ["folders remove", "folders add", "folders push", "MARFA_VERSION"] {
+            for advice in [
+                "folders remove",
+                "folders add",
+                "folders push",
+                "MARFA_VERSION",
+            ] {
                 assert!(!said.contains(advice), "{advice}: {said}");
             }
         }

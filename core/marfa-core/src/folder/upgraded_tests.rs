@@ -8,11 +8,8 @@ fn store_of(dir: &Path) -> PathBuf {
 }
 
 fn read(dir: &Path) -> rusqlite::Connection {
-    rusqlite::Connection::open_with_flags(
-        store_of(dir),
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .unwrap()
+    rusqlite::Connection::open_with_flags(store_of(dir), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .unwrap()
 }
 
 fn version(dir: &Path) -> i64 {
@@ -41,12 +38,16 @@ fn journal(dir: &Path) -> Vec<String> {
 fn upgradable(refused: &CoreError) -> bool {
     matches!(
         refused,
-        CoreError::WrongSchema { folder: Some(crate::FolderStore::Upgradable), .. }
+        CoreError::WrongSchema {
+            folder: Some(crate::FolderStore::Upgradable),
+            ..
+        }
     )
 }
 
 #[test]
-fn a_folder_at_schema_11_is_read_without_advice_to_remove_it_and_upgraded_by_its_next_scan_with_every_held_file() {
+fn a_folder_at_schema_11_is_read_without_advice_to_remove_it_and_upgraded_by_its_next_scan_with_every_held_file()
+ {
     let (_, _registry) = registry::tests::own_registry();
     let query = json!({ "query": {} });
     let (from, a) = folder_with("01a00000-0000-7000-8000-0000000036a1", query.clone(), None);
@@ -72,7 +73,8 @@ fn a_folder_at_schema_11_is_read_without_advice_to_remove_it_and_upgraded_by_its
     assert!(
         held_before
             .iter()
-            .any(|row| row.starts_with(&format!("held.txt {held_item} ")) && row.contains(" unsure ")),
+            .any(|row| row.starts_with(&format!("held.txt {held_item} "))
+                && row.contains(" unsure ")),
         "{held_before:?}"
     );
     drop(a);
@@ -131,7 +133,9 @@ fn a_folder_at_schema_11_is_read_without_advice_to_remove_it_and_upgraded_by_its
     listed.sort();
     assert_eq!(listed, ["held.txt", "later.txt"]);
     Folder::status_of(from.path()).unwrap();
-    let settled = a.settle_held(&["held.txt".to_string()], Settle::Trash).unwrap();
+    let settled = a
+        .settle_held(&["held.txt".to_string()], Settle::Trash)
+        .unwrap();
     assert_eq!(settled.trashed, ["held.txt"], "{settled:?}");
 
     let b = Folder::open(other.path(), None).unwrap();
@@ -153,7 +157,10 @@ fn a_folder_at_schema_11_is_listed_paused_only_while_its_sync_is_paused() {
         crate::store::testing::as_schema_11(&store_of(dir));
     }
 
-    assert!(Folder::paused_at(paused.path()), "a paused folder was listed running");
+    assert!(
+        Folder::paused_at(paused.path()),
+        "a paused folder was listed running"
+    );
     assert!(!Folder::paused_at(running.path()));
     assert_eq!(version(paused.path()), 11, "a read changed the store");
 }
