@@ -4877,7 +4877,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     }
   });
 
-  it("changes nothing when forgetting a directory the registry still lists, names `folders remove` and exits 3, and releases the held delete once the directory is removed and forgotten", async () => {
+  it("changes nothing when forgetting a directory the registry still lists and exits 3, then releases the held delete once the directory is removed and forgotten", async () => {
     const held = "01a00000-0000-7000-8000-0000000035e6";
     const { a, b } = await remembering("forget-listed", [
       "01a00000-0000-7000-8000-0000000035e5",

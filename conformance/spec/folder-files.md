@@ -2370,7 +2370,7 @@ When a device holds a missing file because a listed folder cannot be read, a dev
 
 **Reason:** a listed folder that is gone is taken off the registry first, and the folders that found it remember it after that (`folder-files/unlisted-missing-deferred`).
 
-**Tests:** `device/folders-one-mac.test.ts › changes nothing when forgetting a directory the registry still lists, names `folders remove` and exits 3, and releases the held delete once the directory is removed and forgotten`.
+**Tests:** `device/folders-one-mac.test.ts › changes nothing when forgetting a directory the registry still lists and exits 3, then releases the held delete once the directory is removed and forgotten`.
 
 ### `folder-files/forget-remembered`
 
@@ -2394,7 +2394,7 @@ When the person forgets a directory, a device MUST NOT take any directory off th
 
 **Reason:** forgetting is not removal. A listed directory is found again by every folder at its next pass, so a listed folder that is gone is removed with `folders remove` first.
 
-**Tests:** `device/folders-one-mac.test.ts › changes nothing when forgetting a directory the registry still lists, names `folders remove` and exits 3, and releases the held delete once the directory is removed and forgotten`.
+**Tests:** `device/folders-one-mac.test.ts › changes nothing when forgetting a directory the registry still lists and exits 3, then releases the held delete once the directory is removed and forgotten`.
 
 ### `folder-files/forget-shown-first`
 
@@ -2460,7 +2460,7 @@ While the registry lists a directory, when the person forgets it, a device MUST 
 
 **Reason:** every folder finds a listed directory again at its next pass, so nothing a hold waits on has changed, and forgetting it from memory alone would leave its holds with nothing that names them. The CLI names `folders remove` in each folder it leaves as it was (`folder-files/forget-left-unchanged`).
 
-**Tests:** `device/folders-one-mac.test.ts › changes nothing when forgetting a directory the registry still lists, names `folders remove` and exits 3, and releases the held delete once the directory is removed and forgotten`.
+**Tests:** `device/folders-one-mac.test.ts › changes nothing when forgetting a directory the registry still lists and exits 3, then releases the held delete once the directory is removed and forgotten`.
 
 ### `folder-files/forget-queues-nothing`
 
