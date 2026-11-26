@@ -104,15 +104,22 @@ test(
   async (t) => {
     const { server, core } = await hydrated(t, [held]);
     let ended = false;
-    (() => {
-      core.follow(
+    // Held until the server has the stream. A subscription collected while
+    // its follow is still connecting stops it before it asks, and the wait
+    // below would then never see a stream.
+    /** @type {{ subscription: Subscription | undefined }} */
+    const holder = {
+      subscription: core.follow(
         () => {},
         () => {
           ended = true;
         },
-      );
-    })();
-    while (server.followed() === 0) await sleep(10);
+      ),
+    };
+    const connecting = Date.now() + 10_000;
+    while (server.followed() === 0 && Date.now() < connecting) await sleep(10);
+    assert.equal(server.followed(), 1, "the follow never reached the server");
+    holder.subscription = undefined;
     const deadline = Date.now() + 10_000;
     while (!ended && Date.now() < deadline) {
       globalThis.gc?.();
@@ -207,7 +214,9 @@ test(
       () => {},
       () => reopenedAs(MarfaCore.open(path).heldHandle()),
     );
-    while (server.followed() === 0) await sleep(10);
+    const connecting = Date.now() + 10_000;
+    while (server.followed() === 0 && Date.now() < connecting) await sleep(10);
+    assert.equal(server.followed(), 1, "the follow never reached the server");
     core = null;
     const deadline = Date.now() + 10_000;
     while (!collected && Date.now() < deadline) {

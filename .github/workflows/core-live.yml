@@ -99,7 +99,10 @@ jobs:
             --target aarch64-apple-ios-sim
 
       # Outside the pnpm workspace, so every call carries the flag.
+      # The step took 3 minutes when last measured. A hang in a Node test
+      # ends in the test's own timeout; this limit is for one outside any test.
       - name: Build, check and test the Node module
+        timeout-minutes: 15
         working-directory: core/bindings/node
         run: |
           pnpm --ignore-workspace install --frozen-lockfile
