@@ -5233,7 +5233,17 @@ marfa folders held [OPTIONS] <DIR>
 
 ### marfa folders forget
 
-Make the folders on this computer forget a directory they remember. A folder remembers each other folder it has found, also once the registry stops listing it, and holds the delete of a missing file that may have moved there until it can read that directory. Nothing at the directory's path shows the folder is gone for good, so only this ends that memory. It changes nothing else: no folder leaves the list, and no file is trashed or kept. A held delete that waited on the directory is decided again at the folder's next pass, as any missing file is. The directory is matched as a folder records it: made absolute, with its parent directories as the file system names them once links are followed. A trailing slash makes no difference; a remembered path that differs only in case is pointed out and not forgotten. Without `--yes`, says which folders remember it and which held deletes it would let be decided again, then asks at a terminal, and elsewhere or with `--json` changes nothing. A folder that cannot be read, that another program does not let go, or whose saved state is not the one shown is named and left as it was, and the command exits 3. A watch holding a folder lets it go while this runs. With `--json`, the result has `dir`, `listed`, `folders` (each with `dir`, `folder` and `held`), `not_read`, `alike` (remembered directories that differ only in case), `declined`, `forgotten` (each with `dir`, `folder` and `released`) and `not_changed`.
+Forget a directory that other folders on this computer remember.
+
+Confirm only when the directory is gone for good. If its volume is offline, mount it so Marfa can look for moved files. Forgetting the last other directory can send a missing file's item to the bin on the next sync. The command leaves the folder registry unchanged.
+
+It matches the absolute path after resolving existing parent directories. A trailing slash makes no difference. It reports remembered paths that differ only in case.
+
+Without `--yes`, the command shows the affected folders and held files. It asks for confirmation at a terminal. With `--json` or outside a terminal, pass `--yes` to confirm.
+
+A watch can hand a folder over while the command runs. If a folder cannot be read or claimed, or its store has changed since the preview, the command names it and exits 3.
+
+With `--json`, the result has `dir`, `listed`, `folders` (each with `dir`, `folder` and `held`), `not_read`, `alike` (remembered directories that differ only in case), `declined`, `forgotten` (each with `dir`, `folder` and `released`) and `not_changed`.
 
 ```text
 marfa folders forget [OPTIONS] <DIR>

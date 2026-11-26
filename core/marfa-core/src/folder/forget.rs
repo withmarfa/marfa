@@ -204,7 +204,7 @@ fn read(
     if folder.as_deref() != Some(entry.folder.as_str())
         || entry.store.is_some() && entry.store != store_id
     {
-        return Err("its saved state is not the folder's the registry lists".into());
+        return Err("its saved state does not match the folder or store in the registry".into());
     }
     let alike = others
         .iter()

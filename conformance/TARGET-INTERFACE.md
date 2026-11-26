@@ -330,6 +330,12 @@ stays because that thing is what it checks.
   file it took in. An earlier release took a file in from another folder and
   recorded it so, which makes a query drop remove the file. This release takes
   no file in from another folder, so no operation makes that record.
+- `device/folders-one-mac.test.ts`, "forgets through the binding only in a
+  folder whose store is still the one it showed, and the next sync sends the
+  delete it released", replaces the folder's `.marfa` directory with a copy
+  between preview and confirmation. This preserves the stored IDs while
+  replacing the database file. The binding has no operation for making that
+  replacement.
 - `device/folders-open-writer.test.ts`, "deletes a file it set aside unchanged
   a week after it could not tell whether a program writes to it", moves back
   the time a folder's store records for a file it keeps. The command line has
@@ -723,7 +729,8 @@ device is judged by the binding fixtures when it supplies what follows.
   calls and result shapes the fixtures use; the host translates them to the
   module's methods.
 - **Folders.** `Folders` provides `add`, `list`, `status`, `sync`,
-  `confirmFirstSync`, `confirm`, `restore`, `remove`, and `watch`. Calls
+  `confirmFirstSync`, `confirm`, `restore`, `remove`, `remembering`,
+  `forgetRemembered`, and `watch`. Calls
   other than `watch` return promises, including while they ask a watch to let
   a folder go. `watch` returns a subscription synchronously and throws if it
   cannot open the folder. Watch events include `handedOver`, `takenBack`,
