@@ -73,6 +73,7 @@ interface PushReport {
     renamed: number;
     unchanged: number;
     trashed: string[];
+    unsure: Array<{ path: string; reason: string }>;
   };
   drain: {
     answered: number;
