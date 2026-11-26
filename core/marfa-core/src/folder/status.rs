@@ -232,10 +232,24 @@ impl Folder {
                 )
                 .collect(),
         };
-        // Each bound path the last sweep found another file carrying, with
-        // its item and that file.
-        let carried: HashMap<String, (String, String)> = state::journaled(&*self.core.conn()?)?
-            .into_iter()
+        let journaled = state::journaled(&*self.core.conn()?)?;
+        let unsure: HashMap<&str, &str> = journaled
+            .iter()
+            .filter_map(|row| match &row.kept {
+                Some(state::Kept::Unsure(reason))
+                    if by_path
+                        .get(row.path.as_str())
+                        .is_some_and(|bound| bound.item_id == row.item_id) =>
+                {
+                    Some((row.path.as_str(), reason.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        // A file at another path can carry the bound file's identity or item ID.
+        let carried: HashMap<String, (String, String)> = journaled
+            .iter()
+            .cloned()
             .filter_map(|row| match row.kept {
                 Some(state::Kept::Carried(carrier))
                     if by_path
@@ -357,6 +371,11 @@ impl Folder {
             files.push(if !lists.takes(&bound.path) {
                 FileStatus::new(&bound.path, at, "unreached")
                     .because("lists", "the folder's lists no longer take it, so it is held rather than deleted")
+            } else if let Some(reason) = unsure
+                .get(bound.path.as_str())
+                .filter(|_| !disk.contains(&bound.path))
+            {
+                FileStatus::new(&bound.path, at, "held").because("unsure", *reason)
             } else if let Some(dir) = walked.directories.iter().find(|dir| {
                 dir.path.is_empty()
                     || bound

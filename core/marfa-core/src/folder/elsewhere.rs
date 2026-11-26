@@ -50,8 +50,21 @@ pub(super) fn lost(core: &Core, registry: &Registry) -> bool {
             == Some(registry.path().display().to_string())
 }
 
+#[cfg(test)]
+pub(super) fn remembered_dirs(folder: &Folder) -> Vec<PathBuf> {
+    store::meta_get(&folder.core.conn().unwrap(), META_OTHERS)
+        .unwrap()
+        .map(|json| serde_json::from_str::<Vec<Registered>>(&json).unwrap())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| entry.dir)
+        .collect()
+}
+
 pub(super) struct Peer {
     root: PathBuf,
+    /// Found in an earlier pass, though the registry no longer lists it.
+    remembered: bool,
     root_dir: Option<Directory>,
     /// Its store, read only; `None` where it cannot be opened.
     folder: Option<Folder>,
@@ -92,7 +105,7 @@ impl OnDisk {
 }
 
 impl Peer {
-    fn open(entry: Registered) -> Peer {
+    fn open(entry: Registered, remembered: bool) -> Peer {
         let root = entry.dir;
         let mut root_dir = Directory::open(&root)
             .ok()
@@ -143,6 +156,7 @@ impl Peer {
         }
         Peer {
             root,
+            remembered,
             root_dir,
             folder,
             members: OnceCell::new(),
@@ -253,6 +267,11 @@ impl Peer {
                     }
                     Err(error) => Some(error.to_string()),
                 }
+            } else if self.remembered {
+                Some(format!(
+                    "the folder {} cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it",
+                    self.root.display()
+                ))
             } else {
                 Some(format!(
                     "the folder {} cannot be reached; if it is gone, `folders remove` it",
@@ -469,6 +488,7 @@ impl<'a> Peers<'a> {
                 .into_iter()
                 .filter(|entry| &entry.dir != own)
                 .collect();
+            let listed = others.len();
             for entry in known {
                 let listed = others.iter().any(|other| {
                     other.dir == entry.dir || (entry.store.is_some() && other.store == entry.store)
@@ -480,7 +500,12 @@ impl<'a> Peers<'a> {
             if let (Some(conn), Ok(json)) = (&conn, serde_json::to_string(&others)) {
                 let _ = store::meta_set(conn, META_OTHERS, &json);
             }
-            (others.into_iter().map(Peer::open).collect(), None)
+            let peers = others
+                .into_iter()
+                .enumerate()
+                .map(|(at, entry)| Peer::open(entry, at >= listed))
+                .collect();
+            (peers, None)
         })
     }
 
@@ -712,6 +737,7 @@ mod tests {
             .key();
         let peer = || Peer {
             root: to.clone(),
+            remembered: false,
             root_dir: Some(Directory::open(&to).unwrap()),
             folder: None,
             members: OnceCell::new(),
@@ -839,6 +865,7 @@ mod tests {
         .unwrap();
         let peer = Peer {
             root: root.clone(),
+            remembered: false,
             root_dir: Some(Directory::open(&root).unwrap()),
             folder: None,
             members: OnceCell::new(),
@@ -886,6 +913,7 @@ mod tests {
         let _sealed = crate::test_folders::locked(&shut, 0o000);
         let peer = Peer {
             root: root.clone(),
+            remembered: false,
             root_dir: Some(Directory::open(&root).unwrap()),
             folder: None,
             members: OnceCell::new(),

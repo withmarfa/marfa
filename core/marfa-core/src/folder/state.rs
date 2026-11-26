@@ -1157,6 +1157,39 @@ pub fn journal_keep(
     Ok(())
 }
 
+/// Set while a delete held as unsure was kept by a pass or a confirmation
+/// that could not read the file, which may have come back and gone since:
+/// the next pass that reads the whole folder starts its grace again.
+const UNREAD_HOLD: &str = "folder_unread_hold";
+
+pub fn journal_unread_hold(conn: &Connection) -> Result<(), CoreError> {
+    if crate::store::meta_get(conn, UNREAD_HOLD)?.is_none() {
+        crate::store::meta_set(conn, UNREAD_HOLD, "1")?;
+    }
+    Ok(())
+}
+
+pub fn journal_unread_held(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(crate::store::meta_get(conn, UNREAD_HOLD)?.is_some())
+}
+
+pub fn journal_read_whole(conn: &Connection) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, UNREAD_HOLD)
+}
+
+/// Starts a journaled file's grace again from now.
+pub fn journal_restart(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
+    conn.execute_cached(
+        "UPDATE folder_journal SET missing_since = ?3 WHERE path = ?1 AND item_id = ?2",
+        params![
+            path,
+            item_id,
+            crate::store::iso_at(crate::clock::system_time())
+        ],
+    )?;
+    Ok(())
+}
+
 /// Every journaled delete, by path.
 pub fn journaled(conn: &Connection) -> Result<Vec<Journaled>, CoreError> {
     let mut statement = conn.prepare(

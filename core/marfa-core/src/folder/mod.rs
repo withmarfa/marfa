@@ -3607,6 +3607,8 @@ mod answered_tests;
 mod displaced_tests;
 #[cfg(test)]
 mod form_tests;
+#[cfg(all(test, unix))]
+mod gone_peer_tests;
 #[cfg(test)]
 mod held_links_tests;
 #[cfg(test)]

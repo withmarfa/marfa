@@ -2032,8 +2032,6 @@ pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
         .collect()
 }
 
-/// What stands while other folders cannot be read, as opposed to what
-/// happened in one pass.
 pub fn unsure_lines(report: &marfa_core::ScanReport) -> Vec<String> {
     let registry = report.registry.iter().map(|why| {
         format!(
@@ -2043,7 +2041,7 @@ pub fn unsure_lines(report: &marfa_core::ScanReport) -> Vec<String> {
     });
     let unsure = report.unsure.iter().map(|file| {
         format!(
-            "{} is missing and not trashed, since the other directories cannot all be read: {}",
+            "Deletion of {} is on hold because {}",
             printable(&file.path),
             printable(&file.reason)
         )

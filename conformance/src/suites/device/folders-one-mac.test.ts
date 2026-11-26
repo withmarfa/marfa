@@ -1,6 +1,7 @@
 import {
   chmodSync,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   realpathSync,
@@ -45,6 +46,7 @@ import type {
 import {
   EdgeDoor,
   idIn,
+  lastReport,
   put,
   read,
   saveAtomically,
@@ -3632,6 +3634,278 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, gone)).toBe(1);
   });
 
+  /** `a` remembers `b`, which is removed, leaving its directory. */
+  async function rememberingGone(
+    label: string,
+    ids: [string, string],
+    before?: (server: ScriptedServer) => void,
+  ): Promise<{ a: FolderHarness; b: FolderHarness }> {
+    const { a, b } = await remembering(label, ids, before);
+    expect((await b.folder.remove()).ok).toBe(true);
+    return { a, b };
+  }
+
+  /** `a` remembers `b`, still listed. */
+  async function remembering(
+    label: string,
+    ids: [string, string],
+    before?: (server: ScriptedServer) => void,
+  ): Promise<{ a: FolderHarness; b: FolderHarness }> {
+    const [first, held] = ids;
+    const { a, b } = await onOneMac(
+      label,
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          { item: { id: first, properties: { title: "First", body: "f\n" } } },
+          { item: { id: held, properties: { title: "Held", body: "h\n" } } },
+        ],
+      },
+      before,
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    // Deciding this delete finds the other folder, so this one remembers it.
+    rmSync(join(a.dir, "First.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(deletesOf(a.server, first)).toBe(1);
+    return { a, b };
+  }
+
+  /** Takes `b` off the registry it shares with `a`, leaving its state. */
+  function unlist(b: FolderHarness): void {
+    const listing = JSON.parse(readFileSync(b.registry, "utf8")) as {
+      folders: Array<{ dir: string }>;
+    };
+    listing.folders = listing.folders.filter((entry) => entry.dir !== b.dir);
+    writeFileSync(b.registry, JSON.stringify(listing));
+  }
+
+  async function deletedByHand(a: FolderHarness): Promise<void> {
+    rmSync(join(a.dir, "Held.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+  }
+
+  async function heldUnsure(a: FolderHarness): Promise<void> {
+    const status = await a.folder.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    if (!status.ok) return;
+    const file = status.value.files.find((entry) => entry.path === "Held.md");
+    expect(
+      [file?.status, file?.flag],
+      "a held delete read as a write waiting to be sent",
+    ).toEqual(["held", "unsure"]);
+  }
+
+  it("holds a delete as a held file while a folder no longer listed cannot be read or is gone", async () => {
+    const held = "01a00000-0000-7000-8000-0000000035b2";
+    const { a, b } = await rememberingGone("remembered-gone", [
+      "01a00000-0000-7000-8000-0000000035b1",
+      held,
+    ]);
+    const there = realpathSync(b.dir);
+    chmodSync(b.dir, 0o000);
+    try {
+      await deletedByHand(a);
+      const kept = await a.folder.push();
+      expect(kept.ok, JSON.stringify(kept)).toBe(true);
+      if (!kept.ok) return;
+      expect(
+        deletesOf(a.server, held),
+        "a missing file was trashed while a folder it may have moved to could not be read",
+      ).toBe(0);
+      expect(kept.value.scan.unsure.map((file) => file.path)).toEqual([
+        "Held.md",
+      ]);
+      expect(kept.value.scan.unsure[0]?.reason).toContain(
+        `the folder ${there} cannot be reached, and the registry no longer lists it; if its volume is not mounted, mount it`,
+      );
+      await heldUnsure(a);
+      expect(lastReport(a).problems).toContainEqual({
+        code: "held_file",
+        count: 1,
+      });
+    } finally {
+      chmodSync(b.dir, 0o755);
+    }
+
+    // Gone from a volume that is mounted reads as a volume that is not.
+    rmSync(b.dir, { recursive: true });
+    const missing = await a.folder.push();
+    expect(
+      missing.ok && missing.value.scan.trashed,
+      "a delete was sent for a folder whose directory cannot be found",
+    ).toEqual([]);
+    expect(deletesOf(a.server, held)).toBe(0);
+    await heldUnsure(a);
+  });
+
+  it("holds a delete for a folder no longer listed while another folder's state stands at its directory, and sends it once its directory holds no state", async () => {
+    let more: FolderItem | undefined;
+    const held = "01a00000-0000-7000-8000-0000000035b4";
+    const { a, b } = await rememberingGone(
+      "remembered-replaced",
+      ["01a00000-0000-7000-8000-0000000035b3", held],
+      (server) => {
+        more = scriptFolderItem(server, { query: { types: ["core.event"] } });
+      },
+    );
+    const third = await folderHarness("remembered-replaced-c", {
+      sharing: { server: a.server, key: KEY },
+      folder: more,
+      registry: a.registry,
+    });
+    try {
+      rmSync(join(b.dir, ".marfa"), { recursive: true, force: true });
+      cpSync(join(third.dir, ".marfa"), join(b.dir, ".marfa"), {
+        recursive: true,
+      });
+      await deletedByHand(a);
+      const replaced = await a.folder.push();
+      expect(
+        replaced.ok && replaced.value.scan.trashed,
+        "a delete was sent for a folder whose directory holds another folder's state",
+      ).toEqual([]);
+      expect(deletesOf(a.server, held)).toBe(0);
+      await heldUnsure(a);
+
+      // The witness: the directory the folder was admitted at, with no
+      // folder state, shows it removed.
+      rmSync(join(b.dir, ".marfa"), { recursive: true, force: true });
+      const swept = await a.folder.push();
+      expect(swept.ok && swept.value.scan.trashed).toEqual(["Held.md"]);
+      expect(deletesOf(a.server, held)).toBe(1);
+    } finally {
+      await third.stop();
+    }
+  });
+
+  it("sends a delete held for a folder no longer listed once its store is listed at another directory", async () => {
+    const held = "01a00000-0000-7000-8000-0000000035b6";
+    const { a, b } = await remembering("remembered-moved", [
+      "01a00000-0000-7000-8000-0000000035b5",
+      held,
+    ]);
+    unlist(b);
+    const moved = `${realpathSync(b.dir)}-moved`;
+    renameSync(b.dir, moved);
+    await deletedByHand(a);
+    const kept = await a.folder.push();
+    expect(
+      kept.ok && kept.value.scan.trashed,
+      "a delete was sent for a folder no longer listed whose directory cannot be found",
+    ).toEqual([]);
+    expect(deletesOf(a.server, held)).toBe(0);
+    await heldUnsure(a);
+
+    // A command at its new directory lists the folder there.
+    const there = new CliFolder(moved, {
+      binary: requireBinary(),
+      url: a.server.url,
+      key: KEY,
+      registry: a.registry,
+    });
+    expect((await there.push()).ok).toBe(true);
+    const listed = await a.folder.list();
+    expect(listed.ok && listed.value.map((entry) => entry.dir)).toContain(
+      moved,
+    );
+    const swept = await a.folder.push();
+    expect(
+      swept.ok && swept.value.scan.trashed,
+      "a delete stayed held for a folder whose store is listed at another directory",
+    ).toEqual(["Held.md"]);
+    expect(deletesOf(a.server, held)).toBe(1);
+  });
+
+  it("keeps a confirmed removal held as unsure while the file's own directory cannot be read", async () => {
+    const ids = [0, 1, 2, 3, 4, 5].map(
+      (n) => `01a00000-0000-7000-8000-0000000035d${String(n)}`,
+    );
+    const { a } = await onOneMac(
+      "confirm-unread-parent",
+      {
+        query: { types: ["core.note"] },
+        removal_threshold: { files: 2, fraction: 0.25 },
+      },
+      { query: { types: ["core.bookmark"] } },
+      {
+        "core.note": ids.map((id, n) => ({
+          item: { id, properties: { title: `Note ${String(n)}`, body: "b\n" } },
+        })),
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    const sub = join(a.dir, "sub");
+    mkdirSync(sub);
+    for (const n of [4, 5]) {
+      renameSync(
+        join(a.dir, `Note ${String(n)}.md`),
+        join(sub, `Note ${String(n)}.md`),
+      );
+    }
+    expect((await a.folder.scan()).ok).toBe(true);
+    const back = readFileSync(join(sub, "Note 5.md"));
+    for (const path of ["Note 0.md", "Note 1.md", "sub/Note 4.md"]) {
+      rmSync(join(a.dir, path));
+    }
+    rmSync(join(sub, "Note 5.md"));
+    const paused = await a.folder.push();
+    expect(paused.ok && paused.value.scan.paused).toBe(4);
+    writeFileSync(join(sub, "Note 5.md"), back);
+
+    chmodSync(sub, 0o000);
+    try {
+      const confirmed = await a.folder.confirm();
+      expect(confirmed.ok, JSON.stringify(confirmed)).toBe(true);
+      if (!confirmed.ok) return;
+      // Read in part, the folder proves no file gone.
+      expect(confirmed.value.deleted).toBe(0);
+      expect(confirmed.value.unsure.map((file) => file.path)).toContain(
+        "sub/Note 4.md",
+      );
+      const unsure = async (): Promise<void> => {
+        const status = await a.folder.status();
+        expect(status.ok, JSON.stringify(status)).toBe(true);
+        if (!status.ok) return;
+        const file = status.value.files.find(
+          (entry) => entry.path === "sub/Note 4.md",
+        );
+        expect(
+          [file?.status, file?.flag],
+          "a confirmed removal held while its own directory could not be read was not shown held",
+        ).toEqual(["held", "unsure"]);
+      };
+      await unsure();
+      expect((await a.folder.push()).ok).toBe(true);
+      await unsure();
+      expect(lastReport(a).problems).toContainEqual({
+        code: "held_file",
+        count: 4,
+      });
+      expect(
+        ids.map((id) => deletesOf(a.server, id)),
+        "a confirmed removal was trashed while the folder could not be read whole",
+      ).toEqual([0, 0, 0, 0, 0, 0]);
+    } finally {
+      chmodSync(sub, 0o755);
+    }
+
+    // The witness: read whole, the files found nowhere are a removal to
+    // confirm, and the file put back keeps its item.
+    const whole = await a.folder.push();
+    expect(whole.ok && whole.value.scan.paused).toBe(3);
+    const again = await a.folder.confirm();
+    expect(again.ok && again.value.deleted).toBe(3);
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(ids.map((id) => deletesOf(a.server, id))).toEqual([
+      1, 1, 0, 0, 1, 0,
+    ]);
+  });
+
   it("holds a delete while another folder cannot be read whole", async () => {
     const gone = "01a00000-0000-7000-8000-0000000040f1";
     const { a, b } = await onOneMac(
@@ -3667,6 +3941,65 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     }
     const swept = await a.folder.push();
     expect(swept.ok && swept.value.scan.trashed).toEqual(["Gone.md"]);
+  });
+
+  it("starts the grace of a held delete again after a pass that could not read its directory", async () => {
+    const gone = "01a00000-0000-7000-8000-0000000040f3";
+    const { a, b } = await onOneMac(
+      "unread-grace",
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          { item: { id: gone, properties: { title: "Gone", body: "g\n" } } },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    const sub = join(a.dir, "sub");
+    mkdirSync(sub);
+    const file = join(sub, "Gone.md");
+    renameSync(join(a.dir, "Gone.md"), file);
+    expect((await a.folder.scan()).ok).toBe(true);
+    const bytes = readFileSync(file);
+    const shut = join(b.dir, "Shut");
+    mkdirSync(shut);
+    chmodSync(shut, 0o000);
+    try {
+      rmSync(file);
+      expect((await a.folder.push()).ok).toBe(true);
+      await pastTheGrace();
+      const held = await a.folder.push();
+      expect(held.ok && held.value.scan.unsure.map((it) => it.path)).toEqual([
+        "sub/Gone.md",
+      ]);
+      // Back while its directory cannot be read, and the grace runs out.
+      writeFileSync(file, bytes);
+      chmodSync(sub, 0o000);
+      try {
+        const unread = await a.folder.push();
+        expect(
+          unread.ok && unread.value.scan.directories.map((dir) => dir.path),
+        ).toEqual(["sub"]);
+        await pastTheGrace();
+      } finally {
+        chmodSync(sub, 0o755);
+      }
+    } finally {
+      chmodSync(shut, 0o755);
+    }
+    rmSync(file);
+    const again = await a.folder.push();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(
+      deletesOf(a.server, gone),
+      "a delete was sent at once for a file a pass could not see come back and go again",
+    ).toBe(0);
+    // The witness: once the grace runs out again, the delete is sent.
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok && swept.value.scan.trashed).toEqual(["sub/Gone.md"]);
+    expect(deletesOf(a.server, gone)).toBe(1);
   });
 
   it("keeps two folders' files for one item editable", async () => {
