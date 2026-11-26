@@ -131,7 +131,7 @@ it("refuses a queued move to the feed once another device has edited the item, w
   expect(
     report.verdicts.find((row) => row.id === merged.id),
     JSON.stringify(report),
-  ).toMatchObject({ verdict: "merged" });
+  ).toMatchObject({ verdict: "accepted" });
   expect(await onServer(witness)).toMatchObject({
     tier: "feed",
     properties: { title: "renamed by B" },
@@ -225,7 +225,7 @@ it("refuses a queued exact edit behind this copy's own edit that the server merg
     report.verdicts.find((row) => row.id === id);
   for (const id of [exactId, witnessId]) {
     expect(verdict(queued.get(id)?.first), JSON.stringify(report)).toMatchObject(
-      { verdict: "merged" },
+      { verdict: "accepted" },
     );
   }
   expect(
