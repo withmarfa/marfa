@@ -590,7 +590,7 @@ fn narrowed_reason(rest: &[PathBuf], written: &[Registered]) -> String {
             dir.display()
         ),
         rest if rest.iter().any(is_listed) => format!(
-            "{} other folders are on this computer, so Marfa cannot tell its delete from a move into one of them; `folders forget` each that is gone, after `folders remove` for one still listed",
+            "{} other folders may hold the file, so Marfa cannot tell its delete from a move into one of them. Use `folders forget` for each folder that is gone. Use `folders remove` first if the registry still lists it.",
             rest.len()
         ),
         rest => format!(
