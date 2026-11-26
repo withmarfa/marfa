@@ -1034,6 +1034,7 @@ export interface BindingRemembered {
       item: string;
       missingSince: string;
       reason: string;
+      stillWaitsOn: string[];
     }>;
   }>;
   notRead: Array<{ dir: string; reason: string }>;
@@ -1044,7 +1045,12 @@ export interface BindingRemembered {
 export interface BindingForgotten {
   dir: string;
   listed: boolean;
-  forgotten: Array<{ dir: string; folder: string; released: string[] }>;
+  forgotten: Array<{
+    dir: string;
+    folder: string;
+    released: string[];
+    stillHeld: Array<{ path: string; stillWaitsOn: string[] }>;
+  }>;
   notChanged: Array<{ dir: string; reason: string }>;
 }
 

@@ -73,7 +73,7 @@ pub struct Forgotten {
     pub forgotten: Vec<ForgottenIn>,
     /// Folders left as they were, each with why: those not read when shown,
     /// and those not changed because the directory is listed or occupied, or
-    /// their store could not be claimed or was not the one shown.
+    /// their store could not be claimed, was not the one shown or moved.
     pub not_changed: Vec<NotRead>,
 }
 
@@ -396,6 +396,9 @@ fn still_at_path(
     }
 }
 
+/// The paths a forget released and the holds it left waiting on others.
+type Changed = (Vec<String>, Vec<StillHeld>);
+
 /// Forgets `target` in the folder `holder` names, under its writer lock,
 /// and answers the paths released and the holds still waiting on others; or
 /// why nothing in it changed.
@@ -403,7 +406,7 @@ fn forget_in(
     holder: &Remembering,
     target: &Path,
     wait: Duration,
-) -> std::result::Result<(Vec<String>, Vec<StillHeld>), Left> {
+) -> std::result::Result<Changed, Left> {
     let registry_read =
         || listed().map_err(|error| because("the folder registry cannot be read")(&error));
     let entry = registry_read()?
@@ -431,7 +434,7 @@ fn forget_in(
     }
     let core = Core::open_claimed(&state_dir, &label, None, Arc::new(lock))
         .map_err(|error| because("its saved state cannot be opened")(&error))?;
-    (|| -> Result<std::result::Result<(Vec<String>, Vec<StillHeld>), Left>> {
+    (|| -> Result<std::result::Result<Changed, Left>> {
         let (folder, store, _) = bound_store(&core, &state_dir)?;
         if folder.as_deref() != Some(holder.folder.as_str()) || store != holder.store {
             return Ok(Err(NOT_SHOWN.into()));

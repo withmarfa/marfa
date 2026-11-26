@@ -1754,16 +1754,25 @@ export interface FolderLeft {
 /**
  * What `folders forget` showed and, once confirmed, did
  * (`folder-files/forget-remembered`). `exit` is 3 where it named a folder it
- * could not read or change.
+ * could not read or change, or the registry lists the directory.
  */
 export interface ForgetReport {
   dir: string;
   listed: boolean;
-  folders: Array<{ dir: string; folder: string; held: HeldFile[] }>;
+  folders: Array<{
+    dir: string;
+    folder: string;
+    held: Array<HeldFile & { still_waits_on: string[] }>;
+  }>;
   not_read: FolderLeft[];
   alike: string[];
   declined: boolean;
-  forgotten: Array<{ dir: string; folder: string; released: string[] }>;
+  forgotten: Array<{
+    dir: string;
+    folder: string;
+    released: string[];
+    still_held: Array<{ path: string; still_waits_on: string[] }>;
+  }>;
   not_changed: FolderLeft[];
   exit: number;
 }

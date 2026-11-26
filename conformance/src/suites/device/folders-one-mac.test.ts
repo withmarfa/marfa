@@ -4877,6 +4877,105 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     }
   });
 
+  it("keeps a delete held on another gone folder when the person forgets one of the two it waits on, and sends it once both are forgotten", async () => {
+    let more: FolderItem | undefined;
+    const held = "01a00000-0000-7000-8000-0000000035f2";
+    const { a, b } = await onOneMac(
+      "forget-narrow",
+      { query: { types: ["core.note"] } },
+      { query: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000035f1",
+              properties: { title: "First", body: "f\n" },
+            },
+          },
+          { item: { id: held, properties: { title: "Held", body: "h\n" } } },
+        ],
+      },
+      (server) => {
+        more = scriptFolderItem(server, { query: { types: ["core.event"] } });
+      },
+    );
+    const third = await folderHarness("forget-narrow-c", {
+      sharing: { server: a.server, key: KEY },
+      folder: more,
+      registry: a.registry,
+    });
+    try {
+      // Holding this delete for both other folders makes this one remember
+      // them.
+      expect((await a.folder.pull()).ok).toBe(true);
+      rmSync(join(a.dir, "First.md"));
+      expect((await a.folder.push()).ok).toBe(true);
+      await pastTheGrace();
+      expect((await a.folder.push()).ok).toBe(true);
+      expect(await heldIn(a)).toEqual(["First.md"]);
+      await trashHeldFiles(a, ["First.md"]);
+    } finally {
+      await third.stop();
+    }
+    expect((await b.folder.remove()).ok).toBe(true);
+    expect((await third.folder.remove()).ok).toBe(true);
+    const first = realpathSync(b.dir);
+    const second = realpathSync(third.dir);
+    rmSync(first, { recursive: true });
+    rmSync(second, { recursive: true });
+    // Neither other folder can be reached, so the delete waits on both.
+    await deletedByHand(a);
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(deletesOf(a.server, held)).toBe(0);
+    await heldUnsure(a);
+
+    const shown = await a.folder.forget(first);
+    expect(shown.ok, JSON.stringify(shown)).toBe(true);
+    if (!shown.ok) return;
+    expect(
+      shown.value.folders.flatMap((folder) =>
+        folder.held.map((file) => [file.path, file.still_waits_on]),
+      ),
+    ).toEqual([["Held.md", [second]]]);
+    const said = await a.folder.forgetText(first);
+    expect(said.ok && said.value.text).toContain(
+      `would keep 1 held deletion(s), which still wait on other folders:\n    Held.md (still waits on ${second})`,
+    );
+
+    const narrowed = await a.folder.forget(first, { yes: true });
+    expect(narrowed.ok, JSON.stringify(narrowed)).toBe(true);
+    if (!narrowed.ok) return;
+    expect(narrowed.value.exit).toBe(0);
+    expect(
+      narrowed.value.forgotten.map((folder) => [
+        folder.released,
+        folder.still_held,
+      ]),
+    ).toEqual([[[], [{ path: "Held.md", still_waits_on: [second] }]]]);
+    expect(await heldIn(a)).toEqual(["Held.md"]);
+    const kept = await a.folder.push();
+    expect(
+      kept.ok && kept.value.scan.trashed,
+      "a delete was sent while another folder it waits on may hold the file",
+    ).toEqual([]);
+    expect(deletesOf(a.server, held)).toBe(0);
+    await heldUnsure(a);
+
+    // The witness: forgotten too, the other releases it.
+    const released = await a.folder.forget(second, { yes: true });
+    expect(released.ok, JSON.stringify(released)).toBe(true);
+    if (!released.ok) return;
+    expect(
+      released.value.forgotten.map((folder) => [
+        folder.released,
+        folder.still_held,
+      ]),
+    ).toEqual([[["Held.md"], []]]);
+    const sent = await a.folder.push();
+    expect(sent.ok && sent.value.scan.trashed).toEqual(["Held.md"]);
+    expect(deletesOf(a.server, held)).toBe(1);
+  });
+
   it("changes nothing when forgetting a directory the registry still lists and exits 3, then releases the held delete once the directory is removed and forgotten", async () => {
     const held = "01a00000-0000-7000-8000-0000000035e6";
     const { a, b } = await remembering("forget-listed", [
@@ -4928,6 +5027,32 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const sent = await a.folder.push();
     expect(sent.ok && sent.value.scan.trashed).toEqual(["Held.md"]);
     expect(deletesOf(a.server, held)).toBe(1);
+
+    // Listed and remembered by no folder, it is still not forgotten.
+    const unremembered = join(tempFolder("forget-listed-alone"), "gone");
+    const listing = JSON.parse(readFileSync(a.registry, "utf8")) as {
+      folders: Array<Record<string, unknown>>;
+    };
+    listing.folders.push({
+      dir: unremembered,
+      folder: "01a00000-0000-7000-8000-0000000035f3",
+    });
+    writeFileSync(a.registry, JSON.stringify(listing));
+    const alone = await a.folder.forget(unremembered, { yes: true });
+    expect(alone.ok, JSON.stringify(alone)).toBe(true);
+    if (!alone.ok) return;
+    expect(alone.value).toMatchObject({
+      listed: true,
+      folders: [],
+      not_read: [],
+      forgotten: [],
+      exit: 3,
+    });
+    const aloneText = await a.folder.forgetText(unremembered, { yes: true });
+    expect(aloneText.ok && aloneText.value.exit).toBe(3);
+    expect(aloneText.ok && aloneText.value.text).toContain(
+      "`folders remove` it first",
+    );
   });
 
   it("forgets through the binding only in a folder whose store is still the one it showed, and the next sync sends the delete it released", async () => {

@@ -930,7 +930,10 @@ fn forgetting_one_directory_a_hold_waits_on_keeps_it_held_on_the_other() {
     let shown = Folder::remembering(other.path()).unwrap();
     assert_eq!(shown.folders.len(), 1, "{shown:?}");
     assert_eq!(shown.folders[0].held.len(), 1, "{shown:?}");
-    assert_eq!(shown.folders[0].held[0].still_waits_on, [second.clone()]);
+    assert_eq!(
+        shown.folders[0].held[0].still_waits_on,
+        std::slice::from_ref(&second)
+    );
     drop(a);
     let forgotten = Folder::forget_remembered(&shown).unwrap();
     assert_eq!(forgotten.not_changed, [], "{forgotten:?}");
