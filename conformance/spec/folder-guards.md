@@ -256,11 +256,11 @@ If a paused disk removal is confirmed while a missing file's path cannot be read
 
 ### `folder-guards/confirm-unread-path-held`
 
-If a paused disk removal is confirmed while a missing file's path cannot be read, and the file went missing at least the rename grace before, then a device MUST hold the file for the person (`folder-files/missing-file-held`).
+If a paused disk removal is confirmed while a missing file's path cannot be read, and the device has found the file missing for at least the rename grace, then a device MUST hold the file for the person (`folder-files/missing-file-held`).
 
-**Reason:** the confirm is the person's answer to the pause, so no later scan asks again, and a file left neither deleted nor held would be lost from view. Inside the grace, the removal stays paused instead (`folder-guards/confirm-in-grace`).
+**Reason:** the confirm is the person's answer to the pause, so no later scan asks again, and a file left neither deleted nor held would be lost from view. Before that, the removal stays paused instead (`folder-guards/confirm-in-grace`).
 
-**Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while a missing file's path cannot be read`, `device/folders-one-mac.test.ts › keeps a confirmed removal paused inside the rename grace, and held as unsure past it, while the file's own directory cannot be read`.
+**Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while a missing file's path cannot be read`, `device/folders-one-mac.test.ts › keeps a confirmed removal held as unsure while the file's own directory cannot be read`.
 
 ### `folder-guards/confirm-unread-folder-paused`
 
@@ -268,15 +268,15 @@ If a paused disk removal is confirmed while part of the directory cannot be read
 
 **Reason:** the unread part may hold the file under another name, so the confirm decides nothing, and the removal stays in view as one to confirm again once the directory can be read.
 
-**Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while part of the folder cannot be read`, `device/folders-one-mac.test.ts › keeps a confirmed removal paused inside the rename grace, and held as unsure past it, while the file's own directory cannot be read`.
+**Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while part of the folder cannot be read`, `device/folders-one-mac.test.ts › keeps a confirmed removal held as unsure while the file's own directory cannot be read`.
 
 ### `folder-guards/confirm-in-grace`
 
-If a paused disk removal is confirmed less than the rename grace after a missing file went missing, then a device MUST keep that file's removal paused and report the file in `unsure`, whether or not the file's path can be read.
+If a paused disk removal is confirmed before the device has found a missing file missing for the rename grace, then a device MUST keep that file's removal paused and report the file in `unsure`, whether or not the file's path can be read.
 
-**Reason:** a confirm decides each file as the sweep past the grace would (`folder-files/delete-grace`), and inside the grace a move into another folder may not have been read there yet. A path that cannot be read gives no more reason to decide the file early. A later confirm or scan decides it once the grace is over.
+**Reason:** a confirm decides each file as the sweep past the grace would (`folder-files/delete-grace`), and inside the grace a move into another folder may not have been read there yet. A path that cannot be read gives no more reason to decide the file early. A pass that cannot read the path does not count toward the grace, because the file may have come back and gone again unseen (`folder-files/missing-file-held-unread-pass`), so a second confirm while the path still cannot be read keeps the removal paused too. A later confirm or scan decides it once the grace is over.
 
-**Tests:** `device/folders-one-mac.test.ts › keeps a removal confirmed inside the rename grace paused, and lets it go once the grace is over`, `device/folders-one-mac.test.ts › keeps a confirmed removal paused inside the rename grace, and held as unsure past it, while the file's own directory cannot be read`.
+**Tests:** `device/folders-one-mac.test.ts › keeps a removal confirmed inside the rename grace paused, and lets it go once the grace is over`, `device/folders-one-mac.test.ts › keeps a confirmed removal paused inside the rename grace while the file's own directory cannot be read`.
 
 ### `folder-guards/confirm-uncertain-file`
 

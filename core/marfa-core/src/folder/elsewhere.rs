@@ -85,6 +85,8 @@ struct Binding {
 struct Walked {
     files: Vec<OnDisk>,
     partial: Option<String>,
+    /// Why part of the folder holds files the walk never listed.
+    hidden: Option<String>,
 }
 
 struct OnDisk {
@@ -93,6 +95,8 @@ struct OnDisk {
     captured: Option<super::Captured>,
     mark: Option<String>,
     id: Option<String>,
+    /// Listed, but not opened, or its id line not read.
+    unread: bool,
     hash: OnceCell<Option<String>>,
 }
 
@@ -273,6 +277,7 @@ impl Peer {
             #[cfg(test)]
             super::tests::PEERS_WALKED.with(|walked| walked.set(walked.get() + 1));
             let mut walked = super::Walked::default();
+            let mut hidden = None;
             let mut partial = if self
                 .folder
                 .as_ref()
@@ -289,6 +294,7 @@ impl Peer {
                 match Lists::wider(&include) {
                     Ok(lists) => {
                         super::walk(&self.root, &self.root, root_dir, &lists, &mut walked);
+                        hidden = Some(walked.unlisted.clone());
                         walked
                             .directories
                             .iter()
@@ -308,6 +314,7 @@ impl Peer {
                     self.root.display()
                 ))
             };
+            let hidden = hidden.unwrap_or_else(|| partial.clone());
             let files = walked
                 .files
                 .into_iter()
@@ -319,6 +326,7 @@ impl Peer {
                         None => walked.unread.get(&path).copied(),
                     }
                     .map(|found| found.key());
+                    let mut unread = false;
                     let id = if let Some(captured) = &captured {
                         if carries_frontmatter(&path) {
                             match captured.open().and_then(id_of_reader) {
@@ -328,6 +336,7 @@ impl Peer {
                                         "{} cannot be read ({error})",
                                         path.display()
                                     ));
+                                    unread = true;
                                     None
                                 }
                             }
@@ -336,6 +345,7 @@ impl Peer {
                         }
                     } else {
                         partial = Some(format!("{} could not be opened", path.display()));
+                        unread = true;
                         None
                     };
                     Some(OnDisk {
@@ -344,11 +354,16 @@ impl Peer {
                         captured,
                         mark,
                         id,
+                        unread,
                         hash: OnceCell::new(),
                     })
                 })
                 .collect();
-            Walked { files, partial }
+            Walked {
+                files,
+                partial,
+                hidden,
+            }
         })
     }
 
@@ -820,7 +835,7 @@ impl<'a> Peers<'a> {
             ));
         }
         // Unread, part of a folder may hold the moved file or a second one.
-        if let Some(why) = peers.iter().find_map(|peer| peer.walked().partial.clone()) {
+        if let Some(why) = peers.iter().find_map(|peer| peer.walked().hidden.clone()) {
             return Look::Unsure(why);
         }
         // Where both folders hold the item, the other's file of it is its
@@ -882,6 +897,21 @@ impl<'a> Peers<'a> {
                             file.path.display()
                         ));
                     }
+                    if let Some((_, unread)) = peers
+                        .iter()
+                        .flat_map(|other| other.files().iter().map(move |also| (*other, also)))
+                        .find(|(other, also)| {
+                            also.unread
+                                && carries_frontmatter(&also.path)
+                                && !(std::ptr::eq(*other, *peer) && also.key == file.key)
+                        })
+                    {
+                        return Look::Unsure(format!(
+                            "{} is the same file on the disk, and {} could not be read, so it may carry its id too",
+                            file.path.display(),
+                            unread.path.display()
+                        ));
+                    }
                     return arrival(peer, file);
                 }
                 _ => {
@@ -891,6 +921,9 @@ impl<'a> Peers<'a> {
                     ));
                 }
             }
+        }
+        if let Some(why) = peers.iter().find_map(|peer| peer.walked().partial.clone()) {
+            return Look::Unsure(why);
         }
         if !file_item && carries_frontmatter(Path::new(lost.path)) {
             let found = peers

@@ -4594,7 +4594,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, held)).toBe(1);
   });
 
-  it("keeps a confirmed removal paused inside the rename grace, and held as unsure past it, while the file's own directory cannot be read", async () => {
+  it("keeps a confirmed removal held as unsure while the file's own directory cannot be read", async () => {
     const ids = [0, 1, 2, 3, 4, 5].map(
       (n) => `01a00000-0000-7000-8000-0000000035d${String(n)}`,
     );
@@ -4629,24 +4629,10 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const paused = await a.folder.push();
     expect(paused.ok && paused.value.scan.paused).toBe(4);
     writeFileSync(join(sub, "Note 5.md"), back);
+    await pastTheGrace();
 
     chmodSync(sub, 0o000);
     try {
-      // Inside the grace, a confirm keeps the removal paused, its unread path included.
-      const early = await a.folder.confirm();
-      expect(early.ok, JSON.stringify(early)).toBe(true);
-      if (!early.ok) return;
-      expect(early.value.deleted).toBe(0);
-      expect(
-        early.value.unsure.find((file) => file.path === "sub/Note 4.md")
-          ?.reason,
-        "a confirm inside the rename grace held a file whose path it could not read",
-      ).toMatch(/less than the rename grace ago/);
-      expect(await heldIn(a)).toEqual([]);
-      const pausedEarly = await a.folder.status();
-      expect(pausedEarly.ok && pausedEarly.value.paused.disk).toBe(4);
-
-      await pastTheGrace();
       const confirmed = await a.folder.confirm();
       expect(confirmed.ok, JSON.stringify(confirmed)).toBe(true);
       if (!confirmed.ok) return;
@@ -4703,6 +4689,71 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(await heldIn(a)).toEqual(held);
     // The witness: the person's trash sends the deletes the holds kept.
     await trashHeldFiles(a, held);
+    expect(ids.map((id) => deletesOf(a.server, id))).toEqual([
+      1, 1, 0, 0, 1, 0,
+    ]);
+  });
+
+  it("keeps a confirmed removal paused inside the rename grace while the file's own directory cannot be read", async () => {
+    const ids = [0, 1, 2, 3, 4, 5].map(
+      (n) => `01a00000-0000-7000-8000-0000000035e${String(n)}`,
+    );
+    const { a } = await onOneMac(
+      "confirm-unread-grace",
+      {
+        query: { types: ["core.note"] },
+        removal_threshold: { files: 2, fraction: 0.25 },
+      },
+      { query: { types: ["core.bookmark"] } },
+      {
+        "core.note": ids.map((id, n) => ({
+          item: { id, properties: { title: `Note ${String(n)}`, body: "b\n" } },
+        })),
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    const sub = join(a.dir, "sub");
+    mkdirSync(sub);
+    renameSync(join(a.dir, "Note 4.md"), join(sub, "Note 4.md"));
+    expect((await a.folder.scan()).ok).toBe(true);
+    const gone = ["Note 0.md", "Note 1.md", "sub/Note 4.md"];
+    for (const path of gone) rmSync(join(a.dir, path));
+    const paused = await a.folder.push();
+    expect(paused.ok && paused.value.scan.paused).toBe(3);
+
+    chmodSync(sub, 0o000);
+    try {
+      // The second confirm finds no row the first left for the unread path.
+      for (const confirm of ["first", "second"]) {
+        const confirmed = await a.folder.confirm();
+        expect(confirmed.ok, JSON.stringify(confirmed)).toBe(true);
+        if (!confirmed.ok) return;
+        expect(confirmed.value.deleted, confirm).toBe(0);
+        expect(
+          confirmed.value.unsure.find((file) => file.path === "sub/Note 4.md")
+            ?.reason,
+          `the ${confirm} confirm inside the rename grace decided a file whose path it could not read`,
+        ).toMatch(/rename grace/);
+        expect(await heldIn(a), confirm).toEqual([]);
+        const status = await a.folder.status();
+        expect(status.ok && status.value.paused.disk, confirm).toBe(3);
+      }
+      expect(ids.map((id) => deletesOf(a.server, id))).toEqual([
+        0, 0, 0, 0, 0, 0,
+      ]);
+    } finally {
+      chmodSync(sub, 0o755);
+    }
+
+    // The witness: read whole and past the grace, a confirm decides the
+    // files, held since another folder is on the Mac.
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    expect((await a.folder.push()).ok).toBe(true);
+    const decided = await a.folder.confirm();
+    expect(decided.ok, JSON.stringify(decided)).toBe(true);
+    expect(await heldIn(a)).toEqual(gone);
+    await trashHeldFiles(a, gone);
     expect(ids.map((id) => deletesOf(a.server, id))).toEqual([
       1, 1, 0, 0, 1, 0,
     ]);

@@ -66,15 +66,26 @@ impl Folder {
         for row in journaled {
             by_path.entry(row.path.clone()).or_default().push(row);
         }
-        let paused: Vec<Paused> = disk
-            .iter()
-            .flat_map(|path| by_path.get(path).into_iter().flatten())
-            .map(|row| Paused {
-                path: row.path.clone(),
-                item_id: row.item_id.clone(),
-                missing_since: (!row.held()).then(|| row.missing_since.clone()),
-            })
-            .collect();
+        let mut paused = Vec::new();
+        for path in &disk {
+            match by_path.get(path) {
+                Some(rows) => paused.extend(rows.iter().map(|row| Paused {
+                    path: row.path.clone(),
+                    item_id: row.item_id.clone(),
+                    missing_since: (!row.held()).then(|| row.missing_since.clone()),
+                })),
+                // A pass that could not read its path cleared its row.
+                None => {
+                    if let Some(bound) = state::bound_at(&*self.core.conn()?, path)? {
+                        paused.push(Paused {
+                            path: path.clone(),
+                            item_id: bound.item_id,
+                            missing_since: None,
+                        });
+                    }
+                }
+            }
+        }
         let mut confirmed = Confirmed::default();
         let mut waiting = Vec::new();
         // Allowed before the one scan, which then queues them.
@@ -183,6 +194,7 @@ impl Folder {
                 None => missing_since.as_ref(),
             }
             .is_some_and(|since| !super::scan::elapsed_past(since, now, super::RENAME_GRACE));
+            let unseen = since.is_none() && missing_since.is_none();
             let reason = match self.file_at(&self.root.join(path)) {
                 Ok(true) => continue,
                 // Paused, it stays in view for a confirm that reads it all.
@@ -201,6 +213,17 @@ impl Folder {
                     confirmed.unsure.push(Unsure {
                         path: path.clone(),
                         reason: "it went missing less than the rename grace ago, so its removal stays paused for a later confirm or scan to decide".into(),
+                    });
+                    continue;
+                }
+                // Unread, it may have come back and gone again since.
+                Err(error) if unseen => {
+                    waiting.push(path.clone());
+                    confirmed.unsure.push(Unsure {
+                        path: path.clone(),
+                        reason: format!(
+                            "its path cannot be checked ({error}), and no scan that read it has found it missing for the rename grace, so its removal stays paused for a later confirm or scan to decide"
+                        ),
                     });
                     continue;
                 }

@@ -2107,6 +2107,8 @@ struct Walked {
     /// pass that heard no event for them leaves unlooked at.
     unchanged: HashMap<PathBuf, Unchanged>,
     directories: Vec<Flagged>,
+    /// Why part of a directory went unlisted, unlike a listed file left unread.
+    unlisted: Option<String>,
     secrets: Vec<String>,
     /// Files a crashed write left beside their target.
     left: Vec<(WalkRoute, PathBuf)>,
@@ -2125,7 +2127,7 @@ impl Walked {
         match require_birth(birth) {
             Ok(()) => true,
             Err(error) => {
-                self.unreadable(root, dir, &error);
+                self.unread_file(root, dir, &error);
                 false
             }
         }
@@ -2141,6 +2143,12 @@ impl Walked {
     }
 
     fn unreadable(&mut self, root: &Path, dir: &Path, error: &std::io::Error) {
+        let why = self.unread_file(root, dir, error);
+        self.unlisted.get_or_insert(why);
+    }
+
+    /// Flags `dir` for a file in it the walk listed but could not open.
+    fn unread_file(&mut self, root: &Path, dir: &Path, error: &std::io::Error) -> String {
         // Gone while the walk read it: moved or renamed, its files are
         // somewhere this walk did not look.
         let (flag, reason) = if error.kind() == std::io::ErrorKind::NotFound {
@@ -2155,6 +2163,7 @@ impl Walked {
             )
         };
         let path = identity::relative(root, dir).unwrap_or_default();
+        let why = format!("{path} {reason}");
         if !self.directories.iter().any(|dir| dir.path == path) {
             self.directories.push(Flagged {
                 path,
@@ -2163,6 +2172,7 @@ impl Walked {
                 item: None,
             });
         }
+        why
     }
 
     fn incomplete(&self) -> bool {
@@ -2418,7 +2428,7 @@ fn take_file(
                     // leave the rest of this inventory incomplete.
                     walked.unread.insert(path.clone(), identity);
                 }
-                walked.unreadable(root, dir, &error);
+                walked.unread_file(root, dir, &error);
             }
         }
         walked.files.push(path);
