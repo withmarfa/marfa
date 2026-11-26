@@ -596,7 +596,11 @@ describe("how a device fills a table", () => {
     const item = await itemOf(type);
     await filled(item, 3);
     const device = await hydratedBinding([type], "fill-waited");
-    const fillHeld = async (): Promise<Call<{ fill: unknown }>> => {
+    // A `Call` is thenable, so it is handed back inside an object: awaited
+    // bare, it would wait for the held call itself.
+    const fillHeld = async (): Promise<{
+      holding: Call<{ fill: unknown }>;
+    }> => {
       await device.hooks.hold("table-hold-filling");
       const holding = device.call<{ fill: unknown }>(
         "holdTable",
@@ -604,11 +608,13 @@ describe("how a device fills a table", () => {
         "steps",
       );
       await untilHeld(device, "table-hold-filling");
-      return holding;
+      return { holding };
     };
-    const fillEnds = async (
-      holding: Call<{ fill: unknown }>,
-    ): Promise<void> => {
+    const fillEnds = async ({
+      holding,
+    }: {
+      holding: Call<{ fill: unknown }>;
+    }): Promise<void> => {
       await device.hooks.release("table-hold-filling");
       expect(
         value(await holding).fill,
