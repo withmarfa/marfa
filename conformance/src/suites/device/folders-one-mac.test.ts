@@ -4674,12 +4674,16 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       chmodSync(sub, 0o755);
     }
 
-    // Read whole, the file put back ends its hold, and a confirm holds the
-    // paused files found nowhere, since another folder is on the Mac.
+    // Read whole, the file put back ends its hold. A held file is no part of
+    // a removal, so the two files found nowhere stay under the threshold,
+    // and past the grace they are held too, since another folder is on the Mac.
     const whole = await a.folder.push();
-    expect(whole.ok && whole.value.scan.paused).toBe(2);
-    const again = await a.folder.confirm();
-    expect(again.ok && again.value.deleted).toBe(0);
+    expect(whole.ok && whole.value.scan.paused).toBe(0);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    expect(swept.value.scan.trashed).toEqual([]);
     const held = ["Note 0.md", "Note 1.md", "sub/Note 4.md"];
     expect(await heldIn(a)).toEqual(held);
     // The witness: the person's trash sends the deletes the holds kept.
