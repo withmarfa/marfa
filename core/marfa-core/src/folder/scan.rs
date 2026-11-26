@@ -73,6 +73,8 @@ struct ScanStart {
     catalog: Catalog,
     edge_types: EdgeTypes,
     lists: Lists,
+    /// Paths held for an unresolved removal, decided before any file is read.
+    removing: HashMap<String, String>,
 }
 
 /// Set once the folder has read its documents' edges again under the rule
@@ -517,6 +519,8 @@ impl Folder {
             self.settle_retained()?;
         }
         self.settle_landings()?;
+        // Before any read, so what the scan sends is what recovery decided on.
+        let removing = self.settle_taken()?;
         // Every pass, so a watch lists its folder again too.
         let (registry, lost) = self.register();
         let doubt = registry.clone().filter(|_| lost);
@@ -539,6 +543,7 @@ impl Folder {
             catalog,
             edge_types,
             lists,
+            removing,
         }))
     }
 
@@ -561,6 +566,7 @@ impl Folder {
             catalog,
             edge_types,
             lists,
+            removing,
         } = start;
         if crate::fault::named("replace-root-before-scan-walk").is_some() {
             std::fs::rename(&self.root, self.root.with_extension("original"))
@@ -696,7 +702,7 @@ impl Folder {
             files: Vec::new(),
             stale: HashMap::new(),
             held_carried: HashMap::new(),
-            removing: HashMap::new(),
+            removing,
         }))
     }
 
@@ -1228,7 +1234,6 @@ impl Folder {
         claims: Vec<Option<Claim>>,
         mut waiting: Waiting,
     ) -> Result<ControlFlow<(), Vec<EdgeWork>>> {
-        scan.removing = self.settle_taken()?;
         let (mode, settle) = (scan.mode, scan.settle);
         let reread_embeds = scan.reread_embeds;
         let held_outside = self.hold_outside(scan, &claims, &waiting)?;

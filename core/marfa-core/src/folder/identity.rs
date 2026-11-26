@@ -218,14 +218,23 @@ mod tests {
             inode,
             born,
         };
-        assert_eq!(recorded.compare(&found(1, 2, Some(10)), Some(1)), Compared::Same);
+        assert_eq!(
+            recorded.compare(&found(1, 2, Some(10)), Some(1)),
+            Compared::Same
+        );
         assert_eq!(
             recorded.compare(&found(1, 2, Some(11)), Some(1)),
             Compared::Other,
             "a file that took a reused inode was called the file recorded"
         );
-        assert_eq!(recorded.compare(&found(1, 3, Some(10)), Some(1)), Compared::Other);
-        assert_eq!(recorded.compare(&found(1, 2, None), Some(1)), Compared::Weaker);
+        assert_eq!(
+            recorded.compare(&found(1, 3, Some(10)), Some(1)),
+            Compared::Other
+        );
+        assert_eq!(
+            recorded.compare(&found(1, 2, None), Some(1)),
+            Compared::Weaker
+        );
         for born in [None, Some(0)] {
             assert_eq!(
                 found(1, 2, born).compare(&found(1, 2, Some(10)), Some(1)),

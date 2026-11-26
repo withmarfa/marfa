@@ -3,7 +3,8 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use super::{Folder, copy_changed, lists::Lists, plainly_inside, pull::TakenAway, state};
+use super::pull::{TakenAway, TakenNow, held_empty};
+use super::{Folder, copy_changed, lists::Lists, plainly_inside, state};
 use crate::Result;
 
 /// A file the folder keeps whose item the folder's query does not match.
@@ -21,6 +22,10 @@ pub struct Unmatched {
     /// Removing unmatched files never takes it away.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub held: Option<String>,
+    /// Why a removal a stop left holds the file's binding where no file is
+    /// at its path. Removing unmatched files ends it and keeps the item.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub removing: Option<String>,
 }
 
 /// What removing unmatched files did.
@@ -33,6 +38,9 @@ pub struct UnmatchedRemoved {
     /// The folder's placements of the removed files' items, ended and queued
     /// to be sent.
     pub ended: usize,
+    /// Removals a stop left, ended because no file is at their paths. Their
+    /// items are unchanged.
+    pub settled: Vec<Unmatched>,
 }
 
 impl Folder {
@@ -53,13 +61,32 @@ impl Folder {
             (state::unmatched(&conn)?, state::every_bound(&conn)?)
         };
         let held = state::held_outside(&*self.core.conn()?)?;
+        let removing = self.removals_ended_by_hand()?;
         let unmatched: HashSet<String> = unmatched.into_iter().collect();
         let mut rows: Vec<state::Bound> = bound
-            .into_iter()
-            .filter(|row| unmatched.contains(&row.item_id))
+            .iter()
+            .filter(|row| unmatched.contains(&row.item_id) && !removing.contains_key(&row.path))
+            .cloned()
             .collect();
+        let removing = removing.into_iter().map(|(path, (record, why))| {
+            let item_id = bound
+                .iter()
+                .find(|row| row.path == path)
+                .map(|row| row.item_id.clone())
+                .or(record.map(|record| record.item_id));
+            Unmatched {
+                path,
+                item_id,
+                kept: None,
+                held: None,
+                removing: Some(why),
+            }
+        });
         if rows.is_empty() {
-            return Ok(held.into_iter().map(held_entry).collect());
+            let mut files: Vec<Unmatched> =
+                held.into_iter().map(held_entry).chain(removing).collect();
+            files.sort_by(|a, b| a.path.cmp(&b.path));
+            return Ok(files);
         }
         rows.sort_by(|a, b| a.path.cmp(&b.path));
         let settings = self.settings()?;
@@ -75,8 +102,57 @@ impl Folder {
             })
             .collect::<Result<Vec<Unmatched>>>()?;
         files.extend(held.into_iter().map(held_entry));
+        files.extend(removing);
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)
+    }
+
+    /// The removals a stop left whose paths hold no file but which recovery
+    /// cannot end, each with its record, where it reads, and why it holds.
+    fn removals_ended_by_hand(
+        &self,
+    ) -> Result<std::collections::HashMap<String, (Option<state::Taken>, String)>> {
+        if self.root_gone().is_some() {
+            return Ok(Default::default());
+        }
+        let taken = state::taken(&*self.core.conn()?)?;
+        Ok(taken
+            .into_iter()
+            .filter_map(
+                |(path, record)| match self.taken_now(&path, record.as_ref()) {
+                    TakenNow::Empty(why) => Some((path, (record, held_empty(&why)))),
+                    TakenNow::Present | TakenNow::Absent | TakenNow::Unsure(_) => None,
+                },
+            )
+            .collect())
+    }
+
+    /// Ends a removal a stop left at `path`, as recovery ends one whose file
+    /// is gone, where no file is at its path: its binding ends and its item
+    /// stays. Answers the item whose binding ended, or `None` where there
+    /// was no such removal.
+    fn end_removal(&self, path: &str) -> Result<Option<Option<String>>> {
+        let Some((record, _)) = self.removals_ended_by_hand()?.remove(path) else {
+            return Ok(None);
+        };
+        let conn = self.core.conn()?;
+        let tx = conn.unchecked_transaction()?;
+        let bound = state::bound_at(&tx, path)?.filter(|bound| {
+            record
+                .as_ref()
+                .is_none_or(|record| record.item_id == bound.item_id)
+        });
+        if let Some(bound) = &bound {
+            state::unbind(&tx, path)?;
+            state::journal_clear(&tx, path, &bound.item_id)?;
+        }
+        state::clear_taken(&tx, path)?;
+        tx.commit()?;
+        Ok(Some(
+            bound
+                .map(|bound| bound.item_id)
+                .or(record.map(|record| record.item_id)),
+        ))
     }
 
     /// Takes away the named unmatched files, each only while it is still
@@ -110,6 +186,7 @@ impl Folder {
                 item_id: None,
                 kept: Some(why.into()),
                 held: None,
+                removing: None,
             };
             if !plainly_inside(&self.root_dir, path) {
                 let reason = "it is not inside the folder";
@@ -123,6 +200,21 @@ impl Folder {
                 done.kept.push(unbound(
                     "it is held outside the query with no item, which removing unmatched files never takes away",
                 ));
+                continue;
+            }
+            if let Some(item_id) = self.end_removal(path)? {
+                if let Some(item_id) = &item_id
+                    && state::bound_to_item(&*self.core.conn()?, item_id)?.is_none()
+                {
+                    unmatched.retain(|id| id != item_id);
+                }
+                done.settled.push(Unmatched {
+                    path: path.clone(),
+                    item_id,
+                    kept: None,
+                    held: None,
+                    removing: None,
+                });
                 continue;
             }
             let Some(row) = state::bound_at(&*self.core.conn()?, path)? else {
@@ -240,6 +332,7 @@ fn entry(row: &state::Bound, kept: Option<String>) -> Unmatched {
         item_id: Some(row.item_id.clone()),
         kept,
         held: None,
+        removing: None,
     }
 }
 
@@ -252,6 +345,7 @@ fn held_entry(path: String) -> Unmatched {
         item_id: None,
         kept: None,
         held: Some(HELD_OUTSIDE_REASON.into()),
+        removing: None,
     }
 }
 
@@ -723,7 +817,7 @@ mod tests {
             let mut records = state::taken(&conn).unwrap();
             let (path, record) = records.pop().unwrap();
             let mut record = record.unwrap();
-            record.born = born;
+            record.file.born = born;
             state::set_taken(&conn, &path, &record).unwrap();
             drop(conn);
             folder.scan().unwrap();
@@ -850,7 +944,10 @@ mod tests {
                 continue;
             }
             let conn = folder.core.conn().unwrap();
-            assert!(state::taken(&conn).unwrap().is_empty(), "replaced {replaced}");
+            assert!(
+                state::taken(&conn).unwrap().is_empty(),
+                "replaced {replaced}"
+            );
             assert!(state::bound_at(&conn, "sub/new.md").unwrap().is_some());
         }
     }
@@ -864,7 +961,11 @@ mod tests {
         let elsewhere = tempfile::tempdir_in(root.parent().unwrap()).unwrap();
         let original = elsewhere.path().join("new.md");
         std::fs::rename(root.join("new.md"), &original).unwrap();
-        std::fs::write(root.join("new.md"), "---\ntitle: new\nstate: archived\n---\nreplaced\n").unwrap();
+        std::fs::write(
+            root.join("new.md"),
+            "---\ntitle: new\nstate: archived\n---\nreplaced\n",
+        )
+        .unwrap();
         let inode = {
             use std::os::unix::fs::MetadataExt;
             std::fs::metadata(root.join("new.md")).unwrap().ino()
@@ -938,7 +1039,10 @@ mod tests {
         assert!(folder.core.get(&id).unwrap().is_some());
         let conn = folder.core.conn().unwrap();
         assert!(state::taken(&conn).unwrap().is_empty(), "{done:?}");
-        assert!(state::bound_at(&conn, "new.md").unwrap().is_none(), "{done:?}");
+        assert!(
+            state::bound_at(&conn, "new.md").unwrap().is_none(),
+            "{done:?}"
+        );
         drop(conn);
         assert!(!held_in_status(&folder, "new.md"));
     }

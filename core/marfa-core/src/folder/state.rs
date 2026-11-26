@@ -436,10 +436,11 @@ const TAKEN: &str = "folder_taken:";
 pub(crate) struct Taken {
     /// Keeps recovery from unbinding another item at the same path.
     pub(crate) item_id: String,
-    /// The file's device and inode as the removal found it.
-    pub(crate) at: (u64, u64),
-    /// Nonzero creation time in nanoseconds since the epoch, when available.
-    pub(crate) born: Option<u128>,
+    /// The file as the removal found it.
+    pub(crate) file: super::identity::Seen,
+    /// The directory the file was in, so a directory put at its name is
+    /// never taken for it.
+    pub(crate) dir: super::identity::Seen,
     /// Hash of the bytes the binding expected to remove.
     pub(crate) hash: Option<String>,
 }

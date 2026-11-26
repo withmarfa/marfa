@@ -1585,6 +1585,13 @@ pub(crate) fn crash_if_named(target: &Path, fault: &str) {
     }
 }
 
+/// A removal's record of a birth time other than the file's, as a reused
+/// inode shows, where a fixture names the target or a unit test asks.
+#[cfg(debug_assertions)]
+pub(crate) fn asked_to_shift_birth(target: &Path) -> bool {
+    failing_here("taken-born-shifted") || named_for(target, "taken-born-shifted")
+}
+
 /// Whether `MARFA_TEST_FAULT` names `fault` with the target's file name.
 pub(crate) fn named_for(target: &Path, fault: &str) -> bool {
     crate::fault::named(fault).is_some_and(|name| {

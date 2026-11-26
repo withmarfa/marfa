@@ -227,6 +227,9 @@ pub(super) enum TakenNow {
     Absent,
     /// Why it cannot tell.
     Unsure(String),
+    /// Nothing is at its path, but the record cannot show the file is gone,
+    /// for this reason; the person ends it by removing unmatched files.
+    Empty(String),
 }
 
 /// The status flag for an unresolved removal.
@@ -240,6 +243,13 @@ fn held_removal(why: &str) -> String {
     }
     format!(
         "Marfa stopped while it took this file away, and cannot tell whether the file is still there: {why}. Its item is not deleted while it cannot tell; once the path holds the file as it was, or a removal reaches the file again, it settles"
+    )
+}
+
+/// Why a removal whose path is empty is held, and how the person ends it.
+pub(super) fn held_empty(why: &str) -> String {
+    format!(
+        "Marfa stopped while it took this file away, and cannot tell whether the file is gone: {why}. Its item is not deleted while it cannot tell. No file is at its path: put back what moved, or run `marfa folders unmatched <DIR> --remove` to end the removal and keep the item"
     )
 }
 
@@ -1977,22 +1987,34 @@ impl Folder {
         let conn = self.core.conn()?;
         context.check(&conn)?;
         let path = self.root.join(&row.path);
-        let metadata = self
-            .removal_file(&path)
-            .and_then(|entry| entry.map(|file| file.metadata()).transpose());
-        match metadata {
-            Ok(Some(metadata)) => {
-                let taken = state::Taken {
+        let captured = self.guarded(&conn, &path, false).and_then(|place| {
+            let name = Path::new(&place.name);
+            if place.directory.entry_kind(name)? != crate::directory::FileType::RegularFile {
+                return Ok(None);
+            }
+            let file = place.directory.capture_file(name)?.metadata()?;
+            let dir = place.directory.metadata()?;
+            Ok(Some((place, file, dir)))
+        });
+        match captured {
+            Ok(Some((place, file, dir))) => {
+                let name = Path::new(&place.name);
+                #[allow(unused_mut)]
+                let mut taken = state::Taken {
                     item_id: row.item_id.clone(),
-                    at: landing::identity(&metadata),
-                    born: identity::born(&metadata),
+                    file: identity::Seen::of(&file),
+                    dir: identity::Seen::of(&dir),
                     hash: row.written_hash.clone(),
                 };
+                #[cfg(debug_assertions)]
+                if landing::asked_to_shift_birth(&path) {
+                    taken.file.born = taken.file.born.map(|born| born + 1);
+                }
                 state::set_taken(&conn, &row.path, &taken)?;
                 landing::stop_if_asked(&path, "crash-before-take-away");
                 let still =
                     |found: &[u8]| row.written_hash.as_deref() == Some(state::hash(found).as_str());
-                let removed = self.remove_file(&conn, &path, still);
+                let removed = landing::remove_at(&place.directory, place.guard(), name, still);
                 let kept = match &removed {
                     Ok(true) => None,
                     Ok(false) => Some(TakenAway::Kept),
@@ -2013,8 +2035,22 @@ impl Folder {
                     }
                 };
                 if let Some(kept) = kept {
-                    match self.file_identity(&path) {
-                        Ok(Some(_)) => {
+                    // Only the file the record names, unchanged in identity,
+                    // ends the record; any other file at the path is held.
+                    let found = place.directory.entry_kind(name).and_then(|kind| {
+                        if kind == crate::directory::FileType::RegularFile {
+                            place.directory.entry_metadata(name).map(Some)
+                        } else {
+                            Ok(None)
+                        }
+                    });
+                    match found {
+                        Ok(Some(found))
+                            if taken.file.compare(
+                                &identity::Seen::of(&found),
+                                super::device(&self.root_dir),
+                            ) == identity::Compared::Same =>
+                        {
                             state::clear_taken(&conn, &row.path)?;
                             return Ok(kept);
                         }
@@ -2053,49 +2089,84 @@ impl Folder {
     const UNTOLD: &str =
         "Marfa cannot tell whether the file at its path is the one it was removing";
 
-    /// Checks the path without following directory links.
+    /// Checks the path without following directory links, through its
+    /// directory as the removal recorded it.
     pub(super) fn taken_now(&self, path: &str, taken: Option<&state::Taken>) -> TakenNow {
-        let Some(taken) = taken else {
-            return TakenNow::Unsure("Marfa cannot read its record of the removal".into());
-        };
         let path = self.root.join(path);
-        match self.removal_file(&path) {
-            Ok(Some(file)) => self
-                .still_the_file(&path, file, taken)
-                .unwrap_or_else(|error| {
-                    TakenNow::Unsure(format!("Marfa cannot look at it: {error}"))
-                }),
-            Ok(None) => TakenNow::Unsure("something other than a file is at its path".into()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => TakenNow::Absent,
-            Err(error) if beyond_a_link(&error) => TakenNow::Unsure(
-                "a directory on its path is a symbolic link or no longer a directory".into(),
-            ),
-            Err(error) => TakenNow::Unsure(format!("Marfa cannot look at it: {error}")),
+        let cannot_look =
+            |error: std::io::Error| TakenNow::Unsure(format!("Marfa cannot look at it: {error}"));
+        let (directory, name) = match self.location(&path, false) {
+            Ok(found) => found,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return TakenNow::Empty(match taken {
+                    Some(_) => Self::DIRECTORY_AWAY.into(),
+                    None => Self::UNREAD.into(),
+                });
+            }
+            Err(error) if beyond_a_link(&error) => {
+                return TakenNow::Unsure(
+                    "a directory on its path is a symbolic link or no longer a directory".into(),
+                );
+            }
+            Err(error) => return cannot_look(error),
+        };
+        let name = Path::new(&name);
+        let why = match taken {
+            None => Some(Self::UNREAD),
+            Some(taken) => match directory.metadata() {
+                Ok(found)
+                    if taken
+                        .dir
+                        .compare(&identity::Seen::of(&found), super::device(&self.root_dir))
+                        != identity::Compared::Other =>
+                {
+                    None
+                }
+                Ok(_) => Some(Self::DIRECTORY_AWAY),
+                Err(error) => return cannot_look(error),
+            },
+        };
+        let kind = match directory.entry_kind(name) {
+            Ok(kind) => kind,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return why.map_or(TakenNow::Absent, |why| TakenNow::Empty(why.into()));
+            }
+            Err(error) => return cannot_look(error),
+        };
+        if let Some(why) = why {
+            return TakenNow::Unsure(why.into());
         }
+        let Some(taken) = taken else {
+            return TakenNow::Unsure(Self::UNREAD.into());
+        };
+        if kind != crate::directory::FileType::RegularFile {
+            return TakenNow::Unsure("something other than a file is at its path".into());
+        }
+        directory
+            .capture_file(name)
+            .and_then(|file| self.still_the_file(&directory, name, file, taken))
+            .unwrap_or_else(cannot_look)
     }
 
-    fn removal_file(&self, path: &Path) -> std::io::Result<Option<std::fs::File>> {
-        let (directory, name) = self.location(path, false)?;
-        let name = Path::new(&name);
-        if directory.entry_kind(name)? != crate::directory::FileType::RegularFile {
-            return Ok(None);
-        }
-        directory.capture_file(name).map(Some)
-    }
+    const UNREAD: &str = "Marfa cannot read its record of the removal";
+
+    const DIRECTORY_AWAY: &str =
+        "the directory Marfa removed it from is no longer at its directory's path";
 
     fn still_the_file(
         &self,
-        path: &Path,
+        directory: &crate::directory::Directory,
+        name: &Path,
         file: std::fs::File,
         taken: &state::Taken,
     ) -> std::io::Result<TakenNow> {
         let metadata = file.metadata()?;
         let another = || TakenNow::Unsure("another file is at its path".into());
-        if !super::same_directory(
-            landing::identity(&metadata),
-            taken.at,
+        let compared = taken.file.compare(
+            &identity::Seen::of(&metadata),
             super::device(&self.root_dir),
-        ) {
+        );
+        if compared == identity::Compared::Other {
             return Ok(another());
         }
         let Some(expected) = &taken.hash else {
@@ -2104,30 +2175,16 @@ impl Folder {
         if state::hash_reader(&file)? != *expected {
             return Ok(another());
         }
-        let born = identity::born(&metadata);
-        if !super::same_birth(taken.born, born) {
-            return Ok(match (taken.born.filter(|birth| *birth > 0), born) {
-                (Some(_), Some(_)) => another(),
-                _ => TakenNow::Unsure(Self::UNTOLD.into()),
-            });
+        if compared == identity::Compared::Weaker {
+            return Ok(TakenNow::Unsure(Self::UNTOLD.into()));
         }
-        let named = self.metadata(path)?;
+        let named = directory.entry_metadata(name)?;
         if !super::same_file(&metadata, &named)
             || super::changed_at(&metadata) != super::changed_at(&named)
         {
             return Ok(TakenNow::Unsure(Self::UNTOLD.into()));
         }
         Ok(TakenNow::Present)
-    }
-
-    /// Returns `None` for a nonregular entry.
-    fn file_identity(&self, path: &Path) -> std::io::Result<Option<(u64, u64)>> {
-        let (directory, name) = self.location(path, false)?;
-        let name = Path::new(&name);
-        match directory.entry_kind(name)? {
-            crate::directory::FileType::RegularFile => directory.entry_identity(name).map(Some),
-            _ => Ok(None),
-        }
     }
 
     /// An owner's delete after a stop is indistinguishable from a completed removal.
@@ -2159,6 +2216,9 @@ impl Folder {
                 TakenNow::Unsure(why) => {
                     unsettled.insert(path, held_removal(&why));
                 }
+                TakenNow::Empty(why) => {
+                    unsettled.insert(path, held_empty(&why));
+                }
             }
         }
         Ok(unsettled)
@@ -2178,6 +2238,7 @@ impl Folder {
                     TakenNow::Present => None,
                     TakenNow::Absent => Some((path, None)),
                     TakenNow::Unsure(why) => Some((path, Some(held_removal(&why)))),
+                    TakenNow::Empty(why) => Some((path, Some(held_empty(&why)))),
                 }
             })
             .collect())

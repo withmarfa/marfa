@@ -1227,7 +1227,11 @@ mod tests {
             )
             .unwrap();
         // The witness: while its file is there, it is listed.
-        assert!(listed(&root, &folder.kept_files().unwrap()).iter().any(|(_, there)| *there));
+        assert!(
+            listed(&root, &folder.kept_files().unwrap())
+                .iter()
+                .any(|(_, there)| *there)
+        );
         std::fs::remove_file(root.join("Notes").join(&private[0])).unwrap();
         folder.scan().unwrap();
 
