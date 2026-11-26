@@ -6662,6 +6662,14 @@ When a catch-up has applied the events it read, when a follow has no frame waiti
 
 **Tests:** `device/tables-live.test.ts › fills a table whole across pages, and answers it from the copy with the server out of reach`, `› applies each rows.changed a follow reads, rows put, patched and deleted`, `› fills a table again each time a follow sees it come back within the cap`, `› fills a table held while a follow holds the stream, with no event to wake the follow, and tells the follow's caller it filled it`.
 
+### `device/table-fill-waited`
+
+When a caller hydrates, catches up or follows a working copy while a fill that an app's hold of a table started is under way, a device MUST wait for the fill to end rather than refuse the call.
+
+**Reason:** an app that holds a table does not ask to move the copy's cursor, so a refusal would stop the follow or fail the hydration of an app that never ran two at once.
+
+**Tests:** `device/tables-live.test.ts › waits out a table hold's fill rather than refuse a follow, a catch-up or a hydration that starts during it`.
+
 ### `device/table-fill-failed`
 
 If the server answers a read a device makes to fill one table with an error about that read, such as a `5xx` answer or a refusal, then a device MUST go on to fill its other tables before it reads that table again.

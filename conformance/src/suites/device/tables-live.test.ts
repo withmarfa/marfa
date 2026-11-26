@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { BindingDevice } from "../../device/binding-adapter.js";
+import { BindingDevice, type Call } from "../../device/binding-adapter.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { HeldTables, Outcome } from "../../device/protocol.js";
 import {
@@ -16,6 +16,7 @@ import {
 } from "../../utils/moved-clock.js";
 import { clientsFor, everythingClient } from "../../utils/own-blob-server.js";
 import { tapStream } from "../../utils/stream-tap.js";
+import { untilHeld } from "./binding.shared.js";
 import { requireBinary, requireModule } from "./harness.js";
 
 /**
@@ -588,6 +589,58 @@ describe("how a device fills a table", () => {
     } finally {
       expect(await follow.stop()).toBeNull();
     }
+  });
+
+  it("waits out a table hold's fill rather than refuse a follow, a catch-up or a hydration that starts during it", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    await filled(item, 3);
+    const device = await hydratedBinding([type], "fill-waited");
+    const fillHeld = async (): Promise<Call<{ fill: unknown }>> => {
+      await device.hooks.hold("table-hold-filling");
+      const holding = device.call<{ fill: unknown }>(
+        "holdTable",
+        type,
+        "steps",
+      );
+      await untilHeld(device, "table-hold-filling");
+      return holding;
+    };
+    const fillEnds = async (
+      holding: Call<{ fill: unknown }>,
+    ): Promise<void> => {
+      await device.hooks.release("table-hold-filling");
+      expect(
+        value(await holding).fill,
+        "the hold left its fill to another",
+      ).not.toBeNull();
+    };
+
+    const followed = await fillHeld();
+    const follow = await device.follow();
+    try {
+      await fillEnds(followed);
+      const later = await itemOf(type);
+      await until(
+        () =>
+          follow.changes.some(
+            (change) => change.kind === "applied" && change.itemId === later,
+          ),
+        "the follow applying an event written after the fill",
+      );
+    } finally {
+      expect(await follow.stop()).toBeNull();
+    }
+
+    const caughtUp = await fillHeld();
+    const catchUp = device.catchUp();
+    await fillEnds(caughtUp);
+    value(await catchUp);
+
+    const rehydrated = await fillHeld();
+    const hydration = device.hydrate([type], "library");
+    await fillEnds(rehydrated);
+    value(await hydration);
   });
 
   it("fills every other table, and ends no catch-up or follow, while one table's page read keeps failing", async () => {
