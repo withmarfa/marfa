@@ -144,7 +144,20 @@ pub fn lay_waiting_writes_over(
         return Ok(());
     }
     let mut tags = item.tags.clone();
+    let mut own_edit_waits = false;
     for mut row in waiting {
+        // An exact update the server will refuse for the version it names
+        // shows nothing, unless this copy's own edit ahead of it may land on
+        // that version first (`queue-and-verdicts/laid-update-exact`).
+        if row.kind == WriteKind::UpdateItem
+            && row.base_version != Some(item.version)
+            && !own_edit_waits
+            && super::refused_when_moved(conn, &row.id)?
+        {
+            continue;
+        }
+        own_edit_waits |= row.verdict.is_none()
+            && matches!(row.kind, WriteKind::UpdateItem | WriteKind::CreateItem);
         let mut read = read_of(conn, &row.id)?
             .map(|read| serde_json::from_str::<Value>(&read))
             .transpose()?;

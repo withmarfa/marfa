@@ -64,7 +64,7 @@ const META_SET_ASIDE_MAKING: &str = "set_aside_making";
 const META_KEEPS: &str = "set_aside_keeps/";
 
 // Unread records block only the write kinds whose sending they govern.
-const BY_WRITE: [(&str, &[WriteKind]); 8] = [
+const BY_WRITE: [(&str, &[WriteKind]); 9] = [
     ("chosen_tier/", &[WriteKind::CreateItem]),
     ("cleared_time/", &[WriteKind::CreateItem]),
     ("dead_effect/", &[]),
@@ -73,6 +73,7 @@ const BY_WRITE: [(&str, &[WriteKind]); 8] = [
     ("sent_source/", &[WriteKind::CreateItem]),
     ("sent_at_version/", VERSION_NAMED),
     ("resent_at_version/", VERSION_NAMED),
+    ("refused_when_moved/", &[]),
 ];
 
 /// The kinds a send under another credential guards with a version.

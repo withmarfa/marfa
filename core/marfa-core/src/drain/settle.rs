@@ -45,6 +45,10 @@ pub(super) fn move_edits_behind(
     let version = at.version;
     let landed = matches!(verdict, Verdict::Accepted | Verdict::Merged);
     for (id, base) in store::edits_behind(conn, row, subject)? {
+        // An exact edit moves only onto the version the write ahead made from
+        // what the edit read, never onto one merged with another writer's
+        // (`queue-and-verdicts/exact-update-behind-own`).
+        let exact = store::refused_when_moved(conn, &id)?;
         let to = match row.kind {
             WriteKind::CreateItem | WriteKind::CreateEdge => {
                 if base != Some(0) {
@@ -58,14 +62,14 @@ pub(super) fn move_edits_behind(
                     _ if let Some(made) = at.made
                         && version > made =>
                     {
-                        if holds(conn, &id, at)? {
+                        if !exact && holds(conn, &id, at)? {
                             version
                         } else {
                             made
                         }
                     }
                     Some(created_on) if created_on > 0 && version > created_on + 1 => {
-                        if holds(conn, &id, at)? {
+                        if !exact && holds(conn, &id, at)? {
                             version
                         } else {
                             created_on
@@ -91,7 +95,7 @@ pub(super) fn move_edits_behind(
                     && if row.kind == WriteKind::UpdateEdge {
                         base == Some(version - 1)
                     } else {
-                        holds(conn, &id, at)?
+                        (!exact || base == Some(version - 1)) && holds(conn, &id, at)?
                     };
                 if onto {
                     version
@@ -181,7 +185,9 @@ fn back_to(
     let Some(ahead) = row.base_version else {
         return Ok(None);
     };
-    if base.is_none_or(|base| base <= ahead) {
+    // On an earlier base an exact edit is only refused, and on its own the
+    // server holds nothing the edit did not read.
+    if base.is_none_or(|base| base <= ahead) || store::refused_when_moved(conn, id)? {
         return Ok(None);
     }
     let carried = |id: &str| -> Result<Vec<String>> {

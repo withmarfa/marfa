@@ -666,6 +666,9 @@ export interface Edit {
   /** The version is one read before the version the copy holds, and the
    *  server merges the edit against it (`queue-and-verdicts/as-read-sent-on-read`). */
   asRead?: boolean;
+  /** The server refuses the edit, merging nothing, where the item has moved
+   *  past `version` (`queue-and-verdicts/exact-update-sent`). */
+  exact?: boolean;
   /** The type to move the item to; sent as a retype. */
   type?: string;
   /** The tier to move the item to. */

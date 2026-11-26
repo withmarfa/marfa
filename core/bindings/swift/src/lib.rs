@@ -1091,6 +1091,13 @@ pub struct Edit {
     /// Refused beside `occurred_at`.
     #[uniffi(default = false)]
     pub clear_occurred_at: bool,
+    /// The server refuses the change, merging none of it, where the item has
+    /// moved past `base_version`: the queued write is refused with the reason
+    /// `version_conflict`, and the copy shows the item as the server holds
+    /// it. A `base_version` older than the copy holds throws `Validation`
+    /// with `version_conflict` and queues nothing.
+    #[uniffi(default = false)]
+    pub exact: bool,
 }
 
 impl Edit {
@@ -1105,6 +1112,7 @@ impl Edit {
             clear_occurred_at: self.clear_occurred_at,
             replace_properties: self.replace_properties,
             clear_properties: self.clear_properties,
+            exact: self.exact,
         })
     }
 }
@@ -4638,6 +4646,7 @@ mod tests {
                 clear_properties: Vec::new(),
                 r#type: None,
                 tier: None,
+                exact: false,
             },
         )
         .unwrap();
@@ -5560,6 +5569,7 @@ mod tests {
             source_id: None,
             r#type: None,
             tier: None,
+            exact: false,
         }
     }
 
@@ -6088,6 +6098,39 @@ mod tests {
             text(&core.get(id).unwrap().unwrap().properties),
             r#"{"title":"U"}"#
         );
+    }
+
+    #[test]
+    fn an_exact_edit_asks_the_server_to_refuse_it_where_the_item_has_moved() {
+        let (_dir, _path, core) = copy_with_entries();
+        for exact in [false, true] {
+            let id = core
+                .create_item(draft("app.test.entry", r#"{"title":"t"}"#))
+                .unwrap()
+                .item_id
+                .unwrap();
+            let version = core.get(id.clone()).unwrap().unwrap().version;
+            let queued = core
+                .update_item(
+                    id,
+                    Edit {
+                        exact,
+                        ..edit(r#"{"title":"T"}"#, version)
+                    },
+                )
+                .unwrap();
+            let named = queued
+                .body
+                .members
+                .iter()
+                .find(|m| m.key == "version_match")
+                .map(|m| &m.value);
+            assert_eq!(
+                named,
+                exact.then(|| JsonValue::String("exact".into())).as_ref(),
+                "exact {exact}"
+            );
+        }
     }
 
     #[test]

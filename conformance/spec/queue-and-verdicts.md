@@ -692,7 +692,7 @@ If a caller queues an update that names no version, then a device MUST refuse it
 
 ### `queue-and-verdicts/update-version-held`
 
-If a caller queues an update naming a version other than the one the copy holds, and does not say it was read, then a device MUST refuse it `invalid`, queueing nothing.
+If a caller queues an update naming a version other than the one the copy holds, and does not say it was read, then a device MUST refuse it `invalid`, queueing nothing, unless it is queued exact on an earlier version (`queue-and-verdicts/exact-update-held`).
 
 **Reason:** nothing then tells a version read from a guess. An update said to be read follows `queue-and-verdicts/as-read-sent-on-read`.
 
@@ -1754,7 +1754,7 @@ When the server answers a write `409 ancestor_unavailable`, a device MUST block 
 
 ### `queue-and-verdicts/conflict-blocks`
 
-When the server answers a write `409 version_conflict`, a device MUST block it `conflict_unresolved`, unless it is a create carrying a natural key whose answer names another item.
+When the server answers a write `409 version_conflict`, a device MUST block it `conflict_unresolved`, unless it is a create carrying a natural key whose answer names another item or an update queued exact (`queue-and-verdicts/exact-update-refused`).
 
 **Reason:** the server resolves a colliding update in the same write (`versions/auto-resolved`) but for one that also moves the type (`versions/auto-type-move`), and refuses a delete of an item that has moved; a device cannot resolve it itself and the same request is refused the same way. A delete blocked so keeps the newer item intact.
 
@@ -2302,7 +2302,7 @@ When this device's create of an item or an edge is answered, a device MUST send 
 
 ### `queue-and-verdicts/create-merged-over`
 
-When a create carrying a version above 0 is answered more than one version past it, and not as a repeat, a device MUST send each later unsent edit of the item based on version 0 on the version the create carried, unless the answer holds, for every property the edit changed, what the copy held when the edit was made.
+When a create carrying a version above 0 is answered more than one version past it, and not as a repeat, a device MUST send each later unsent edit of the item based on version 0 on the version the create carried, unless the edit is not queued exact and the answer holds, for every property the edit changed, what the copy held when the edit was made.
 
 **Reason:** the server merged the create over another device's write (`versions/create-stale-merges`), which an edit made from the copy never read; on the version the create read, the server merges or conflicts on the edit as the type's policy says.
 
@@ -2310,7 +2310,7 @@ When a create carrying a version above 0 is answered more than one version past 
 
 ### `queue-and-verdicts/create-merged-over-apart`
 
-When a create carrying a version above 0 is answered more than one version past it, and not as a repeat, with an answer holding, for every property a later unsent edit based on version 0 changed, what the copy held when the edit was made, a device MUST send that edit on the version of the answer.
+When a create carrying a version above 0 is answered more than one version past it, and not as a repeat, with an answer holding, for every property a later unsent edit based on version 0 and not queued exact changed, what the copy held when the edit was made, a device MUST send that edit on the version of the answer.
 
 **Reason:** there it changes what the person changed, and the other device's write stands.
 
@@ -2334,7 +2334,7 @@ When a device gives this device's create naming its id the verdict `accepted` un
 
 ### `queue-and-verdicts/page-create-edit-rebased`
 
-When a create a page made is settled on a read that finds the item or edge past version 1, a device MUST send each later unsent edit of it based on version 0 on version 1, unless the read finds an item holding, for every property the edit changed, what the copy held when the edit was made.
+When a create a page made is settled on a read that finds the item or edge past version 1, a device MUST send each later unsent edit of it based on version 0 on version 1, unless the edit is not queued exact and the read finds an item holding, for every property the edit changed, what the copy held when the edit was made.
 
 **Reason:** a page create makes version 1, and the read that settles it can come a drain later (`queue-and-verdicts/page-read-back-failed`), after another device has written the item or edge; on version 1 the server merges or conflicts on the edit as the type's policy says, rather than taking it over a write it never read.
 
@@ -2342,7 +2342,7 @@ When a create a page made is settled on a read that finds the item or edge past 
 
 ### `queue-and-verdicts/edit-on-answer`
 
-When this device's edit of an item is answered `accepted` or `merged` at version N, a device MUST send each later unsent edit of the item based on an earlier version than N on N, where N holds, for every property the later edit changed, what the copy held when the later edit was made.
+When this device's edit of an item is answered `accepted` or `merged` at version N, a device MUST send each later unsent edit of the item based on an earlier version than N on N, where N holds, for every property the later edit changed, what the copy held when the later edit was made, but where `queue-and-verdicts/exact-update-behind-own` says otherwise.
 
 **Reason:** the item at N is then exactly what the later edit was made against: the version it read with the earlier edit laid over it. The version is the one the earlier edit was answered with, not the one the server holds when the later edit goes, so a change another device makes between the two sends is merged or conflicted as N says.
 
@@ -2398,7 +2398,7 @@ When an earlier edit of an item or an edge is answered `conflicted` or `refused`
 
 ### `queue-and-verdicts/edit-back-to-base`
 
-When an earlier edit of an item or an edge is answered, blocked for a reason other than `credential_refused`, or made `dead`, and a later unsent edit that carries a property the earlier one carries is based on a later version than the earlier one and is not sent on the answer, a device MUST send the later edit on the earlier edit's version.
+When an earlier edit of an item or an edge is answered, blocked for a reason other than `credential_refused`, or made `dead`, and a later unsent edit not queued exact that carries a property the earlier one carries is based on a later version than the earlier one and is not sent on the answer, a device MUST send the later edit on the earlier edit's version.
 
 **Reason:** the later edit was made, for every property the earlier one carries, against that edit's value laid over the copy, not the server's, so on its own base the server would take the earlier value it carries as newer than the item's and apply it without a word; on the earlier base the server merges or conflicts on it.
 
@@ -2418,7 +2418,7 @@ An editor holding an item while the copy takes in another device's write has wha
 
 ### `queue-and-verdicts/as-read-sent-on-read`
 
-When a caller queues an update said to be read at a version above 0 and earlier than the one the copy holds, a device MUST send it on the version it was read at, but where `queue-and-verdicts/edit-back-to-base` sends it on an earlier one.
+When a caller queues an update said to be read at a version above 0 and earlier than the one the copy holds, a device MUST send it on the version it was read at, but where `queue-and-verdicts/edit-back-to-base` sends it on an earlier one or `queue-and-verdicts/exact-update-held` refuses it.
 
 **Reason:** the server then merges it against that version (`versions/merge-stale`): a property only this edit changed lands, one only the other write changed stands, and one both changed goes as its merge policy says.
 
@@ -2461,6 +2461,58 @@ When the write ahead of an update said to be read at an earlier version is answe
 **Reason:** moved, it would be taken as made against content it never read.
 
 **Tests:** `device/queue.test.ts › never moves an edit said to be read onto the answer to an edit ahead of it`.
+
+## An edit refused where the item has moved
+
+A caller queues an update exact when its person decided on the item as the copy showed it, such as a move to the feed, and a merge onto what another writer made since would act on something they never saw.
+
+### `queue-and-verdicts/exact-update-sent`
+
+When a caller queues an update exact, a device MUST carry `version_match: exact` in the write, beside the version it is based on, so that every send of the write names both.
+
+**Reason:** the server then refuses the update `409 version_conflict`, merging none of it, once the item has moved past that version, `conflict=auto` included (`versions/exact-match`).
+
+**Tests:** `device/update-exact-live.test.ts › refuses a queued move to the feed once another device has edited the item, which keeps that device's change`, `› lands a queued exact edit where nothing moved the item but this copy's own edit ahead of it`.
+
+### `queue-and-verdicts/exact-update-refused`
+
+When the server answers an update queued exact `409 version_conflict`, a device MUST give the write the verdict `refused` with the reason `version_conflict`.
+
+**Reason:** blocked, the update would stay laid over the copy, and released, it would meet the same refusal. The answer the write keeps carries the item as the server holds it (`versions/exact-envelope`).
+
+**Tests:** `device/update-exact-live.test.ts › refuses a queued move to the feed once another device has edited the item, which keeps that device's change`.
+
+### `queue-and-verdicts/exact-update-shows-server`
+
+When the server answers an update queued exact `409 version_conflict` and a read-back of the item succeeds, a device MUST show the item as that read-back holds it.
+
+**Reason:** a refusal produces no event, so only a read-back tells the copy what the other writer made. Until one succeeds, the copy keeps what it showed (`queue-and-verdicts/refused-read-fails`), and a later drain reads the item again.
+
+**Tests:** `device/update-exact-live.test.ts › refuses a queued move to the feed once another device has edited the item, which keeps that device's change`.
+
+### `queue-and-verdicts/exact-update-held`
+
+If a caller queues an update exact on a version earlier than the one the copy holds, then a device MUST refuse it `version_conflict`, queueing nothing.
+
+**Reason:** the copy has already heard of the change the server would refuse it for, so the person can be told before the update is queued. A version the copy has not reached is `queue-and-verdicts/as-read-bounds`.
+
+**Tests:** `device/update-exact-live.test.ts › refuses, queueing nothing, an exact edit on a version older than the copy holds`.
+
+### `queue-and-verdicts/laid-update-exact`
+
+When a device lays a waiting update queued exact over a version of the item other than the one it is based on, with no create or update of the item from this device ahead of it that the server has yet to answer, a device MUST NOT change the item.
+
+**Reason:** the server will refuse it there, and a copy that showed it would show the person a change that does not land over what the other writer made.
+
+**Tests:** `device/update-exact-live.test.ts › shows the server's item beneath a waiting exact edit the item has moved past`.
+
+### `queue-and-verdicts/exact-update-behind-own`
+
+When this device's edit of an item is answered `accepted` or `merged` at version N, a device MUST NOT send a later unsent update of the item queued exact on N unless that update is based on N − 1.
+
+**Reason:** N one past what the person saw holds only this device's own edit, while a later N holds another writer's change too, which the server merged and the person never saw.
+
+**Tests:** `device/update-exact-live.test.ts › refuses a queued exact edit behind this copy's own edit that the server merged with another writer's change`, `› lands a queued exact edit where nothing moved the item but this copy's own edit ahead of it`.
 
 ## An edit that sends its properties whole
 

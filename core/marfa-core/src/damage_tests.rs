@@ -959,6 +959,21 @@ fn a_carried_write_whose_guarding_record_does_not_read_is_held() {
 }
 
 #[test]
+fn a_carried_update_stays_one_a_moved_item_refuses() {
+    let (_dir, path, queued) = store_with(2);
+    {
+        let conn = Connection::open(&path).unwrap();
+        store::refuse_when_moved(&conn, &queued[0].id).unwrap();
+    }
+    damage_table(&path, "items");
+    assert_eq!(set_aside(&path).carried, 2);
+    let core = Core::open(&path, None).unwrap();
+    let conn = core.conn().unwrap();
+    assert!(store::refused_when_moved(&conn, &queued[0].id).unwrap());
+    assert!(!store::refused_when_moved(&conn, &queued[1].id).unwrap());
+}
+
+#[test]
 fn a_create_whose_chosen_tier_does_not_read_is_held_and_the_rest_wait_for_the_instance() {
     let (_dir, path, queued) = store_with(2);
     {

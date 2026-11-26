@@ -666,6 +666,12 @@ pub struct Edit {
     /// it, those this copy cannot read included. Refused where a name is
     /// also in `properties`.
     pub clear_properties: Vec<String>,
+    /// Sent with `version_match: exact`, so the server refuses the edit
+    /// `version_conflict`, merging nothing, once the item has moved past the
+    /// version the copy held when it was queued. `base_version` names that
+    /// version; one earlier is refused `version_conflict` before anything is
+    /// queued.
+    pub exact: bool,
 }
 
 impl Edit {

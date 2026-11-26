@@ -233,6 +233,18 @@ pub(crate) fn forget_read_revision(conn: &Connection, id: &str) -> Result<(), Co
     super::meta::meta_delete(conn, &format!("{READ_REVISION}{id}"))
 }
 
+pub(super) const REFUSED_WHEN_MOVED: &str = "refused_when_moved/";
+
+/// Marks the update `id` a caller queued exact, which a `version_conflict`
+/// refuses rather than blocks.
+pub(crate) fn refuse_when_moved(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    meta_set(conn, &format!("{REFUSED_WHEN_MOVED}{id}"), "1")
+}
+
+pub(crate) fn refused_when_moved(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, &format!("{REFUSED_WHEN_MOVED}{id}"))?.is_some())
+}
+
 fn version_at(conn: &Connection, key: &str) -> Result<Option<i64>, CoreError> {
     meta_get(conn, key)?
         .map(|version| {
@@ -253,6 +265,7 @@ pub(super) fn forget_write_state(conn: &Connection, id: &str) -> Result<(), Core
         format!("{SENT_AT_VERSION}{id}"),
         format!("{RESENT_AT_VERSION}{id}"),
         format!("{READ_REVISION}{id}"),
+        format!("{REFUSED_WHEN_MOVED}{id}"),
     ] {
         super::meta::meta_delete(conn, &key)?;
     }

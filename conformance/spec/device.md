@@ -1792,7 +1792,7 @@ When the server answers a write to an item, a device MUST hold the item at the v
 
 ### `device/conflict-blocked`
 
-If the server refuses a write `409 version_conflict`, then a device MUST report the write `blocked` with the reason `conflict_unresolved`, keeping the server's envelope, unless the write is a create carrying a natural key whose answer names another item (`queue-and-verdicts/landed-refused`).
+If the server refuses a write `409 version_conflict`, then a device MUST report the write `blocked` with the reason `conflict_unresolved`, keeping the server's envelope, unless the write is a create carrying a natural key whose answer names another item (`queue-and-verdicts/landed-refused`) or an update queued exact (`queue-and-verdicts/exact-update-refused`).
 
 **Tests:** `device/verdicts.test.ts › reports a conflict rather than resolving it`, `device/local-refusals.test.ts › refuses to resolve a conflict it was refused`, `device/queue.test.ts › refuses a create whose natural key names an item, and moves the copy onto that item`.
 
@@ -1806,7 +1806,7 @@ If the server refuses a write `409 version_conflict`, then a device MUST send no
 
 ### `device/conflict-version-kept`
 
-If the server refuses a write `409 version_conflict`, then a device MUST keep the item at the version it held, unless the write is a create carrying a natural key whose answer names another item (`queue-and-verdicts/landed-refused`).
+If the server refuses a write `409 version_conflict`, then a device MUST keep the item at the version it held, unless the write is a create carrying a natural key whose answer names another item (`queue-and-verdicts/landed-refused`) or an update queued exact (`queue-and-verdicts/exact-update-shows-server`).
 
 **Tests:** `device/local-refusals.test.ts › refuses to resolve a conflict it was refused`, `device/verdicts.test.ts › reports a conflict rather than resolving it`, `device/queue.test.ts › refuses a create whose natural key names an item, and moves the copy onto that item`.
 

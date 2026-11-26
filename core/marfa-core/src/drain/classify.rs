@@ -415,6 +415,26 @@ pub(super) fn refine(
     }
 }
 
+/// An update a caller queued exact is refused once the item has moved:
+/// blocking it would keep its change laid over the server's, and releasing it
+/// would meet the same refusal (`queue-and-verdicts/exact-update-refused`).
+pub(super) fn refused_when_moved(
+    conn: &rusqlite::Connection,
+    row: &QueuedWrite,
+    class: Classified,
+) -> Result<Classified> {
+    Ok(
+        if row.kind == WriteKind::UpdateItem
+            && class == Classified::Block(BlockedReason::ConflictUnresolved)
+            && store::refused_when_moved(conn, &row.id)?
+        {
+            Classified::Contract
+        } else {
+            class
+        },
+    )
+}
+
 /// A guarded extension write sent again after its answer was lost meets the
 /// revision its own first send made. Where the namespace now holds what the
 /// write leaves, the first send took.

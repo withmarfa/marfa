@@ -476,3 +476,111 @@ fn only_the_waiting_unsent_edits_queued_after_it_are_behind_it() {
         "the edits behind named one queued before the answered one, one already sent, one refused by the drain, or one of another row"
     );
 }
+
+/// An exact edit and, as its witness, the same edit not queued exact, each
+/// read as holding what the answer holds.
+fn exact_and_not(
+    conn: &rusqlite::Connection,
+    base: i64,
+    depends_on: &[String],
+) -> (QueuedWrite, QueuedWrite) {
+    let body = json!({ "version": base, "properties": { "body": "mine" } }).to_string();
+    let queue = || {
+        let edit = store::enqueue(
+            conn,
+            &store::NewWrite {
+                payload: &body,
+                ..write(WriteKind::UpdateItem, "mine", None, Some(base), depends_on)
+            },
+        )
+        .unwrap();
+        store::record_read(conn, &edit.id, &json!({ "properties": { "body": "mine" } })).unwrap();
+        edit
+    };
+    let exact = queue();
+    store::refuse_when_moved(conn, &exact.id).unwrap();
+    (exact, queue())
+}
+
+#[test]
+fn an_exact_edit_moves_only_onto_the_version_its_own_edit_ahead_made_from_its_base() {
+    let answered = |version| {
+        let mut item = store::testing::note("mine", "title", "body", "2026-01-01T00:00:00Z");
+        item.version = version;
+        item
+    };
+    for (verdict, acknowledged, version, moved) in [
+        (Verdict::Accepted, false, 4, true),
+        (Verdict::Merged, false, 4, true),
+        (Verdict::Merged, false, 5, false),
+        (Verdict::Accepted, true, 3, false),
+    ] {
+        let conn = store::testing::conn();
+        let ahead = store::enqueue(
+            &conn,
+            &write(WriteKind::UpdateItem, "mine", None, Some(3), &[]),
+        )
+        .unwrap();
+        let (exact, witness) = exact_and_not(&conn, 3, &[]);
+        let item = answered(version);
+        let at = AnsweredAt {
+            version,
+            item: Some(&item),
+            made: None,
+        };
+        move_edits_behind(&conn, &ahead, verdict, acknowledged, "mine", &at).unwrap();
+        let case = format!("{verdict:?} at {version}, acknowledged {acknowledged}");
+        let expected = if moved {
+            (Some(4), Some(4))
+        } else {
+            (Some(3), Some(3))
+        };
+        assert_eq!(based_on(&conn, &exact.id), expected, "{case}");
+        if version > 3 {
+            assert_eq!(
+                based_on(&conn, &witness.id),
+                (Some(version), Some(version)),
+                "{case}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_exact_edit_behind_its_own_create_moves_onto_the_version_the_create_made() {
+    let conn = store::testing::conn();
+    let create = store::enqueue(
+        &conn,
+        &write(WriteKind::CreateItem, "mine", None, None, &[]),
+    )
+    .unwrap();
+    let (exact, witness) = exact_and_not(&conn, 0, std::slice::from_ref(&create.id));
+    let mut item = store::testing::note("mine", "title", "body", "2026-01-01T00:00:00Z");
+    item.version = 5;
+    let at = AnsweredAt {
+        version: 5,
+        item: Some(&item),
+        made: Some(1),
+    };
+    move_edits_behind(&conn, &create, Verdict::Accepted, false, "mine", &at).unwrap();
+    assert_eq!(based_on(&conn, &exact.id), (Some(1), Some(1)));
+    assert_eq!(based_on(&conn, &witness.id), (Some(5), Some(5)));
+}
+
+#[test]
+fn an_exact_edit_does_not_go_back_onto_the_base_of_one_that_did_not_land() {
+    let conn = store::testing::conn();
+    let body = json!({ "version": 3, "properties": { "body": "first" } }).to_string();
+    let ahead = store::enqueue(
+        &conn,
+        &store::NewWrite {
+            payload: &body,
+            ..write(WriteKind::UpdateItem, "mine", None, Some(3), &[])
+        },
+    )
+    .unwrap();
+    let (exact, witness) = exact_and_not(&conn, 4, &[]);
+    move_edits_back(&conn, &ahead).unwrap();
+    assert_eq!(based_on(&conn, &exact.id), (Some(4), Some(4)));
+    assert_eq!(based_on(&conn, &witness.id), (Some(3), Some(3)));
+}

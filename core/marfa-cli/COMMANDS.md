@@ -3799,6 +3799,7 @@ marfa device items update [OPTIONS] <ID>
 | `--version <VERSION>` | The version the edit was based on. Required: the device refuses an update that names no version, as the server does. |
 | `--source-id <KEY>` | The natural key to move the item to. The server refuses one another item already holds, so a rename does not take a name off a note. |
 | `--as-read` | The version is one read before the version the copy holds now, and the server merges the edit against it rather than taking it as newer than what came in since. |
+| `--exact` | The server refuses the edit with `version_conflict`, merging nothing, if the item has moved past the version since. An earlier version than the copy holds is refused before anything is queued. |
 | `--type <TYPE>` | The type to move the item to. The server holds its properties to the type it enters. |
 | `--tier <TIER>` | The tier to move the item to. One of `library`, `feed`. |
 | `--replace` | The properties are the item's whole properties: one they leave out is cleared rather than kept. Requires `--properties`. |

@@ -1029,6 +1029,11 @@ pub struct UpdateArgs {
     /// than what came in since.
     #[arg(long)]
     pub as_read: bool,
+    /// The server refuses the edit with `version_conflict`, merging nothing,
+    /// if the item has moved past the version since. An earlier version than
+    /// the copy holds is refused before anything is queued.
+    #[arg(long)]
+    pub exact: bool,
     /// The type to move the item to. The server holds its properties to the
     /// type it enters.
     #[arg(long = "type", value_name = "TYPE")]
@@ -1710,6 +1715,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                         clear_occurred_at: args.clear_occurred_at,
                         replace_properties: args.replace,
                         clear_properties: args.clear_properties,
+                        exact: args.exact,
                     };
                     let queued = if args.as_read {
                         core.update_item_as_read(&args.id, &edit)?

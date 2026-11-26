@@ -10,7 +10,8 @@ use super::address::{
 use super::classify::{
     Classified, ENVIRONMENTAL_STREAK, Phase, Role, STREAK_FLOOR_MILLIS, Standing, Suspect,
     block_failing_alone, classify, failure_of, held_to_most, leave_waiting, limiting, next_test,
-    not_the_writes, put_verdict, rate_limited, refine, set_aside, tell, unconfirmed,
+    not_the_writes, put_verdict, rate_limited, refine, refused_when_moved, set_aside, tell,
+    unconfirmed,
 };
 use super::read_back::{ReachChange, read_owed_backs, reconcile};
 use super::report::DrainReport;
@@ -767,7 +768,8 @@ pub(super) fn send_queue(
         let class = if taken_as_applied {
             Classified::Success
         } else {
-            refine(row, &payload, &answer, classify(&answer), resent)
+            let class = refine(row, &payload, &answer, classify(&answer), resent);
+            refused_when_moved(&*core.conn()?, row, class)?
         };
         let environmental = class == Classified::Environmental;
         let landed = matches!(class, Classified::Landed { .. } | Classified::Delivered);

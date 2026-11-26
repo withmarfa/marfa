@@ -382,6 +382,8 @@ pub(crate) enum Based {
     AsRead,
     /// The held version, which the server refuses `version_conflict` once
     /// the row has moved past it, rather than merging over another writer.
+    /// The write is then blocked `conflict_unresolved` for the folder to
+    /// withdraw; a caller's `Edit::exact` is refused instead.
     Exact,
 }
 
@@ -515,9 +517,26 @@ pub(crate) fn queue_update(
         base
     };
     let behind_own_create = own_create && base == 0 && store::own_create_untaken(tx, id)?;
-    let read_earlier =
-        based == Based::AsRead && (base > 0 || behind_own_create) && base <= held.version;
-    if base != held.version && !read_earlier {
+    // The copy already holds a later version, so the server would refuse it.
+    if edit.exact && base < held.version && !behind_own_create {
+        return Err(CoreError::Validation {
+            server: None,
+            code: "version_conflict".into(),
+            message: format!(
+                "{id} is at version {} in this working copy, not {base}",
+                held.version
+            ),
+            details: Some(Box::new(serde_json::json!({
+                "expected": base,
+                "actual": held.version,
+            }))),
+        });
+    }
+    let read_earlier = based == Based::AsRead
+        && !edit.exact
+        && (base > 0 || behind_own_create)
+        && base <= held.version;
+    if base != held.version && !read_earlier && !(edit.exact && behind_own_create) {
         return Err(CoreError::Invalid(format!(
             "the update to {id} is based on version {base} and this copy holds version {}; read it again",
             held.version
@@ -544,7 +563,7 @@ pub(crate) fn queue_update(
         });
     }
     let mut payload = edit.payload(base)?;
-    if based == Based::Exact {
+    if based == Based::Exact || edit.exact {
         let mut body: Value = serde_json::from_str(&payload)?;
         if let Some(body) = body.as_object_mut() {
             body.insert("version_match".into(), Value::String("exact".into()));
@@ -670,6 +689,9 @@ pub(crate) fn queue_update(
     )?;
     if let Some(read) = &read {
         store::record_read(tx, &queued.id, read)?;
+    }
+    if edit.exact {
+        store::refuse_when_moved(tx, &queued.id)?;
     }
     Ok(queued)
 }

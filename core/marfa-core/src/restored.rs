@@ -968,6 +968,7 @@ fn keep_update(
         clear_occurred_at: false,
         replace_properties: true,
         clear_properties: Vec::new(),
+        exact: false,
     };
     let changed = edit.properties != server.properties
         || edit.source_id.is_some()
