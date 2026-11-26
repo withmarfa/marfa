@@ -285,9 +285,10 @@ pub enum FoldersCommand {
     ///
     /// A watch can hand a folder over while the command runs. If a folder
     /// cannot be read or claimed, is no longer listed at its path, or its
-    /// store has changed or moved since the preview, or the registry lists the
-    /// directory or something stands there by then, the command names the
-    /// folder in `not_changed` and exits 3.
+    /// store has changed or moved since the preview, or the registry listed
+    /// the directory at the preview or lists it by then, or something stands
+    /// there by then, the command names the folder in `not_changed` and exits
+    /// 3. It releases only the held files the preview showed it would.
     ///
     /// With `--json`, the result has `dir`, `listed` (whether the registry
     /// lists the directory, read again as the folders are changed), `folders`
@@ -295,9 +296,11 @@ pub enum FoldersCommand {
     /// `item`, `missing_since`, `reason` and `still_waits_on`, the other
     /// directories that keep it held, empty where the forget releases it),
     /// `not_read`, `alike` (remembered directories that differ only in case),
-    /// `declined`, `forgotten` (each with `dir`, `folder`, `released` and
-    /// `still_held`, each with `path` and `still_waits_on`) and
-    /// `not_changed`.
+    /// `declined`, `forgotten` (each with `dir`, `folder`, `released`,
+    /// `still_held`, each with `path` and `still_waits_on`, and
+    /// `not_released`, held files shown as staying held that wait on nothing
+    /// else by now, which stay held for another `folders forget` or
+    /// `folders held`) and `not_changed`.
     Forget {
         /// The directory the folders remember.
         dir: PathBuf,
@@ -1208,6 +1211,17 @@ fn forget_remembered(dir: &Path, yes: bool, json: bool) -> Result<bool, CliError
                             done.still_held
                                 .iter()
                                 .map(|held| still_waiting(&held.path, &held.still_waits_on, "  ")),
+                        );
+                    }
+                    if !done.not_released.is_empty() {
+                        lines.push(format!(
+                            "{} keeps these held deletions, which were shown as staying held and now wait on nothing else; run `folders forget` again or settle them with `folders held`:",
+                            shown_path(&done.dir)
+                        ));
+                        lines.extend(
+                            done.not_released
+                                .iter()
+                                .map(|path| format!("  {}", printable(path))),
                         );
                     }
                 }

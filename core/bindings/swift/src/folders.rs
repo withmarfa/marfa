@@ -527,6 +527,9 @@ pub struct ForgottenIn {
     pub released: Vec<String>,
     /// Its held files that waited on the directory and still wait on others.
     pub still_held: Vec<StillHeldFile>,
+    /// Held files shown as staying held that wait on nothing else by now;
+    /// they stay held.
+    pub not_released: Vec<String>,
 }
 
 /// A held file that still waits on other directories after a forget.
@@ -867,6 +870,7 @@ guarded! {
                                 still_waits_on: displayed(held.still_waits_on),
                             })
                             .collect(),
+                        not_released: done.not_released,
                     })
                     .collect(),
                 not_changed: done.not_changed.into_iter().map(folder_left).collect(),

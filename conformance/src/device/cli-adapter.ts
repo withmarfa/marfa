@@ -1772,6 +1772,7 @@ export interface ForgetReport {
     folder: string;
     released: string[];
     still_held: Array<{ path: string; still_waits_on: string[] }>;
+    not_released: string[];
   }>;
   not_changed: FolderLeft[];
   exit: number;

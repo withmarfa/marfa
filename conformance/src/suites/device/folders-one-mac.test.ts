@@ -4877,7 +4877,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     }
   });
 
-  it("keeps a delete held on another gone folder when the person forgets one of the two it waits on, and sends it once both are forgotten", async () => {
+  it("keeps a delete held on another gone folder when the person forgets one of the two it waits on, releases none a preview showed as staying held, and sends it once both are forgotten", async () => {
     let more: FolderItem | undefined;
     const held = "01a00000-0000-7000-8000-0000000035f2";
     const { a, b } = await onOneMac(
@@ -4942,16 +4942,50 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       `would keep 1 held deletion(s), which still wait on other folders:\n    Held.md (still waits on ${second})`,
     );
 
-    const narrowed = await a.folder.forget(first, { yes: true });
-    expect(narrowed.ok, JSON.stringify(narrowed)).toBe(true);
-    if (!narrowed.ok) return;
-    expect(narrowed.value.exit).toBe(0);
-    expect(
-      narrowed.value.forgotten.map((folder) => [
-        folder.released,
-        folder.still_held,
-      ]),
-    ).toEqual([[[], [{ path: "Held.md", still_waits_on: [second] }]]]);
+    const bound = await openBindingFolder(a);
+    try {
+      // Shown as staying held on the first, before the first is forgotten.
+      const staying = await bound.device.remembering(second);
+      expect(staying.ok, JSON.stringify(staying)).toBe(true);
+      if (!staying.ok) return;
+      expect(
+        staying.value.folders.flatMap((folder) =>
+          folder.held.map((file) => [file.path, file.stillWaitsOn]),
+        ),
+      ).toEqual([["Held.md", [first]]]);
+
+      const narrowed = await a.folder.forget(first, { yes: true });
+      expect(narrowed.ok, JSON.stringify(narrowed)).toBe(true);
+      if (!narrowed.ok) return;
+      expect(narrowed.value.exit).toBe(0);
+      expect(
+        narrowed.value.forgotten.map((folder) => [
+          folder.released,
+          folder.still_held,
+        ]),
+      ).toEqual([[[], [{ path: "Held.md", still_waits_on: [second] }]]]);
+      const reasons = await a.folder.held();
+      expect(reasons.ok, JSON.stringify(reasons)).toBe(true);
+      if (!reasons.ok) return;
+      const reason = reasons.value.held[0]?.reason ?? "";
+      expect(reason).toContain(second);
+      expect(reason).not.toContain(first);
+      expect(reason).not.toContain("2 other folders");
+      expect(reason).toContain("`folders forget`");
+
+      const confirmed = await bound.device.forgetRemembered(staying.value);
+      expect(confirmed.ok, JSON.stringify(confirmed)).toBe(true);
+      if (!confirmed.ok) return;
+      expect(
+        confirmed.value.forgotten.map((folder) => [
+          folder.released,
+          folder.notReleased,
+        ]),
+        "a delete shown as staying held was released",
+      ).toEqual([[[], ["Held.md"]]]);
+    } finally {
+      await bound.device.close();
+    }
     expect(await heldIn(a)).toEqual(["Held.md"]);
     const kept = await a.folder.push();
     expect(
@@ -4982,8 +5016,14 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       "01a00000-0000-7000-8000-0000000035e5",
       held,
     ]);
-    // Still listed, its volume is not mounted.
     const there = realpathSync(b.dir);
+    // Listed and mounted, its own files stand there.
+    const mounted = await a.folder.forget(there, { yes: true });
+    expect(mounted.ok, JSON.stringify(mounted)).toBe(true);
+    if (!mounted.ok) return;
+    expect([mounted.value.listed, mounted.value.exit]).toEqual([true, 3]);
+    expect(mounted.value.forgotten).toEqual([]);
+    // Still listed, its volume is not mounted.
     rmSync(b.dir, { recursive: true });
     await deletedByHand(a);
     const kept = await a.folder.push();
@@ -5014,8 +5054,27 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, held)).toBe(0);
     await heldUnsure(a);
 
-    // As the hold and the refusal advise: remove it, then forget it.
-    expect((await b.folder.remove()).ok).toBe(true);
+    // Removed after a preview that read it listed, nothing is changed, and
+    // the answer is the registry as the folder was changed.
+    const self = realpathSync(a.dir);
+    const bound = await openBindingFolder(a);
+    try {
+      const shown = await bound.device.remembering(there);
+      expect(shown.ok, JSON.stringify(shown)).toBe(true);
+      if (!shown.ok) return;
+      expect(shown.value.listed).toBe(true);
+      // As the hold and the refusal advise: remove it, then forget it.
+      expect((await b.folder.remove()).ok).toBe(true);
+      const stale = await bound.device.forgetRemembered(shown.value);
+      expect(stale.ok, JSON.stringify(stale)).toBe(true);
+      if (!stale.ok) return;
+      expect(stale.value.listed).toBe(false);
+      expect(stale.value.forgotten).toEqual([]);
+      expect(stale.value.notChanged.map((left) => left.dir)).toEqual([self]);
+    } finally {
+      await bound.device.close();
+    }
+    expect(await heldIn(a)).toEqual(["Held.md"]);
     const again = await a.folder.forget(there, { yes: true });
     expect(again.ok, JSON.stringify(again)).toBe(true);
     if (!again.ok) return;

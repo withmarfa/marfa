@@ -300,6 +300,9 @@ pub struct ForgottenIn {
     pub folder: String,
     pub released: Vec<String>,
     pub still_held: Vec<StillHeldFile>,
+    /// Held files shown as staying held that wait on nothing else by now;
+    /// they stay held.
+    pub not_released: Vec<String>,
 }
 #[napi(object)]
 pub struct StillHeldFile {
@@ -1113,6 +1116,7 @@ impl Task for ForgetRemembered {
                                 still_waits_on: displayed(held.still_waits_on),
                             })
                             .collect(),
+                        not_released: done.not_released,
                     })
                     .collect(),
                 not_changed: done.not_changed.into_iter().map(folder_left).collect(),

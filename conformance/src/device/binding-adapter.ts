@@ -1050,6 +1050,7 @@ export interface BindingForgotten {
     folder: string;
     released: string[];
     stillHeld: Array<{ path: string; stillWaitsOn: string[] }>;
+    notReleased: string[];
   }>;
   notChanged: Array<{ dir: string; reason: string }>;
 }

@@ -1030,3 +1030,153 @@ fn a_store_moved_out_of_its_state_directory_while_the_forget_waits_is_left_as_it
         .unwrap();
     assert_eq!(kept.as_deref(), Some("unsure"));
 }
+
+fn held_reasons(dir: &Path) -> Vec<String> {
+    Folder::open_without_listing(dir.to_path_buf(), None, None)
+        .unwrap()
+        .held_files()
+        .unwrap()
+        .into_iter()
+        .map(|file| file.reason)
+        .collect()
+}
+
+/// `a`'s `held.txt` waits on `other` and on a second gone directory, with
+/// the reason a pass gives two folders.
+fn holding_on_two_gone_folders(ids: [&str; 2]) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let (from, a, other) = holding_for_a_gone_folder(ids);
+    let second = from.path().with_file_name(format!(
+        "{}-second",
+        from.path().file_name().unwrap().to_string_lossy()
+    ));
+    let waits = serde_json::to_string(&[other.path(), second.as_path()]).unwrap();
+    set_journal(
+        &a,
+        &format!(
+            "UPDATE folder_journal SET waits_on = '{waits}', reason = '2 other folders are on this computer, so Marfa cannot tell its delete from a move into one of them' WHERE path = ?1"
+        ),
+        "held.txt",
+    );
+    remembers(&a, &[]);
+    (from, other.path().to_path_buf(), second)
+}
+
+/// A hold the person was shown as staying held is not released by that
+/// confirmation, though another forget took its other directory meanwhile.
+#[test]
+fn a_hold_shown_as_staying_held_is_not_released_when_its_other_directory_is_forgotten_meanwhile() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (from, other, second) = holding_on_two_gone_folders([
+        "01a00000-0000-7000-8000-000000357857",
+        "01a00000-0000-7000-8000-000000357858",
+    ]);
+    let first = Folder::remembering(&other).unwrap();
+    assert_eq!(
+        first.folders[0].held[0].still_waits_on,
+        std::slice::from_ref(&second)
+    );
+    let meanwhile = Folder::remembering(&second).unwrap();
+    let done = Folder::forget_remembered(&meanwhile).unwrap();
+    assert_eq!(done.forgotten[0].still_held.len(), 1, "{done:?}");
+
+    let forgotten = Folder::forget_remembered(&first).unwrap();
+    assert_eq!(forgotten.not_changed, [], "{forgotten:?}");
+    assert_eq!(
+        forgotten.forgotten[0].released,
+        Vec::<String>::new(),
+        "{forgotten:?}"
+    );
+    assert_eq!(forgotten.forgotten[0].not_released, ["held.txt"]);
+    assert_eq!(held_in(from.path()), ["held.txt"]);
+
+    let again = Folder::remembering(&other).unwrap();
+    assert_eq!(
+        again.folders[0].held[0].still_waits_on,
+        Vec::<PathBuf>::new()
+    );
+    let forgotten = Folder::forget_remembered(&again).unwrap();
+    assert_eq!(forgotten.forgotten[0].released, ["held.txt"]);
+    assert_eq!(held_in(from.path()), Vec::<String>::new());
+}
+
+/// A narrowed hold names what it still waits on, not the directory forgotten.
+#[test]
+fn a_narrowed_hold_gives_its_reason_from_the_directories_it_still_waits_on() {
+    let (_, _registry) = registry::tests::own_registry();
+    let (from, other, second) = holding_on_two_gone_folders([
+        "01a00000-0000-7000-8000-000000357859",
+        "01a00000-0000-7000-8000-000000357860",
+    ]);
+    let shown = Folder::remembering(&second).unwrap();
+    Folder::forget_remembered(&shown).unwrap();
+    let reasons = held_reasons(from.path());
+    assert_eq!(reasons.len(), 1);
+    let reason = &reasons[0];
+    assert!(reason.contains(&other.display().to_string()), "{reason}");
+    assert!(!reason.contains(&second.display().to_string()), "{reason}");
+    assert!(!reason.contains("2 other folders"), "{reason}");
+    assert!(reason.contains("`folders forget`"), "{reason}");
+}
+
+/// The answer is the registry as the folders are changed, so a directory
+/// taken off it after the preview is not reported listed, and the folders
+/// shown a listed directory are left as they were.
+#[test]
+fn a_directory_removed_from_the_registry_after_the_preview_is_reported_as_read_then() {
+    let (registry, _guard) = registry::tests::own_registry();
+    let (from, a, other) = holding_for_a_gone_folder([
+        "01a00000-0000-7000-8000-000000357861",
+        "01a00000-0000-7000-8000-000000357862",
+    ]);
+    list_raw(
+        &registry,
+        Registered {
+            dir: other.path().to_path_buf(),
+            folder: "01a00000-0000-7000-8000-000000357862".into(),
+            store: None,
+            root: None,
+        },
+    );
+    let shown = Folder::remembering(other.path()).unwrap();
+    assert!(shown.listed);
+    drop(a);
+    assert!(Folder::forget(other.path()).unwrap());
+    let forgotten = Folder::forget_remembered(&shown).unwrap();
+    assert!(!forgotten.listed, "{forgotten:?}");
+    assert_eq!(forgotten.forgotten, [], "{forgotten:?}");
+    assert_eq!(forgotten.not_changed.len(), 1, "{forgotten:?}");
+    assert!(
+        remembered_at(&from.path().join(STATE_DIR).join("core.sqlite"))
+            .contains(&other.path().to_path_buf())
+    );
+    assert_eq!(held_in(from.path()), ["held.txt"]);
+}
+
+/// A listed folder's directory holds its own state, and is reported listed
+/// rather than refused as occupied.
+#[test]
+fn a_listed_directory_where_its_folder_stands_is_reported_listed() {
+    let (registry, _guard) = registry::tests::own_registry();
+    let (from, a, other) = holding_for_a_gone_folder([
+        "01a00000-0000-7000-8000-000000357863",
+        "01a00000-0000-7000-8000-000000357864",
+    ]);
+    std::fs::create_dir_all(other.path().join(STATE_DIR)).unwrap();
+    std::fs::write(other.path().join("note.md"), "words\n").unwrap();
+    list_raw(
+        &registry,
+        Registered {
+            dir: other.path().to_path_buf(),
+            folder: "01a00000-0000-7000-8000-000000357864".into(),
+            store: None,
+            root: None,
+        },
+    );
+    let shown = Folder::remembering(other.path()).unwrap();
+    assert!(shown.listed, "{shown:?}");
+    drop(a);
+    let forgotten = Folder::forget_remembered(&shown).unwrap();
+    assert!(forgotten.listed, "{forgotten:?}");
+    assert_eq!(forgotten.forgotten, [], "{forgotten:?}");
+    assert_eq!(held_in(from.path()), ["held.txt"]);
+}

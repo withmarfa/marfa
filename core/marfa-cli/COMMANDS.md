@@ -5243,9 +5243,9 @@ It refuses a path where anything but an empty directory stands, such as a direct
 
 Without `--yes`, the command shows the affected folders and held files. It asks for confirmation at a terminal. With `--json` or outside a terminal, pass `--yes` to confirm.
 
-A watch can hand a folder over while the command runs. If a folder cannot be read or claimed, is no longer listed at its path, or its store has changed or moved since the preview, or the registry lists the directory or something stands there by then, the command names the folder in `not_changed` and exits 3.
+A watch can hand a folder over while the command runs. If a folder cannot be read or claimed, is no longer listed at its path, or its store has changed or moved since the preview, or the registry listed the directory at the preview or lists it by then, or something stands there by then, the command names the folder in `not_changed` and exits 3. It releases only the held files the preview showed it would.
 
-With `--json`, the result has `dir`, `listed` (whether the registry lists the directory, read again as the folders are changed), `folders` (each with `dir`, `folder` and `held`, each held file with `path`, `item`, `missing_since`, `reason` and `still_waits_on`, the other directories that keep it held, empty where the forget releases it), `not_read`, `alike` (remembered directories that differ only in case), `declined`, `forgotten` (each with `dir`, `folder`, `released` and `still_held`, each with `path` and `still_waits_on`) and `not_changed`.
+With `--json`, the result has `dir`, `listed` (whether the registry lists the directory, read again as the folders are changed), `folders` (each with `dir`, `folder` and `held`, each held file with `path`, `item`, `missing_since`, `reason` and `still_waits_on`, the other directories that keep it held, empty where the forget releases it), `not_read`, `alike` (remembered directories that differ only in case), `declined`, `forgotten` (each with `dir`, `folder`, `released`, `still_held`, each with `path` and `still_waits_on`, and `not_released`, held files shown as staying held that wait on nothing else by now, which stay held for another `folders forget` or `folders held`) and `not_changed`.
 
 ```text
 marfa folders forget [OPTIONS] <DIR>

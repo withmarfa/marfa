@@ -55,7 +55,8 @@ pub struct WaitingHold {
     pub file: HeldFile,
     /// The other directories it waits on, which keep it held once the
     /// directory is forgotten. Where there are none, the forget releases it
-    /// and the folder's next pass decides it again.
+    /// and the folder's next pass decides it again; where there are some, the
+    /// forget never releases it.
     pub still_waits_on: Vec<PathBuf>,
 }
 
@@ -86,6 +87,10 @@ pub struct ForgottenIn {
     /// Its held deletes that waited on the directory and still wait on
     /// others.
     pub still_held: Vec<StillHeld>,
+    /// Paths of its held deletes shown as staying held that wait on nothing
+    /// else by now. They stay held, still waiting on the directory, for a
+    /// new preview to show as released or for `folders held` to settle.
+    pub not_released: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -97,17 +102,21 @@ pub struct StillHeld {
 impl Folder {
     /// Which listed folders remember `dir` or hold a delete that waits on it,
     /// and for each such held delete, the other directories it still waits
-    /// on once `dir` is forgotten. Reads only, and asks no watch for a folder. `dir` is matched as spelled, made absolute, and never
-    /// through the file system, so a link standing in a parent leads nowhere
-    /// else. A remembered path that differs from it only in case is pointed
-    /// out, in `alike`. Refused where anything but an empty directory stands
-    /// at `dir`.
+    /// on once `dir` is forgotten. Reads only, and asks no watch for a
+    /// folder. `dir` is matched as spelled, made absolute, and never through
+    /// the file system, so a link standing in a parent leads nowhere else. A
+    /// remembered path that differs from it only in case is pointed out, in
+    /// `alike`. Unless the registry lists `dir`, refused where anything but
+    /// an empty directory stands there.
     pub fn remembering(dir: impl AsRef<Path>) -> Result<Remembered> {
         // Rebuilt from its parts, so a trailing slash is not shown.
         let dir: PathBuf = registry::absolute(dir.as_ref()).components().collect();
-        nothing_stands(&dir)?;
         let entries = listed()?;
+        // A listed folder's own files stand at its directory.
         let listed = entries.iter().any(|entry| entry.dir == dir);
+        if !listed {
+            nothing_stands(&dir)?;
+        }
         let mut shown = Remembered {
             dir,
             listed,
@@ -141,35 +150,42 @@ impl Folder {
 
     /// Forgets the directory in each folder `shown` names, and takes it off
     /// each held delete it showed that still waits on it, unchanged,
-    /// releasing the hold where it waits on nothing else. A watch
-    /// holding a folder lets it go while this runs. A folder is changed only
-    /// while the registry lists it at its path, its store is the one shown,
-    /// the registry does not list the directory and nothing stands there but
-    /// an empty directory, all read again as it is changed.
+    /// releasing only a hold it showed as released, and rewriting the reason
+    /// of one it narrows. A watch holding a folder lets it go while this
+    /// runs. A folder is changed only while the registry lists it at its
+    /// path, its store is the one shown, the registry did not list the
+    /// directory when shown and does not now, and nothing stands there but an
+    /// empty directory, all read again as it is changed.
     pub fn forget_remembered(shown: &Remembered) -> Result<Forgotten> {
         Folder::forget_waiting(shown, handover::HANDOVER_WAIT)
     }
 
     pub(super) fn forget_waiting(shown: &Remembered, wait: Duration) -> Result<Forgotten> {
-        nothing_stands(&shown.dir)?;
+        let listed = listed()?.iter().any(|entry| entry.dir == shown.dir);
+        if !listed {
+            nothing_stands(&shown.dir)?;
+        }
         let mut done = Forgotten {
             dir: shown.dir.clone(),
-            listed: shown.listed || listed()?.iter().any(|entry| entry.dir == shown.dir),
+            listed,
             forgotten: Vec::new(),
             not_changed: shown.not_read.clone(),
         };
         for holder in &shown.folders {
             let changed = if done.listed {
                 Err(Left::Listed)
+            } else if shown.listed {
+                Err(Left::ShownListed)
             } else {
                 forget_in(holder, &shown.dir, wait)
             };
             match changed {
-                Ok((released, still_held)) => done.forgotten.push(ForgottenIn {
+                Ok(changed) => done.forgotten.push(ForgottenIn {
                     dir: holder.dir.clone(),
                     folder: holder.folder.clone(),
-                    released,
-                    still_held,
+                    released: changed.released,
+                    still_held: changed.still_held,
+                    not_released: changed.not_released,
                 }),
                 Err(left) => {
                     done.listed |= matches!(left, Left::Listed);
@@ -348,6 +364,8 @@ const NOT_LISTED: &str =
 enum Left {
     /// The registry lists the directory being forgotten.
     Listed,
+    /// The registry listed it when shown, so no change was shown.
+    ShownListed,
     Because(String),
 }
 
@@ -356,6 +374,10 @@ impl Left {
         match self {
             Left::Listed => format!(
                 "the registry lists {}, so every folder finds it again at its next pass and nothing in this one was changed; `folders remove` it first, then forget it",
+                target.display()
+            ),
+            Left::ShownListed => format!(
+                "the registry listed {} when it was shown, so nothing in this folder was changed; forget it again",
                 target.display()
             ),
             Left::Because(reason) => reason,
@@ -396,12 +418,16 @@ fn still_at_path(
     }
 }
 
-/// The paths a forget released and the holds it left waiting on others.
-type Changed = (Vec<String>, Vec<StillHeld>);
+/// What a forget changed in one folder.
+#[derive(Default)]
+struct Changed {
+    released: Vec<String>,
+    still_held: Vec<StillHeld>,
+    not_released: Vec<String>,
+}
 
 /// Forgets `target` in the folder `holder` names, under its writer lock,
-/// and answers the paths released and the holds still waiting on others; or
-/// why nothing in it changed.
+/// and answers what it changed, or why nothing in it changed.
 fn forget_in(
     holder: &Remembering,
     target: &Path,
@@ -465,9 +491,12 @@ fn forget_in(
                     .map_err(|error| CoreError::Store(error.to_string()))?;
                 store::meta_set(&tx, META_OTHERS, &json)?;
             }
-            let mut released: Vec<String> = Vec::new();
-            let mut still_held: Vec<StillHeld> = Vec::new();
-            for WaitingHold { file, .. } in &holder.held {
+            let mut changed = Changed::default();
+            for WaitingHold {
+                file,
+                still_waits_on: shown_waits,
+            } in &holder.held
+            {
                 let Some(row) = state::journaled_at(&tx, &file.path, &file.item)? else {
                     continue;
                 };
@@ -478,13 +507,19 @@ fn forget_in(
                     continue;
                 }
                 let rest = without(&unsure, target);
-                if rest.is_empty() {
+                if rest.is_empty() && !shown_waits.is_empty() {
+                    // Shown as staying held, so the person did not agree to
+                    // its release.
+                    if !changed.not_released.contains(&file.path) {
+                        changed.not_released.push(file.path.clone());
+                    }
+                } else if rest.is_empty() {
                     state::journal_keep(&tx, &file.path, &file.item, None)?;
-                    if !released.contains(&file.path) {
-                        released.push(file.path.clone());
+                    if !changed.released.contains(&file.path) {
+                        changed.released.push(file.path.clone());
                     }
                 } else {
-                    let narrowed = state::Unsure::on(unsure.reason, rest.clone());
+                    let narrowed = state::Unsure::on(narrowed_reason(&rest, written), rest.clone());
                     state::journal_keep(
                         &tx,
                         &file.path,
@@ -495,8 +530,8 @@ fn forget_in(
                         path: file.path.clone(),
                         still_waits_on: rest,
                     };
-                    if !still_held.contains(&still) {
-                        still_held.push(still);
+                    if !changed.still_held.contains(&still) {
+                        changed.still_held.push(still);
                     }
                 }
             }
@@ -506,7 +541,7 @@ fn forget_in(
                 return Ok(Err(MOVED.into()));
             }
             tx.commit()?;
-            Ok(Ok((released, still_held)))
+            Ok(Ok(changed))
         };
         match Registry::located() {
             Some(registry) => registry.while_written(commit)?,
@@ -539,6 +574,30 @@ fn without(unsure: &state::Unsure, target: &Path) -> Vec<PathBuf> {
         .filter(|dir| dir.as_path() != target)
         .cloned()
         .collect()
+}
+
+/// Why a hold still waits on `rest`, the directories left once one is
+/// forgotten, with the step that settles it.
+fn narrowed_reason(rest: &[PathBuf], written: &[Registered]) -> String {
+    let is_listed = |dir: &PathBuf| written.iter().any(|entry| &entry.dir == dir);
+    match rest {
+        [dir] if is_listed(dir) => format!(
+            "another folder is on this computer, at {}, so Marfa cannot tell its delete from a move into it; if it is gone, `folders remove` it, then `folders forget` it",
+            dir.display()
+        ),
+        [dir] => format!(
+            "the folder {} may hold it, and the registry no longer lists it, so Marfa cannot tell its delete from a move into it; if its volume is not mounted, mount it, and if it is gone, `folders forget` it",
+            dir.display()
+        ),
+        rest if rest.iter().any(is_listed) => format!(
+            "{} other folders are on this computer, so Marfa cannot tell its delete from a move into one of them; `folders forget` each that is gone, after `folders remove` for one still listed",
+            rest.len()
+        ),
+        rest => format!(
+            "{} other folders the registry no longer lists may hold it, so Marfa cannot tell its delete from a move into one of them; mount any whose volume is not mounted, and `folders forget` each that is gone",
+            rest.len()
+        ),
+    }
 }
 
 fn alike(one: &Path, other: &Path) -> bool {
