@@ -214,12 +214,15 @@ pub enum FoldersCommand {
     /// a program wrote to goes back to its path, and the next push sends what
     /// the program wrote; `--discard` puts such a file back too, in place of
     /// deleting it. One whose record Marfa could not read is deleted only
-    /// while it holds the bytes Marfa set aside, and is listed still where it
-    /// holds anything else. Every file a discard Marfa stopped on left under
-    /// another reserved name is listed, and so is a record of one whose file
-    /// is not where it says. Where Marfa cannot read such a record and nothing
-    /// is at its path in the directory itself, `--discard` forgets it and
-    /// deletes no file for it. With `--discard`, a watch
+    /// while it holds the bytes Marfa set aside and its directory is the one
+    /// in the folder that the record names, and is listed still otherwise.
+    /// Every file a discard Marfa stopped on left under another reserved name
+    /// is listed, and so is a record of one whose file is not where it says.
+    /// A file an earlier release moved aside in another folder's directory as
+    /// it took the file in is listed while Marfa cannot tell that directory
+    /// is the one it recorded, and Marfa never deletes it. `--discard` forgets
+    /// such a record where nothing is at its path, and deletes no file for
+    /// it. With `--discard`, a watch
     /// holding the directory lets it go while this runs, and this is refused
     /// if the process holding the directory does not let it go within 10
     /// seconds.
@@ -984,7 +987,7 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
             }));
             lines.extend(done.forgotten.iter().map(|path| {
                 format!(
-                    "{}: no file is there, so Marfa forgot its record of the discard it stopped on",
+                    "{}: no file is there, so Marfa forgot its record of it",
                     printable(path)
                 )
             }));

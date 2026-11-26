@@ -747,7 +747,7 @@ fn another_volume_at_a_take_ins_recorded_path_is_never_settled_against() {
             "{case}: the record was forgotten, and the save it names may be on the volume that was at its path"
         );
         let path = kept.to_string_lossy().into_owned();
-        assert_eq!(kept_paths(&folder), [path.clone()], "{case}");
+        assert_eq!(kept_paths(&folder), std::slice::from_ref(&path), "{case}");
         let status = Folder::status_of(&root).unwrap();
         assert!(
             status.files.iter().any(|file| file.path == path),
@@ -837,7 +837,7 @@ fn a_row_in_another_folders_directory_unlike_a_take_ins_is_never_acted_on() {
         );
         assert_eq!(displaced_rows(&folder), 1, "{shape}");
         let path = kept.to_string_lossy().into_owned();
-        assert_eq!(kept_paths(&folder), [path.clone()], "{shape}");
+        assert_eq!(kept_paths(&folder), std::slice::from_ref(&path), "{shape}");
         let done = folder.discard_kept().unwrap();
         assert!(kept.exists(), "{shape}: the owner's discard deleted it");
         assert_eq!(kept_paths(&folder), [path], "{shape}: {done:?}");

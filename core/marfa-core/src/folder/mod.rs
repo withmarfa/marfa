@@ -1523,10 +1523,91 @@ fn settle_row(
 }
 
 /// Whether `found`, a directory's device and inode, is the directory
-/// `recorded` names. A volume mounted again has another device number, so
-/// where the root's is not the one recorded, the inode alone decides.
-fn same_directory(found: (u64, u64), recorded: (u64, u64), root_device: Option<u64>) -> bool {
+/// `recorded` names at `place`. A volume mounted again has another device
+/// number, so in the folder, where the root's is not the one recorded, the
+/// inode alone decides. Outside it, nothing tells a volume mounted again from
+/// another volume at the same path, whose root can have the same inode.
+fn same_directory(
+    place: &str,
+    found: (u64, u64),
+    recorded: (u64, u64),
+    root_device: Option<u64>,
+) -> bool {
+    let root_device = if Path::new(place).is_absolute() {
+        Some(recorded.0)
+    } else {
+        root_device
+    };
     found.1 == recorded.1 && (found.0 == recorded.0 || root_device != Some(recorded.0))
+}
+
+/// A row's directories, where either is outside the folder: only a take-in
+/// from another folder recorded one there.
+pub(super) struct Outside<'a> {
+    dir: (&'a str, (u64, u64)),
+    aside: (&'a str, (u64, u64)),
+    /// Whether the row is as a take-in wrote it: a removal, its path and
+    /// reserved name in one directory, under the name its id gives.
+    shaped: bool,
+}
+
+impl<'a> Outside<'a> {
+    fn of(
+        dir: (&'a str, (u64, u64)),
+        aside: (&'a str, (u64, u64)),
+        removal: bool,
+        (id, target, kept): (&str, &str, &str),
+    ) -> Option<Outside<'a>> {
+        if !Path::new(dir.0).is_absolute() && !Path::new(aside.0).is_absolute() {
+            return None;
+        }
+        let name = |name: &str| {
+            let mut parts = Path::new(name).components();
+            matches!(parts.next(), Some(std::path::Component::Normal(_))) && parts.next().is_none()
+        };
+        let shaped = removal
+            && dir == aside
+            && name(target)
+            && name(kept)
+            && Path::new(kept) == landing::reserved(id);
+        Some(Outside { dir, aside, shaped })
+    }
+}
+
+impl state::Displaced {
+    pub(super) fn outside(&self) -> Option<Outside<'_>> {
+        let displacement = &self.displacement;
+        Outside::of(
+            (&self.dir, self.dir_at),
+            (&self.aside, self.aside_at),
+            displacement.kind == landing::Displaced::Withdraw && displacement.ours.is_none(),
+            (&displacement.id, &displacement.target, &displacement.kept),
+        )
+    }
+}
+
+impl state::Retained {
+    pub(super) fn outside(&self) -> Option<Outside<'_>> {
+        let retained = &self.retained;
+        Outside::of(
+            (&self.dir, self.dir_at),
+            (&self.aside, self.aside_at),
+            retained.kind == landing::Displaced::Withdraw && retained.ours.is_none(),
+            (&retained.id, &retained.target, &retained.kept),
+        )
+    }
+}
+
+/// Why recovery leaves a file outside the folder, moved from `from`.
+pub(super) fn outside_reason(from: &str, shaped: bool) -> String {
+    let why = if shaped {
+        "the directory now at this path is not the one Marfa moved it in, so the file may be on the volume that was here"
+    } else {
+        "Marfa's record of it is not one it can act on"
+    };
+    format!(
+        "Marfa moved {from} here as it took the file into this folder, and {why}. Marfa leaves the file; check it, and put it back yourself if it holds a change. Once nothing is at this path, `marfa folders kept <DIR> --discard` forgets the record"
+    )
 }
 
 /// `row`'s displacement with the files it names on `dir`'s device, where the
@@ -1654,6 +1735,7 @@ impl Folder {
     fn displaced_dir(&self, place: &str, at: (u64, u64)) -> std::io::Result<Directory> {
         let directory = self.place_dir(place)?;
         if !same_directory(
+            place,
             landing::identity(&directory.metadata()?),
             at,
             device(&self.root_dir),
@@ -1692,6 +1774,16 @@ impl Folder {
             .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
     }
 
+    /// Whether recovery leaves an `outside` row as it is: one not shaped as a
+    /// take-in wrote it, or whose directory is not the one recorded.
+    pub(super) fn left_outside(&self, outside: &Outside<'_>) -> bool {
+        !outside.shaped
+            || self
+                .displaced_dir(outside.dir.0, outside.dir.1)
+                .and_then(|_| self.displaced_dir(outside.aside.0, outside.aside.1))
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    }
+
     /// The bound paths of rows whose directory is not where it was, whose
     /// write a crash cut off is settled only once the row settles, against
     /// the file wherever its directory went.
@@ -1699,7 +1791,7 @@ impl Folder {
         Ok(state::displaced(&*self.core.conn()?)?
             .into_iter()
             .flatten()
-            .filter(|row| !Path::new(&row.dir).is_absolute() && self.displaced_away(row))
+            .filter(|row| row.outside().is_none() && self.displaced_away(row))
             .map(|row| joined(&row.dir, &row.displacement.target))
             .collect())
     }
@@ -1727,6 +1819,9 @@ impl Folder {
                     continue;
                 }
             };
+            if row.outside().is_some_and(|outside| !outside.shaped) {
+                continue;
+            }
             match self
                 .displaced_dir(&row.dir, row.dir_at)
                 .and_then(|dir| Ok((dir, self.displaced_dir(&row.aside, row.aside_at)?)))
@@ -1759,7 +1854,10 @@ impl Folder {
         let root_device = device(&self.root_dir);
         let mut settled = false;
         for row in state::displaced(&conn)?.into_iter().flatten() {
-            if row.dir != row.aside || self.displaced_dir(&row.aside, row.aside_at).is_ok() {
+            if row.outside().is_some()
+                || row.dir != row.aside
+                || self.displaced_dir(&row.aside, row.aside_at).is_ok()
+            {
                 continue;
             }
             let found = kept
@@ -1768,7 +1866,7 @@ impl Folder {
                 .find_map(|(route, path)| {
                     let dir = route.open().ok()?;
                     let at = landing::identity(&dir.metadata().ok()?);
-                    same_directory(at, row.aside_at, root_device).then_some((dir, path))
+                    same_directory(&row.aside, at, row.aside_at, root_device).then_some((dir, path))
                 });
             let Some((dir, path)) = found else {
                 continue;
@@ -1792,31 +1890,41 @@ impl Folder {
 
     /// Each file a row holds under its reserved name in a directory that is
     /// not where it was, and that the walk did not meet: one the walk met is
-    /// reported where it met it.
-    fn unsettled(&self, walked: &[(WalkRoute, String)]) -> Result<Vec<(String, Flagged)>> {
+    /// reported where it met it. Each comes with whether the row is outside
+    /// the folder, which no walk of it settles.
+    fn unsettled(&self, walked: &[(WalkRoute, String)]) -> Result<Vec<(String, Flagged, bool)>> {
         let conn = self.core.conn()?;
         Ok(state::displaced(&conn)?
             .into_iter()
             .flatten()
-            .filter(|row| {
-                self.displaced_away(row)
-                    && !walked
-                        .iter()
-                        .any(|(_, path)| named_as(path, &row.displacement.kept))
-            })
-            .map(|row| {
-                (
+            .filter_map(|row| {
+                let from = joined(&row.dir, &row.displacement.target);
+                let (reason, outside) = match row.outside() {
+                    Some(outside) => (
+                        self.left_outside(&outside)
+                            .then(|| outside_reason(&from, outside.shaped))?,
+                        true,
+                    ),
+                    None => {
+                        let away = self.displaced_away(&row)
+                            && !walked
+                                .iter()
+                                .any(|(_, path)| named_as(path, &row.displacement.kept));
+                        (away.then(|| format!(
+                            "Marfa moved {from} here while it wrote or removed it, and this directory is no longer in the folder, so Marfa cannot put it back; the file stays under this name wherever the directory now is"
+                        ))?, false)
+                    }
+                };
+                Some((
                     row.displacement.id.clone(),
                     Flagged {
                         path: joined(&row.aside, &row.displacement.kept),
                         flag: "kept",
-                        reason: format!(
-                            "Marfa moved {} here while it wrote or removed it, and this directory is no longer in the folder, so Marfa cannot put it back; the file stays under this name wherever the directory now is",
-                            joined(&row.dir, &row.displacement.target)
-                        ),
+                        reason,
                         item: None,
                     },
-                )
+                    outside,
+                ))
             })
             .collect())
     }
@@ -1826,13 +1934,17 @@ impl Folder {
     /// since the last report in the same step, so a pass that ends before it
     /// reports still leaves the report to the next one.
     fn clear_unfound(&self, walked: &[(WalkRoute, String)]) -> Result<()> {
-        let unfound = self.unsettled(walked)?;
+        let unfound: Vec<_> = self
+            .unsettled(walked)?
+            .into_iter()
+            .filter(|(_, _, outside)| !outside)
+            .collect();
         if unfound.is_empty() {
             return Ok(());
         }
         let conn = self.core.conn()?;
         let tx = conn.unchecked_transaction()?;
-        for (id, flagged) in &unfound {
+        for (id, flagged, _) in &unfound {
             state::put_kept(&tx, &flagged.path, &flagged.reason)?;
             state::clear_displaced(&tx, id)?;
         }

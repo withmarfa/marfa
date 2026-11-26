@@ -275,7 +275,7 @@ impl Folder {
         for kept in self
             .unsettled(&walked.kept)?
             .into_iter()
-            .map(|(_, flagged)| flagged)
+            .map(|(_, flagged, _)| flagged)
             .chain(self.walked_kept(&walked.kept))
         {
             if seen.insert(kept.path.clone()) {
