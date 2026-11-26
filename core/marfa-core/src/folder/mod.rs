@@ -7790,8 +7790,18 @@ mod tests {
         std::fs::write(&path, text.replace("state: archived\n", "state: active\n")).unwrap();
 
         let point = &format!("folder-state-decided:{id}");
+        let scanned = scan_while_held(&folder, point, || change(&folder, &id)).unwrap();
+        (dir, folder, id, scanned)
+    }
+
+    #[cfg(debug_assertions)]
+    fn scan_while_held(
+        folder: &Folder,
+        point: &str,
+        change: impl Fn() + Sync,
+    ) -> Result<ScanReport> {
         crate::fault::arm(point);
-        let scanned = std::thread::scope(|scope| {
+        std::thread::scope(|scope| {
             let following = scope.spawn(|| {
                 let waited = std::time::Instant::now();
                 while crate::fault::waiting(point) == 0 {
@@ -7801,15 +7811,13 @@ mod tests {
                     }
                     std::thread::sleep(Duration::from_millis(5));
                 }
-                change(&folder, &id);
+                change();
                 crate::fault::release(point);
             });
             let scanned = folder.scan();
             following.join().unwrap();
             scanned
         })
-        .unwrap();
-        (dir, folder, id, scanned)
     }
 
     #[cfg(debug_assertions)]
@@ -7840,6 +7848,158 @@ mod tests {
         folder.scan().unwrap();
         assert_eq!(transitions_queued(&folder, &id), Vec::<Value>::new());
         assert_eq!(state_held(&folder, &id), ItemState::Trashed);
+    }
+
+    #[cfg(debug_assertions)]
+    fn assert_refused_state(folder: &Folder, path: &str, id: &str) {
+        assert_eq!(bound_paths(folder), [(path.into(), id.into())]);
+        let status = folder.status().unwrap();
+        assert!(
+            status.files.iter().any(|file| file.path == path
+                && file.flag == Some("refused")
+                && file
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("state_conflict"))),
+            "{status:?}"
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_refused_state_change_follows_a_rename_and_edit_until_the_file_is_removed() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder, id, _) =
+            unarchive_while_changed("01a00000-0000-7000-8000-00000000e7c3", trashed_elsewhere);
+        assert_refused_state(&folder, "note.md", &id);
+        let path = dir.path().join("renamed.md");
+        std::fs::rename(dir.path().join("note.md"), &path).unwrap();
+        let original = std::fs::read_to_string(&path).unwrap();
+        for text in [
+            original.clone(),
+            original.replace("state: active", "state: archived"),
+        ] {
+            if std::fs::read_to_string(&path).unwrap() != text {
+                std::fs::write(&path, &text).unwrap();
+            }
+            assert_eq!(folder.scan().unwrap().created, 0);
+            folder.pull().unwrap();
+            assert_refused_state(&folder, "renamed.md", &id);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+            assert!(folder.core.queue().unwrap().is_empty());
+        }
+        std::fs::remove_file(path).unwrap();
+        folder.scan().unwrap();
+        folder.pull().unwrap();
+        assert!(
+            folder
+                .status()
+                .unwrap()
+                .files
+                .iter()
+                .all(|f| f.flag != Some("refused"))
+        );
+        assert_eq!(state_held(&folder, &id), ItemState::Trashed);
+    }
+
+    #[cfg(debug_assertions)]
+    fn initial_archive_race(change: impl Fn(&Folder, &str) + Sync) -> (ScannedDir, Folder, String) {
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({
+            "query": { "types": ["core.note"] },
+            "defaults": { "edges": { "in-collection": [SHELF] } }
+        }));
+        let path = dir.path().join("new.md");
+        let text = format!("---\nstate: archived\nchild-of: \"[[{SHELF}]]\"\n---\nmy words\n");
+        std::fs::write(&path, &text).unwrap();
+        let created_id = || {
+            folder
+                .core
+                .conn()
+                .unwrap()
+                .query_row(
+                    "SELECT item_id FROM queue WHERE kind = 'create_item'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap()
+        };
+        let first = scan_while_held(&folder, "folder-initial-archive:new.md", || {
+            change(&folder, &created_id());
+        })
+        .unwrap();
+        let id = created_id();
+        assert_eq!(first.created, 1);
+        assert_refused_state(&folder, "new.md", &id);
+        assert!(transitions_queued(&folder, &id).is_empty());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+        (dir, folder, id)
+    }
+
+    #[cfg(debug_assertions)]
+    fn assert_initial_edges(folder: &Folder, id: &str) {
+        let mut expected = [
+            ("create", SHELF.into(), "parent-of".into(), id.into()),
+            ("create", id.into(), "in-collection".into(), SHELF.into()),
+        ];
+        expected.sort();
+        assert_eq!(queued_edge_writes(folder), expected);
+        let placed = folder.placement(id).unwrap().unwrap();
+        assert_eq!(placed.properties["path"], "new.md");
+        assert!(
+            placed.properties["form"]["keys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["key"] == "child-of")
+        );
+        assert_eq!(queued_kinds(folder, WriteKind::CreateEdge), 3);
+        assert_eq!(queued_kinds(folder, WriteKind::CreateItem), 1);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_concurrent_archive_preserves_the_edges_of_a_new_file() {
+        let (_dir, folder, id) = initial_archive_race(|folder, id| {
+            set_item_state(folder, id, "archived");
+        });
+        assert_initial_edges(&folder, &id);
+        assert_eq!(folder.scan().unwrap().created, 0);
+        assert_initial_edges(&folder, &id);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_refused_initial_archive_binds_the_new_file_on_its_first_scan() {
+        let (dir, folder, id) = initial_archive_race(trashed_elsewhere);
+        let path = dir.path().join("new.md");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let refused = state::bound_at(&folder.core.conn().unwrap(), "new.md")
+            .unwrap()
+            .unwrap()
+            .writes;
+        assert!(refused.placement_refused());
+        assert_eq!(
+            refused
+                .refused
+                .iter()
+                .filter(|entry| entry.reason.contains("item_not_found"))
+                .count(),
+            3
+        );
+        assert_eq!(queued_kinds(&folder, WriteKind::CreateEdge), 0);
+        assert_eq!(folder.scan().unwrap().created, 0);
+        assert_eq!(landed(&folder, "new.md"), id);
+        folder.pull().unwrap();
+        assert_refused_state(&folder, "new.md", &id);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+        assert!(transitions_queued(&folder, &id).is_empty());
+        assert_eq!(queued_kinds(&folder, WriteKind::CreateEdge), 0);
+        assert_eq!(queued_kinds(&folder, WriteKind::CreateItem), 1);
+        folder.core.restore_item(&id).unwrap();
+        assert_eq!(folder.scan().unwrap().created, 0);
+        assert_initial_edges(&folder, &id);
+        assert_eq!(folder.scan().unwrap().created, 0);
+        assert_initial_edges(&folder, &id);
     }
 
     #[cfg(debug_assertions)]

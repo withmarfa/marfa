@@ -1826,13 +1826,13 @@ When a file’s create is refused and the copy loses the item, a device MUST pre
 
 ### `folder-files/lost-item-edit-retried`
 
-When the person changes or moves a file whose item the copy no longer holds, a device MUST queue the file as a new item under a new device-minted ID.
+When the person changes or moves a file whose item the copy no longer holds and whose binding has no refused state change, a device MUST queue the file as a new item under a new device-minted ID.
 
 **Tests:** `device/folders-identity.test.ts › queues a file whose item the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › queues a file whose item the copy lost again once it moves`.
 
 ### `folder-files/lost-item-unchanged-held`
 
-While a file whose item the copy no longer holds stays unchanged at its path, a device MUST report the file as lost.
+While a file whose item the copy no longer holds stays unchanged at its path and its binding has no refused state change, a device MUST report the file as lost.
 
 **Tests:** `device/folders-identity.test.ts › queues a file whose item the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`, `device/folders.test.ts › pulls again after a rebuild at the drain after the pull, writing what the new reach holds and keeping a file it no longer reads`.
 

@@ -394,9 +394,9 @@ When restoring a disk removal releases an archived file’s old binding but a he
 
 ### `folder-guards/restore-pull-items`
 
-When a paused pull removal is restored, a device MUST queue restoration of trashed items or transition departed items into a state the folder query holds.
+When a paused pull removal is restored, a device MUST queue the transition from the state it read to active for a trashed item or to a state the folder query holds for another departed item, provided the item still has the state the device read.
 
-**Tests:** `device/folders-contract-b.test.ts › restores a paused pull removal of %s items into a held state`.
+**Tests:** `device/folders-contract-b.test.ts › restores a paused pull removal of %s items into a held state`, `› keeps the server's newer state when a queued folder restore reaches it after an archive`.
 
 ### `folder-guards/pause-said`
 
