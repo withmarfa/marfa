@@ -20,6 +20,7 @@ use super::listing::{Params, states_of};
 use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::blobs::Hash;
 use crate::app::edges::write::Inline;
 use crate::app::idempotency::{self, Claim, Entry, Kept, MAX_KEY_CHARACTERS};
 use crate::app::items::write::{self, Change, Done, Put, Settle, Update, ruled};
@@ -62,8 +63,10 @@ const REPLACE_TAG_FIELDS: [&str; 2] = ["tags", "read_tags"];
 const BULK_GET_FIELDS: [&str; 2] = ["ids", "include"];
 const COUNT_FIELDS: [&str; 4] = ["ids", "backref", "edge", "table"];
 const TITLE_FIELDS: [&str; 1] = ["names"];
+const HOLDER_FIELDS: [&str; 1] = ["hashes"];
 const MAX_BULK_IDS: usize = 100;
 const MAX_TITLE_NAMES: usize = 200;
+const MAX_HOLDER_HASHES: usize = 200;
 const MAX_HISTORY_PAGE: i64 = 200;
 const HISTORY_PAGE: i64 = 50;
 const REPLAYED_HEADER: &str = "idempotency-replayed";
@@ -782,6 +785,40 @@ pub async fn titles(
         .into());
     }
     let answer = items::titles(&app, &caller, wanted).await?;
+    Ok(text_answer(StatusCode::OK, answer))
+}
+
+pub async fn holders(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
+    let sent = body.object(&HOLDER_FIELDS).await?;
+    let Some(listed) = sent.get("hashes") else {
+        return Err(missing_field("hashes").into());
+    };
+    let wanted = strings_of(listed, "hashes")?;
+    if wanted.len() > MAX_HOLDER_HASHES {
+        return Err(invalid_field(
+            "hashes",
+            format!("Maximum {MAX_HOLDER_HASHES} hashes per call"),
+        )
+        .into());
+    }
+    let hashes = wanted
+        .iter()
+        .map(|hash| {
+            Hash::parse(hash).map_err(|_| {
+                invalid_field(
+                    "hashes",
+                    "A hash is sha256: and 64 lowercase hexadecimal digits".to_string(),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let answer = items::holders(&app, &caller, hashes).await?;
     Ok(text_answer(StatusCode::OK, answer))
 }
 

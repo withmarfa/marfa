@@ -918,6 +918,62 @@ When more than 20 items match a name sent to `POST /items/titles`, the server MU
 
 **Tests:** `compliance/item-titles.test.ts › lists at most 20 items for a name and says when there are more`.
 
+### `items/blobs`
+
+When a key sends `POST /items/blobs` with `hashes`, the server MUST answer `200` with `data`, one entry for each hash in the order the request named them, each holding the `hash` as sent and the `items` that the key may read, in the state active or archived, that are not hidden items (`items/hidden-types`) and whose `blob_ref` property is that hash, with each item's `id`, `type` and `title`.
+
+**Reason:** an app about to add a file asks whether the person already keeps the same bytes, so it can offer the item already there before it adds another.
+
+**Tests:** `compliance/item-blobs.test.ts › answers each hash in the order named with the items that hold it`, `› finds an archived item, and leaves out an item in the bin and a hidden item`.
+
+### `items/blobs-blob-ref`
+
+When a key sends `POST /items/blobs`, the server MUST leave out an item that names the hash in a property other than `blob_ref`.
+
+**Reason:** only an item whose file is the bytes holds them; an item that names the hash in its text points at a file and is not one.
+
+**Tests:** `compliance/item-blobs.test.ts › leaves out an item that names the hash in another property`.
+
+### `items/blobs-title`
+
+When a key sends `POST /items/blobs`, the server MUST read an item's `title` as `items/titles-title` states, and answer `null` where the item holds no title.
+
+**Tests:** `compliance/item-blobs.test.ts › reads a title from the property its type is titled by, and answers null where there is none`.
+
+### `items/blobs-scope`
+
+When a key sends `POST /items/blobs`, the server MUST leave out every item that the key could not list through `GET /items` in any state.
+
+**Reason:** knowing a file's bytes must not tell a key that an item holding them exists which it may not list.
+
+**Tests:** `compliance/item-blobs.test.ts › leaves out an item whose type the key may not read, and refuses a key that reads no type`.
+
+### `items/blobs-unreadable-same`
+
+When no item that the key sending `POST /items/blobs` could list through `GET /items` holds a hash in its `blob_ref`, the server MUST answer that hash with the same entry whether the instance holds the bytes under items the key may not list, under an item in the bin, under a hidden item, or not at all.
+
+**Reason:** any difference would tell a key that the instance holds bytes it may not read, which `blobs/read-unreadable` keeps from it.
+
+**Tests:** `compliance/item-blobs.test.ts › answers a hash no item the key may list holds the same, whatever holds the bytes`.
+
+### `items/blobs-no-type`
+
+If the key sending `POST /items/blobs` reaches no type, then the server MUST answer `403` with `type_not_permitted`.
+
+**Tests:** `compliance/item-blobs.test.ts › leaves out an item whose type the key may not read, and refuses a key that reads no type`.
+
+### `items/blobs-limits`
+
+If `POST /items/blobs` names more than 200 hashes, or a hash that is not `sha256:` and 64 lowercase hexadecimal digits, or sends `hashes` as anything but a list of strings, or carries a key the operation does not declare, then the server MUST answer `400` with `validation_error`.
+
+**Tests:** `compliance/item-blobs.test.ts › takes at most 200 hashes, and answers none for none`, `› refuses a hash that is not a blob hash, and a body that is not a list of hashes`.
+
+### `items/blobs-list`
+
+When more than 20 items hold a hash sent to `POST /items/blobs`, the server MUST answer the first 20 by `id` with `more` set to `true`.
+
+**Tests:** `compliance/item-blobs.test.ts › lists at most 20 items for a hash and says when there are more`.
+
 ## Updating an item
 
 What a write at a stale version does is `versions.md`'s.

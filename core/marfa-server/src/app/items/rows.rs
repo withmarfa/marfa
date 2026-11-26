@@ -890,6 +890,48 @@ pub(super) fn titled(
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
+pub(super) struct Holder {
+    pub seq: i64,
+    pub id: String,
+    pub type_id: String,
+    pub source: String,
+}
+
+/// Each active or archived item whose `blob_ref` is `hash`, by id, until `keep` stops.
+pub(super) fn holders_of(
+    tx: &Transaction<'_>,
+    hash: &str,
+    mut keep: impl FnMut(Holder) -> Result<bool>,
+) -> Result<()> {
+    // CROSS JOIN keeps SQLite from walking `items` in id order instead of seeking the hash.
+    let mut statement = tx.prepare_cached(
+        "SELECT i.seq, i.id, i.type, i.source FROM blob_references r \
+         CROSS JOIN items i ON i.seq = r.seq \
+         WHERE r.hash = ?1 AND r.kind = 'item' AND i.state IN ('active', 'archived') \
+         AND i.properties ->> '$.blob_ref' = ?1 \
+         ORDER BY i.id",
+    )?;
+    let mut found = statement.query([hash])?;
+    while let Some(row) = found.next()? {
+        let holder = Holder {
+            seq: row.get(0)?,
+            id: row.get(1)?,
+            type_id: row.get(2)?,
+            source: row.get(3)?,
+        };
+        if !keep(holder)? {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn properties_of(tx: &Transaction<'_>, seq: i64) -> Result<String> {
+    Ok(tx
+        .prepare_cached("SELECT json(properties) FROM items WHERE seq = ?1")?
+        .query_row([seq], |row| row.get(0))?)
+}
+
 pub(super) fn count_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<i64> {
     Ok(tx.query_row(
         "SELECT COUNT(*) FROM items WHERE type = ?1",

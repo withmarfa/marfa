@@ -16,6 +16,7 @@ use super::{
 use crate::app::App;
 use crate::app::access::reach::Demand;
 use crate::app::access::{Caller, Level, Permission};
+use crate::app::blobs::Hash;
 use crate::app::catalog::{self, Catalog, Snapshot};
 use crate::app::clock::Stamp;
 use crate::app::connectors::{ReadOnly, read_only};
@@ -27,6 +28,7 @@ use crate::app::refusal::{Code, Refusal, Result};
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
 const TITLES_PER_NAME: i64 = 20;
+const HOLDERS_PER_HASH: i64 = 20;
 const FIRST_PAGE: i64 = 50;
 const MAX_TAKES: usize = 100;
 const MAX_NEIGHBORS: usize = 100;
@@ -562,6 +564,41 @@ pub async fn titles(app: &App, caller: &Caller, names: Vec<String>) -> Result<St
             results.push(serde_json::json!({ "name": name, "items": found, "more": more }));
         }
         Ok(serde_json::json!({ "data": results }).to_string())
+    })
+    .await
+}
+
+pub async fn holders(app: &App, caller: &Caller, hashes: Vec<Hash>) -> Result<String> {
+    reading(app, caller, move |read| {
+        read.caller.require_reach()?;
+        let rules = &read.catalog.rules;
+        let levers = read.caller.levers()?;
+        let mut results = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            let mut found = Vec::new();
+            let mut more = false;
+            rows::holders_of(read.tx, hash.as_str(), |row| {
+                if super::is_hidden(&row.type_id)
+                    || !read.caller.may_read_type(&row.type_id)
+                    || !levers.lists(rules, &row.type_id, &row.source)
+                {
+                    return Ok(true);
+                }
+                if found.len() as i64 == HOLDERS_PER_HASH {
+                    more = true;
+                    return Ok(false);
+                }
+                let properties = super::parsed(&rows::properties_of(read.tx, row.seq)?)?;
+                found.push(json!({
+                    "id": row.id,
+                    "type": row.type_id,
+                    "title": properties.get(rules.title_property(&row.type_id)),
+                }));
+                Ok(true)
+            })?;
+            results.push(json!({ "hash": hash.as_str(), "items": found, "more": more }));
+        }
+        Ok(json!({ "data": results }).to_string())
     })
     .await
 }
