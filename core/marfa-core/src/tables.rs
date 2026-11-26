@@ -51,24 +51,25 @@ pub struct FillReport {
     pub unfilled: u64,
     pub pages: u64,
     pub rows: u64,
-    /// Tables whose read failed, each left to the next pass.
+    /// Tables left unfilled because their read failed, each left to the next pass.
     pub failed: u64,
-    /// The last of them, and why.
+    /// The last of them, or what cut the fill short, and why.
     pub failure: Option<String>,
     /// Tables left to the hydration, catch-up or follow that took the stream.
     pub handed: Vec<ChangedTable>,
 }
 
 impl FillReport {
-    /// Adds a later pass's counts; what it left unfilled is what is left.
+    /// Adds a later pass's counts; what it left unfilled, failed or handed
+    /// on is what is left.
     pub(crate) fn absorb(&mut self, later: FillReport) {
         self.whole += later.whole;
         self.online += later.online;
         self.unfilled = later.unfilled;
         self.pages += later.pages;
         self.rows += later.rows;
-        self.failed += later.failed;
-        self.failure = later.failure.or(self.failure.take());
+        self.failed = later.failed;
+        self.failure = later.failure;
         self.handed = later.handed;
     }
 }
@@ -689,14 +690,20 @@ pub(crate) const RETRY_MOST: Duration = Duration::from_secs(10 * 60);
 
 struct Retry {
     wait: Duration,
+    at: Instant,
     due: Instant,
+    why: String,
 }
+
+/// The tables whose read failed, kept across the passes of one call.
+#[derive(Default)]
+pub(crate) struct Retries(HashMap<(String, String), Retry>);
 
 /// One pass over the tables not yet whole, in which a table whose read fails
 /// is not asked for again until its wait has passed.
 #[derive(Default)]
 pub(crate) struct Pass<'a> {
-    failed: HashMap<(String, String), Retry>,
+    failed: Retries,
     report: FillReport,
     claim: Option<&'a StreamClaim<'a>>,
     took: BTreeSet<(String, String)>,
@@ -709,17 +716,17 @@ impl Pass<'_> {
     pub(crate) fn owes(&mut self, conn: &Connection, now: Instant) -> Result<bool> {
         let owes = next_owed(conn, &|key| self.waiting(key, now))?.is_some();
         if !owes {
-            self.failed.retain(|_, retry| retry.due > now);
+            self.failed.0.retain(|_, retry| retry.due > now);
         }
         Ok(owes)
     }
 
     pub(crate) fn retry_due(&self, now: Instant) -> bool {
-        self.failed.values().any(|retry| retry.due <= now)
+        self.failed.0.values().any(|retry| retry.due <= now)
     }
 
     fn waiting(&self, key: &(String, String), now: Instant) -> bool {
-        self.failed.get(key).is_some_and(|retry| retry.due > now)
+        self.failed.0.get(key).is_some_and(|retry| retry.due > now)
     }
 
     pub(crate) fn step(
@@ -730,7 +737,7 @@ impl Pass<'_> {
         stop: &AtomicBool,
     ) -> Result<Step> {
         let Some(owed) = next_owed(&*core.conn()?, &|key| self.waiting(key, now))? else {
-            self.failed.retain(|_, retry| retry.due > now);
+            self.failed.0.retain(|_, retry| retry.due > now);
             return Ok(Step::Done);
         };
         let key = (owed.item.clone(), owed.table.clone());
@@ -738,7 +745,7 @@ impl Pass<'_> {
         let settled = self.report.whole + self.report.online;
         match advance(core, context, &owed, &mut self.report, stop, self.claim) {
             Ok(()) => {
-                self.failed.remove(&key);
+                self.failed.0.remove(&key);
                 if self.report.whole + self.report.online > settled {
                     self.settled.insert(key);
                     Ok(Step::Settled {
@@ -751,19 +758,17 @@ impl Pass<'_> {
             }
             Err(error) if fails_one_table(&error) => {
                 let failure = format!("the table {} of {}: {error}", owed.table, owed.item);
-                self.report.failure = Some(failure.clone());
-                let wait = match self.failed.get(&key) {
+                let wait = match self.failed.0.get(&key) {
                     Some(retry) => (retry.wait * 2).min(RETRY_MOST),
-                    None => {
-                        self.report.failed += 1;
-                        RETRY_FIRST
-                    }
+                    None => RETRY_FIRST,
                 };
-                self.failed.insert(
+                self.failed.0.insert(
                     key,
                     Retry {
                         wait,
+                        at: now,
                         due: now.checked_add(wait).unwrap_or(now),
+                        why: failure.clone(),
                     },
                 );
                 #[cfg(debug_assertions)]
@@ -929,9 +934,11 @@ pub(crate) fn fill(
     context: &Context,
     stop: &AtomicBool,
     claim: Option<&StreamClaim<'_>>,
+    retries: &mut Retries,
 ) -> Result<FillReport> {
     let held = || claim.is_none_or(StreamClaim::held);
     let mut pass = Pass {
+        failed: std::mem::take(retries),
         claim,
         ..Pass::default()
     };
@@ -961,17 +968,40 @@ pub(crate) fn fill(
             other.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?
         }
     }
-    let left: Vec<(String, String)> = if held() {
-        let now = unfilled(&*core.conn()?)?;
-        pass.took.intersection(&now).cloned().collect()
-    } else {
-        pass.took.difference(&pass.settled).cloned().collect()
+    #[cfg(debug_assertions)]
+    if claim.is_some() {
+        crate::fault::hold(|| "table-fill-ending");
+    }
+    // The next mover writes only under the connection's lock, so while this
+    // holds it a claim still held means the tables read are as this fill left them.
+    let now = {
+        let conn = core.conn()?;
+        held().then(|| unfilled(&conn)).transpose()?
+    };
+    let left: BTreeSet<(String, String)> = match &now {
+        Some(now) => pass.took.intersection(now).cloned().collect(),
+        None => pass.took.difference(&pass.settled).cloned().collect(),
     };
     pass.report.unfilled = left.len() as u64;
-    if !held() {
-        pass.report.handed = ChangedTable::of(left);
+    if now.is_some() {
+        let failed: Vec<&Retry> = left
+            .iter()
+            .filter_map(|key| pass.failed.0.get(key))
+            .collect();
+        pass.report.failed = failed.len() as u64;
+        pass.report.failure = failed
+            .into_iter()
+            .max_by_key(|retry| retry.at)
+            .map(|retry| retry.why.clone());
+    } else {
+        pass.report.handed = ChangedTable::of(left.into_iter().collect());
     }
+    *retries = std::mem::take(&mut pass.failed);
     Ok(pass.report)
+}
+
+pub(crate) fn unfilled_count(conn: &Connection) -> Result<u64> {
+    Ok(unfilled(conn)?.len() as u64)
 }
 
 fn unfilled(conn: &Connection) -> Result<BTreeSet<(String, String)>> {

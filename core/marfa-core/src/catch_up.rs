@@ -714,7 +714,13 @@ pub(crate) fn catch_up(
     )
     .or_else(read_only::contained)
     .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?;
-    report.tables = crate::tables::fill(core, &context, stop, None)?;
+    report.tables = crate::tables::fill(
+        core,
+        &context,
+        stop,
+        None,
+        &mut crate::tables::Retries::default(),
+    )?;
     report.changed_tables = crate::tables::ChangedTable::of(
         store::tables_changed_since(&*core.conn()?, tables_before, usize::MAX)?.unwrap_or_default(),
     );
@@ -5492,6 +5498,336 @@ mod tests {
             fill.held(),
             "a follow whose stop was raised took the stream from a fill"
         );
+    }
+
+    /// A copy whose slice holds the ledger `l1`, whose tables `log`, with
+    /// `log_rows` rows, and `other`, empty, the server lists.
+    #[cfg(debug_assertions)]
+    fn hydrated_with_a_ledger(
+        server: &Scripted,
+        after: Vec<Answer>,
+        log_rows: i64,
+    ) -> (tempfile::TempDir, Arc<Core>) {
+        use crate::scripted::{certified, json};
+        let mut events = hydration_streams();
+        events.extend(after);
+        let (dir, core) = unhydrated(server, events);
+        let table = serde_json::json!({"columns": {"a": {"type": "string"}}});
+        let answer = |body: serde_json::Value| vec![certified(json(200, &body.to_string()))];
+        server.on(
+            "/types",
+            answer(serde_json::json!({
+                "data": [
+                    {"id": NOTE, "display_hints": {"title_field": "title"}},
+                    {"id": LEDGER, "fields": {}, "tables": {"log": table, "other": table}},
+                ],
+                "next_cursor": null,
+            })),
+        );
+        server.on(
+            "/keys/current",
+            answer(serde_json::json!({"type_permissions": {NOTE: "read", LEDGER: "read"}})),
+        );
+        let at = "2026-01-01T00:00:00Z";
+        server.on(
+            "/items",
+            answer(serde_json::json!({
+                "data": [{
+                    "item": {
+                        "id": "l1", "type": LEDGER, "properties": {}, "state": "active",
+                        "tier": "library", "version": 1, "schema_version": 1, "source": "test",
+                        "occurred_at": at, "created_at": at, "updated_at": at,
+                    },
+                    "metadata": {"tags": []},
+                    "listed": true,
+                }],
+                "next_cursor": null,
+            })),
+        );
+        server.on(
+            "/items/l1/tables",
+            answer(serde_json::json!({
+                "data": [
+                    {"name": "log", "row_count": log_rows, "bytes": log_rows * 10},
+                    {"name": "other", "row_count": 0, "bytes": 0},
+                ],
+            })),
+        );
+        core.hydrate(&[NOTE.into(), LEDGER.into()], SliceTier::Library)
+            .unwrap();
+        assert!(store::item_held(&core.conn().unwrap(), "l1").unwrap());
+        (dir, core)
+    }
+
+    #[cfg(debug_assertions)]
+    fn ledger_table(core: &Core, table: &str) -> Option<String> {
+        crate::tables::state(&core.conn().unwrap(), "l1", table).unwrap()
+    }
+
+    #[cfg(debug_assertions)]
+    fn failing_rows() -> Answer {
+        crate::scripted::certified(crate::scripted::json(
+            500,
+            r#"{"error":{"code":"internal","message":"scripted"}}"#,
+        ))
+    }
+
+    /// The catch-up's stream sends `n1` at 11, waits for `ready`, then goes live.
+    #[cfg(debug_assertions)]
+    fn catch_up_held(entered: &Arc<AtomicBool>, ready: &Arc<AtomicBool>) -> Answer {
+        stream(
+            vec![created("n1", "11")],
+            Then::WaitFor {
+                entered: Arc::clone(entered),
+                ready: Arc::clone(ready),
+                then: Box::new(Then::Later {
+                    keepalive: MS(5),
+                    after: Duration::ZERO,
+                    frames: vec![stream_live(Some("11"))],
+                }),
+            },
+        )
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_catch_up_that_took_its_events_reports_them_though_the_fill_after_it_fails() {
+        let server = Scripted::start();
+        let (entered, ready) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let (_dir, core) =
+            hydrated_with_a_ledger(&server, vec![catch_up_held(&entered, &ready)], 1);
+        // The catch-up's own fill fails the table; the fill after it cannot
+        // reach the server.
+        server.on(
+            "/items/l1/tables/log/rows",
+            vec![failing_rows(), crate::scripted::unnamed(502, "bad_gateway")],
+        );
+        let catching = {
+            let core = Arc::clone(&core);
+            thread::spawn(move || core.catch_up())
+        };
+        wait_until("the catch-up never read its stream", || {
+            entered.load(Ordering::Relaxed)
+        });
+        assert_eq!(
+            core.hold_table(LEDGER, "log").unwrap().fill,
+            None,
+            "the catch-up does not hold the stream"
+        );
+        ready.store(true, Ordering::Relaxed);
+        let report = catching.join().unwrap();
+        assert_eq!(
+            server.seen("/items/l1/tables/log/rows").len(),
+            2,
+            "the fill after the catch-up did not read the table"
+        );
+        let report = report.expect("a catch-up that took its events reported a failure");
+        assert_eq!(report.applied, 1);
+        assert_eq!(stored_cursor(&core), Some("11".to_string()));
+        assert!(
+            report
+                .tables
+                .failure
+                .as_deref()
+                .is_some_and(|failure| failure.contains("502")),
+            "{:?}",
+            report.tables
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_copy_that_took_the_head_in_time_is_caught_up_though_the_fill_after_runs_past_the_wait() {
+        let server = Scripted::start();
+        let (entered, ready) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let head = stream(
+            vec![
+                crate::scripted::copy_marker("stream_cursor", "11"),
+                created("n1", "11"),
+                crate::scripted::copy_marker("stream_live", "11"),
+            ],
+            Then::End,
+        );
+        let (_dir, core) =
+            hydrated_with_a_ledger(&server, vec![head, catch_up_held(&entered, &ready)], 1);
+        server.on(
+            "/items/l1/tables/log/rows",
+            vec![
+                failing_rows(),
+                Answer::Slow {
+                    after: Duration::from_secs(30),
+                    answer: Box::new(failing_rows()),
+                },
+            ],
+        );
+        let waiting = {
+            let core = Arc::clone(&core);
+            thread::spawn(move || {
+                core.caught_up_to_head(Duration::from_secs(2), &crate::NEVER_STOPPED)
+            })
+        };
+        wait_until("the catch-up never read its stream", || {
+            entered.load(Ordering::Relaxed)
+        });
+        assert_eq!(core.hold_table(LEDGER, "log").unwrap().fill, None);
+        ready.store(true, Ordering::Relaxed);
+        assert_eq!(
+            waiting.join().unwrap(),
+            Ok(None),
+            "a copy whose cursor reached the head in time was reported behind"
+        );
+        assert_eq!(stored_cursor(&core), Some("11".to_string()));
+        assert_eq!(server.seen("/items/l1/tables/log/rows").len(), 2);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_follow_stopped_between_its_readiness_read_and_its_claim_leaves_a_fill_the_stream() {
+        let server = Scripted::start();
+        let (_dir, core) = hydrated_with_a_table(&server, vec![at_head()]);
+        let fill = core.try_claim_stream(crate::Mover::Fill).unwrap();
+        crate::fault::arm("follow-claiming");
+        let (stop, done) = follow_for_real(&core);
+        wait_until("the follow never came to its claim", || {
+            crate::fault::waiting("follow-claiming") > 0
+        });
+        stop.store(true, Ordering::Relaxed);
+        crate::fault::release("follow-claiming");
+        assert_eq!(
+            done.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Ok(FollowReport::default())
+        );
+        assert!(
+            fill.held(),
+            "a follow whose stop was raised before its claim took the stream from a fill"
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_table_chosen_while_a_follow_ends_is_filled_by_the_time_the_stream_is_free() {
+        let server = Scripted::start();
+        let (_dir, core) = hydrated_with_a_ledger(
+            &server,
+            vec![stream(vec![stream_live(Some("10"))], held())],
+            0,
+        );
+        crate::fault::observe(true);
+        let (stop, done) = follow_for_real(&core);
+        wait_until("the follow never had its stream", || {
+            crate::fault::reached("follow-stream-had") > 0
+        });
+        crate::fault::arm("follow-ending");
+        stop.store(true, Ordering::Relaxed);
+        wait_until("the follow never ended", || {
+            crate::fault::waiting("follow-ending") > 0
+        });
+        assert_eq!(
+            core.hold_table(LEDGER, "log").unwrap().fill,
+            None,
+            "the follow does not hold the stream"
+        );
+        assert_eq!(ledger_table(&core, "log").as_deref(), Some("owed"));
+        crate::fault::release("follow-ending");
+        done.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        assert!(core.try_claim_stream(crate::Mover::CatchUp).is_ok());
+        assert_eq!(
+            ledger_table(&core, "log").as_deref(),
+            Some(crate::tables::WHOLE),
+            "a table chosen as the follow ended was left owed with the stream free"
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_fill_whose_stream_a_catch_up_took_hands_on_the_table_it_did_not_finish() {
+        let server = Scripted::start();
+        let (_dir, core) = hydrated_with_a_ledger(
+            &server,
+            vec![stream(
+                vec![created("n1", "11"), stream_live(Some("11"))],
+                Then::End,
+            )],
+            1,
+        );
+        server.on(
+            "/items/l1/tables/log/rows",
+            vec![
+                failing_rows(),
+                failing_rows(),
+                crate::scripted::certified(crate::scripted::json(
+                    200,
+                    r#"{"data":[{"id":"r1","values":{"a":"x"},"updated_at":"2026-01-01T00:00:00Z"}],"next_cursor":null}"#,
+                )),
+            ],
+        );
+        let held = core.hold_table(LEDGER, "log").unwrap().fill.unwrap();
+        assert_eq!((held.failed, held.unfilled), (1, 1), "{held:?}");
+        crate::fault::arm("table-fill-ending");
+        let filling = {
+            let core = Arc::clone(&core);
+            thread::spawn(move || core.fill_tables(&crate::NEVER_STOPPED))
+        };
+        wait_until("the fill never ended its pass", || {
+            crate::fault::waiting("table-fill-ending") > 0
+        });
+        assert_eq!(server.seen("/items/l1/tables/log/rows").len(), 2);
+        core.catch_up().unwrap();
+        assert_eq!(
+            ledger_table(&core, "log").as_deref(),
+            Some(crate::tables::WHOLE)
+        );
+        crate::fault::release("table-fill-ending");
+        let report = filling.join().unwrap().unwrap();
+        assert_eq!(
+            (report.failed, report.unfilled, report.handed.len()),
+            (0, 1, 1),
+            "{report:?}"
+        );
+        assert_eq!(report.handed[0].item, "l1");
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_fill_reads_a_failed_table_again_only_after_its_wait_whatever_is_chosen_meanwhile() {
+        for new_choice in [false, true] {
+            let server = Scripted::start();
+            let (_dir, core) = hydrated_with_a_ledger(&server, vec![], 1);
+            server.on("/items/l1/tables/log/rows", vec![failing_rows()]);
+            let reads = || server.seen("/items/l1/tables/log/rows").len();
+            core.hold_table(LEDGER, "log").unwrap();
+            crate::fault::arm("table-hold-filled");
+            let filling = {
+                let core = Arc::clone(&core);
+                thread::spawn(move || core.fill_tables(&crate::NEVER_STOPPED))
+            };
+            wait_until("the fill never finished its pass", || {
+                crate::fault::waiting("table-hold-filled") > 0
+            });
+            assert_eq!(reads(), 2);
+            let other = if new_choice { "other" } else { "log" };
+            assert_eq!(core.hold_table(LEDGER, other).unwrap().fill, None);
+            crate::fault::release("table-hold-filled");
+            let report = filling.join().unwrap().unwrap();
+            assert_eq!(
+                (reads(), report.failed),
+                (2, 1),
+                "a fill read a failed table again before its wait passed, choosing {other}: {report:?}"
+            );
+            if new_choice {
+                assert_eq!(
+                    ledger_table(&core, "other").as_deref(),
+                    Some(crate::tables::WHOLE),
+                    "the witness: a new choice is filled in the same call"
+                );
+            }
+        }
     }
 
     #[test]

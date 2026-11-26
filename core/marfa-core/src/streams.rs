@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::fault;
 use crate::hydrate::Fill;
 use crate::{
-    CatchUpFailed, CatchUpReport, Change, Core, CoreError, FollowReport, HydrateReport,
+    CatchUpFailed, CatchUpReport, Change, Core, CoreError, FillReport, FollowReport, HydrateReport,
     NEVER_STOPPED, Result, SliceQuery, SliceTier, catch_up, fault_message, http, hydrate, reach,
     store, telemetry,
 };
@@ -168,13 +168,45 @@ impl Core {
         )?;
         taken.reached();
         self.settle_bodies(stop)?;
-        let context = reach::Context::capture(&*self.conn()?)?;
-        report.tables = crate::tables::fill(self, &context, stop, None)?;
+        let context = self.conn().and_then(|conn| reach::Context::capture(&conn));
+        let filled = context.and_then(|context| {
+            crate::tables::fill(
+                self,
+                &context,
+                stop,
+                None,
+                &mut crate::tables::Retries::default(),
+            )
+        });
+        report.tables = self.filled_after(&mut FillReport::default(), filled.map(Some));
         drop(streaming);
-        if let Some(later) = self.fill_chosen_since(seen, stop)? {
-            report.tables.absorb(later);
-        }
+        let later = self.fill_chosen_since(seen, stop);
+        report.tables = self.filled_after(&mut report.tables, later);
         Ok(report)
+    }
+
+    /// A fill after the cursor moved: its failure is reported as the fill's
+    /// own, never as the call's, and leaves what is not whole unfilled.
+    fn filled_after(
+        &self,
+        before: &mut FillReport,
+        filled: Result<Option<FillReport>>,
+    ) -> FillReport {
+        let mut report = std::mem::take(before);
+        match filled {
+            Ok(Some(later)) => report.absorb(later),
+            Ok(None) => {}
+            Err(error) => {
+                if let Ok(left) = self
+                    .conn()
+                    .and_then(|conn| crate::tables::unfilled_count(&conn))
+                {
+                    report.unfilled = left;
+                }
+                report.failure = Some(error.to_string());
+            }
+        }
+        report
     }
 
     /// Holds every edge of `edge_types` the key reads, whichever ends the
@@ -236,25 +268,44 @@ impl Core {
             self.settle_bodies(stop)?;
             Ok(report)
         })
-        .and_then(|mut report| {
+        .map(|mut report| {
             drop(streaming);
-            let before = store::last_table_change(&*self.conn()?)?;
-            if let Some(later) = self.fill_chosen_since(seen, stop)? {
-                report.tables.absorb(later);
-                let changed = store::tables_changed_since(&*self.conn()?, before, usize::MAX)?
-                    .unwrap_or_default();
-                for table in crate::tables::ChangedTable::of(changed) {
-                    if !report.changed_tables.contains(&table) {
-                        report.changed_tables.push(table);
-                    }
-                }
-            }
-            Ok(report)
+            self.fill_after_catch_up(seen, stop, &mut report);
+            report
         })
         .map_err(|error| CatchUpFailed {
             error,
             catalog_changed,
         })
+    }
+
+    /// The catch-up has taken its events by now, so nothing here fails it.
+    fn fill_after_catch_up(&self, seen: u64, stop: &AtomicBool, report: &mut CatchUpReport) {
+        let before = match self.conn().and_then(|conn| store::last_table_change(&conn)) {
+            Ok(before) => before,
+            Err(error) => {
+                report.tables.failure = Some(error.to_string());
+                return;
+            }
+        };
+        let later = self.fill_chosen_since(seen, stop);
+        if matches!(later, Ok(None)) {
+            return;
+        }
+        report.tables = self.filled_after(&mut report.tables, later);
+        match self
+            .conn()
+            .and_then(|conn| store::tables_changed_since(&conn, before, usize::MAX))
+        {
+            Ok(changed) => {
+                for table in crate::tables::ChangedTable::of(changed.unwrap_or_default()) {
+                    if !report.changed_tables.contains(&table) {
+                        report.changed_tables.push(table);
+                    }
+                }
+            }
+            Err(error) => report.tables.failure = Some(error.to_string()),
+        }
     }
 
     /// An unreadable head does not prevent sending the write.
@@ -379,6 +430,8 @@ impl Core {
     /// `stop` as `drain_until` does, and the follow raises `stop` itself
     /// when it ends, however it ends, so no write goes out after either:
     /// give each follow a flag of its own.
+    ///
+    /// A table chosen after its last look is filled before it returns.
     pub fn follow(
         &self,
         stop: &AtomicBool,
@@ -489,13 +542,20 @@ impl Core {
             };
             drop(conn);
             match answer {
-                Ok(()) => match self.try_claim_stream(Mover::Follow) {
-                    Ok(claim) => return Ok(Some(claim)),
-                    // The hydration waited for holds it until it has
-                    // settled, and a catch-up may have taken it since.
-                    Err(Mover::Hydration | Mover::CatchUp) if waited => {}
-                    Err(_) => return Err(one_at_a_time()),
-                },
+                Ok(()) => {
+                    #[cfg(debug_assertions)]
+                    fault::hold(|| "follow-claiming");
+                    if stop.load(Ordering::Relaxed) {
+                        return Ok(None);
+                    }
+                    match self.try_claim_stream(Mover::Follow) {
+                        Ok(claim) => return Ok(Some(claim)),
+                        // The hydration waited for holds it until it has
+                        // settled, and a catch-up may have taken it since.
+                        Err(Mover::Hydration | Mover::CatchUp) if waited => {}
+                        Err(_) => return Err(one_at_a_time()),
+                    }
+                }
                 Err(_) if waits => {
                     #[cfg(debug_assertions)]
                     if !waited {
@@ -513,17 +573,18 @@ impl Core {
     fn follow_claimed(
         &self,
         http: Arc<http::Http>,
-        _streaming: StreamClaim<'_>,
+        streaming: StreamClaim<'_>,
         stop: &AtomicBool,
         how: catch_up::FollowAs,
         mut on_change: impl FnMut(&Change),
         mut on_live: impl FnMut(bool),
         mut on_contact: impl FnMut(),
     ) -> Result<FollowReport> {
+        let seen = self.tables_chosen();
         // A binding says the follow ended when this returns: a fault that
         // unwound past here would end the thread silently, and a caller
         // waiting to be told would wait for good.
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             catch_up::follow(
                 self,
                 http,
@@ -534,7 +595,21 @@ impl Core {
                 &mut on_contact,
             )
         }))
-        .unwrap_or_else(|fault| Err(CoreError::Fault(fault_message(fault.as_ref()))))
+        .unwrap_or_else(|fault| Err(CoreError::Fault(fault_message(fault.as_ref()))));
+        #[cfg(debug_assertions)]
+        fault::hold(|| "follow-ending");
+        drop(streaming);
+        // The follow's own stop is raised by now, and a table chosen after
+        // its last look would otherwise wait for the next call.
+        let after = self.fill_chosen_since(seen, &NEVER_STOPPED);
+        let after = self.filled_after(&mut FillReport::default(), after);
+        result.map(|mut report| {
+            if after.failed > 0 || after.failure.is_some() {
+                report.tables_failed += after.failed;
+                report.last_failure = after.failure.or(report.last_failure);
+            }
+            report
+        })
     }
 
     /// A call already stopped ends `Canceled`, whoever holds the stream.

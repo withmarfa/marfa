@@ -15,9 +15,9 @@ pub struct TableFill {
     pub unfilled: i64,
     pub pages: i64,
     pub rows: i64,
-    /// Tables whose read failed, each left to the next pass.
+    /// Tables left unfilled because their read failed, each left to the next pass.
     pub failed: i64,
-    /// The last of them, and why.
+    /// The last of them, or what cut the fill short, and why.
     pub failure: Option<String>,
     /// Tables left to the call that took the stream, counted in `unfilled`.
     pub handed: Vec<ChangedTable>,

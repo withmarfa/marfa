@@ -225,7 +225,9 @@ impl Core {
         let was_held = busy::retrying(&self.conn, stop, || {
             tables::choose(&mut *self.conn()?, type_id, table)
         })?;
-        self.tables_chosen.fetch_add(1, Ordering::SeqCst);
+        if !was_held {
+            self.tables_chosen.fetch_add(1, Ordering::SeqCst);
+        }
         let fill = match self.try_claim_stream(Mover::Fill) {
             Ok(streaming) => self.fill_from(streaming, stop, true)?,
             Err(_) => None,
@@ -265,6 +267,7 @@ impl Core {
         hold: bool,
     ) -> Result<Option<FillReport>> {
         let mut fill: Option<FillReport> = None;
+        let mut retries = tables::Retries::default();
         loop {
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "table-hold-filling");
@@ -273,7 +276,7 @@ impl Core {
                 break;
             }
             let context = reach::Context::capture(&*self.conn()?)?;
-            let report = tables::fill(self, &context, stop, Some(&streaming))?;
+            let report = tables::fill(self, &context, stop, Some(&streaming), &mut retries)?;
             let kept = streaming.held();
             match &mut fill {
                 Some(before) => before.absorb(report),
