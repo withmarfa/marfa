@@ -30,13 +30,25 @@ fn remembering(ids: [&str; 2]) -> (tempfile::TempDir, Folder, tempfile::TempDir)
     std::fs::remove_file(from.path().join("first.txt")).unwrap();
     assert_eq!(a.scan().unwrap().missing, 1);
     past_the_grace(&a, "first.txt");
-    assert_eq!(a.scan().unwrap().deleted, 1);
+    trashed_once_held(&a, "first.txt");
     drop(b);
     assert!(Folder::forget(other.path()).unwrap());
     std::fs::remove_file(from.path().join("held.txt")).unwrap();
     assert_eq!(a.scan().unwrap().missing, 1);
     past_the_grace(&a, "held.txt");
     (from, a, other)
+}
+
+/// A sweep holds the delete for the other folder, and the person trashes it.
+fn trashed_once_held(a: &Folder, path: &str) {
+    let swept = a.scan().unwrap();
+    assert_eq!(swept.deleted, 0, "{swept:?}");
+    assert!(
+        swept.unsure.iter().any(|file| file.path == path),
+        "{swept:?}"
+    );
+    let settled = a.settle_held(&[path.to_string()], Settle::Trash).unwrap();
+    assert_eq!(settled.trashed, [path], "{settled:?}");
 }
 
 fn unsure_reasons(report: &ScanReport) -> Vec<&str> {
@@ -125,9 +137,9 @@ fn a_delete_stays_held_while_another_folder_stands_at_a_remembered_directory() {
 }
 
 /// The remembered folder's own store listed now at another directory is read
-/// there like any listed folder.
+/// there like any listed folder, and the hold waits for the person.
 #[test]
-fn a_remembered_folder_listed_at_another_directory_is_forgotten_and_the_delete_sent() {
+fn a_remembered_folder_listed_at_another_directory_is_read_there_and_the_hold_kept() {
     let (_, _registry) = registry::tests::own_registry();
     let (_from, a, other) = remembering([
         "01a00000-0000-7000-8000-0000000035a8",
@@ -143,11 +155,15 @@ fn a_remembered_folder_listed_at_another_directory_is_forgotten_and_the_delete_s
     std::fs::rename(other.path(), &moved).unwrap();
     drop(Folder::open(&moved, None).unwrap());
     let swept = a.scan().unwrap();
-    assert_eq!(
-        swept.trashed,
-        ["held.txt"],
-        "a delete stayed held for a folder listed at another directory: {swept:?}"
+    assert!(
+        swept.trashed.is_empty(),
+        "a scan settled a held delete: {swept:?}"
     );
+    let status = a.status().unwrap();
+    assert_eq!(held(&status, "held.txt"), Some(("held", Some("unsure"))));
+    // Read at its new directory, the folder holds no file of the item.
+    let settled = a.settle_held(&["held.txt".into()], Settle::Trash).unwrap();
+    assert_eq!(settled.trashed, ["held.txt"], "{settled:?}");
     let remembered: Vec<PathBuf> = elsewhere::remembered_dirs(&a);
     assert!(
         !remembered.contains(&other.path().to_path_buf()),
@@ -156,8 +172,8 @@ fn a_remembered_folder_listed_at_another_directory_is_forgotten_and_the_delete_s
     assert!(remembered.contains(&moved), "{remembered:?}");
 }
 
-/// A folder with `sub/held.txt`, which a listed folder beside it took part in
-/// deciding a delete for, so it remembers that folder too.
+/// A folder with `sub/held.txt` beside a listed folder, which it remembers
+/// since a delete it held for that folder.
 fn beside_a_listed_folder(
     ids: [&str; 2],
 ) -> (tempfile::TempDir, Folder, tempfile::TempDir, Folder) {
@@ -176,7 +192,7 @@ fn beside_a_listed_folder(
     std::fs::remove_file(from.path().join("first.txt")).unwrap();
     a.scan().unwrap();
     past_the_grace(&a, "first.txt");
-    assert_eq!(a.scan().unwrap().deleted, 1);
+    trashed_once_held(&a, "first.txt");
     (from, a, other, b)
 }
 
@@ -236,9 +252,9 @@ fn a_rootless_entry_for_another_store_at_a_remembered_path_releases_no_delete() 
 }
 
 /// A pass that cannot read a held file's directory cannot see it come back
-/// and go again, so the grace starts afresh at the next pass that reads it.
+/// and go again, so neither it nor a later pass settles the hold.
 #[test]
-fn a_pass_that_cannot_read_a_held_files_directory_restarts_its_grace() {
+fn a_held_delete_outlasts_a_pass_that_cannot_read_its_directory() {
     let (_, _guard) = registry::tests::own_registry();
     let (from, a, other, _b) = beside_a_listed_folder([
         "01a00000-0000-7000-8000-0000000035b4",
@@ -258,22 +274,22 @@ fn a_pass_that_cannot_read_a_held_files_directory_restarts_its_grace() {
         assert!(!a.scan().unwrap().swept);
     }
     std::fs::rename(&file, &outside).unwrap();
-    // As though the grace ran out between the unread pass and this one.
-    let long_ago = crate::store::iso_at(
-        crate::clock::system_time() - RENAME_GRACE - std::time::Duration::from_secs(1),
-    );
-    a.core
-        .conn()
-        .unwrap()
-        .execute("UPDATE folder_journal SET missing_since = ?1", [&long_ago])
-        .unwrap();
-    let just_gone = a.scan().unwrap();
+    for _ in 0..2 {
+        let swept = a.scan().unwrap();
+        assert!(swept.swept, "{swept:?}");
+        assert_eq!(
+            swept.deleted, 0,
+            "a pass after one that could not read the directory settled the hold: {swept:?}"
+        );
+        past_the_grace(&a, "sub/held.txt");
+    }
     assert_eq!(
-        just_gone.deleted, 0,
-        "a delete was sent before its grace ran out after a pass that could not read it: {just_gone:?}"
+        held(&a.status().unwrap(), "sub/held.txt"),
+        Some(("held", Some("unsure")))
     );
-    // The witness: once the grace runs out, the delete is sent.
-    past_the_grace(&a, "sub/held.txt");
-    let swept = a.scan().unwrap();
-    assert_eq!(swept.trashed, ["sub/held.txt"], "{swept:?}");
+    // The witness: the person's trash sends the delete the hold kept.
+    let settled = a
+        .settle_held(&["sub/held.txt".into()], Settle::Trash)
+        .unwrap();
+    assert_eq!(settled.trashed, ["sub/held.txt"], "{settled:?}");
 }

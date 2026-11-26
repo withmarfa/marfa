@@ -161,7 +161,15 @@ impl Folder {
             let reason = match self.file_at(&self.root.join(path)) {
                 Err(error) => format!("its path cannot be checked ({error})"),
                 Ok(true) => continue,
-                Ok(false) if !scanned.swept => unread.clone(),
+                // Paused, it stays in view for a confirm that reads it all.
+                Ok(false) if !scanned.swept => {
+                    waiting.push(path.clone());
+                    confirmed.unsure.push(Unsure {
+                        path: path.clone(),
+                        reason: unread.clone(),
+                    });
+                    continue;
+                }
                 Ok(false) => match since {
                     // The person settles a held file with `folders held`.
                     Some((_, Some(reason))) => reason.clone(),
@@ -190,7 +198,12 @@ impl Folder {
             let conn = self.core.conn()?;
             let tx = conn.unchecked_transaction()?;
             state::journal_missing(&tx, path, item_id)?;
-            state::journal_keep(&tx, path, item_id, Some(&state::Kept::Unsure(reason.clone())))?;
+            state::journal_keep(
+                &tx,
+                path,
+                item_id,
+                Some(&state::Kept::Unsure(reason.clone())),
+            )?;
             tx.commit()?;
             drop(conn);
             confirmed.unsure.push(Unsure {
@@ -580,6 +593,14 @@ mod tests {
             .map(|problem| problem.count)
     }
 
+    /// The person trashes a held file, which no later scan decides.
+    fn trashed_by_person(folder: &Folder, path: &str) {
+        let settled = folder
+            .settle_held(&[path.to_string()], super::super::Settle::Trash)
+            .unwrap();
+        assert_eq!(settled.trashed, [path], "{settled:?}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_confirmed_removal_held_while_another_folder_cannot_be_read_stays_a_held_file() {
@@ -614,14 +635,18 @@ mod tests {
             );
             assert_eq!(held_files(folder), Some(1));
         }
-        assert_eq!(folder.scan().unwrap().paused, 1);
-        assert_eq!(folder.confirm().unwrap().deleted, 1);
+        let read = folder.scan().unwrap();
+        assert_eq!((read.paused, read.deleted), (0, 0), "{read:?}");
+        assert_eq!(held_as(folder, "gone.md"), Some(("held", Some("unsure"))));
+        assert!(deletes_queued(folder).is_empty(), "a delete was queued");
+        // The witness: the person's trash sends the delete the hold kept.
+        trashed_by_person(folder, "gone.md");
         assert_eq!(deletes_queued(folder).len(), 1);
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_confirmed_removal_held_while_its_own_directory_cannot_be_read_stays_a_held_file() {
+    fn a_removal_confirmed_while_another_directory_cannot_be_read_stays_paused_in_view() {
         let (_, _registry) = registry::tests::own_registry();
         let paused = paused_over(
             "01a00000-0000-7000-8000-00000000c6b3",
@@ -635,7 +660,19 @@ mod tests {
             confirmed.unsure.iter().any(|file| file.path == "gone.md"),
             "{confirmed:?}"
         );
-        assert_eq!(held_as(folder, "gone.md"), Some(("held", Some("unsure"))));
+        assert_eq!(
+            held_as(folder, "gone.md").map(|(_, flag)| flag),
+            Some(Some("removal")),
+            "a removal the confirm could not decide dropped out of view"
+        );
+        let held: Vec<String> = folder
+            .held_files()
+            .unwrap()
+            .into_iter()
+            .map(|file| file.path)
+            .collect();
+        // Its path unreadable, the file put back in `sub` is held instead.
+        assert_eq!(held, ["sub/original.md"]);
     }
 
     #[cfg(unix)]
@@ -681,9 +718,11 @@ mod tests {
         );
         assert_eq!(held_files(folder), Some(1));
         assert!(deletes_queued(folder).is_empty(), "a delete was queued");
-        // The witness: read whole, the missing file is a removal to confirm.
-        assert_eq!(folder.scan().unwrap().paused, 1);
-        assert_eq!(folder.confirm().unwrap().deleted, 1);
+        let read = folder.scan().unwrap();
+        assert_eq!((read.paused, read.deleted), (0, 0), "{read:?}");
+        assert!(deletes_queued(folder).is_empty(), "a delete was queued");
+        // The witness: the person's trash sends the delete the hold kept.
+        trashed_by_person(folder, "sub/gone.md");
         assert_eq!(deletes_queued(folder).len(), 1);
     }
 

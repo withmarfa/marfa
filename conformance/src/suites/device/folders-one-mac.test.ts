@@ -4431,11 +4431,13 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       before,
     );
     expect((await a.folder.pull()).ok).toBe(true);
-    // Deciding this delete finds the other folder, so this one remembers it.
+    // Holding this delete for the other folder makes this one remember it.
     rmSync(join(a.dir, "First.md"));
     expect((await a.folder.push()).ok).toBe(true);
     await pastTheGrace();
     expect((await a.folder.push()).ok).toBe(true);
+    expect(await heldIn(a)).toEqual(["First.md"]);
+    await trashHeldFiles(a, ["First.md"]);
     expect(deletesOf(a.server, first)).toBe(1);
     return { a, b };
   }
@@ -4509,7 +4511,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     await heldUnsure(a);
   });
 
-  it("holds a delete for a folder no longer listed while another folder's state stands at its directory, and sends it once its directory holds no state", async () => {
+  it("holds a delete for a folder no longer listed while another folder's state stands at its directory, and once its directory holds no state, until the person trashes it", async () => {
     let more: FolderItem | undefined;
     const held = "01a00000-0000-7000-8000-0000000035b4";
     const { a, b } = await rememberingGone(
@@ -4538,18 +4540,20 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       expect(deletesOf(a.server, held)).toBe(0);
       await heldUnsure(a);
 
-      // The witness: the directory the folder was admitted at, with no
-      // folder state, shows it removed.
+      // The directory, now with no folder state, does not settle the hold.
       rmSync(join(b.dir, ".marfa"), { recursive: true, force: true });
       const swept = await a.folder.push();
-      expect(swept.ok && swept.value.scan.trashed).toEqual(["Held.md"]);
+      expect(swept.ok && swept.value.scan.trashed).toEqual([]);
+      await heldUnsure(a);
+      // The witness: the person's trash sends the delete the hold kept.
+      await trashHeldFiles(a, ["Held.md"]);
       expect(deletesOf(a.server, held)).toBe(1);
     } finally {
       await third.stop();
     }
   });
 
-  it("sends a delete held for a folder no longer listed once its store is listed at another directory", async () => {
+  it("keeps a delete held for a folder no longer listed once its store is listed at another directory, until the person trashes it", async () => {
     const held = "01a00000-0000-7000-8000-0000000035b6";
     const { a, b } = await remembering("remembered-moved", [
       "01a00000-0000-7000-8000-0000000035b5",
@@ -4582,8 +4586,11 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const swept = await a.folder.push();
     expect(
       swept.ok && swept.value.scan.trashed,
-      "a delete stayed held for a folder whose store is listed at another directory",
-    ).toEqual(["Held.md"]);
+      "a scan settled a held delete",
+    ).toEqual([]);
+    await heldUnsure(a);
+    // Read at its new directory, the folder holds no file of the item.
+    await trashHeldFiles(a, ["Held.md"]);
     expect(deletesOf(a.server, held)).toBe(1);
   });
 
@@ -4646,11 +4653,18 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         ).toEqual(["held", "unsure"]);
       };
       await unsure();
+      // A file whose own path can be read stays a removal to confirm again.
+      const status = await a.folder.status();
+      expect(
+        status.ok &&
+          status.value.files.find((entry) => entry.path === "Note 0.md")?.flag,
+        "a removal the confirm could not decide dropped out of view",
+      ).toBe("removal");
       expect((await a.folder.push()).ok).toBe(true);
       await unsure();
       expect(lastReport(a).problems).toContainEqual({
         code: "held_file",
-        count: 4,
+        count: 2,
       });
       expect(
         ids.map((id) => deletesOf(a.server, id)),
@@ -4660,13 +4674,16 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       chmodSync(sub, 0o755);
     }
 
-    // The witness: read whole, the files found nowhere are a removal to
-    // confirm, and the file put back keeps its item.
+    // Read whole, the file put back ends its hold, and a confirm holds the
+    // paused files found nowhere, since another folder is on the Mac.
     const whole = await a.folder.push();
-    expect(whole.ok && whole.value.scan.paused).toBe(3);
+    expect(whole.ok && whole.value.scan.paused).toBe(2);
     const again = await a.folder.confirm();
-    expect(again.ok && again.value.deleted).toBe(3);
-    expect((await a.folder.push()).ok).toBe(true);
+    expect(again.ok && again.value.deleted).toBe(0);
+    const held = ["Note 0.md", "Note 1.md", "sub/Note 4.md"];
+    expect(await heldIn(a)).toEqual(held);
+    // The witness: the person's trash sends the deletes the holds kept.
+    await trashHeldFiles(a, held);
     expect(ids.map((id) => deletesOf(a.server, id))).toEqual([
       1, 1, 0, 0, 1, 0,
     ]);
@@ -4712,7 +4729,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, gone)).toBe(1);
   });
 
-  it("starts the grace of a held delete again after a pass that could not read its directory", async () => {
+  it("keeps a held delete whose file came back and went again while its directory could not be read, until the person trashes it", async () => {
     const gone = "01a00000-0000-7000-8000-0000000040f3";
     const { a, b } = await onOneMac(
       "unread-grace",
@@ -4764,10 +4781,12 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       deletesOf(a.server, gone),
       "a delete was sent at once for a file a pass could not see come back and go again",
     ).toBe(0);
-    // The witness: once the grace runs out again, the delete is sent.
     await pastTheGrace();
     const swept = await a.folder.push();
-    expect(swept.ok && swept.value.scan.trashed).toEqual(["sub/Gone.md"]);
+    expect(swept.ok && swept.value.scan.trashed).toEqual([]);
+    expect(await heldIn(a)).toEqual(["sub/Gone.md"]);
+    // The witness: the person's trash sends the delete the hold kept.
+    await trashHeldFiles(a, ["sub/Gone.md"]);
     expect(deletesOf(a.server, gone)).toBe(1);
   });
 

@@ -260,7 +260,15 @@ If a paused disk removal is confirmed while a missing file's path cannot be read
 
 **Reason:** the confirm is the person's answer to the pause, so no later scan asks again, and a file left neither deleted nor held would be lost from view.
 
-**Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while a missing file's path cannot be read`.
+**Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while a missing file's path cannot be read`, `device/folders-one-mac.test.ts › keeps a confirmed removal held as unsure while the file's own directory cannot be read`.
+
+### `folder-guards/confirm-unread-folder-paused`
+
+If a paused disk removal is confirmed while part of the directory cannot be read and the missing file's path can be read, then a device MUST keep the removal of that file paused.
+
+**Reason:** the unread part may hold the file under another name, so the confirm decides nothing, and the removal stays in view as one to confirm again once the directory can be read.
+
+**Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while part of the folder cannot be read`, `device/folders-one-mac.test.ts › keeps a confirmed removal held as unsure while the file's own directory cannot be read`.
 
 ### `folder-guards/confirm-in-grace`
 
