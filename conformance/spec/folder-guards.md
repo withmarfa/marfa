@@ -106,7 +106,7 @@ When an unmatched file named for removal is kept, a device MUST report the file 
 
 If removal of an unmatched file stops or fails before it ends, as when the process is killed or the file system refuses a step, then a device MUST NOT queue the deletion of the file's item.
 
-**Reason:** a removal that stops or fails after the file left the directory leaves the store binding a file that is gone, which a scan would otherwise read as the person deleting it. A device that finds such a file gone at its next scan ends the binding instead, and one that finds it still there as it was keeps the binding. A person's delete in that gap reads the same way, so the item is kept, which loses nothing.
+**Reason:** a removal that stops or fails after the file left the directory leaves the store binding a file that is gone, which a scan would otherwise read as the person deleting it. A device that finds such a file gone from the directory it removed the file from at its next scan ends the binding instead, and one that finds it still there as it was keeps the binding. A person's delete in that gap reads the same way, so the item is kept, which loses nothing.
 
 **Tests:** `device/folders-unmatched.test.ts › never deletes the item of a file whose removal stopped at %s, as it does one deleted by hand`, `› never deletes the item of a file whose removal failed after the file left its path, as it does one deleted by hand`.
 
@@ -123,6 +123,54 @@ While a device cannot tell whether the file of a stopped removal is still at its
 **Reason:** the file may still exist where the device cannot see it, so sending what is at the path or deleting the item could lose it.
 
 **Tests:** `device/folders-unmatched.test.ts › holds the binding of a file whose removal stopped where another file took its path, and never deletes its item`.
+
+### `folder-guards/unmatched-remove-replaced-held`
+
+If another file takes the path of an unmatched file while a device removes it, as when an editor saves by writing a new file and renaming it over the old one, then a device MUST keep the file's binding and report the file as `held` in `folders status` until no file is at its path.
+
+**Reason:** the file at the path is not the one the removal checked, so ending the binding would let a later delete of that file read as a delete of the item. A device decides on the file's device, inode and birth time, read through the directory it opened for the removal, in the step that would end the binding.
+
+**Tests:** `device/folders-unmatched.test.ts › keeps the binding of a file an editor replaced as its removal went, and never deletes its item once it is gone`.
+
+### `folder-guards/unmatched-remove-stopped-identity`
+
+When a device decides whether the file at the path of a stopped removal is the file it removed, a device MUST take the file as another file unless its device, inode and, where both the record and the file system have one, birth time match the record.
+
+**Reason:** a file system reuses an inode once its file is gone, so a new file can carry the inode the record names. Where either side has no birth time, the device compares what both have, and a match on that alone never ends the removal: it holds the file as `folder-guards/unmatched-remove-stopped-held` says.
+
+**Tests:** `device/folders-unmatched.test.ts › judges the file at a stopped removal's path by its birth time too, which is %s`, `› holds the binding of a file whose removal stopped where another file took its path, and never deletes its item`.
+
+### `folder-guards/unmatched-remove-stopped-directory`
+
+If the directory a stopped removal took its file from is no longer at its path, as when it was moved aside and another directory put at its name, then a device MUST keep the file's binding and report the file as `held` in `folders status`.
+
+**Reason:** the file may be in the directory that moved, so an empty path there says nothing about it. A device checks the directory's identity, recorded with the removal, through the handle it reads the path with.
+
+**Tests:** `device/folders-unmatched.test.ts › holds the binding of a file whose removal stopped while another directory has its directory's name, and keeps it once the directory is back`.
+
+### `folder-guards/unmatched-remove-stopped-before-read`
+
+When a scan finds the record of a stopped removal, a device MUST settle the record before the scan reads any file.
+
+**Reason:** a scan that read a file at the path before recovery decided on it could send what it read once the file the removal took was back, as an edit of the item.
+
+**Tests:** `device/folders-unmatched.test.ts › sends nothing a scan read at the path of a stopped removal once the file it removed is back`.
+
+### `folder-guards/unmatched-remove-stopped-empty-listed`
+
+While a device keeps the record of a stopped removal where no file is at its path, as when it cannot read the record or the file's directory is away, a device MUST list the file in `folders unmatched` with a reason that names `folders unmatched --remove`.
+
+**Reason:** no scan can end such a record, because the device cannot show the file is gone, so the person needs to see it and the command that ends it.
+
+**Tests:** `device/folders-unmatched.test.ts › lists a stopped removal whose record it cannot read once its file is gone, and ends it with --remove, keeping the item`, `› holds the binding of a file whose removal stopped while another directory has its directory's name, and keeps it once the directory is back`.
+
+### `folder-guards/unmatched-remove-stopped-empty-ended`
+
+When the owner confirms `folders unmatched --remove`, or an app removes unmatched files through a binding, for a file whose stopped removal the device keeps where no file is at its path, a device MUST end the file's binding without queuing a write to its item.
+
+**Reason:** the person decides the file is gone, as a scan would have where the record read. The item stays as it was, and the device reports the file in `settled`.
+
+**Tests:** `device/folders-unmatched.test.ts › lists a stopped removal whose record it cannot read once its file is gone, and ends it with --remove, keeping the item`.
 
 ### `folder-guards/unmatched-remove-gone-kept`
 

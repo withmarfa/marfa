@@ -1208,6 +1208,36 @@ If a discard leaves a kept file under a name other than the one it was listed at
 
 **Tests:** `device/folders-open-writer.test.ts › lists a kept file under the name it is left at where a discard %s, until it is deleted`.
 
+### `folder-files/write-retained-discard-directory-away`
+
+If the directory a stopped discard left a kept file in is no longer at its path, as when it was moved aside and another directory put at its name, then a device MUST keep the record of the name the file is under and list the file in `folders kept`.
+
+**Reason:** the file is wherever the directory went, so an empty path in the directory now at its name says nothing about it. A device checks the directory's identity, recorded with the discard, before it reads the path.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a kept file a stopped discard left while another directory has its directory's name, and once the directory is back`.
+
+### `folder-files/write-retained-discard-every-file`
+
+A device MUST list in `folders kept` each file a stopped discard left under a name of its own, including each of several left under one record.
+
+**Reason:** each is a copy the owner may want, and one the list leaves out is one the owner cannot find.
+
+**Tests:** `device/folders-open-writer.test.ts › lists both files two stopped discards left under one record it cannot read`.
+
+### `folder-files/write-retained-discard-gone-listed`
+
+While a device keeps a record of a stopped discard that it cannot read and no file is at the record's path, a device MUST list the path in `folders kept` with a reason that says no file is there.
+
+**Tests:** `device/folders-open-writer.test.ts › forgets a record of a stopped discard it cannot read once its file is gone, when the owner discards`.
+
+### `folder-files/write-retained-discard-forgets-gone`
+
+When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST forget each record of a stopped discard whose file is not at its path, where it cannot read the record or nothing is at the path of the record's directory.
+
+**Reason:** no pass can settle such a record, so it would stay listed for good. Forgetting it deletes no file, and the device reports the path in `forgotten`.
+
+**Tests:** `device/folders-open-writer.test.ts › forgets a record of a stopped discard it cannot read once its file is gone, when the owner discards`.
+
 ## Deletion, purges and missing directories
 
 ### `folder-files/delete-grace`
