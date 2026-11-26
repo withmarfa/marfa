@@ -319,14 +319,16 @@ impl Registry {
     pub(crate) fn while_listed<T>(&self, act: impl FnOnce(&[Registered]) -> T) -> Result<T> {
         let (directory, name, _lock) = self.locked()?;
         let listed = match directory.read(&name) {
-            Ok(bytes) => serde_json::from_slice::<Listing>(&bytes)
-                .map_err(|error| {
-                    CoreError::Store(format!(
-                        "the folder registry {} cannot be read ({error})",
-                        self.path.display()
-                    ))
-                })?
-                .folders,
+            Ok(bytes) => {
+                serde_json::from_slice::<Listing>(&bytes)
+                    .map_err(|error| {
+                        CoreError::Store(format!(
+                            "the folder registry {} cannot be read ({error})",
+                            self.path.display()
+                        ))
+                    })?
+                    .folders
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(error) => return Err(self.failed("read", &error)),
         };

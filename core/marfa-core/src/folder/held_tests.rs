@@ -901,7 +901,10 @@ fn a_missing_note_renamed_into_another_folder_beside_a_copy_of_it_is_held() {
     assert_eq!(report.moved_away, 0, "{report:?}");
     assert!(report.trashed.is_empty(), "{report:?}");
     let reason = held_reason(&a, "note.md");
-    assert!(reason.contains("another file in the other folders carries its id"), "{reason}");
+    assert!(
+        reason.contains("another file in the other folders carries its id"),
+        "{reason}"
+    );
 }
 
 #[cfg(unix)]
