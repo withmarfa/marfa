@@ -1725,6 +1725,26 @@ export interface KeptDiscard {
   declined: boolean;
 }
 
+/** A missing file whose deletion the folder holds (`folder-files/missing-file-held`). */
+export interface HeldFile {
+  path: string;
+  item: string;
+  missing_since: string;
+  reason: string;
+}
+
+/** What `folders held --trash` or `--keep` did. */
+export interface HeldSettled {
+  trashed: string[];
+  gone: string[];
+  moved: string[];
+  kept: string[];
+  written_back: string[];
+  not_written_back: Array<{ path: string; flag: string; reason: string }>;
+  not_settled: Array<{ path: string; reason: string }>;
+  declined: boolean;
+}
+
 /** What `folders unmatched --remove` did (`folder-guards/unmatched-remove-file`). */
 export interface UnmatchedRemoval {
   removed: UnmatchedFile[];
@@ -1963,6 +1983,38 @@ export class CliFolder {
   /** Discards them, confirmed. */
   async discardKept(): Promise<Outcome<KeptDiscard>> {
     return this.run(["folders", "kept", this.dir, "--discard", "--yes"]);
+  }
+
+  /** The files whose deletion the folder holds for the person (`folder-files/missing-file-held`). */
+  async held(): Promise<Outcome<{ held: HeldFile[] }>> {
+    return this.run(["folders", "held", this.dir]);
+  }
+
+  /** Trashes the items of these held files, confirmed (`folder-files/missing-file-held-trash`). */
+  async trashHeld(paths: string[]): Promise<Outcome<HeldSettled>> {
+    return this.run([
+      "folders",
+      "held",
+      this.dir,
+      "--trash",
+      ...paths,
+      "--yes",
+    ]);
+  }
+
+  /** Keeps the items of these held files (`folder-files/missing-file-held-keep`). */
+  async keepHeld(
+    paths: string[],
+    options: { writeBack?: boolean } = {},
+  ): Promise<Outcome<HeldSettled>> {
+    return this.run([
+      "folders",
+      "held",
+      this.dir,
+      "--keep",
+      ...paths,
+      ...(options.writeBack === true ? ["--write-back"] : []),
+    ]);
   }
 
   /** A folder command left running, such as one waiting for a watch to let

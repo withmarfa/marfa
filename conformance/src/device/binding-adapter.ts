@@ -1011,6 +1011,17 @@ export type BindingFolderEvent =
         | "unlisted";
     };
 
+/** What `trashHeld` or `keepHeld` did. */
+export interface BindingHeldSettled {
+  trashed: string[];
+  gone: string[];
+  moved: string[];
+  kept: string[];
+  writtenBack: string[];
+  notWrittenBack: Array<{ path: string; flag: string; reason: string }>;
+  notSettled: Array<{ path: string; reason: string }>;
+}
+
 export interface BindingKeptFile {
   path: string;
   from: string;
@@ -1074,6 +1085,20 @@ export class BindingFolder {
     kept: BindingKeptFile[];
   }> {
     return this.device.folderCall("discardKept", this.dir);
+  }
+  /** The files whose deletion the folder holds for the person (`folder-files/missing-file-held-reported`). */
+  held(): Call<
+    Array<{ path: string; item: string; missingSince: string; reason: string }>
+  > {
+    return this.device.folderCall("held", this.dir);
+  }
+  /** Trashes the items of these held files (`folder-files/missing-file-held-trash`). */
+  trashHeld(paths: string[]): Call<BindingHeldSettled> {
+    return this.device.folderCall("trashHeld", this.dir, paths);
+  }
+  /** Keeps the items of these held files (`folder-files/missing-file-held-keep`). */
+  keepHeld(paths: string[], writeBack: boolean): Call<BindingHeldSettled> {
+    return this.device.folderCall("keepHeld", this.dir, paths, writeBack);
   }
   /** Pauses the directory's sync; false where it was paused already (`folder-sync/pause-running-watch-stays`). */
   pause(): Call<boolean> {

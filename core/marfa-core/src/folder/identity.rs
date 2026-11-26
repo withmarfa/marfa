@@ -43,6 +43,27 @@ pub fn of(metadata: &Metadata) -> Option<Identity> {
     Identity::from_parts(device_of(metadata), inode_of(metadata), born(metadata)?)
 }
 
+/// A file's identity, withheld where the file has another name: a hard link
+/// is also the file at that name, in this folder or another.
+pub fn unshared(metadata: &Metadata) -> Option<Identity> {
+    if hard_linked(metadata) {
+        return None;
+    }
+    of(metadata)
+}
+
+/// Whether the file has another name on the disk.
+#[cfg(unix)]
+pub fn hard_linked(metadata: &Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    metadata.nlink() > 1
+}
+
+#[cfg(not(unix))]
+pub fn hard_linked(_metadata: &Metadata) -> bool {
+    false
+}
+
 /// A file's birth time in nanoseconds since the epoch, where the filesystem
 /// keeps one.
 pub fn born(metadata: &Metadata) -> Option<u128> {

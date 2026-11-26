@@ -217,6 +217,164 @@ it("counts an empty file as a held file, and a file the query leaves alone as no
   ]);
 });
 
+it("shows a held delete as held and counts it as a held file until the person settles it", async () => {
+  const id = "01a00000-0000-7000-8000-000000000211";
+  harness = await folderHarness("health-held-delete", {
+    items: {
+      "core.note": [
+        { item: { id, properties: { title: "Gone", body: "g\n" } } },
+      ],
+    },
+  });
+  scriptFolderWrites(harness);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  writeFileSync(harness.registry, "");
+  rmSync(join(harness.dir, "Gone.md"));
+  expect((await harness.folder.push()).ok).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 6_000));
+  const pushed = await harness.folder.push();
+  expect(pushed.ok && pushed.value.scan.unsure.map((f) => f.path)).toEqual([
+    "Gone.md",
+  ]);
+  expect(flagOf(await statusOf(harness), "Gone.md")).toEqual([
+    "held",
+    "unsure",
+  ]);
+  expect(latest(harness).problems).toEqual([{ code: "held_file", count: 1 }]);
+
+  const trashed = await harness.folder.trashHeld(["Gone.md"]);
+  expect(trashed.ok && trashed.value.trashed).toEqual(["Gone.md"]);
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(latest(harness).problems).toEqual([]);
+});
+
+it("shows a held delete whose path another note's file took as held, and keeps the hold when that file stops its write-back", async () => {
+  const id = "01a00000-0000-7000-8000-000000000212";
+  harness = await folderHarness("health-held-rebound", {
+    items: {
+      "core.note": [
+        { item: { id, properties: { title: "Gone", body: "g\n" } } },
+      ],
+    },
+  });
+  scriptFolderWrites(harness);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  writeFileSync(harness.registry, "");
+  rmSync(join(harness.dir, "Gone.md"));
+  expect((await harness.folder.push()).ok).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 6_000));
+  const pushed = await harness.folder.push();
+  expect(pushed.ok && pushed.value.scan.unsure.map((f) => f.path)).toEqual([
+    "Gone.md",
+  ]);
+
+  // Another note's file takes the held path.
+  writeFileSync(join(harness.dir, "Other.md"), "other words\n");
+  expect((await harness.folder.push()).ok).toBe(true);
+  renameSync(join(harness.dir, "Other.md"), join(harness.dir, "Gone.md"));
+  expect((await harness.folder.push()).ok).toBe(true);
+  const rows = (await statusOf(harness)).files.filter(
+    (file) => file.path === "Gone.md",
+  );
+  // The witness: the other note's file is listed at the path.
+  expect(rows.some((file) => file.item_id !== id)).toBe(true);
+  expect(
+    rows
+      .filter((file) => file.item_id === id)
+      .map((file) => [file.status, file.flag]),
+    "a held delete whose path another file took was hidden from the person",
+  ).toEqual([["held", "unsure"]]);
+  expect(latest(harness).problems).toEqual([{ code: "held_file", count: 1 }]);
+
+  const refused = await harness.folder.keepHeld(["Gone.md"], {
+    writeBack: true,
+  });
+  expect(refused.ok, JSON.stringify(refused)).toBe(true);
+  if (!refused.ok) return;
+  expect(refused.value.kept).toEqual([]);
+  expect(refused.value.not_settled.map((file) => file.path)).toEqual([
+    "Gone.md",
+  ]);
+  const held = await harness.folder.held();
+  expect(
+    held.ok && held.value.held.map((file) => file.path),
+    "a write-back onto a path another file holds ended the hold",
+  ).toEqual(["Gone.md"]);
+});
+
+it("keeps a held delete when the note's file that took its path moves away, and holds both notes once that file goes missing there too", async () => {
+  const id = "01a00000-0000-7000-8000-000000000213";
+  harness = await folderHarness("health-held-two-at-a-path", {
+    items: {
+      "core.note": [
+        { item: { id, properties: { title: "Gone", body: "g\n" } } },
+      ],
+    },
+  });
+  scriptFolderWrites(harness);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  writeFileSync(harness.registry, "");
+  rmSync(join(harness.dir, "Gone.md"));
+  expect((await harness.folder.push()).ok).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 6_000));
+  expect((await harness.folder.push()).ok).toBe(true);
+  writeFileSync(join(harness.dir, "Other.md"), "other words\n");
+  expect((await harness.folder.push()).ok).toBe(true);
+  renameSync(join(harness.dir, "Other.md"), join(harness.dir, "Gone.md"));
+  expect((await harness.folder.push()).ok).toBe(true);
+  const other = (await statusOf(harness)).files.find(
+    (file) => file.path === "Gone.md" && file.item_id !== id,
+  )?.item_id;
+  expect(other).toBeDefined();
+  const heldItems = async (): Promise<string[][]> => {
+    const held = await harness!.folder.held();
+    if (!held.ok) throw new Error(JSON.stringify(held));
+    return held.value.held.map((file) => [file.path, file.item]).sort();
+  };
+
+  // The other note's file moves on, and the hold stays with its own note.
+  renameSync(join(harness.dir, "Gone.md"), join(harness.dir, "Again.md"));
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(
+    (await statusOf(harness)).files.find((file) => file.path === "Again.md")
+      ?.item_id,
+  ).toBe(other);
+  expect(
+    await heldItems(),
+    "a file of another note leaving the held path ended the hold",
+  ).toEqual([["Gone.md", id]]);
+
+  // Back at the path, the other note's file goes missing there too.
+  renameSync(join(harness.dir, "Again.md"), join(harness.dir, "Gone.md"));
+  expect((await harness.folder.push()).ok).toBe(true);
+  rmSync(join(harness.dir, "Gone.md"));
+  expect((await harness.folder.push()).ok).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 6_000));
+  const swept = await harness.folder.push();
+  expect(swept.ok && swept.value.scan.trashed).toEqual([]);
+  expect(
+    await heldItems(),
+    "a second note missing at a held path was not held beside the first",
+  ).toEqual(
+    [
+      ["Gone.md", id],
+      ["Gone.md", other!],
+    ].sort(),
+  );
+  expect(
+    (await statusOf(harness)).files
+      .filter((file) => file.path === "Gone.md")
+      .map((file) => [file.item_id, file.status, file.flag])
+      .sort(),
+  ).toEqual(
+    [
+      [id, "held", "unsure"],
+      [other, "held", "unsure"],
+    ].sort(),
+  );
+  expect(latest(harness).problems).toEqual([{ code: "held_file", count: 2 }]);
+});
+
 it("counts no problem for a file whose item is already in the bin", async () => {
   const id = "01a00000-0000-7000-8000-000000000201";
   const row = { item: { id, properties: { title: "Binned", body: "body\n" } } };

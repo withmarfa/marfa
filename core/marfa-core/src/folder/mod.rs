@@ -11,6 +11,7 @@ pub mod fields;
 mod first;
 mod form;
 mod handover;
+mod held;
 pub mod identity;
 mod landing;
 mod lines;
@@ -55,6 +56,7 @@ pub use every::{
     follows, watch_every,
 };
 pub use handover::{HANDOVER_WAIT, held_by_another, not_handed_over};
+pub use held::{HeldFile, Settle, Settled};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
 pub use storage::StorageCause;
 #[cfg(unix)]
@@ -94,7 +96,7 @@ use std::io::{Read, Seek};
 use crate::body::embed::{FILE_TYPE, bytes_of, carries_frontmatter, is_document};
 use crate::body::resolve::{Names, Resolver};
 use edge_types::EdgeTypes;
-use elsewhere::{Look, Peers};
+use elsewhere::{Among, Look, Lost, Peers};
 use embeds::ATTACHMENT_EDGE;
 pub use fields::{ID_FIELD, Uncarried, VERSION_FIELD};
 use lines::{BoundFiles, EdgeWork};
@@ -1356,6 +1358,7 @@ fn follow_binding(
         Err(error) => return Err(io(error)),
     };
     let metadata = file.metadata().map_err(io)?;
+    let item_id = bound.item_id.clone();
     let settled = match bound.writes.landing.clone() {
         None => Some(bound),
         Some(landing) => {
@@ -1375,13 +1378,13 @@ fn follow_binding(
             conn,
             &state::Bound {
                 path: follow.from.clone(),
-                identity: identity::of(&metadata).map(|found| found.key()),
+                identity: identity::unshared(&metadata).map(|found| found.key()),
                 ..settled
             },
         ),
         None => {
             state::unbind(conn, &follow.from)?;
-            state::journal_clear(conn, &follow.from)
+            state::journal_clear(conn, &follow.from, &item_id)
         }
     }
 }
@@ -2104,6 +2107,8 @@ struct Walked {
     /// pass that heard no event for them leaves unlooked at.
     unchanged: HashMap<PathBuf, Unchanged>,
     directories: Vec<Flagged>,
+    /// Why part of a directory went unlisted, unlike a listed file left unread.
+    unlisted: Option<String>,
     secrets: Vec<String>,
     /// Files a crashed write left beside their target.
     left: Vec<(WalkRoute, PathBuf)>,
@@ -2122,7 +2127,7 @@ impl Walked {
         match require_birth(birth) {
             Ok(()) => true,
             Err(error) => {
-                self.unreadable(root, dir, &error);
+                self.unread_file(root, dir, &error);
                 false
             }
         }
@@ -2138,6 +2143,12 @@ impl Walked {
     }
 
     fn unreadable(&mut self, root: &Path, dir: &Path, error: &std::io::Error) {
+        let why = self.unread_file(root, dir, error);
+        self.unlisted.get_or_insert(why);
+    }
+
+    /// Flags `dir` for a file in it the walk listed but could not open.
+    fn unread_file(&mut self, root: &Path, dir: &Path, error: &std::io::Error) -> String {
         // Gone while the walk read it: moved or renamed, its files are
         // somewhere this walk did not look.
         let (flag, reason) = if error.kind() == std::io::ErrorKind::NotFound {
@@ -2152,6 +2163,7 @@ impl Walked {
             )
         };
         let path = identity::relative(root, dir).unwrap_or_default();
+        let why = format!("{path} {reason}");
         if !self.directories.iter().any(|dir| dir.path == path) {
             self.directories.push(Flagged {
                 path,
@@ -2160,6 +2172,7 @@ impl Walked {
                 item: None,
             });
         }
+        why
     }
 
     fn incomplete(&self) -> bool {
@@ -2415,7 +2428,7 @@ fn take_file(
                     // leave the rest of this inventory incomplete.
                     walked.unread.insert(path.clone(), identity);
                 }
-                walked.unreadable(root, dir, &error);
+                walked.unread_file(root, dir, &error);
             }
         }
         walked.files.push(path);
@@ -2559,6 +2572,9 @@ struct Scanned {
     /// Device, inode and birth time, where the filesystem gave a usable
     /// three.
     mark: Option<String>,
+    /// Whether the file has another name on the disk, which may be another
+    /// folder's file.
+    linked: bool,
     born: Option<u128>,
     id: Option<String>,
     /// The version its `marfa_version` line names, where that is one the
@@ -2606,6 +2622,8 @@ impl Scanned {
             key: identity::relative(root, path)?,
             path: path.to_path_buf(),
             mark,
+            linked: captured
+                .is_some_and(|captured| identity::hard_linked(&captured.metadata.borrow())),
             born: captured.and_then(|captured| identity::born(&captured.metadata.borrow())),
             text: String::new(),
             hash: String::new(),
@@ -2617,6 +2635,12 @@ impl Scanned {
             executable: None,
             folded: false,
         })
+    }
+
+    /// The identity a binding records: none for a hard link, whose identity
+    /// another folder's file may share.
+    fn recorded_mark(&self) -> Option<String> {
+        self.mark.clone().filter(|_| !self.linked)
     }
 
     fn document(&self) -> document::Document {
@@ -3612,6 +3636,8 @@ mod gone_peer_tests;
 #[cfg(test)]
 mod held_links_tests;
 #[cfg(test)]
+mod held_tests;
+#[cfg(test)]
 mod quiet_watch_tests;
 #[cfg(test)]
 mod reclaim_tests;
@@ -3972,7 +3998,7 @@ mod tests {
 
     /// How many times this thread walked another folder's directory since
     /// the last call.
-    fn peers_walked() -> usize {
+    pub(super) fn peers_walked() -> usize {
         PEERS_WALKED.with(|walked| walked.replace(0))
     }
 
@@ -6654,7 +6680,7 @@ mod tests {
         assert_eq!(server.seen(end).len(), asked);
     }
 
-    /// Moves the journaled delete at `path` past the grace.
+    /// Moves every journaled delete at `path` past the grace.
     pub(super) fn past_the_grace(folder: &Folder, path: &str) {
         let long_ago = crate::store::iso_at(
             crate::clock::system_time() - RENAME_GRACE - Duration::from_secs(1),
@@ -6666,7 +6692,7 @@ mod tests {
                 [path, long_ago.as_str()],
             )
             .unwrap();
-        assert_eq!(aged, 1, "{path} is not journaled");
+        assert!(aged > 0, "{path} is not journaled");
     }
 
     pub(super) fn kept(folder: &Folder, path: &str) -> Option<state::Kept> {

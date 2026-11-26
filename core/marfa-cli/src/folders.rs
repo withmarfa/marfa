@@ -186,8 +186,8 @@ pub enum FoldersCommand {
     /// are never taken away. Takes away no `held`, `outside` or `unreached` file. With
     /// `--remove`, a watch holding the directory lets it go while this runs, and
     /// this is refused if the process holding the directory does not let it go
-    /// within 10 seconds. Delete an unmatched file with this, not by hand: a
-    /// file deleted by hand sends a delete of its item.
+    /// within 10 seconds. Use `--remove` to keep the item when removing its
+    /// file. Deleting the file by hand can send the item to the bin.
     Unmatched {
         /// The directory.
         dir: PathBuf,
@@ -223,6 +223,38 @@ pub enum FoldersCommand {
         /// deletion asks at a terminal, and is refused with `--json` or
         /// anywhere else.
         #[arg(long, requires = "discard")]
+        yes: bool,
+    },
+    /// List the files whose deletion the directory holds because Marfa cannot
+    /// tell whether each was deleted or moved into another folder on this
+    /// computer, and settle them one by one. No scan or pull deletes a held
+    /// file's item or writes the file again, and a hold lasts until it is
+    /// settled. With `--trash`, the delete of each named file's item is
+    /// queued, checked against the version Marfa last read, and sent at the
+    /// next push, after a confirmation at a terminal or `--yes`; a file that
+    /// one other folder Marfa can read now holds keeps its item. With
+    /// `--keep`, each named file's item stays in Marfa as it is and the
+    /// folder's binding and placement of it end; while the folder's query
+    /// holds the item, a later pull writes the file again. With `--write-back`
+    /// as well, the file is written again at once, unless another item's file
+    /// is at its path. A path where a file is now stays held and is left
+    /// alone. A watch holding the directory lets it go while this runs.
+    Held {
+        /// The directory.
+        dir: PathBuf,
+        /// Trash the items of these held files, by their paths in the directory.
+        #[arg(long, num_args = 1.., value_name = "PATH", conflicts_with = "keep")]
+        trash: Vec<String>,
+        /// Keep the items of these held files, by their paths in the directory.
+        #[arg(long, num_args = 1.., value_name = "PATH")]
+        keep: Vec<String>,
+        /// Write each kept file again at once where the folder's query holds
+        /// its item. A file whose path another item's file took stays held.
+        #[arg(long, requires = "keep")]
+        write_back: bool,
+        /// Confirm the trash without asking, for scripts. Without it, a trash
+        /// asks at a terminal, and is refused with `--json` or anywhere else.
+        #[arg(long, requires = "trash")]
         yes: bool,
     },
     /// Create a folder's settings on the server, as a `system.folder`.
@@ -751,6 +783,13 @@ pub fn run(
         }
         FoldersCommand::Unmatched { dir, remove, yes } => unmatched(&dir, remove, yes, json),
         FoldersCommand::Kept { dir, discard, yes } => kept(&dir, discard, yes, json),
+        FoldersCommand::Held {
+            dir,
+            trash,
+            keep,
+            write_back,
+            yes,
+        } => held_files(&dir, &trash, &keep, write_back, yes, named, json),
         FoldersCommand::Watch {
             dir,
             r#for,
@@ -936,6 +975,151 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
             lines.join("\n")
         },
     )
+}
+
+fn held_files(
+    dir: &Path,
+    trash: &[String],
+    keep: &[String],
+    write_back: bool,
+    yes: bool,
+    named: &Named,
+    json: bool,
+) -> Result<(), CliError> {
+    if trash.is_empty() && keep.is_empty() {
+        let files = Folder::held_of(dir)?;
+        return output::report(&serde_json::json!({ "held": files }), json, || {
+            describe_held(&files)
+        });
+    }
+    let at_terminal =
+        !json && std::io::stdin().is_terminal() && crate::output::stderr_is_terminal();
+    if !trash.is_empty() && !yes && !at_terminal {
+        return Err(CliError::Usage(
+            "`folders held --trash` asks only at a terminal and without --json, and otherwise trashes nothing; pass --yes to confirm it".into(),
+        ));
+    }
+    // Writing a file item back fetches its bytes.
+    let server = if write_back {
+        named.session_if_named()?
+    } else {
+        None
+    };
+    let folder = working(dir, server)?;
+    let (paths, settle) = if trash.is_empty() {
+        (keep, marfa_core::Settle::Keep { write_back })
+    } else {
+        (trash, marfa_core::Settle::Trash)
+    };
+    let agreed = keep.len() == paths.len() || yes || asks_to_trash(dir, trash)?;
+    let done = if agreed {
+        folder.settle_held(paths, settle)?
+    } else {
+        Default::default()
+    };
+    output::report(
+        &serde_json::json!({
+            "trashed": done.trashed,
+            "gone": done.gone,
+            "moved": done.moved,
+            "kept": done.kept,
+            "written_back": done.written_back,
+            "not_written_back": done.not_written_back,
+            "not_settled": done.not_settled,
+            "declined": !agreed,
+        }),
+        json,
+        || {
+            if !agreed {
+                return "nothing was trashed".into();
+            }
+            let mut lines = Vec::new();
+            if !done.trashed.is_empty() {
+                lines.push(format!(
+                    "{} item(s) to the bin, sent at the next push",
+                    done.trashed.len()
+                ));
+            }
+            lines.extend(done.gone.iter().map(|path| {
+                format!(
+                    "{}: its item is already in the bin or gone, so the folder lets it go",
+                    printable(path)
+                )
+            }));
+            lines.extend(done.moved.iter().map(|path| {
+                format!(
+                    "{}: found in another folder, so its item stays",
+                    printable(path)
+                )
+            }));
+            if !done.kept.is_empty() {
+                lines.push(format!(
+                    "{} item(s) kept; the folder's placement of each ends, sent at the next push, unless its file is written again",
+                    done.kept.len()
+                ));
+            }
+            lines.extend(
+                done.written_back
+                    .iter()
+                    .map(|path| format!("{}: written again", printable(path))),
+            );
+            lines.extend(done.not_written_back.iter().map(|file| {
+                format!(
+                    "{}: not written again, {}",
+                    printable(&file.path),
+                    printable(&file.reason)
+                )
+            }));
+            lines.extend(done.not_settled.iter().map(|file| {
+                format!(
+                    "{}: not settled, {}",
+                    printable(&file.path),
+                    printable(&file.reason)
+                )
+            }));
+            if lines.is_empty() {
+                "nothing was settled".into()
+            } else {
+                lines.join("\n")
+            }
+        },
+    )
+}
+
+fn describe_held(files: &[marfa_core::HeldFile]) -> String {
+    if files.is_empty() {
+        return "no held files".into();
+    }
+    let mut lines = vec![format!(
+        "{} held file(s), which `folders held --trash` or `--keep` settles",
+        files.len()
+    )];
+    lines.extend(
+        files
+            .iter()
+            .map(|file| format!("{} {}", printable(&file.path), printable(&file.reason))),
+    );
+    lines.join("\n")
+}
+
+/// Asks at a terminal; the caller has already made sure there is one.
+fn asks_to_trash(dir: &Path, going: &[String]) -> Result<bool, CliError> {
+    use std::io::{BufRead, Write};
+    let mut question = crate::output::stderr();
+    writeln!(
+        question,
+        "The items of {} held file(s) in {} would go to the bin. A file another folder now holds keeps its item:",
+        going.len(),
+        dir.display()
+    )?;
+    for path in going {
+        writeln!(question, "  {}", printable(path))?;
+    }
+    write!(question, "Trash them? [y/N] ")?;
+    question.flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
 fn describe_kept(files: &[marfa_core::KeptFile]) -> String {
@@ -2041,7 +2225,7 @@ pub fn unsure_lines(report: &marfa_core::ScanReport) -> Vec<String> {
     });
     let unsure = report.unsure.iter().map(|file| {
         format!(
-            "Deletion of {} is on hold because {}",
+            "Deletion of {} is on hold because {}. `folders held` settles it",
             printable(&file.path),
             printable(&file.reason)
         )

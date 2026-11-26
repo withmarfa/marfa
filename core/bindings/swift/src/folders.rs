@@ -427,6 +427,36 @@ impl From<marfa_core::Removal> for FolderRemoval {
     }
 }
 
+/// A missing file whose deletion is held, because Marfa cannot tell whether
+/// it was deleted or moved into another folder.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HeldFile {
+    pub path: String,
+    pub item: String,
+    /// When this folder first found it missing.
+    pub missing_since: String,
+    pub reason: String,
+}
+
+/// What settling held files did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SettledHeld {
+    /// Files whose items' deletes are queued, sent at the next sync.
+    pub trashed: Vec<String>,
+    /// Files whose items were already in the bin or gone.
+    pub gone: Vec<String>,
+    /// Files one other readable folder now holds, whose items stay.
+    pub moved: Vec<String>,
+    /// Files whose items stay, and which the folder lets go.
+    pub kept: Vec<String>,
+    /// Kept files written again.
+    pub written_back: Vec<String>,
+    /// Kept files not written again, each with why.
+    pub not_written_back: Vec<FlaggedFile>,
+    /// Named files left as they were, each with why.
+    pub not_settled: Vec<UnsureFile>,
+}
+
 /// What cancelling a paused removal did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RestoredRemoval {
@@ -709,6 +739,47 @@ guarded! {
                 restored: restored.restored as u64,
                 pull: pull_of(restored.pull),
             })
+        }
+
+        /// The folder's held files, in path order. Asks no watch for the folder.
+        pub fn held(&self, dir: String) -> Result<Vec<HeldFile>, MarfaError> {
+            Ok(marfa_core::Folder::held_of(&dir)?
+                .into_iter()
+                .map(|file| HeldFile {
+                    path: file.path,
+                    item: file.item,
+                    missing_since: file.missing_since,
+                    reason: file.reason,
+                })
+                .collect())
+        }
+
+        /// Sends the delete of each named held file's item, checked against
+        /// the item's version. Show the person each file before calling. Asks
+        /// a watch that holds the folder to let it go, as `add` does.
+        pub fn trash_held(
+            &self,
+            dir: String,
+            paths: Vec<String>,
+        ) -> Result<SettledHeld, MarfaError> {
+            let folder = working(&dir, None, None)?;
+            Ok(settled_held(folder.settle_held(&paths, marfa_core::Settle::Trash)?))
+        }
+
+        /// Keeps each named held file's item and lets the folder's file of it
+        /// go. With `write_back`, writes the file again where the folder's
+        /// query holds the item, never over a file now at its path. Asks a
+        /// watch that holds the folder to let it go, as `add` does.
+        pub fn keep_held(
+            &self,
+            dir: String,
+            paths: Vec<String>,
+            write_back: bool,
+        ) -> Result<SettledHeld, MarfaError> {
+            let folder = working(&dir, self.server(), self.renewal.as_ref())?;
+            Ok(settled_held(
+                folder.settle_held(&paths, marfa_core::Settle::Keep { write_back })?,
+            ))
         }
 
         /// Takes the folder off this machine: its state under `.marfa` goes and
@@ -1041,6 +1112,29 @@ fn pull_of(pull: marfa_core::PullReport) -> FolderPull {
         unmatched: pull.unmatched as u64,
         paused: pull.paused as u64,
         root_gone: pull.root_gone,
+    }
+}
+
+fn settled_held(settled: marfa_core::Settled) -> SettledHeld {
+    SettledHeld {
+        trashed: settled.trashed,
+        gone: settled.gone,
+        moved: settled.moved,
+        kept: settled.kept,
+        written_back: settled.written_back,
+        not_written_back: settled
+            .not_written_back
+            .into_iter()
+            .map(flagged_file)
+            .collect(),
+        not_settled: settled
+            .not_settled
+            .into_iter()
+            .map(|file| UnsureFile {
+                path: file.path,
+                reason: file.reason,
+            })
+            .collect(),
     }
 }
 

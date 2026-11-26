@@ -104,7 +104,7 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
         "UPDATE body_edges SET other_id = ?2 WHERE other_id = ?1",
         "UPDATE body_names SET other_id = ?2 WHERE other_id = ?1",
         "UPDATE folder_files SET item_id = ?2 WHERE item_id = ?1",
-        "UPDATE folder_journal SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE OR REPLACE folder_journal SET item_id = ?2 WHERE item_id = ?1",
         "UPDATE rows_laid SET item_id = ?2 WHERE item_id = ?1",
     ] {
         conn.execute(statement, params![local, answered])?;

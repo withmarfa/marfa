@@ -321,6 +321,12 @@ stays because that thing is what it checks.
   what the copy queued", writes a declaration under `user.*` into a device's
   store. Declaring one is refused now, so no door makes the state an earlier
   build left behind.
+- `device/folders-one-mac.test.ts`, "holds a file an earlier release took into
+  another folder that then takes it away when its item is archived, until the
+  person keeps its item", records in a folder's store that the folder wrote the
+  file it took in. An earlier release took a file in from another folder and
+  recorded it so, which makes a query drop remove the file. This release takes
+  no file in from another folder, so no operation makes that record.
 - `device/folders-open-writer.test.ts`, "deletes a file it set aside unchanged
   a week after it could not tell whether a program writes to it", moves back
   the time a folder's store records for a file it keeps. The command line has

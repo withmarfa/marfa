@@ -246,24 +246,8 @@ impl Registry {
         listed: Option<&Registered>,
         edit: impl FnOnce(&mut Vec<Registered>) -> bool,
     ) -> Result<(Vec<Registered>, bool)> {
-        // Resolved as a file, so a link at the registry's own directory is
-        // followed and only the file itself is opened without following.
-        let path = resolved(&self.path);
-        let parent = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        let directory = Directory::create(parent)
-            .map_err(|error| self.failed("make the directory of", &error))?;
-        let name = Path::new(
-            path.file_name()
-                .ok_or_else(|| CoreError::Invalid("registry needs a file name".into()))?,
-        );
-        // Two folders registering at once would each write back a list
-        // missing the other's entry.
-        let lock = open_lock(&directory, &name.with_extension("lock"))
-            .map_err(|error| self.failed("lock", &error))?;
-        lock.lock().map_err(|error| self.failed("lock", &error))?;
+        let (directory, name, _lock) = self.locked()?;
+        let name = name.as_path();
         let (mut listing, replaced) = match directory.read(name) {
             Ok(bytes) => match serde_json::from_slice::<Listing>(&bytes) {
                 Ok(listing) => (listing, false),
@@ -303,6 +287,53 @@ impl Registry {
             self.write(&directory, name, &listing)?;
         }
         Ok((listing.folders, edited))
+    }
+
+    /// The registry's directory and file name, with its lock taken until the
+    /// file is dropped.
+    fn locked(&self) -> Result<(Directory, PathBuf, std::fs::File)> {
+        // Resolved as a file, so a link at the registry's own directory is
+        // followed and only the file itself is opened without following.
+        let path = resolved(&self.path);
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let directory = Directory::create(parent)
+            .map_err(|error| self.failed("make the directory of", &error))?;
+        let name = PathBuf::from(
+            path.file_name()
+                .ok_or_else(|| CoreError::Invalid("registry needs a file name".into()))?,
+        );
+        // Two folders registering at once would each write back a list
+        // missing the other's entry.
+        let lock = open_lock(&directory, &name.with_extension("lock"))
+            .map_err(|error| self.failed("lock", &error))?;
+        lock.lock().map_err(|error| self.failed("lock", &error))?;
+        Ok((directory, name, lock))
+    }
+
+    /// Runs `act` on the folders listed, but those gone, under the lock every
+    /// registration takes, so no folder is listed between what `act` reads
+    /// and what it writes.
+    pub(crate) fn while_listed<T>(&self, act: impl FnOnce(&[Registered]) -> T) -> Result<T> {
+        let (directory, name, _lock) = self.locked()?;
+        let listed = match directory.read(&name) {
+            Ok(bytes) => {
+                serde_json::from_slice::<Listing>(&bytes)
+                    .map_err(|error| {
+                        CoreError::Store(format!(
+                            "the folder registry {} cannot be read ({error})",
+                            self.path.display()
+                        ))
+                    })?
+                    .folders
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(self.failed("read", &error)),
+        };
+        let listed: Vec<Registered> = listed.into_iter().filter(|entry| !gone(entry)).collect();
+        Ok(act(&listed))
     }
 
     /// Held under the lock, so whatever is there is this process's to replace.
@@ -823,7 +854,7 @@ fn existing_prefix_resolved(path: &Path) -> PathBuf {
 
 /// The identity of the directory `root` holds open, as an entry records it.
 /// `None` where the file system keeps no birth time, which admission refuses.
-fn root_identity(root: &Directory) -> Option<String> {
+pub(super) fn root_identity(root: &Directory) -> Option<String> {
     super::identity::of(&root.metadata().ok()?).map(|identity| identity.key())
 }
 

@@ -12,14 +12,36 @@ use std::path::Path;
 
 pub const SCHEMA: &str = include_str!("../schema.sql");
 
-/// SQLite's `user_version`; a shape change increments it and appends to `SHAPES`.
-pub const SCHEMA_VERSION: i64 = 11;
+/// SQLite's `user_version`; a shape change increments it, appends to `SHAPES`
+/// and appends its step to `UPGRADES`.
+pub const SCHEMA_VERSION: i64 = 12;
 
-/// Moves with `SCHEMA_VERSION` until the first compatible release, then stays fixed.
-pub(super) const OLDEST_UPGRADED: i64 = SCHEMA_VERSION;
+/// The oldest version a writer upgrades in place; it refuses an older store.
+pub(super) const OLDEST_UPGRADED: i64 = 11;
 
 /// One SQL step per version, starting at `OLDEST_UPGRADED`.
-pub(super) const UPGRADES: &[&str] = &[];
+pub(super) const UPGRADES: &[&str] = &[JOURNAL_BY_ITEM];
+
+/// Keys `folder_journal` by path and item, and keeps with each row the
+/// identity and bytes of the binding the item still has at its path.
+const JOURNAL_BY_ITEM: &str = "
+ALTER TABLE folder_journal RENAME TO folder_journal_before;
+CREATE TABLE folder_journal (
+  path TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  missing_since TEXT NOT NULL,
+  kept TEXT CHECK (kept IN ('arriving', 'unsure', 'carried')),
+  reason TEXT,
+  identity TEXT,
+  content_hash TEXT,
+  PRIMARY KEY (path, item_id)
+) WITHOUT ROWID;
+INSERT INTO folder_journal
+  SELECT j.path, j.item_id, j.missing_since, j.kept, j.reason, f.identity, f.content_hash
+  FROM folder_journal_before j
+  LEFT JOIN folder_files f ON f.path = j.path AND f.item_id = j.item_id;
+DROP TABLE folder_journal_before;
+";
 
 fn upgraded(found: i64) -> bool {
     (OLDEST_UPGRADED..SCHEMA_VERSION).contains(&found)

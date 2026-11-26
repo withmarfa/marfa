@@ -5180,7 +5180,7 @@ marfa folders push [OPTIONS] <DIR>
 
 ### marfa folders unmatched
 
-List the files the directory keeps whose items its folder's query does not match, as the last pull left them, and with `--remove` take them away. A file goes only after a confirmation at a terminal or `--yes`, and only while its bytes are the ones the directory wrote (for a file made from a new file, the ones it last read) and no edit of it waits to be sent; any other is kept and said. The item stays in Marfa as it was, and the folder's placement of it ends, sent at the next push. Also lists, with why, the new files a directory whose folder's `outside_query` is `hold` holds because its query would not hold them; they have no item and are never taken away. Takes away no `held`, `outside` or `unreached` file. With `--remove`, a watch holding the directory lets it go while this runs, and this is refused if the process holding the directory does not let it go within 10 seconds. Delete an unmatched file with this, not by hand: a file deleted by hand sends a delete of its item.
+List the files the directory keeps whose items its folder's query does not match, as the last pull left them, and with `--remove` take them away. A file goes only after a confirmation at a terminal or `--yes`, and only while its bytes are the ones the directory wrote (for a file made from a new file, the ones it last read) and no edit of it waits to be sent; any other is kept and said. The item stays in Marfa as it was, and the folder's placement of it ends, sent at the next push. Also lists, with why, the new files a directory whose folder's `outside_query` is `hold` holds because its query would not hold them; they have no item and are never taken away. Takes away no `held`, `outside` or `unreached` file. With `--remove`, a watch holding the directory lets it go while this runs, and this is refused if the process holding the directory does not let it go within 10 seconds. Use `--remove` to keep the item when removing its file. Deleting the file by hand can send the item to the bin.
 
 ```text
 marfa folders unmatched [OPTIONS] <DIR>
@@ -5211,6 +5211,25 @@ marfa folders kept [OPTIONS] <DIR>
 | --- | --- |
 | `--discard` | Delete the files, after a confirmation, whatever programs hold them. |
 | `--yes` | Confirm the deletion without asking, for scripts. Without it, a deletion asks at a terminal, and is refused with `--json` or anywhere else. |
+
+### marfa folders held
+
+List the files whose deletion the directory holds because Marfa cannot tell whether each was deleted or moved into another folder on this computer, and settle them one by one. No scan or pull deletes a held file's item or writes the file again, and a hold lasts until it is settled. With `--trash`, the delete of each named file's item is queued, checked against the version Marfa last read, and sent at the next push, after a confirmation at a terminal or `--yes`; a file that one other folder Marfa can read now holds keeps its item. With `--keep`, each named file's item stays in Marfa as it is and the folder's binding and placement of it end; while the folder's query holds the item, a later pull writes the file again. With `--write-back` as well, the file is written again at once, unless another item's file is at its path. A path where a file is now stays held and is left alone. A watch holding the directory lets it go while this runs.
+
+```text
+marfa folders held [OPTIONS] <DIR>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<DIR>` | The directory. |
+
+| Option | Description |
+| --- | --- |
+| `--trash <PATH>...` | Trash the items of these held files, by their paths in the directory. |
+| `--keep <PATH>...` | Keep the items of these held files, by their paths in the directory. |
+| `--write-back` | Write each kept file again at once where the folder's query holds its item. A file whose path another item's file took stays held. |
+| `--yes` | Confirm the trash without asking, for scripts. Without it, a trash asks at a terminal, and is refused with `--json` or anywhere else. |
 
 ### marfa folders create
 

@@ -179,13 +179,13 @@ pub(crate) fn settle_landings(
                         .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
                     {
                         unbind(conn, &left.path)?;
-                        journal_clear(conn, &left.path)?;
+                        journal_clear(conn, &left.path, &left.item_id)?;
                     }
                 }
             }
             Some(None) => {
                 unbind(conn, &row.path)?;
-                journal_clear(conn, &row.path)?;
+                journal_clear(conn, &row.path, &row.item_id)?;
             }
         }
     }
@@ -1044,8 +1044,10 @@ pub fn copy_moment(conn: &Connection) -> Result<String, CoreError> {
 /// still reaches the grace.
 pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
     conn.execute_cached(
-        "INSERT OR IGNORE INTO folder_journal (path, item_id, missing_since)
-         VALUES (?1, ?2, ?3)",
+        "INSERT OR IGNORE INTO folder_journal
+           (path, item_id, missing_since, identity, content_hash)
+         SELECT ?1, ?2, ?3, f.identity, f.content_hash
+         FROM (SELECT 1) LEFT JOIN folder_files f ON f.path = ?1 AND f.item_id = ?2",
         params![
             path,
             item_id,
@@ -1056,12 +1058,7 @@ pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(
 }
 
 /// A row that outlives its question becomes a delete nobody asked for.
-pub fn journal_clear(conn: &Connection, path: &str) -> Result<(), CoreError> {
-    conn.execute_cached("DELETE FROM folder_journal WHERE path = ?1", [path])?;
-    Ok(())
-}
-
-pub fn journal_clear_for(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
+pub fn journal_clear(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
     conn.execute_cached(
         "DELETE FROM folder_journal WHERE path = ?1 AND item_id = ?2",
         [path, item_id],
@@ -1094,10 +1091,14 @@ pub fn journal_carried(
         )?;
     }
     conn.execute_cached(
-        "INSERT INTO folder_journal (path, item_id, missing_since, kept, reason)
-         VALUES (?1, ?2, ?3, 'carried', ?4)
-         ON CONFLICT (path) DO UPDATE SET
-           item_id = excluded.item_id, kept = 'carried', reason = excluded.reason",
+        "INSERT INTO folder_journal
+           (path, item_id, missing_since, kept, reason, identity, content_hash)
+         SELECT ?1, ?2, ?3, 'carried', ?4, f.identity, f.content_hash
+         FROM (SELECT 1) LEFT JOIN folder_files f ON f.path = ?1 AND f.item_id = ?2
+         WHERE true
+         ON CONFLICT (path, item_id) DO UPDATE SET
+           kept = 'carried', reason = excluded.reason,
+           identity = coalesce(excluded.identity, identity)",
         params![
             path,
             item_id,
@@ -1111,8 +1112,8 @@ pub fn journal_carried(
 /// Journals as missing from now a file no other file carries any longer.
 pub fn journal_uncarried(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
     conn.execute_cached(
-        "DELETE FROM folder_journal WHERE path = ?1 AND kept = 'carried'",
-        [path],
+        "DELETE FROM folder_journal WHERE path = ?1 AND item_id = ?2 AND kept = 'carried'",
+        [path, item_id],
     )?;
     journal_missing(conn, path, item_id)
 }
@@ -1123,7 +1124,10 @@ pub enum Kept {
     /// Moved to a folder that knows the file only by this binding, and that
     /// has not taken it yet.
     Arriving,
-    /// Whether it moved cannot be told yet, and why.
+    /// Whether it was deleted or moved cannot be told, and why: held, with
+    /// no delete and no file written, until the person settles it
+    /// (`Folder::settle_held`), a file comes back at its path, or its item
+    /// leaves. No pass that cannot read the file's directory ends it.
     Unsure(String),
     /// The file at this path, which the scan holds for its name or skips,
     /// carries its identity or its item's ID.
@@ -1138,6 +1142,8 @@ pub struct Journaled {
     pub missing_since: String,
     /// What the last sweep that looked decided, where it kept the binding.
     pub kept: Option<Kept>,
+    pub identity: Option<String>,
+    pub content_hash: Option<String>,
 }
 
 impl Journaled {
@@ -1145,9 +1151,14 @@ impl Journaled {
         matches!(self.kept, Some(Kept::Carried(_)))
     }
 
-    /// Kept until a look at the other folders, or a full pass, can tell.
+    /// Kept until a look at the other folders finds the folder it went to
+    /// has taken it.
     pub fn looked_for(&self) -> bool {
-        matches!(self.kept, Some(Kept::Arriving | Kept::Unsure(_)))
+        matches!(self.kept, Some(Kept::Arriving))
+    }
+
+    pub fn held(&self) -> bool {
+        matches!(self.kept, Some(Kept::Unsure(_)))
     }
 }
 
@@ -1172,58 +1183,44 @@ pub fn journal_keep(
     Ok(())
 }
 
-/// Set while a delete held as unsure was kept by a pass or a confirmation
-/// that could not read the file, which may have come back and gone since:
-/// the next pass that reads the whole folder starts its grace again.
-const UNREAD_HOLD: &str = "folder_unread_hold";
-
-pub fn journal_unread_hold(conn: &Connection) -> Result<(), CoreError> {
-    if crate::store::meta_get(conn, UNREAD_HOLD)?.is_none() {
-        crate::store::meta_set(conn, UNREAD_HOLD, "1")?;
-    }
-    Ok(())
+pub fn journaled_at(
+    conn: &Connection,
+    path: &str,
+    item_id: &str,
+) -> Result<Option<Journaled>, CoreError> {
+    Ok(conn
+        .prepare_cached(&format!(
+            "SELECT {JOURNALED} FROM folder_journal WHERE path = ?1 AND item_id = ?2"
+        ))?
+        .query_row([path, item_id], journaled_row)
+        .optional()?)
 }
 
-pub fn journal_unread_held(conn: &Connection) -> Result<bool, CoreError> {
-    Ok(crate::store::meta_get(conn, UNREAD_HOLD)?.is_some())
+const JOURNALED: &str = "path, item_id, missing_since, kept, reason, identity, content_hash";
+
+fn journaled_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Journaled> {
+    let reason: Option<String> = row.get(4)?;
+    Ok(Journaled {
+        path: row.get(0)?,
+        item_id: row.get(1)?,
+        missing_since: row.get(2)?,
+        kept: match row.get::<_, Option<String>>(3)?.as_deref() {
+            Some("arriving") => Some(Kept::Arriving),
+            Some("carried") => Some(Kept::Carried(reason.unwrap_or_default())),
+            Some(_) => Some(Kept::Unsure(reason.unwrap_or_default())),
+            None => None,
+        },
+        identity: row.get(5)?,
+        content_hash: row.get(6)?,
+    })
 }
 
-pub fn journal_read_whole(conn: &Connection) -> Result<(), CoreError> {
-    crate::store::meta_delete(conn, UNREAD_HOLD)
-}
-
-/// Starts a journaled file's grace again from now.
-pub fn journal_restart(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
-    conn.execute_cached(
-        "UPDATE folder_journal SET missing_since = ?3 WHERE path = ?1 AND item_id = ?2",
-        params![
-            path,
-            item_id,
-            crate::store::iso_at(crate::clock::system_time())
-        ],
-    )?;
-    Ok(())
-}
-
-/// Every journaled delete, by path.
+/// Every journaled delete, by path and item.
 pub fn journaled(conn: &Connection) -> Result<Vec<Journaled>, CoreError> {
-    let mut statement = conn.prepare(
-        "SELECT path, item_id, missing_since, kept, reason FROM folder_journal ORDER BY path",
-    )?;
-    let rows = statement.query_map([], |row| {
-        let reason: Option<String> = row.get(4)?;
-        Ok(Journaled {
-            path: row.get(0)?,
-            item_id: row.get(1)?,
-            missing_since: row.get(2)?,
-            kept: match row.get::<_, Option<String>>(3)?.as_deref() {
-                Some("arriving") => Some(Kept::Arriving),
-                Some("carried") => Some(Kept::Carried(reason.unwrap_or_default())),
-                Some(_) => Some(Kept::Unsure(reason.unwrap_or_default())),
-                None => None,
-            },
-        })
-    })?;
+    let mut statement = conn.prepare(&format!(
+        "SELECT {JOURNALED} FROM folder_journal ORDER BY path, item_id"
+    ))?;
+    let rows = statement.query_map([], journaled_row)?;
     let mut journaled = Vec::new();
     for row in rows {
         journaled.push(row?);
@@ -1265,7 +1262,8 @@ pub fn record_digest(conn: &Connection) -> Result<[u8; 32], CoreError> {
         &[],
     )?;
     take(
-        "SELECT path, item_id, missing_since, kept, reason FROM folder_journal ORDER BY path",
+        "SELECT path, item_id, missing_since, kept, reason, identity, content_hash
+         FROM folder_journal ORDER BY path, item_id",
         &[],
     )?;
     take(

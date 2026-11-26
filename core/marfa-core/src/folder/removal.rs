@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use serde::Serialize;
 
@@ -23,6 +23,14 @@ pub struct Confirmed {
     /// Paused files the volume could not take away safely, each with why.
     /// Each stays, and stays paused.
     pub refused: Vec<Unsure>,
+}
+
+/// A paused removal, with when its file went missing as the confirm found it
+/// before its scan, where it was not held.
+struct Paused {
+    path: String,
+    item_id: String,
+    missing_since: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -54,15 +62,32 @@ impl Folder {
                 state::journaled(&conn)?,
             )
         };
-        let journaled: HashMap<String, String> = journaled
-            .into_iter()
-            .map(|row| (row.path, row.item_id))
-            .collect();
-        let paused: Vec<(String, String)> = disk
-            .iter()
-            .filter_map(|path| Some((path.clone(), journaled.get(path)?.clone())))
-            .collect();
+        let mut by_path: HashMap<String, Vec<state::Journaled>> = HashMap::new();
+        for row in journaled {
+            by_path.entry(row.path.clone()).or_default().push(row);
+        }
+        let mut paused = Vec::new();
+        for path in &disk {
+            match by_path.get(path) {
+                Some(rows) => paused.extend(rows.iter().map(|row| Paused {
+                    path: row.path.clone(),
+                    item_id: row.item_id.clone(),
+                    missing_since: (!row.held()).then(|| row.missing_since.clone()),
+                })),
+                // A pass that could not read its path cleared its row.
+                None => {
+                    if let Some(bound) = state::bound_at(&*self.core.conn()?, path)? {
+                        paused.push(Paused {
+                            path: path.clone(),
+                            item_id: bound.item_id,
+                            missing_since: None,
+                        });
+                    }
+                }
+            }
+        }
         let mut confirmed = Confirmed::default();
+        let mut waiting = Vec::new();
         // Allowed before the one scan, which then queues them.
         let released = held
             .iter()
@@ -77,7 +102,7 @@ impl Folder {
             let scanned = self.scan_holding_missing()?;
             confirmed.added = released;
             if !paused.is_empty() {
-                self.confirm_removals(&paused, &scanned, &settings, &mut confirmed)?;
+                waiting = self.confirm_removals(&paused, &scanned, &settings, &mut confirmed)?;
             }
         }
         copy.same_copy(&*self.core.conn()?)?;
@@ -113,7 +138,7 @@ impl Folder {
                 .iter()
                 .map(|file| file.path.clone())
                 .collect();
-            state::set_paused(&conn, state::Removal::Disk, &[])?;
+            state::set_paused(&conn, state::Removal::Disk, &waiting)?;
             state::set_paused(&conn, state::Removal::Pull, &refused)?;
         }
         self.settle_retained()?;
@@ -123,47 +148,110 @@ impl Folder {
     /// Lets go of each paused file, a path and its item, that `scanned`, a
     /// fresh scan of the whole folder that let go of nothing, finds under no
     /// name, and of no other file. A file the scan finds back, at its path or
-    /// another, keeps its item.
+    /// another, keeps its item. Returns the paths still inside the rename
+    /// grace, whose removal stays paused.
     fn confirm_removals(
         &self,
-        paused: &[(String, String)],
+        paused: &[Paused],
         scanned: &super::ScanReport,
         settings: &super::Settings,
         confirmed: &mut Confirmed,
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
+        let mut waiting = Vec::new();
         // A file another file carries is no removal to confirm.
-        let journaled: HashSet<(String, String)> = state::journaled(&*self.core.conn()?)?
-            .into_iter()
-            .filter(|row| !row.carried())
-            .map(|row| (row.path, row.item_id))
-            .collect();
+        let journaled: HashMap<(String, String), (String, Option<String>)> =
+            state::journaled(&*self.core.conn()?)?
+                .into_iter()
+                .filter(|row| !row.carried())
+                .map(|row| {
+                    let held = match row.kept {
+                        Some(state::Kept::Unsure(reason)) => Some(reason),
+                        _ => None,
+                    };
+                    ((row.path, row.item_id), (row.missing_since, held))
+                })
+                .collect();
         let unread = unread_reason(scanned);
+        let now = crate::store::millis_at(crate::clock::system_time());
         let mut missing = Vec::new();
-        for (path, item_id) in paused {
+        for Paused {
+            path,
+            item_id,
+            missing_since,
+        } in paused
+        {
             let bound = state::bound_at(&*self.core.conn()?, path)?
                 .is_some_and(|bound| &bound.item_id == item_id);
             // Unbound: found under another name by the scan.
             if !bound {
                 continue;
             }
+            let since = journaled.get(&(path.clone(), item_id.clone()));
+            // The scan clears the row of a path it cannot reach, not its grace.
+            let in_grace = match since {
+                Some((since, None)) => Some(since),
+                Some((_, Some(_))) => None,
+                None => missing_since.as_ref(),
+            }
+            .is_some_and(|since| !super::scan::elapsed_past(since, now, super::RENAME_GRACE));
+            let unseen = since.is_none() && missing_since.is_none();
             let reason = match self.file_at(&self.root.join(path)) {
-                Err(error) => format!("its path cannot be checked ({error})"),
                 Ok(true) => continue,
-                Ok(false) if !scanned.swept => unread.clone(),
-                Ok(false) if journaled.contains(&(path.clone(), item_id.clone())) => {
-                    missing.push((path.clone(), item_id.clone()));
+                // Paused, it stays in view for a confirm that reads it all.
+                Ok(false) if !scanned.swept => {
+                    waiting.push(path.clone());
+                    confirmed.unsure.push(Unsure {
+                        path: path.clone(),
+                        reason: unread.clone(),
+                    });
                     continue;
                 }
-                // Bound and missing, yet not journaled: a file the lists no
-                // longer reach, which no scan deletes.
-                Ok(false) => continue,
+                // A rename takes as long to show here as a sweep waits,
+                // whether or not its path can be read.
+                _ if in_grace => {
+                    waiting.push(path.clone());
+                    confirmed.unsure.push(Unsure {
+                        path: path.clone(),
+                        reason: "it went missing less than the rename grace ago, so its removal stays paused for a later confirm or scan to decide".into(),
+                    });
+                    continue;
+                }
+                // Unread, it may have come back and gone again since.
+                Err(error) if unseen => {
+                    waiting.push(path.clone());
+                    confirmed.unsure.push(Unsure {
+                        path: path.clone(),
+                        reason: format!(
+                            "its path cannot be checked ({error}), and no scan that read it has found it missing for the rename grace, so its removal stays paused for a later confirm or scan to decide"
+                        ),
+                    });
+                    continue;
+                }
+                Err(error) => format!("its path cannot be checked ({error})"),
+                Ok(false) => match since {
+                    // The person settles a held file with `folders held`.
+                    Some((_, Some(reason))) => reason.clone(),
+                    Some(_) => {
+                        missing.push((path.clone(), item_id.clone()));
+                        continue;
+                    }
+                    // Bound and missing, yet not journaled: a file the lists
+                    // no longer reach, which no scan deletes.
+                    None => continue,
+                },
             };
-            // Status needs the reason after confirmation clears the pause.
-            let kept = state::Kept::Unsure(reason.clone());
+            // The confirm's own scan may have cleared the row of a path it
+            // could not reach, and status needs the reason once the pause ends.
             let conn = self.core.conn()?;
-            state::journal_missing(&conn, path, item_id)?;
-            state::journal_keep(&conn, path, item_id, Some(&kept))?;
-            state::journal_unread_hold(&conn)?;
+            let tx = conn.unchecked_transaction()?;
+            state::journal_missing(&tx, path, item_id)?;
+            state::journal_keep(
+                &tx,
+                path,
+                item_id,
+                Some(&state::Kept::Unsure(reason.clone())),
+            )?;
+            tx.commit()?;
             drop(conn);
             confirmed.unsure.push(Unsure {
                 path: path.clone(),
@@ -174,9 +262,16 @@ impl Folder {
         let sweep = Sweep::default();
         self.decide_changed(&missing, settings, &sweep)?;
         for (path, item_id) in &missing {
-            match self.let_go_missing(path, item_id, settings, &peers, &sweep)? {
+            match self.let_go_missing(
+                path,
+                item_id,
+                settings,
+                &peers,
+                &sweep,
+                super::scan::Letting::Confirmed,
+            )? {
                 Missing::Moved => confirmed.moved += 1,
-                Missing::Arriving | Missing::Changed => {}
+                Missing::Arriving | Missing::Changed(_) => {}
                 Missing::Unsure(reason) => confirmed.unsure.push(Unsure {
                     path: path.clone(),
                     reason,
@@ -185,7 +280,7 @@ impl Folder {
                 Missing::Gone | Missing::Carried => {}
             }
         }
-        Ok(())
+        Ok(waiting)
     }
 
     /// Lets every new file of the next scan on this open become an item,
@@ -231,7 +326,7 @@ impl Folder {
                 // The file leaves for good, so its placement ends before its binding.
                 self.end_placement(&bound.item_id, path)?;
                 let conn = self.core.conn()?;
-                state::journal_clear(&conn, path)?;
+                state::journal_clear(&conn, path, &bound.item_id)?;
                 state::unbind(&conn, path)?;
                 continue;
             }
@@ -242,7 +337,7 @@ impl Folder {
                 continue;
             }
             let conn = self.core.conn()?;
-            state::journal_clear(&conn, path)?;
+            state::journal_clear(&conn, path, &bound.item_id)?;
             marked.push((path, bound.item_id.clone()));
             state::bind(
                 &conn,
@@ -358,7 +453,7 @@ fn unread_reason(scanned: &super::ScanReport) -> String {
 /// What the pull said of the item's own file, or else of a file at its path
 /// that the pull tied to no item: a flag on another item's file at the path
 /// is about that item.
-fn flagged_for(flagged: &[Flagged], item_id: &str, path: &str) -> Option<Flagged> {
+pub(super) fn flagged_for(flagged: &[Flagged], item_id: &str, path: &str) -> Option<Flagged> {
     flagged
         .iter()
         .find(|file| file.item.as_deref() == Some(item_id))
@@ -420,6 +515,9 @@ mod tests {
         }
         let paused = folder.scan().unwrap();
         assert_eq!(paused.paused, names.len(), "{paused:?}");
+        for name in names {
+            past_the_grace(&folder, name);
+        }
         Paused {
             dir,
             away,
@@ -546,6 +644,14 @@ mod tests {
             .map(|problem| problem.count)
     }
 
+    /// The person trashes a held file, which no later scan decides.
+    fn trashed_by_person(folder: &Folder, path: &str) {
+        let settled = folder
+            .settle_held(&[path.to_string()], super::super::Settle::Trash)
+            .unwrap();
+        assert_eq!(settled.trashed, [path], "{settled:?}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_confirmed_removal_held_while_another_folder_cannot_be_read_stays_a_held_file() {
@@ -580,14 +686,18 @@ mod tests {
             );
             assert_eq!(held_files(folder), Some(1));
         }
-        assert_eq!(folder.scan().unwrap().paused, 1);
-        assert_eq!(folder.confirm().unwrap().deleted, 1);
+        let read = folder.scan().unwrap();
+        assert_eq!((read.paused, read.deleted), (0, 0), "{read:?}");
+        assert_eq!(held_as(folder, "gone.md"), Some(("held", Some("unsure"))));
+        assert!(deletes_queued(folder).is_empty(), "a delete was queued");
+        // The witness: the person's trash sends the delete the hold kept.
+        trashed_by_person(folder, "gone.md");
         assert_eq!(deletes_queued(folder).len(), 1);
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_confirmed_removal_held_while_its_own_directory_cannot_be_read_stays_a_held_file() {
+    fn a_removal_confirmed_while_another_directory_cannot_be_read_stays_paused_in_view() {
         let (_, _registry) = registry::tests::own_registry();
         let paused = paused_over(
             "01a00000-0000-7000-8000-00000000c6b3",
@@ -601,7 +711,19 @@ mod tests {
             confirmed.unsure.iter().any(|file| file.path == "gone.md"),
             "{confirmed:?}"
         );
-        assert_eq!(held_as(folder, "gone.md"), Some(("held", Some("unsure"))));
+        assert_eq!(
+            held_as(folder, "gone.md").map(|(_, flag)| flag),
+            Some(Some("removal")),
+            "a removal the confirm could not decide dropped out of view"
+        );
+        let held: Vec<String> = folder
+            .held_files()
+            .unwrap()
+            .into_iter()
+            .map(|file| file.path)
+            .collect();
+        // Its path unreadable, the file put back in `sub` is held instead.
+        assert_eq!(held, ["sub/original.md"]);
     }
 
     #[cfg(unix)]
@@ -647,9 +769,11 @@ mod tests {
         );
         assert_eq!(held_files(folder), Some(1));
         assert!(deletes_queued(folder).is_empty(), "a delete was queued");
-        // The witness: read whole, the missing file is a removal to confirm.
-        assert_eq!(folder.scan().unwrap().paused, 1);
-        assert_eq!(folder.confirm().unwrap().deleted, 1);
+        let read = folder.scan().unwrap();
+        assert_eq!((read.paused, read.deleted), (0, 0), "{read:?}");
+        assert!(deletes_queued(folder).is_empty(), "a delete was queued");
+        // The witness: the person's trash sends the delete the hold kept.
+        trashed_by_person(folder, "sub/gone.md");
         assert_eq!(deletes_queued(folder).len(), 1);
     }
 
@@ -730,6 +854,7 @@ mod tests {
         // Once the file is gone under every name, its item goes too.
         std::fs::remove_file(paused.dir.path().join("original.bin")).unwrap();
         assert_eq!(folder.scan().unwrap().paused, 1);
+        past_the_grace(folder, "original.md");
         assert_eq!(folder.confirm().unwrap().deleted, 1);
         assert_eq!(deletes_queued(folder).len(), 2);
     }
@@ -813,9 +938,17 @@ mod tests {
             "{swept:?}"
         );
         drop(sealed.lock().unwrap().take());
-        // The witness: once the path can be checked, the file gone is let go.
         let again = folder.scan().unwrap();
-        assert_eq!(again.trashed, ["sub/note.md"], "{again:?}");
+        assert!(
+            again.trashed.is_empty(),
+            "a held delete was sent unasked: {again:?}"
+        );
+        // The witness: the person's trash of it sends the delete.
+        let settled = folder
+            .settle_held(&["sub/note.md".into()], super::super::Settle::Trash)
+            .unwrap();
+        assert_eq!(settled.trashed, ["sub/note.md"], "{settled:?}");
+        assert_eq!(deletes_queued(&folder).len(), 1);
     }
 
     /// A folder of notes whose `note.md` moved to `note.bin`, a name it does
@@ -1253,7 +1386,9 @@ mod tests {
             written.contains("changed elsewhere"),
             "{pulled:?} {written}"
         );
-        // The witness: unchanged, the same item goes once its grace has run.
+        // The witness: unchanged, the same item goes once its grace has run,
+        // on a computer with no other folder.
+        let (_, _alone) = registry::tests::own_registry();
         let (dir, folder, item) = held_at_carried_path("01a00000-0000-7000-8000-00000000c61b");
         std::fs::remove_file(dir.path().join("note.md")).unwrap();
         std::fs::remove_file(dir.path().join("note.bin")).unwrap();
@@ -1427,7 +1562,8 @@ mod tests {
     }
 
     #[test]
-    fn a_confirmed_removal_under_a_raised_threshold_counts_the_files_found_in_another_folder() {
+    fn a_confirmed_removal_under_a_raised_threshold_moves_the_files_found_in_another_folder_and_holds_the_rest()
+     {
         let (_, _registry) = registry::tests::own_registry();
         let names: Vec<String> = (0..15).map(|n| format!("note {n}.md")).collect();
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -1456,11 +1592,20 @@ mod tests {
         let confirmed = folder.confirm().unwrap();
         assert_eq!(
             (confirmed.moved, confirmed.deleted),
-            (5, 10),
+            (5, 0),
             "{confirmed:?}"
         );
-        assert!(confirmed.unsure.is_empty(), "{confirmed:?}");
-        assert_eq!(deletes_queued(folder).len(), 10);
+        // The other folder may hold the rest under names Marfa cannot follow.
+        assert_eq!(confirmed.unsure.len(), 10, "{confirmed:?}");
+        assert!(
+            confirmed
+                .unsure
+                .iter()
+                .all(|file| file.reason.contains("another folder is on this computer")),
+            "{confirmed:?}"
+        );
+        assert!(deletes_queued(folder).is_empty());
+        assert_eq!(folder.held_files().unwrap().len(), 10);
     }
 
     #[cfg(unix)]

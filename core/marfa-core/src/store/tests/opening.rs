@@ -834,14 +834,14 @@ fn a_store_from_before_tags_were_replaced_by_their_own_kind_is_refused_with_its_
         )
         .unwrap();
     }
-    at_version(&path, SCHEMA_VERSION - 1);
+    at_version(&path, OLDEST_UPGRADED - 1);
     let (reason, unsent, _) = refusal_of(&path);
     assert!(
         reason.contains("1 write of kind replace_metadata, which this build cannot send"),
         "{reason}"
     );
     assert!(
-        reason.contains(&format!("schema version {}", SCHEMA_VERSION - 1)),
+        reason.contains(&format!("schema version {}", OLDEST_UPGRADED - 1)),
         "{reason}"
     );
     assert_eq!(unsent, Some(1));
@@ -855,7 +855,7 @@ fn a_store_from_before_tags_were_replaced_by_their_own_kind_is_refused_with_its_
 }
 
 /// Append one hash per schema version; never change an existing entry.
-const SHAPES: [&str; 11] = [
+const SHAPES: [&str; 12] = [
     "9a505dc1b14cecc6",
     "115c1d4def4a3d91",
     "2d4e4e1e76ec61dc",
@@ -867,18 +867,17 @@ const SHAPES: [&str; 11] = [
     "8677b34bec9e8814",
     "03d2b1a62ad045a9",
     "19191f94ade9938b",
+    "07e2ec7950f2fc14",
 ];
 
-#[test]
-fn the_shape_this_build_makes_is_the_one_its_version_names() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(SCHEMA).unwrap();
+/// Every table, index and trigger `conn` holds, as SQLite records them.
+fn shape_of(conn: &Connection) -> String {
     let mut query = conn
         .prepare(
             "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name",
         )
         .unwrap();
-    let named: String = query
+    query
         .query_map([], |row| {
             Ok(format!(
                 "{}:{}:{}\n",
@@ -889,7 +888,14 @@ fn the_shape_this_build_makes_is_the_one_its_version_names() {
         })
         .unwrap()
         .collect::<rusqlite::Result<_>>()
-        .unwrap();
+        .unwrap()
+}
+
+#[test]
+fn the_shape_this_build_makes_is_the_one_its_version_names() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(SCHEMA).unwrap();
+    let named = shape_of(&conn);
     assert_eq!(
         SHAPES.len() as i64,
         SCHEMA_VERSION,
@@ -943,6 +949,60 @@ fn a_store_at_an_earlier_version_is_upgraded_in_place_with_its_queue_kept() {
         Err(CoreError::WrongSchema { .. })
     ));
     assert_eq!(version(&conn).unwrap(), 3);
+}
+
+#[test]
+fn a_store_at_the_oldest_upgraded_version_keeps_every_missing_file_it_journaled() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    drop(open(&path).unwrap());
+    let made = shape_of(&Connection::open(&path).unwrap());
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "DROP TABLE folder_journal;
+             CREATE TABLE folder_journal (
+               path TEXT PRIMARY KEY,
+               item_id TEXT NOT NULL,
+               missing_since TEXT NOT NULL,
+               kept TEXT CHECK (kept IN ('arriving', 'unsure', 'carried')),
+               reason TEXT
+             ) WITHOUT ROWID;
+             INSERT INTO folder_files (path, item_id, identity, content_hash, links, edge_lines, seen_at)
+               VALUES ('a.md', 'a', 'id-a', 'hash-a', '[]', '[]', '2026-01-01T00:00:00Z'),
+                      ('b.bin', 'other', 'id-other', 'hash-other', '[]', '[]', '2026-01-01T00:00:00Z');
+             INSERT INTO folder_journal (path, item_id, missing_since, kept, reason)
+               VALUES ('a.md', 'a', '2026-01-01T00:00:00Z', NULL, NULL),
+                      ('b.bin', 'b', '2026-01-02T00:00:00Z', 'unsure', 'offline'),
+                      ('c.md', 'c', '2026-01-03T00:00:00Z', 'carried', 'd.md');",
+        )
+        .unwrap();
+    }
+    at_version(&path, OLDEST_UPGRADED);
+    let conn = open(&path).unwrap();
+    assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
+    assert_eq!(shape_of(&conn), made, "the upgrade made another shape");
+    let journal: Vec<String> = conn
+        .prepare(
+            "SELECT path || ' ' || item_id || ' ' || missing_since || ' ' || ifnull(kept, '-')
+                    || ' ' || ifnull(reason, '-') || ' ' || ifnull(identity, '-')
+                    || ' ' || ifnull(content_hash, '-')
+             FROM folder_journal ORDER BY path",
+        )
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        journal,
+        [
+            "a.md a 2026-01-01T00:00:00Z - - id-a hash-a",
+            // Another item's binding at the path says nothing of this one.
+            "b.bin b 2026-01-02T00:00:00Z unsure offline - -",
+            "c.md c 2026-01-03T00:00:00Z carried d.md - -",
+        ]
+    );
 }
 
 #[test]

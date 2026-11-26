@@ -361,7 +361,7 @@ fn a_quiet_watch_over_a_directory_it_cannot_read_pulls_at_most_once_an_interval(
 }
 
 #[test]
-fn a_quiet_watch_looks_again_each_minute_for_a_delete_it_cannot_tell_from_a_move() {
+fn a_quiet_watch_rests_over_a_held_delete_and_sends_none_once_the_registry_reads_again() {
     let (registry, _registry) = super::registry::tests::own_registry();
     let (dir, folder) = folder_with(
         "01a00000-0000-7000-8000-0000000026e1",
@@ -370,9 +370,9 @@ fn a_quiet_watch_looks_again_each_minute_for_a_delete_it_cannot_tell_from_a_move
     );
     std::fs::write(dir.path().join("a.md"), "a words\n").unwrap();
     assert_eq!(folder.scan().unwrap().created, 1);
-    let id = landed(&folder, "a.md");
+    landed(&folder, "a.md");
     answered(&folder);
-    let (folder, server) = served(dir.path(), folder);
+    let (folder, _server) = served(dir.path(), folder);
     let mut passes = watch::Passes::default();
     passes.run(&folder, true).unwrap();
     settle(&folder, &mut passes);
@@ -387,30 +387,15 @@ fn a_quiet_watch_looks_again_each_minute_for_a_delete_it_cannot_tell_from_a_move
     let unsure = || matches!(kept(&folder, "a.md"), Some(state::Kept::Unsure(_)));
     assert!(unsure(), "{:?}", kept(&folder, "a.md"));
 
-    // The pass runs once a minute, not each tick, and the full pass is ten
-    // minutes off.
-    assert_eq!(ticks_of_full_passes(&mut passes, &folder, 130), [60, 120]);
-    assert!(unsure(), "the witness: the delete stands undecided");
-
-    // The registry can be read again, which no event here tells. The server
-    // is busy, so the delete the quick pass decides waits in the queue.
-    std::fs::write(registry.path(), listed).unwrap();
-    server.on(
-        &format!("/items/{id}"),
-        vec![crate::scripted::refusal(503, "unavailable")],
-    );
-    let decided_after = (1..=60).find(|_| {
-        passes.tick(&folder).unwrap();
-        state::journaled(&folder.core.conn().unwrap())
-            .unwrap()
-            .is_empty()
-    });
+    // Only the full pass ten minutes off runs: nothing is looked for.
     assert_eq!(
-        decided_after,
-        Some(50),
-        "the quick pass did not decide the delete a minute after the look at tick 120"
+        ticks_of_full_passes(&mut passes, &folder, 130),
+        Vec::<usize>::new()
     );
-    assert_eq!(deletes_queued(&folder).len(), 1);
+    std::fs::write(registry.path(), listed).unwrap();
+    assert_eq!(ticks_of_full_passes(&mut passes, &folder, 600), [470]);
+    assert!(unsure(), "a held delete was decided again unasked");
+    assert!(deletes_queued(&folder).is_empty(), "a held delete was sent");
 }
 
 /// A watch whose registry cannot be read, over notes named `names` that are
@@ -456,12 +441,15 @@ fn watch_keeping_one(
 
 #[test]
 fn a_quiet_watch_over_a_kept_file_and_a_paused_removal_passes_at_most_once_a_minute() {
-    let (_dir, folder, _server, mut passes, _guard) = watch_keeping_one(
+    let (dir, folder, _server, mut passes, _guard) = watch_keeping_one(
         "01a00000-0000-7000-8000-0000000026e4",
-        &["a.md", "b.md"],
+        &["a.md", "b.md", "c.md"],
         serde_json::json!({ "query": {} }),
     );
-    // The threshold now stops the sweep before it looks.
+    std::fs::remove_file(dir.path().join("b.md")).unwrap();
+    passes.run(&folder, false).unwrap();
+    past_the_grace(&folder, "b.md");
+    // The threshold now stops the sweep, and a held file is no part of it.
     folder
         .core
         .conn()
@@ -473,7 +461,7 @@ fn a_quiet_watch_over_a_kept_file_and_a_paused_removal_passes_at_most_once_a_min
         .unwrap();
     passes.run(&folder, false).unwrap();
     let paused = state::paused(&folder.core.conn().unwrap(), state::Removal::Disk).unwrap();
-    assert_eq!(paused, ["a.md"], "the witness: the removal stands paused");
+    assert_eq!(paused, ["b.md"], "the witness: the removal stands paused");
     let ran = ticks_of_full_passes(&mut passes, &folder, 130);
     assert!(ran.len() <= 3, "passes at ticks {ran:?}");
 }
@@ -529,7 +517,7 @@ fn a_restarted_watch_over_a_persisted_kept_file_passes_at_most_once_a_minute() {
 }
 
 #[test]
-fn a_new_missing_file_does_not_postpone_the_look_at_an_older_kept_one() {
+fn a_quiet_watch_over_held_files_looks_for_none_of_them() {
     let (dir, folder, _server, mut passes, _guard) = watch_keeping_one(
         "01a00000-0000-7000-8000-0000000026e7",
         &["a.md", "b.md"],
@@ -539,20 +527,15 @@ fn a_new_missing_file_does_not_postpone_the_look_at_an_older_kept_one() {
         passes.tick(&folder).unwrap();
     }
     std::fs::remove_file(dir.path().join("b.md")).unwrap();
-    // A quick pass, since a full scan would look at the older file itself.
     passes.run(&folder, false).unwrap();
     past_the_grace(&folder, "b.md");
     passes.run(&folder, false).unwrap();
     assert!(
         matches!(kept(&folder, "b.md"), Some(state::Kept::Unsure(_))),
-        "the witness: the new file's own check kept it"
+        "the witness: the new file's own check held it"
     );
-    let ran = ticks_of_full_passes(&mut passes, &folder, 40);
-    assert_eq!(
-        ran,
-        [30],
-        "the older file's look is a minute after its last"
-    );
+    let ran = ticks_of_full_passes(&mut passes, &folder, 120);
+    assert!(ran.is_empty(), "passes at ticks {ran:?}");
 }
 
 #[test]
