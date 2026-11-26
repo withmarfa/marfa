@@ -2011,6 +2011,8 @@ impl Folder {
                     taken.file.born = taken.file.born.map(|born| born + 1);
                 }
                 state::set_taken(&conn, &row.path, &taken)?;
+                #[cfg(debug_assertions)]
+                crate::fault::hold(|| "folder-take-away-recorded");
                 landing::stop_if_asked(&path, "crash-before-take-away");
                 let still =
                     |found: &[u8]| row.written_hash.as_deref() == Some(state::hash(found).as_str());
@@ -2092,6 +2094,8 @@ impl Folder {
     /// Checks the path without following directory links, through its
     /// directory as the removal recorded it.
     pub(super) fn taken_now(&self, path: &str, taken: Option<&state::Taken>) -> TakenNow {
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| format!("folder-taken-look:{path}"));
         let path = self.root.join(path);
         let cannot_look =
             |error: std::io::Error| TakenNow::Unsure(format!("Marfa cannot look at it: {error}"));

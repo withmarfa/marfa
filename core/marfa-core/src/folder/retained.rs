@@ -632,6 +632,8 @@ impl Folder {
                 MarkAt::Away => continue,
                 MarkAt::There => {}
             }
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "folder-discard-mark-checked");
             let Ok(aside) = self.place_dir(&mark.aside) else {
                 continue;
             };
@@ -1364,5 +1366,113 @@ mod tests {
 
         let kept = listed(&root, &folder.kept_files().unwrap());
         assert!(kept.is_empty(), "{kept:?}");
+    }
+
+    /// Spoils every record of a stopped discard.
+    #[cfg(debug_assertions)]
+    fn spoiled_discard_records(folder: &Folder) {
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE meta SET value = 'unreadable' WHERE key LIKE 'folder_discarding:%'",
+                [],
+            )
+            .unwrap();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_record_of_a_stopped_discard_is_never_forgotten_while_its_directory_is_away() {
+        for unread in [false, true] {
+            let (_dir, folder, root, _) = kept_aside(false);
+            let folder = discard_stopped(folder, &root);
+            if unread {
+                spoiled_discard_records(&folder);
+            }
+            let elsewhere = tempfile::tempdir_in(root.parent().unwrap()).unwrap();
+            std::fs::rename(root.join("Notes"), elsewhere.path().join("Notes")).unwrap();
+
+            let done = folder.discard_kept().unwrap();
+
+            assert!(
+                done.forgotten.is_empty(),
+                "unread {unread}: a record was forgotten while its directory was away: {done:?}"
+            );
+            std::fs::rename(elsewhere.path().join("Notes"), root.join("Notes")).unwrap();
+            let kept = listed(&root, &folder.kept_files().unwrap());
+            assert!(
+                kept.iter().any(|(_, there)| *there),
+                "unread {unread}: the file the discard left is not listed: {kept:?}"
+            );
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_stopped_discard_is_settled_in_the_directory_it_checked() {
+        let (_dir, folder, root, _) = kept_aside(false);
+        let folder = discard_stopped(folder, &root);
+        let private = reserved_in(&root.join("Notes"));
+        assert_eq!(private.len(), 1);
+        let elsewhere = tempfile::tempdir_in(root.parent().unwrap()).unwrap();
+        let copy = elsewhere.path().join("copy");
+        std::fs::create_dir(&copy).unwrap();
+        std::fs::copy(root.join("Notes").join(&private[0]), copy.join(&private[0])).unwrap();
+        let swap = super::super::unmatched::tests::meanwhile_at("folder-discard-mark-checked", {
+            let (root, elsewhere, copy) =
+                (root.clone(), elsewhere.path().to_path_buf(), copy.clone());
+            move || {
+                std::fs::rename(root.join("Notes"), elsewhere.join("Notes")).unwrap();
+                std::fs::rename(&copy, root.join("Notes")).unwrap();
+            }
+        });
+
+        folder.scan().unwrap();
+
+        assert!(
+            swap.join().unwrap(),
+            "the discard's record was never settled, so nothing below is about it"
+        );
+        assert_eq!(
+            reserved_in(&root.join("Notes")),
+            private,
+            "the directory put at its name after the check was changed"
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_stopped_discard_never_settles_on_a_directory_short_of_its_full_identity() {
+        for spoil in ["no birth time", "another device"] {
+            let (_dir, folder, root, _) = kept_aside(false);
+            let folder = discard_stopped(folder, &root);
+            {
+                let conn = folder.core.conn().unwrap();
+                let (_, mark) = state::discarding(&conn).unwrap().pop().unwrap();
+                let mut mark = mark.unwrap();
+                if spoil == "no birth time" {
+                    mark.aside_at.born = None;
+                } else {
+                    mark.aside_at.device ^= 1;
+                }
+                state::set_discarding(&conn, &mark).unwrap();
+            }
+            let private = reserved_in(&root.join("Notes"));
+            assert_eq!(private.len(), 1);
+            std::fs::remove_file(root.join("Notes").join(&private[0])).unwrap();
+
+            folder.scan().unwrap();
+
+            assert_eq!(
+                state::discarding(&folder.core.conn().unwrap())
+                    .unwrap()
+                    .len(),
+                1,
+                "{spoil}: the record was cleared on less than its directory's full identity"
+            );
+            assert!(!folder.kept_files().unwrap().is_empty(), "{spoil}");
+        }
     }
 }
