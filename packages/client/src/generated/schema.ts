@@ -900,7 +900,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get a connector's state
+         * Get a connector's controls
          * @description Returns what the owner wants of a plugin's connector: whether it is paused, a run asked for, and how many rewrites and previews wait on it. Needs `connectors.manage`, or the connector's own key.
          */
         get: operations["getPluginConnector"];
