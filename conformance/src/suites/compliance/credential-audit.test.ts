@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
@@ -154,12 +155,11 @@ describe("a sign-in's audit entry", () => {
     const signedBefore = await count("auth.sign_in.success", "owner");
     const endedBefore = await count("auth.sign_in.ended", "sign_in");
 
-    const failed = await fetch(`${server.apiUrl}/auth/sign-in`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin },
-      body: JSON.stringify({ username: OWNER.username, password: "not it" }),
+    const failed = await postSignInForm(server.apiUrl, origin, {
+      username: OWNER.username,
+      password: "not it",
     });
-    expect(failed.status).toBe(401);
+    expect(signInOutcome(failed)).toBe("invalid_credentials");
     const session = await signIn(server, origin);
     const ended = await fetch(`${server.apiUrl}/auth/sign-out`, {
       method: "POST",
@@ -190,12 +190,11 @@ describe("a security observation", () => {
 
   it("is in the audit log when the refusal of a failed sign-in answers", async () => {
     const before = await logged("auth.sign_in.failed");
-    const failed = await fetch(`${server.apiUrl}/auth/sign-in`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin },
-      body: JSON.stringify({ username: OWNER.username, password: "not it" }),
+    const failed = await postSignInForm(server.apiUrl, origin, {
+      username: OWNER.username,
+      password: "not it",
     });
-    expect(failed.status).toBe(401);
+    expect(signInOutcome(failed)).toBe("invalid_credentials");
     expect(await logged("auth.sign_in.failed")).toBe(before + 1);
     const rows = await new MarfaClient({
       baseUrl: server.apiUrl,

@@ -6,7 +6,12 @@ import {
 } from "../../utils/fresh-server.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { TEST_OWNER } from "../../utils/target.js";
-import { sessionCookieOf as sessionCookie } from "../../client/owner-session.js";
+import {
+  sessionCookieOf as sessionCookie,
+  postSignInForm,
+  signInAnswerOf,
+  signInOutcome,
+} from "../../client/owner-session.js";
 
 /**
  * What a signed-in owner's browser can do: see who is signed in at the root,
@@ -43,20 +48,17 @@ function passwordSignIn(
   password: string,
   address = nextAddress(),
 ): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin,
-      [CLIENT_HEADER]: address,
-    },
-    body: JSON.stringify({ username: TEST_OWNER.username, password }),
-  });
+  return postSignInForm(
+    server.apiUrl,
+    origin,
+    { username: TEST_OWNER.username, password },
+    { [CLIENT_HEADER]: address },
+  );
 }
 
 async function signIn(password = TEST_OWNER.password): Promise<string> {
   const response = await passwordSignIn(password);
-  expect(response.status).toBe(200);
+  expect(signInOutcome(response)).toBe("signed_in");
   const cookie = sessionCookie(response);
   expect(cookie, "sign-in set no session cookie").toBeTruthy();
   return cookie!;
@@ -122,8 +124,9 @@ async function lives(cookie: string): Promise<boolean> {
 async function signsIn(password: string): Promise<boolean> {
   const response = await passwordSignIn(password);
   await response.body?.cancel();
-  expect([200, 401]).toContain(response.status);
-  return response.status === 200;
+  const outcome = signInOutcome(response);
+  expect(["signed_in", "invalid_credentials"]).toContain(outcome);
+  return outcome === "signed_in";
 }
 
 async function code(response: Response): Promise<string> {
@@ -276,7 +279,7 @@ describe("changing the password", () => {
       );
       expect(wrong.status).toBe(401);
       const direct = await passwordSignIn("wrong two", address);
-      expect(direct.status).toBe(401);
+      expect(signInOutcome(direct)).toBe("invalid_credentials");
     }
     const locked = await change(
       { current_password: TEST_OWNER.password, new_password: NEW_PASSWORD },
@@ -290,8 +293,8 @@ describe("changing the password", () => {
 
     // The sign-in door is held by the same lane, with no longer a wait.
     const held = await passwordSignIn(TEST_OWNER.password, address);
-    expect(held.status).toBe(429);
-    expect(Number(held.headers.get("retry-after"))).toBeLessThanOrEqual(wait);
+    expect(signInOutcome(held)).toBe("too_many_attempts");
+    expect(signInAnswerOf(held).wait).toBeLessThanOrEqual(wait);
 
     // Nothing changed, and another address is not held by it.
     expect(await lives(here)).toBe(true);

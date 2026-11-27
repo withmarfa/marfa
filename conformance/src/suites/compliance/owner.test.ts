@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { rm } from "node:fs/promises";
 import {
@@ -52,6 +53,12 @@ function post(
     body: JSON.stringify(body),
   });
 }
+function signInAs(
+  credentials: { username: string; password: string },
+  headers: Record<string, string> = {},
+) {
+  return postSignInForm(server.url, server.url, credentials, headers);
+}
 async function errorCode(response: Response): Promise<string> {
   return ((await response.json()) as { error: { code: string } }).error.code;
 }
@@ -78,9 +85,7 @@ describe("claiming the one owner", () => {
     const noProofOwner = await post("/owner", OWNER);
     expect(noProofOwner.status).toBe(401);
     expect(await errorCode(noProofOwner)).toBe("setup_proof_invalid");
-    expect(
-      (await post("/auth/sign-in", OWNER, { origin: server.url })).status,
-    ).toBe(401);
+    expect(signInOutcome(await signInAs(OWNER))).toBe("invalid_credentials");
     expect((await fetch(`${server.url}/_control/setup/status`)).status).toBe(
       404,
     );
@@ -539,10 +544,8 @@ describe("claiming the one owner", () => {
       owner_id: ownerId,
     });
     expect(Number.isNaN(Date.parse(owner.created_at))).toBe(false);
-    const login = await post("/auth/sign-in", OWNER, {
-      origin: server.url,
-    });
-    expect(login.status).toBe(200);
+    const login = await signInAs(OWNER);
+    expect(signInOutcome(login)).toBe("signed_in");
     cookie = login.headers
       .getSetCookie()
       .map((value) => value.split(";")[0])
@@ -610,10 +613,8 @@ describe("claiming the one owner", () => {
 
   it("recovers the existing owner and ends the old browser session", async () => {
     const password = "replacement owner password";
-    const other = await post("/auth/sign-in", OWNER, {
-      origin: server.url,
-    });
-    expect(other.status).toBe(200);
+    const other = await signInAs(OWNER);
+    expect(signInOutcome(other)).toBe("signed_in");
     const otherCookie = other.headers
       .getSetCookie()
       .map((v) => v.split(";")[0])
@@ -624,38 +625,32 @@ describe("claiming the one owner", () => {
     };
     for (let i = 0; i < 10; i++)
       expect(
-        (
-          await post(
-            "/auth/sign-in",
+        signInOutcome(
+          await signInAs(
             { ...OWNER, password: "incorrect owner password" },
             lockedAddress,
-          )
-        ).status,
-      ).toBe(401);
+          ),
+        ),
+      ).toBe("invalid_credentials");
     // Then the address's own limit across every username, so that no username
     // signs in from it.
     for (let i = 0; i < 20; i++)
       expect(
-        (
-          await post(
-            "/auth/sign-in",
+        signInOutcome(
+          await signInAs(
             { username: `stranger-${String(i)}`, password },
             lockedAddress,
-          )
-        ).status,
-      ).not.toBe(200);
-    expect((await post("/auth/sign-in", OWNER, lockedAddress)).status).toBe(
-      429,
+          ),
+        ),
+      ).not.toBe("signed_in");
+    expect(signInOutcome(await signInAs(OWNER, lockedAddress))).toBe(
+      "too_many_attempts",
     );
     expect(
-      (
-        await post(
-          "/auth/sign-in",
-          { username: "stranger-new", password },
-          lockedAddress,
-        )
-      ).status,
-    ).toBe(429);
+      signInOutcome(
+        await signInAs({ username: "stranger-new", password }, lockedAddress),
+      ),
+    ).toBe("too_many_attempts");
     expect((await local("/_control/owner/recover", { password })).status).toBe(
       200,
     );
@@ -663,18 +658,10 @@ describe("claiming the one owner", () => {
       (await fetch(`${server.url}/owner/passkeys`, { headers: { cookie } }))
         .status,
     ).toBe(401);
-    expect(
-      (await post("/auth/sign-in", OWNER, { origin: server.url })).status,
-    ).toBe(401);
-    expect(
-      (
-        await post(
-          "/auth/sign-in",
-          { ...OWNER, password },
-          { origin: server.url },
-        )
-      ).status,
-    ).toBe(200);
+    expect(signInOutcome(await signInAs(OWNER))).toBe("invalid_credentials");
+    expect(signInOutcome(await signInAs({ ...OWNER, password }))).toBe(
+      "signed_in",
+    );
     expect(
       (
         await fetch(`${server.url}/owner/passkeys`, {
@@ -683,9 +670,8 @@ describe("claiming the one owner", () => {
       ).status,
     ).toBe(401);
     expect(
-      (await post("/auth/sign-in", { ...OWNER, password }, lockedAddress))
-        .status,
-    ).toBe(200);
+      signInOutcome(await signInAs({ ...OWNER, password }, lockedAddress)),
+    ).toBe("signed_in");
     expect(
       (
         await fetch(`${server.url}/keys/current`, {
@@ -707,14 +693,10 @@ describe("claiming the one owner", () => {
     expect((await local("/_control/setup/code", {})).status).toBe(409);
     expect((await post("/setup/claim", { ...OWNER, code })).status).toBe(409);
     expect(
-      (
-        await post(
-          "/auth/sign-in",
-          { ...OWNER, password: "replacement owner password" },
-          { origin: server.url },
-        )
-      ).status,
-    ).toBe(200);
+      signInOutcome(
+        await signInAs({ ...OWNER, password: "replacement owner password" }),
+      ),
+    ).toBe("signed_in");
     expect(
       (
         await fetch(`${server.url}/keys/current`, {
@@ -827,12 +809,8 @@ describe("signing the owner in at the claim", () => {
           avatar: owner.avatar,
         });
 
-        const login = await fetch(`${instance.url}/auth/sign-in`, {
-          method: "POST",
-          headers: { "content-type": "application/json", origin },
-          body: JSON.stringify(OWNER),
-        });
-        expect(login.status).toBe(200);
+        const login = await postSignInForm(instance.url, origin, OWNER);
+        expect(signInOutcome(login)).toBe("signed_in");
         expect(cookieShape(session[0]!)).toEqual(
           cookieShape(sessionCookies(login)[0]!),
         );
@@ -971,15 +949,8 @@ describe("signing the owner in at the claim", () => {
         expect(claimed.status).toBe(201);
         expect(sessionCookies(claimed)).toEqual([]);
         // The owner exists, so the missing cookie is the rule and not a failed claim.
-        const login = await fetch(`${instance.url}/auth/sign-in`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            origin: instance.url,
-          },
-          body: JSON.stringify(OWNER),
-        });
-        expect(login.status).toBe(200);
+        const login = await postSignInForm(instance.url, instance.url, OWNER);
+        expect(signInOutcome(login)).toBe("signed_in");
         expect(sessionCookies(login)).toHaveLength(1);
       });
     },
@@ -995,17 +966,20 @@ describe("a claim whose sign-in fails", () => {
         const origin = instance.url;
         const address = { "x-conformance-client": "192.0.2.230" };
         const signIn = (password: string, headers: Record<string, string>) =>
-          fetch(`${instance.url}/auth/sign-in`, {
-            method: "POST",
-            headers: { "content-type": "application/json", origin, ...headers },
-            body: JSON.stringify({ ...OWNER, password }),
-          });
+          postSignInForm(
+            instance.url,
+            origin,
+            { ...OWNER, password },
+            { ...headers },
+          );
         // An address that has spent its password attempts is refused its next sign-in.
         for (let i = 0; i < 10; i++)
           expect(
-            (await signIn("incorrect owner password", address)).status,
-          ).toBe(401);
-        expect((await signIn(OWNER.password, address)).status).toBe(429);
+            signInOutcome(await signIn("incorrect owner password", address)),
+          ).toBe("invalid_credentials");
+        expect(signInOutcome(await signIn(OWNER.password, address))).toBe(
+          "too_many_attempts",
+        );
 
         const claimed = await fetch(`${instance.url}/owner`, {
           method: "POST",
@@ -1023,7 +997,7 @@ describe("a claim whose sign-in fails", () => {
         const elsewhere = await signIn(OWNER.password, {
           "x-conformance-client": "192.0.2.231",
         });
-        expect(elsewhere.status).toBe(200);
+        expect(signInOutcome(elsewhere)).toBe("signed_in");
         expect(sessionCookies(elsewhere)).toHaveLength(1);
       });
     },

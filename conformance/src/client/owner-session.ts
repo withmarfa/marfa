@@ -29,6 +29,35 @@ export async function postSignInForm(
   });
 }
 
+/** What a sign-in form's redirect says: the `error` it names and the wait it gives. */
+export interface SignInAnswer {
+  status: number;
+  location: string;
+  /** The `error` the redirect to the sign-in page carries; none when the form signed the owner in. */
+  error: string | undefined;
+  /** The `retry_after_seconds` the redirect carries when a limit refused the attempt. */
+  wait: number | undefined;
+}
+
+export function signInAnswerOf(response: Response): SignInAnswer {
+  const location = response.headers.get("location") ?? "";
+  const query = new URL(location, "http://sign-in.invalid").searchParams;
+  const wait = query.get("retry_after_seconds");
+  return {
+    status: response.status,
+    location,
+    error: query.get("error") ?? undefined,
+    wait: wait === null ? undefined : Number(wait),
+  };
+}
+
+/** What the form's answer was: `signed_in`, the `error` its redirect names, or the status of an answer that is no redirect. */
+export function signInOutcome(response: Response): string {
+  const answer = signInAnswerOf(response);
+  if (answer.status !== 302) return String(answer.status);
+  return answer.error ?? "signed_in";
+}
+
 /** The owner's session cookie from a password sign-in, or an error naming why there is none. */
 export async function signInOwnerWithPassword(
   baseUrl: string,

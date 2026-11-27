@@ -84,7 +84,7 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /.well-known/oauth-protected-resource/mcp/schema": [200],
   "GET /.well-known/oauth-protected-resource/mcp/admin": [200],
   "GET /auth/sign-in": [200, 400],
-  "POST /auth/sign-in": [200, 302, 400, 401, 403, 413],
+  "POST /auth/sign-in": [302, 400, 403, 413],
   "POST /auth/confirm": [200, 400, 401, 403, 409, 429],
   "POST /auth/sign-out": [200, 401, 403, 500],
   "POST /auth/passkeys/registration/options": [200, 400, 401, 403],

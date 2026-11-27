@@ -8,7 +8,11 @@ import { controlRequest } from "../../utils/control-request.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { testAuthenticator } from "../../utils/passkey-authenticator.js";
 import { TEST_OWNER } from "../../utils/target.js";
-import { sessionCookieOf as sessionCookie } from "../../client/owner-session.js";
+import {
+  sessionCookieOf as sessionCookie,
+  postSignInForm,
+  signInOutcome,
+} from "../../client/owner-session.js";
 
 /**
  * Confirming a stale sign-in in place: `POST /auth/confirm` replaces the
@@ -46,16 +50,10 @@ function nextAddress(): string {
 
 /** Signs in with the owner's password from `address`. */
 async function signIn(address = nextAddress()): Promise<string> {
-  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin,
-      [CLIENT_HEADER]: address,
-    },
-    body: JSON.stringify(TEST_OWNER),
+  const response = await postSignInForm(server.apiUrl, origin, TEST_OWNER, {
+    [CLIENT_HEADER]: address,
   });
-  expect(response.status).toBe(200);
+  expect(signInOutcome(response)).toBe("signed_in");
   const cookie = sessionCookie(response);
   expect(cookie, "sign-in set no session cookie").toBeTruthy();
   return cookie!;
@@ -286,16 +284,13 @@ describe("confirming with the password", () => {
       expect(
         (await confirm({ password: "wrong one" }, stale, address)).status,
       ).toBe(401);
-      const direct = await fetch(`${server.apiUrl}/auth/sign-in`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          origin,
-          [CLIENT_HEADER]: address,
-        },
-        body: JSON.stringify({ ...TEST_OWNER, password: "wrong two" }),
-      });
-      expect(direct.status).toBe(401);
+      const direct = await postSignInForm(
+        server.apiUrl,
+        origin,
+        { ...TEST_OWNER, password: "wrong two" },
+        { [CLIENT_HEADER]: address },
+      );
+      expect(signInOutcome(direct)).toBe("invalid_credentials");
     }
     const askedAt = Date.now();
     const locked = await confirm(
@@ -309,18 +304,8 @@ describe("confirming with the password", () => {
     expect(wait).toBeGreaterThan(0);
 
     // The sign-in page is held by the same lane, with the same wait.
-    const form = await fetch(`${server.apiUrl}/auth/sign-in`, {
-      method: "POST",
-      redirect: "manual",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        origin,
-        [CLIENT_HEADER]: address,
-      },
-      body: new URLSearchParams({
-        username: TEST_OWNER.username,
-        password: TEST_OWNER.password,
-      }),
+    const form = await postSignInForm(server.apiUrl, origin, TEST_OWNER, {
+      [CLIENT_HEADER]: address,
     });
     expect(form.status).toBe(302);
     expect(form.headers.get("location")).toContain("too_many_attempts");
@@ -364,21 +349,18 @@ describe("confirming while strangers are limited", () => {
           password: string,
           address: string,
         ) =>
-          fetch(`${crowded.apiUrl}/auth/sign-in`, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              origin: crowdedOrigin,
-              [CLIENT_HEADER]: address,
-            },
-            body: JSON.stringify({ username, password }),
-          });
+          postSignInForm(
+            crowded.apiUrl,
+            crowdedOrigin,
+            { username, password },
+            { [CLIENT_HEADER]: address },
+          );
         const signedIn = await signInAt(
           TEST_OWNER.username,
           TEST_OWNER.password,
           "10.4.0.1",
         );
-        expect(signedIn.status).toBe(200);
+        expect(signInOutcome(signedIn)).toBe("signed_in");
         const stale = sessionCookie(signedIn)!;
         expect(stale).toBeTruthy();
         for (let a = 1; a <= 10; a++) {
@@ -388,7 +370,7 @@ describe("confirming while strangers are limited", () => {
               "not the password",
               `10.4.${String(a)}.1`,
             );
-            expect(stranger.status).toBe(401);
+            expect(signInOutcome(stranger)).toBe("invalid_credentials");
           }
         }
         const spent = await signInAt(
@@ -396,9 +378,10 @@ describe("confirming while strangers are limited", () => {
           "not the password",
           "10.4.99.1",
         );
-        expect(spent.status, "the hour every address shares is not spent").toBe(
-          429,
-        );
+        expect(
+          signInOutcome(spent),
+          "the hour every address shares is not spent",
+        ).toBe("too_many_attempts");
         await crowded.advanceClock(PAST_RECENT);
         const confirmed = await fetch(`${crowded.apiUrl}/auth/confirm`, {
           method: "POST",

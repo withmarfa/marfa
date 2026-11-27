@@ -85,13 +85,19 @@ impl Instance {
             .as_str()
             .unwrap()
             .to_string();
-        let signing = json!({ "username": "owner", "password": PASSWORD });
-        let (status, headers, text) = call(
-            &public,
-            json_request(Method::POST, "/auth/sign-in", &signing, None),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{text}");
+        let signing = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("username", "owner")
+            .append_pair("password", PASSWORD)
+            .finish();
+        let signing_in = Request::builder()
+            .method(Method::POST)
+            .uri("/auth/sign-in")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(header::ORIGIN, ORIGIN)
+            .body(Body::from(signing))
+            .unwrap();
+        let (status, headers, text) = call(&public, signing_in).await;
+        assert_eq!(status, StatusCode::FOUND, "{text}");
         let session = headers[header::SET_COOKIE]
             .to_str()
             .unwrap()

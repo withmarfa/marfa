@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -190,17 +191,15 @@ it("holds a sign-in address change until its flag confirms it, and tells a key a
 
 /** Whether `password` signs the owner in at the sign-in page now. */
 async function signsIn(password: string): Promise<boolean> {
-  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: await issuerOrigin(server),
-    },
-    body: JSON.stringify({ username: TEST_OWNER.username, password }),
-  });
+  const response = await postSignInForm(
+    server.apiUrl,
+    await issuerOrigin(server),
+    { username: TEST_OWNER.username, password },
+  );
   await response.body?.cancel();
-  expect([200, 401]).toContain(response.status);
-  return response.status === 200;
+  const outcome = signInOutcome(response);
+  expect(["signed_in", "invalid_credentials"]).toContain(outcome);
+  return outcome === "signed_in";
 }
 
 /** How many requests to `path` the server has logged so far. */

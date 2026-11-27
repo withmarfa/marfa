@@ -10,7 +10,7 @@ While an instance is unclaimed, the server MUST answer the private local command
 
 ### `instance-claim/unclaimed-sign-in`
 
-While an instance is unclaimed, the server MUST refuse password sign-in with `401`.
+While an instance is unclaimed, the server MUST refuse the sign-in form by redirecting `302` to `/auth/sign-in` with `error=invalid_credentials`.
 
 **Tests:** `compliance/owner.test.ts › starts unclaimed with local authority and no public claim authority`.
 

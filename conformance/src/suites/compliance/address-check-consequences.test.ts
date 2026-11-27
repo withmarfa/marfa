@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   approvedAppToken,
@@ -25,12 +26,8 @@ beforeAll(async () => {
     },
   });
   expect(moved.status, JSON.stringify(moved.body)).toBe(200);
-  const signedIn = await fetch(`${home.origin}/auth/sign-in`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Origin: home.origin },
-    body: JSON.stringify(TEST_OWNER),
-  });
-  expect(signedIn.status).toBe(200);
+  const signedIn = await postSignInForm(home.origin, home.origin, TEST_OWNER);
+  expect(signInOutcome(signedIn)).toBe("signed_in");
   ownerCookie = signedIn.headers
     .getSetCookie()
     .map((value) => value.split(";")[0])

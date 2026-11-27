@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { rm } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
@@ -985,16 +986,13 @@ describe("a claim another tab or a refused sign-in finished", () => {
         // An address that has spent its password attempts is refused the
         // sign-in that follows its claim.
         for (let i = 0; i < 10; i++) {
-          const refused = await fetch(`${instance.url}/auth/sign-in`, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              origin: instance.origin,
-              [CLIENT]: address,
-            },
-            body: JSON.stringify({ ...OWNER, password: "incorrect password" }),
-          });
-          expect(refused.status).toBe(401);
+          const refused = await postSignInForm(
+            instance.url,
+            instance.origin,
+            { ...OWNER, password: "incorrect password" },
+            { [CLIENT]: address },
+          );
+          expect(signInOutcome(refused)).toBe("invalid_credentials");
         }
         const browser = new Browser(instance, address);
         const exchanged = await browser.post("/setup/exchange", [

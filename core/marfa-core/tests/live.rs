@@ -389,10 +389,18 @@ fn app_token(url: &str) -> String {
     let username = std::env::var("MARFA_TEST_OWNER_USERNAME").expect("the boot names its owner");
     let password = std::env::var("MARFA_TEST_OWNER_PASSWORD").expect("the boot names its owner");
     let origin = sign_in_origin(url);
+    let credentials = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("username", &username)
+        .append_pair("password", &password)
+        .finish();
     let sign_in = ureq::post(format!("{url}/auth/sign-in"))
-        .header("Content-Type", "application/json")
+        .config()
+        .max_redirects(0)
+        .max_redirects_will_error(false)
+        .build()
+        .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Origin", &origin)
-        .send(serde_json::json!({"username": username, "password": password}).to_string())
+        .send(credentials)
         .unwrap();
     let cookie = sign_in
         .headers()

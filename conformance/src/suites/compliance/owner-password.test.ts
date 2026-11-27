@@ -9,7 +9,12 @@ import { controlRequest } from "../../utils/control-request.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { TEST_OWNER } from "../../utils/target.js";
-import { sessionCookieOf as sessionCookie } from "../../client/owner-session.js";
+import {
+  sessionCookieOf as sessionCookie,
+  postSignInForm,
+  signInAnswerOf,
+  signInOutcome,
+} from "../../client/owner-session.js";
 
 /**
  * Replacing the owner's password with a key, an app's token or the private
@@ -89,20 +94,17 @@ function passwordSignIn(
   password: string,
   address = nextAddress(),
 ): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin,
-      [CLIENT_HEADER]: address,
-    },
-    body: JSON.stringify({ username: TEST_OWNER.username, password }),
-  });
+  return postSignInForm(
+    server.apiUrl,
+    origin,
+    { username: TEST_OWNER.username, password },
+    { [CLIENT_HEADER]: address },
+  );
 }
 
 async function signIn(): Promise<string> {
   const response = await passwordSignIn(TEST_OWNER.password);
-  expect(response.status).toBe(200);
+  expect(signInOutcome(response)).toBe("signed_in");
   const cookie = sessionCookie(response);
   expect(cookie, "sign-in set no session cookie").toBeTruthy();
   return cookie!;
@@ -112,8 +114,9 @@ async function signIn(): Promise<string> {
 async function signsIn(password: string): Promise<boolean> {
   const response = await passwordSignIn(password);
   await response.body?.cancel();
-  expect([200, 401]).toContain(response.status);
-  return response.status === 200;
+  const outcome = signInOutcome(response);
+  expect(["signed_in", "invalid_credentials"]).toContain(outcome);
+  return outcome === "signed_in";
 }
 
 /** The passkey page's list is a door a session counts on, so it says whether the session lives. */
@@ -317,7 +320,7 @@ describe("replacing the password with a credential", () => {
       );
       expect(wrong.status).toBe(401);
       const direct = await passwordSignIn("wrong two", address);
-      expect(direct.status).toBe(401);
+      expect(signInOutcome(direct)).toBe("invalid_credentials");
     }
     const locked = await replace(key, FORWARD, address);
     expect(locked.status).toBe(429);
@@ -327,8 +330,8 @@ describe("replacing the password with a credential", () => {
 
     // The sign-in door is held by the same lane, with no longer a wait.
     const held = await passwordSignIn(TEST_OWNER.password, address);
-    expect(held.status).toBe(429);
-    expect(Number(held.headers.get("retry-after"))).toBeLessThanOrEqual(wait);
+    expect(signInOutcome(held)).toBe("too_many_attempts");
+    expect(signInAnswerOf(held).wait).toBeLessThanOrEqual(wait);
 
     // Nothing changed, and another address is not held by it.
     expect(await signsIn(NEW_PASSWORD)).toBe(false);
@@ -389,21 +392,18 @@ describe("replacing the password with a credential", () => {
           password: string,
           address: string,
         ) =>
-          fetch(`${held.apiUrl}/auth/sign-in`, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              origin: heldOrigin,
-              [CLIENT_HEADER]: address,
-            },
-            body: JSON.stringify({ username, password }),
-          });
+          postSignInForm(
+            held.apiUrl,
+            heldOrigin,
+            { username, password },
+            { [CLIENT_HEADER]: address },
+          );
         const signedIn = await signInAt(
           TEST_OWNER.username,
           TEST_OWNER.password,
           "10.5.0.1",
         );
-        expect(signedIn.status).toBe(200);
+        expect(signInOutcome(signedIn)).toBe("signed_in");
         let session = sessionCookie(signedIn)!;
         expect(session).toBeTruthy();
         // Strangers spend fifty of the hundred at the owner's username.
@@ -414,7 +414,7 @@ describe("replacing the password with a credential", () => {
               "not the password",
               `10.5.${String(a)}.1`,
             );
-            expect(stranger.status).toBe(401);
+            expect(signInOutcome(stranger)).toBe("invalid_credentials");
           }
         }
 
@@ -500,8 +500,8 @@ describe("replacing the password with a credential", () => {
           "not the password",
           "10.7.5.1",
         );
-        expect(right.status).toBe(401);
-        expect(wrong.status).toBe(401);
+        expect(signInOutcome(right)).toBe("invalid_credentials");
+        expect(signInOutcome(wrong)).toBe("invalid_credentials");
       } finally {
         await held.stop();
       }
