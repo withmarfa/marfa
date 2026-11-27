@@ -3,10 +3,9 @@
 
 use super::fields::VERSION_FIELD;
 use super::{
-    Directory, Folder, OUTSIDE, Rows, carries_frontmatter, device, document, identity, in_state,
-    joined, landing, line_of, state, writers,
+    Directory, Folder, Rows, carries_frontmatter, device, document, identity, in_state, joined,
+    landing, line_of, state, writers,
 };
-use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde::Serialize;
@@ -41,7 +40,7 @@ pub struct KeptDiscarded {
     /// The paths a file a program wrote to went back to, in place of being
     /// deleted, and those Marfa kept such a file beside.
     pub put_back: Vec<String>,
-    /// Files that remain after the discard, each with its reason.
+    /// The files still kept, where Marfa could not reach them.
     pub kept: Vec<KeptFile>,
 }
 
@@ -55,70 +54,9 @@ fn until(retained: &landing::Retained) -> String {
         .unwrap_or_default()
 }
 
-/// The private paths, outside the folder, that a stopped discard of each
-/// record may have left its file under, by the record's id.
-type Privates = HashMap<String, Vec<String>>;
-
-fn privates(marks: &[(String, Option<state::Discarding>)]) -> Privates {
-    let mut privates = Privates::new();
-    for (path, mark) in marks {
-        if let Some(mark) = mark
-            && !state::in_folder(path)
-        {
-            privates
-                .entry(mark.id.clone())
-                .or_default()
-                .push(path.clone());
-        }
-    }
-    privates
-}
-
-/// A record's entry, and whether any of its places, a stopped discard's
-/// private path included, is outside the folder, where Marfa acts on none
-/// of them.
-fn record_file<'a>(
-    row: &'a std::result::Result<state::Retained, Box<state::Unread>>,
-    privates: &Privates,
-) -> (&'a str, KeptFile, bool) {
-    let id = match row {
-        Ok(row) => &row.retained.id,
-        Err(row) => &row.id,
-    };
-    let at = privates.get(id).map_or(&[][..], Vec::as_slice);
-    match row {
-        Ok(row) => (id, kept_file(row, at), row.outside() || !at.is_empty()),
-        Err(row) => (id, unread_file(row, at), row.outside || !at.is_empty()),
-    }
-}
-
-/// Each kept-file record's entry, as status, the listing and each pass's
-/// report give it.
-pub(super) fn record_files(conn: &rusqlite::Connection) -> Result<Vec<KeptFile>> {
-    let privates = privates(&state::discarding(conn)?);
-    Ok(state::retained(conn)?
-        .iter()
-        .map(|row| record_file(row, &privates).1)
-        .collect())
-}
-
-fn kept_file(row: &state::Retained, privates: &[String]) -> KeptFile {
+fn kept_file(row: &state::Retained) -> KeptFile {
     let retained = &row.retained;
     let from = joined(&row.dir, &retained.target);
-    if row.outside() || !privates.is_empty() {
-        let set_aside = if row.outside() {
-            taken_in(&from)
-        } else {
-            format!("Marfa set {from} aside here")
-        };
-        return KeptFile {
-            path: joined(&row.aside, &retained.kept),
-            writers: "none",
-            until: None,
-            reason: outside_reason(set_aside, privates),
-            from,
-        };
-    }
     KeptFile {
         path: joined(&row.aside, &retained.kept),
         writers: match retained.writers {
@@ -134,62 +72,14 @@ fn kept_file(row: &state::Retained, privates: &[String]) -> KeptFile {
 
 pub(super) const UNREAD: &str = "Marfa could not read its record";
 
-fn unread_file(row: &state::Unread, privates: &[String]) -> KeptFile {
-    let outside = row.outside || !privates.is_empty();
-    let reason = if !outside {
-        UNREAD.into()
-    } else if row.from.is_empty() {
-        outside_reason(UNREAD.into(), privates)
-    } else if row.aside_named {
-        outside_reason(format!("{UNREAD}, which names {}", row.from), privates)
-    } else {
-        outside_reason(unplaced(&row.from, "set aside in"), privates)
-    };
+fn unread_file(row: &state::Unread) -> KeptFile {
     KeptFile {
         path: joined(&row.aside, &row.kept),
         from: row.from.clone(),
-        writers: if outside { "none" } else { "unknown" },
+        writers: "unknown",
         until: None,
-        reason,
+        reason: UNREAD.into(),
     }
-}
-
-/// The first sentence, with no full stop, of the reason for a file listed in
-/// the root because a record Marfa could not read names `from` but not the
-/// directory the file was then `put`, such as "moved to".
-pub(super) fn unplaced(from: &str, put: &str) -> String {
-    format!("{UNREAD}, which names {from} but not the directory the file was {put}")
-}
-
-fn taken_in(from: &str) -> String {
-    let from = if from.is_empty() { "a file" } else { from };
-    format!("Marfa set {from} aside here as it took the file in from another folder")
-}
-
-/// `first`, a sentence with no full stop, then the names a stopped discard
-/// may have left the file under, then what Marfa does about it.
-fn outside_reason(first: String, privates: &[String]) -> String {
-    if privates.is_empty() {
-        format!("{first}. {OUTSIDE}")
-    } else {
-        format!(
-            "{first}. Marfa stopped as it discarded it, so if the file still exists, it is under this name or at {}. {OUTSIDE}",
-            privates.join(" or ")
-        )
-    }
-}
-
-/// Why a name a stopped discard outside the folder may have left the file
-/// under is listed, where `other` is the other such name.
-fn mark_reason(from: &str, other: &str) -> String {
-    let from = if from.is_empty() { "a kept file" } else { from };
-    format!(
-        "Marfa stopped as it discarded {from}, so if the file still exists, it is under this name or at {other}. {OUTSIDE}"
-    )
-}
-
-fn outside_unread() -> String {
-    format!("{UNREAD}. {OUTSIDE}")
 }
 
 fn left_reason(left: &str) -> String {
@@ -199,7 +89,7 @@ fn left_reason(left: &str) -> String {
 }
 
 /// Why a file set aside at `path` is kept, by what the last look found.
-fn retained_reason(path: &str, retained: &landing::Retained) -> String {
+pub(super) fn retained_reason(path: &str, retained: &landing::Retained) -> String {
     let set_aside =
         format!("Marfa replaced or removed {path} and set the file it held aside under this name");
     match retained.writers {
@@ -448,88 +338,54 @@ impl Folder {
     /// them, in path order.
     pub fn kept_files(&self) -> Result<Vec<KeptFile>> {
         let conn = self.core.conn()?;
-        let marks = state::discarding(&conn)?;
-        let privates = privates(&marks);
-        let left = |path: String, mark: state::Discarding| KeptFile {
-            reason: left_reason(
-                mark.left
-                    .as_deref()
-                    .unwrap_or("Marfa stopped as it discarded it"),
-            ),
-            path,
-            from: mark.from,
-            writers: "unknown",
-            until: None,
-        };
-        // An in-folder mark found holding the file stands in for its
-        // record's entry; any other mark is an entry of its own.
-        let mut moved = HashMap::new();
-        let mut marked = Vec::new();
-        for (path, mark) in marks {
-            let inside = state::in_folder(&path);
+        let mut moved = std::collections::HashMap::new();
+        let mut files = Vec::new();
+        for (path, mark) in state::discarding(&conn)? {
             match mark {
-                Some(mark) if inside => {
+                Some(mark) => {
                     let gone = self
                         .place_dir(&mark.aside)
                         .and_then(|aside| aside.entry_identity(Path::new(&mark.private)))
                         .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
-                    if gone {
-                        continue;
-                    }
-                    if moved.contains_key(&mark.id) {
-                        marked.push(left(path, mark));
-                    } else {
+                    if !gone {
                         moved.insert(mark.id.clone(), (path, mark));
                     }
                 }
-                // Marfa may not look outside the folder, and a stop can leave
-                // the file under either name.
-                Some(mark) => {
-                    let reserved = joined(&mark.aside, &mark.kept);
-                    marked.push(KeptFile {
-                        reason: mark_reason(&mark.from, &reserved),
-                        path: path.clone(),
-                        from: mark.from.clone(),
-                        writers: "none",
-                        until: None,
-                    });
-                    marked.push(KeptFile {
-                        reason: mark_reason(&mark.from, &path),
-                        path: reserved,
-                        from: mark.from,
-                        writers: "none",
-                        until: None,
-                    });
-                }
-                None => marked.push(KeptFile {
-                    reason: if inside {
-                        format!("{UNREAD}; delete it when it is not needed")
-                    } else {
-                        outside_unread()
-                    },
+                None => files.push(KeptFile {
                     path,
                     from: String::new(),
-                    writers: if inside { "unknown" } else { "none" },
+                    writers: "unknown",
                     until: None,
+                    reason: format!("{UNREAD}; delete it when it is not needed"),
                 }),
             }
         }
-        let mut files = Vec::new();
         for row in state::retained(&conn)? {
-            let (id, mut file, _) = record_file(&row, &privates);
+            let (id, mut file) = match &row {
+                Ok(row) => (&row.retained.id, kept_file(row)),
+                Err(row) => (&row.id, unread_file(row)),
+            };
             if let Some((path, mark)) = moved.remove(id) {
+                file.path = path;
                 if let Some(left) = &mark.left {
                     file.reason = left_reason(left);
                 }
-                file.path = path;
             }
             files.push(file);
         }
-        files.extend(moved.into_values().map(|(path, mark)| left(path, mark)));
-        files.extend(marked);
-        // A record's own entry comes first, so its reason names each path.
-        let mut seen = HashSet::new();
-        files.retain(|file| seen.insert(file.path.clone()));
+        files.extend(moved.into_values().map(|(path, mark)| {
+            KeptFile {
+                path,
+                reason: left_reason(
+                    mark.left
+                        .as_deref()
+                        .unwrap_or("Marfa stopped as it discarded it"),
+                ),
+                from: mark.from,
+                writers: "unknown",
+                until: None,
+            }
+        }));
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)
     }
@@ -574,9 +430,7 @@ impl Folder {
     /// it. Answers each file it looked at and what became of it.
     fn settle_retained_as(&self, discard: bool) -> Result<Vec<(KeptFile, RowSettled)>> {
         let conn = self.core.conn()?;
-        let marks = state::discarding(&conn)?;
-        let privates = privates(&marks);
-        self.settle_discarding(&conn, marks, &privates)?;
+        self.settle_discarding(&conn)?;
         let rows = state::retained(&conn)?;
         let mut waiting = false;
         let mut back = false;
@@ -587,11 +441,6 @@ impl Folder {
             for batch in rows.chunks(SETTLED_AT_ONCE) {
                 let mut opened = Vec::with_capacity(batch.len());
                 for row in batch {
-                    let (_, file, outside) = record_file(row, &privates);
-                    if outside {
-                        state::put_kept(&conn, &file.path, &file.reason)?;
-                        continue;
-                    }
                     match row {
                         Ok(row) => {
                             if let Some(open) = self.retained_open(&conn, row, now)? {
@@ -601,7 +450,7 @@ impl Folder {
                         // Left for the owner to discard.
                         Err(row) if discard => {
                             let settled = self.discard_unread(&conn, row)?;
-                            looked.push((file, settled));
+                            looked.push((unread_file(row), settled));
                         }
                         Err(_) => {}
                     }
@@ -631,7 +480,7 @@ impl Folder {
                         | RowSettled::Stayed
                         | RowSettled::Gone => {}
                     }
-                    looked.push((kept_file(row, &[]), settled));
+                    looked.push((kept_file(row), settled));
                 }
             }
         }
@@ -645,38 +494,20 @@ impl Folder {
         Ok(looked)
     }
 
-    /// Puts each file a stopped discard left under a private name back
-    /// under its reserved name, where its record and the mark name only
-    /// places in the folder. A mark outside it is reported under both names
-    /// instead; each record reports its own name after, with its own reason.
-    fn settle_discarding(
-        &self,
-        conn: &rusqlite::Connection,
-        marks: Vec<(String, Option<state::Discarding>)>,
-        privates: &Privates,
-    ) -> Result<()> {
+    /// Restore the kept name so the retained record can settle the file.
+    fn settle_discarding(&self, conn: &rusqlite::Connection) -> Result<()> {
+        let marks = state::discarding(conn)?;
         if marks.is_empty() {
             return Ok(());
         }
-        let rows: HashSet<String> = state::retained(conn)?
-            .iter()
-            .filter_map(|row| match record_file(row, privates) {
-                (id, _, false) => Some(id.to_string()),
-                (_, _, true) => None,
+        let rows: std::collections::HashSet<String> = state::retained(conn)?
+            .into_iter()
+            .map(|row| match row {
+                Ok(row) => row.retained.id,
+                Err(row) => row.id,
             })
             .collect();
         for (path, mark) in marks {
-            if !state::in_folder(&path) {
-                match mark {
-                    Some(mark) => {
-                        let reserved = joined(&mark.aside, &mark.kept);
-                        state::put_kept(conn, &path, &mark_reason(&mark.from, &reserved))?;
-                        state::put_kept(conn, &reserved, &mark_reason(&mark.from, &path))?;
-                    }
-                    None => state::put_kept(conn, &path, &outside_unread())?,
-                }
-                continue;
-            }
             let Some(mark) = mark else { continue };
             let Ok(aside) = self.place_dir(&mark.aside) else {
                 continue;
@@ -833,6 +664,7 @@ mod tests {
     use std::io::Write;
     use std::path::Path;
 
+    #[cfg(debug_assertions)]
     use super::super::state;
     use super::super::tests::{changed_elsewhere, landed, scanned_folder};
     use super::super::{Folder, landing};
@@ -1313,525 +1145,5 @@ mod tests {
                 "unread {unread}"
             );
         }
-    }
-
-    /// The file a take-in from another folder read.
-    const TAKEN: &[u8] = b"as the server has it\n";
-
-    /// A directory beside the folder's, as another folder's is.
-    fn beside(root: &Path) -> (tempfile::TempDir, std::path::PathBuf) {
-        let other = tempfile::tempdir_in(root.join("..")).unwrap();
-        let path = other.path().canonicalize().unwrap();
-        (other, path)
-    }
-
-    fn identity_of(path: &Path) -> (u64, u64) {
-        landing::identity(&std::fs::metadata(path).unwrap())
-    }
-
-    /// What a take-in from another folder recorded as it set `Recovery.md`
-    /// aside in `dir`, named as `place`, eight days ago, where it could not
-    /// tell whether a program writes to it. Answers the record's id and the
-    /// file under its reserved name, unchanged since.
-    fn kept_by_a_take_in(folder: &Folder, dir: &Path, place: &str) -> (String, std::path::PathBuf) {
-        let id = uuid::Uuid::now_v7().simple().to_string();
-        let name = landing::reserved(&id);
-        let kept = dir.join(&name);
-        std::fs::write(&kept, TAKEN).unwrap();
-        let (device, inode) = identity_of(&kept);
-        let now = landing::seconds(crate::clock::system_time());
-        state::set_retained(
-            &folder.core.conn().unwrap(),
-            &state::Retained {
-                dir: place.into(),
-                dir_at: identity_of(dir),
-                aside: place.into(),
-                aside_at: identity_of(dir),
-                retained: landing::Retained {
-                    id: id.clone(),
-                    kind: landing::Displaced::Withdraw,
-                    target: "Recovery.md".into(),
-                    kept: name.to_string_lossy().into_owned(),
-                    ours: None,
-                    read: landing::Object {
-                        device,
-                        inode,
-                        length: None,
-                        modified: None,
-                        hash: Some(state::hash(TAKEN)),
-                    },
-                    changed: None,
-                    since: now - landing::RETAINED_FOR - 24 * 60 * 60,
-                    writers: Some(super::super::writers::Writers::Unknown),
-                },
-            },
-        )
-        .unwrap();
-        (id, kept)
-    }
-
-    /// A note scanned and answered, so a pull runs against the folder's copy.
-    fn pullable(root: &Path, folder: &Folder) {
-        std::fs::write(root.join("Ready.md"), "ready\n").unwrap();
-        assert_eq!(folder.scan().unwrap().created, 1);
-        landed(folder, "Ready.md");
-    }
-
-    fn records(folder: &Folder) -> usize {
-        state::retained(&folder.core.conn().unwrap()).unwrap().len()
-    }
-
-    fn path_of(path: &Path) -> String {
-        path.to_string_lossy().into_owned()
-    }
-
-    /// Asserts `reason` says the file came from `from` and stays outside the
-    /// folder untouched.
-    fn says_outside(reason: &str, from: &Path) {
-        assert!(
-            reason.contains(&path_of(from)) && reason.contains("outside this folder"),
-            "{reason}"
-        );
-    }
-
-    /// The paths `flagged` reports kept.
-    fn reported(flagged: &[super::super::Flagged]) -> Vec<&str> {
-        flagged
-            .iter()
-            .filter(|flagged| flagged.flag == "kept")
-            .map(|flagged| flagged.path.as_str())
-            .collect()
-    }
-
-    #[test]
-    fn a_kept_file_outside_the_folder_survives_every_door_and_discard() {
-        let (dir, folder) = scanned_folder();
-        let root = dir.path().canonicalize().unwrap();
-        pullable(&root, &folder);
-        let (_other, other) = beside(&root);
-        let (_, kept) = kept_by_a_take_in(&folder, &other, &path_of(&other));
-        std::fs::create_dir(root.join("Projects")).unwrap();
-        let (_, inside) = kept_by_a_take_in(&folder, &root.join("Projects"), "Projects");
-        let from = other.join("Recovery.md");
-
-        let scanned = folder.scan().unwrap();
-        // The witness: the same file in the folder is deleted.
-        assert!(!inside.exists());
-        assert!(reported(&scanned.flagged).contains(&path_of(&kept).as_str()));
-        let pulled = folder.pull().unwrap();
-        assert!(reported(&pulled.flagged).contains(&path_of(&kept).as_str()));
-        folder.confirm().unwrap();
-        folder.remove_unmatched(&[]).unwrap();
-        let done = folder.discard_kept().unwrap();
-
-        assert!(done.discarded.is_empty(), "{done:?}");
-        assert!(done.put_back.is_empty(), "{done:?}");
-        let listed = folder.kept_files().unwrap();
-        assert_eq!(done.kept, listed);
-        assert_eq!(Folder::kept_of(&root).unwrap(), listed);
-        assert_eq!(listed.len(), 1, "{listed:?}");
-        assert_eq!(listed[0].path, path_of(&kept));
-        assert_eq!(listed[0].from, path_of(&from));
-        assert_eq!(listed[0].writers, "none");
-        assert_eq!(listed[0].until, None);
-        says_outside(&listed[0].reason, &from);
-        assert_eq!(std::fs::read(&kept).unwrap(), TAKEN);
-        assert!(!from.exists());
-        assert_eq!(records(&folder), 1);
-    }
-
-    #[test]
-    fn an_unreadable_kept_file_record_outside_the_folder_deletes_nothing() {
-        let (dir, folder) = scanned_folder();
-        let root = dir.path().canonicalize().unwrap();
-        let (_other, other) = beside(&root);
-        std::fs::create_dir(root.join("Projects")).unwrap();
-        let outside = path_of(&other);
-        let mut files = Vec::new();
-        // An outside `aside`, an outside `dir` with no `aside`, and the
-        // witness, an `aside` in the folder.
-        for (id, dir, aside, there) in [
-            (
-                "1",
-                Some(outside.as_str()),
-                Some(outside.as_str()),
-                other.clone(),
-            ),
-            ("2", Some(outside.as_str()), None, root.clone()),
-            (
-                "3",
-                Some("Projects"),
-                Some("Projects"),
-                root.join("Projects"),
-            ),
-        ] {
-            let name = path_of(&landing::reserved(id));
-            std::fs::write(there.join(&name), TAKEN).unwrap();
-            files.push(there.join(&name));
-            // No `kind`, so the record does not read.
-            let mut value = serde_json::json!({
-                "dir": dir,
-                "retained": {
-                    "id": id,
-                    "target": "Recovery.md",
-                    "kept": name,
-                    "read": { "hash": state::hash(TAKEN) },
-                },
-            });
-            if let Some(aside) = aside {
-                value["aside"] = aside.into();
-            }
-            crate::store::meta_set(
-                &folder.core.conn().unwrap(),
-                &format!("folder_retained:{id}"),
-                &value.to_string(),
-            )
-            .unwrap();
-        }
-        let from = other.join("Recovery.md");
-
-        let scanned = folder.scan().unwrap();
-        let flagged = reported(&scanned.flagged);
-        // With no `aside`, the record shows only a name, which reads as in the root.
-        for at in [
-            other.join(path_of(&landing::reserved("1"))),
-            landing::reserved("2"),
-        ] {
-            assert!(
-                flagged.contains(&path_of(&at).as_str()),
-                "{at:?} in {flagged:?}"
-            );
-        }
-        let done = folder.discard_kept().unwrap();
-
-        assert!(files[0].exists() && files[1].exists(), "{done:?}");
-        assert!(!files[2].exists(), "the witness: {done:?}");
-        assert_eq!(
-            done.discarded,
-            vec![format!("Projects/{}", path_of(&landing::reserved("3")))]
-        );
-        let listed = folder.kept_files().unwrap();
-        assert_eq!(listed.len(), 2, "{listed:?}");
-        for file in &listed {
-            assert!(file.reason.starts_with(super::UNREAD), "{file:?}");
-            says_outside(&file.reason, &from);
-        }
-        let rootward = listed
-            .iter()
-            .find(|file| file.path == path_of(&landing::reserved("2")))
-            .unwrap_or_else(|| panic!("{listed:?}"));
-        assert!(
-            rootward.reason.contains("not the directory"),
-            "{rootward:?}"
-        );
-        assert_eq!(records(&folder), 2);
-    }
-
-    #[test]
-    fn a_stopped_discard_outside_the_folder_renames_nothing() {
-        for readable in [true, false] {
-            let (dir, folder) = scanned_folder();
-            let root = dir.path().canonicalize().unwrap();
-            pullable(&root, &folder);
-            let (_other, other) = beside(&root);
-            let (id, kept) = kept_by_a_take_in(&folder, &other, &path_of(&other));
-            let private = other.join(landing::reserved(
-                &uuid::Uuid::now_v7().simple().to_string(),
-            ));
-            std::fs::rename(&kept, &private).unwrap();
-            let from = other.join("Recovery.md");
-            let mark = state::Discarding {
-                id,
-                aside: path_of(&other),
-                kept: path_of(kept.file_name().unwrap().as_ref()),
-                private: path_of(private.file_name().unwrap().as_ref()),
-                from: path_of(&from),
-                left: None,
-            };
-            let conn = folder.core.conn().unwrap();
-            if readable {
-                state::set_discarding(&conn, &mark).unwrap();
-            } else {
-                crate::store::meta_set(
-                    &conn,
-                    &format!("folder_discarding:{}", path_of(&private)),
-                    "not a mark",
-                )
-                .unwrap();
-            }
-            drop(conn);
-
-            for _ in 0..2 {
-                let scanned = folder.scan().unwrap();
-                let flagged = reported(&scanned.flagged);
-                // Marfa may not look, so both names a stop can leave are reported.
-                for path in [&private, &kept] {
-                    assert!(
-                        flagged.contains(&path_of(path).as_str()),
-                        "readable {readable}: {flagged:?}"
-                    );
-                }
-            }
-            folder.pull().unwrap();
-            let done = folder.discard_kept().unwrap();
-
-            assert!(done.discarded.is_empty(), "readable {readable}: {done:?}");
-            assert_eq!(
-                std::fs::read(&private).unwrap(),
-                TAKEN,
-                "readable {readable}"
-            );
-            assert!(!kept.exists(), "readable {readable}");
-            let listed = folder.kept_files().unwrap();
-            assert!(
-                listed.iter().any(|file| file.path == path_of(&private)),
-                "readable {readable}: {listed:?}"
-            );
-            for file in &listed {
-                assert!(
-                    file.reason.contains("outside this folder"),
-                    "readable {readable}: {file:?}"
-                );
-            }
-            assert_eq!(listed.len(), 2, "{listed:?}");
-            assert_eq!(
-                state::discarding(&folder.core.conn().unwrap())
-                    .unwrap()
-                    .len(),
-                1
-            );
-            assert_eq!(records(&folder), 1);
-        }
-    }
-
-    /// A mark a discard of the record `id`, kept in `dir` as `kept`, wrote
-    /// before it renamed the file to a private name. Answers that name's path.
-    fn marked(folder: &Folder, id: &str, dir: &Path, kept: &Path) -> std::path::PathBuf {
-        let private = dir.join(landing::reserved(
-            &uuid::Uuid::now_v7().simple().to_string(),
-        ));
-        state::set_discarding(
-            &folder.core.conn().unwrap(),
-            &state::Discarding {
-                id: id.into(),
-                aside: path_of(dir),
-                kept: path_of(kept.file_name().unwrap().as_ref()),
-                private: path_of(private.file_name().unwrap().as_ref()),
-                from: path_of(&dir.join("Recovery.md")),
-                left: None,
-            },
-        )
-        .unwrap();
-        private
-    }
-
-    fn marks(folder: &Folder) -> usize {
-        state::discarding(&folder.core.conn().unwrap())
-            .unwrap()
-            .len()
-    }
-
-    fn listed_at<'a>(listed: &'a [super::KeptFile], path: &Path) -> &'a super::KeptFile {
-        listed
-            .iter()
-            .find(|file| file.path == path_of(path))
-            .unwrap_or_else(|| panic!("{} in {listed:?}", path.display()))
-    }
-
-    #[test]
-    fn an_outside_mark_whose_file_is_still_at_its_reserved_name_lists_that_name() {
-        for renamed_back in [false, true] {
-            let (dir, folder) = scanned_folder();
-            let root = dir.path().canonicalize().unwrap();
-            pullable(&root, &folder);
-            let (_other, other) = beside(&root);
-            let (id, kept) = kept_by_a_take_in(&folder, &other, &path_of(&other));
-            let private = marked(&folder, &id, &other, &kept);
-            if renamed_back {
-                std::fs::rename(&kept, &private).unwrap();
-                std::fs::rename(&private, &kept).unwrap();
-            }
-
-            for flagged in [
-                folder.scan().unwrap().flagged,
-                folder.pull().unwrap().flagged,
-            ] {
-                let flagged = reported(&flagged);
-                for path in [&kept, &private] {
-                    assert!(
-                        flagged.contains(&path_of(path).as_str()),
-                        "renamed back {renamed_back}: {} in {flagged:?}",
-                        path.display()
-                    );
-                }
-            }
-            let done = folder.discard_kept().unwrap();
-            let listed = folder.kept_files().unwrap();
-            assert_eq!(done.kept, listed, "renamed back {renamed_back}");
-            // Each name's reason names the other, as a stop can leave the file at either.
-            assert!(
-                listed_at(&listed, &kept)
-                    .reason
-                    .contains(&path_of(&private))
-            );
-            assert!(
-                listed_at(&listed, &private)
-                    .reason
-                    .contains(&path_of(&kept))
-            );
-            assert_eq!(std::fs::read(&kept).unwrap(), TAKEN);
-            assert!(!private.exists());
-            assert_eq!((records(&folder), marks(&folder)), (1, 1));
-        }
-    }
-
-    #[test]
-    fn an_in_folder_kept_file_sharing_an_id_with_an_outside_mark_stays_listed_at_its_own_path() {
-        let (dir, folder) = scanned_folder();
-        let root = dir.path().canonicalize().unwrap();
-        pullable(&root, &folder);
-        let (_other, other) = beside(&root);
-        std::fs::create_dir(root.join("Projects")).unwrap();
-        let (id, inside) = kept_by_a_take_in(&folder, &root.join("Projects"), "Projects");
-        let private = marked(&folder, &id, &other, &inside);
-        std::fs::write(&private, TAKEN).unwrap();
-        let path = format!("Projects/{}", path_of(inside.file_name().unwrap().as_ref()));
-
-        let listed = folder.kept_files().unwrap();
-        let file = listed_at(&listed, Path::new(&path));
-        assert_eq!(
-            (file.writers, file.until.as_deref()),
-            ("none", None),
-            "{file:?}"
-        );
-        assert!(file.reason.contains("outside this folder"), "{file:?}");
-        let done = folder.discard_kept().unwrap();
-
-        assert!(done.discarded.is_empty(), "{done:?}");
-        listed_at(&done.kept, Path::new(&path));
-        assert_eq!(std::fs::read(&inside).unwrap(), TAKEN);
-        assert_eq!(std::fs::read(&private).unwrap(), TAKEN);
-        assert_eq!((records(&folder), marks(&folder)), (1, 1));
-    }
-
-    #[test]
-    fn two_marks_for_one_outside_record_are_both_listed() {
-        let (dir, folder) = scanned_folder();
-        let root = dir.path().canonicalize().unwrap();
-        let (_other, other) = beside(&root);
-        let (id, kept) = kept_by_a_take_in(&folder, &other, &path_of(&other));
-        let first = marked(&folder, &id, &other, &kept);
-        let second = marked(&folder, &id, &other, &kept);
-        std::fs::rename(&kept, &first).unwrap();
-        std::fs::write(&second, TAKEN).unwrap();
-
-        let done = folder.discard_kept().unwrap();
-        let listed = folder.kept_files().unwrap();
-        for path in [&first, &second] {
-            listed_at(&listed, path);
-            listed_at(&done.kept, path);
-        }
-        assert_eq!(std::fs::read(&first).unwrap(), TAKEN);
-        assert_eq!(std::fs::read(&second).unwrap(), TAKEN);
-        assert_eq!((records(&folder), marks(&folder)), (1, 2));
-    }
-
-    #[test]
-    fn a_kept_file_in_the_folder_whose_record_names_an_outside_source_has_no_date_anywhere() {
-        let (dir, folder) = scanned_folder();
-        let root = dir.path().canonicalize().unwrap();
-        let (_other, other) = beside(&root);
-        std::fs::create_dir(root.join("Notes")).unwrap();
-        let (_, kept) = kept_by_a_take_in(&folder, &root.join("Notes"), "Notes");
-        let conn = folder.core.conn().unwrap();
-        let mut row = state::retained(&conn).unwrap().remove(0).unwrap();
-        row.dir = path_of(&other);
-        row.dir_at = identity_of(&other);
-        state::set_retained(&conn, &row).unwrap();
-        drop(conn);
-        let path = format!("Notes/{}", path_of(kept.file_name().unwrap().as_ref()));
-
-        let listed = folder.kept_files().unwrap();
-        let file = listed_at(&listed, Path::new(&path));
-        assert_eq!(
-            (file.writers, file.until.as_deref()),
-            ("none", None),
-            "{file:?}"
-        );
-        let status = Folder::status_of(&root).unwrap();
-        let held: Vec<_> = status
-            .files
-            .iter()
-            .filter(|held| held.path == path)
-            .map(|held| held.reason.as_deref())
-            .collect();
-        assert_eq!(held, [Some(file.reason.as_str())], "{:?}", status.files);
-        let scanned = folder.scan().unwrap();
-        let flagged: Vec<_> = scanned
-            .flagged
-            .iter()
-            .filter(|flagged| flagged.path == path)
-            .map(|flagged| flagged.reason.as_str())
-            .collect();
-        assert_eq!(flagged, [file.reason.as_str()], "{:?}", scanned.flagged);
-        assert_eq!(std::fs::read(&kept).unwrap(), TAKEN);
-        assert_eq!(records(&folder), 1);
-    }
-
-    #[test]
-    fn a_kept_file_record_whose_replacement_directory_lacks_its_file_is_kept() {
-        let (dir, folder) = scanned_folder();
-        let root = dir.path().canonicalize().unwrap();
-        let (_other, other) = beside(&root);
-        let (_, kept) = kept_by_a_take_in(&folder, &other, &path_of(&other));
-        std::fs::remove_file(&kept).unwrap();
-        // The recorded inode on another device, as another volume mounted there has.
-        let conn = folder.core.conn().unwrap();
-        let mut row = state::retained(&conn).unwrap().remove(0).unwrap();
-        let (device, inode) = identity_of(&other);
-        row.dir_at = (device ^ 1, inode);
-        row.aside_at = (device ^ 1, inode);
-        state::set_retained(&conn, &row).unwrap();
-        drop(conn);
-
-        for _ in 0..2 {
-            let scanned = folder.scan().unwrap();
-            assert!(reported(&scanned.flagged).contains(&path_of(&kept).as_str()));
-        }
-        folder.discard_kept().unwrap();
-        listed_at(&folder.kept_files().unwrap(), &kept);
-        assert_eq!(records(&folder), 1);
-    }
-
-    #[test]
-    fn a_changed_kept_file_outside_the_folder_is_not_put_back_by_a_pass_or_a_discard() {
-        let (dir, folder) = scanned_folder();
-        let root = dir.path().canonicalize().unwrap();
-        pullable(&root, &folder);
-        let (_other, other) = beside(&root);
-        let (_, kept) = kept_by_a_take_in(&folder, &other, &path_of(&other));
-        let written = b"as the server has it\nwhat a program wrote\n";
-        std::fs::write(&kept, written).unwrap();
-        // The witness: in the folder, the same change goes back to its path.
-        std::fs::create_dir(root.join("Projects")).unwrap();
-        let (_, inside) = kept_by_a_take_in(&folder, &root.join("Projects"), "Projects");
-        std::fs::write(&inside, written).unwrap();
-
-        folder.scan().unwrap();
-        assert_eq!(
-            std::fs::read(root.join("Projects/Recovery.md")).unwrap(),
-            written
-        );
-        folder.pull().unwrap();
-        let done = folder.discard_kept().unwrap();
-
-        assert!(done.put_back.is_empty(), "{done:?}");
-        assert_eq!(std::fs::read(&kept).unwrap(), written);
-        let names: Vec<_> = std::fs::read_dir(&other)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
-        assert_eq!(names, [kept.file_name().unwrap()]);
-        assert_eq!(records(&folder), 1);
     }
 }

@@ -210,10 +210,7 @@ pub enum FoldersCommand {
     /// the program wrote; `--discard` puts such a file back too, in place of
     /// deleting it. One whose record Marfa could not read is deleted only
     /// while it holds the bytes Marfa set aside, and is listed still where it
-    /// holds anything else. A file kept outside this folder, which a take-in
-    /// from another folder left there, is listed with the path it came from
-    /// and never changed: `--discard` leaves it, and it stays listed until
-    /// `folders remove`. With `--discard`, a watch holding the
+    /// holds anything else. With `--discard`, a watch holding the
     /// directory lets it go while this runs, and this is refused if the process
     /// holding the directory does not let it go within 10 seconds.
     Kept {
@@ -993,11 +990,8 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
     }
     let folder = working(dir, None)?;
     let files = folder.kept_files()?;
-    let agreed = match discard_question(dir, &files) {
-        None => true,
-        Some(_) if yes => true,
-        Some(question) => asks_to_discard(&question)?,
-    };
+    let going: Vec<String> = files.iter().map(|file| file.path.clone()).collect();
+    let agreed = going.is_empty() || yes || asks_to_discard(dir, &going)?;
     let done = if agreed {
         folder.discard_kept()?
     } else {
@@ -1029,9 +1023,8 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
             if agreed {
                 lines.extend(done.kept.iter().map(|file| {
                     format!(
-                        "{} is still kept: {}",
-                        printable(&file.path),
-                        printable(&file.reason)
+                        "{} is still kept: Marfa could not reach it",
+                        printable(&file.path)
                     )
                 }));
             }
@@ -1430,7 +1423,7 @@ fn describe_kept(files: &[marfa_core::KeptFile]) -> String {
         return "no kept files".into();
     }
     let mut lines = vec![format!(
-        "{} kept file(s); `folders kept --discard` deletes each one that is unchanged since Marfa set it aside, unless its record names a place outside this folder",
+        "{} kept file(s), which `folders kept --discard` deletes",
         files.len()
     )];
     lines.extend(
@@ -1441,28 +1434,20 @@ fn describe_kept(files: &[marfa_core::KeptFile]) -> String {
     lines.join("\n")
 }
 
-/// What `folders kept --discard` asks before it discards `files`, or `None`
-/// where there is nothing to ask about.
-fn discard_question(dir: &Path, files: &[marfa_core::KeptFile]) -> Option<String> {
-    if files.is_empty() {
-        return None;
-    }
-    let mut question = format!(
-        "{} kept file(s) in {} would be deleted. A file a program wrote to goes back to its path instead, one whose record Marfa could not read is deleted only while it holds the bytes Marfa set aside, and one whose record names a place outside this folder is left as it is:\n",
-        files.len(),
-        dir.display()
-    );
-    for file in files {
-        question.push_str(&format!("  {}\n", printable(&file.path)));
-    }
-    Some(question)
-}
-
 /// Asks at a terminal; the caller has already made sure there is one.
-fn asks_to_discard(asked: &str) -> Result<bool, CliError> {
+fn asks_to_discard(dir: &Path, going: &[String]) -> Result<bool, CliError> {
     use std::io::{BufRead, Write};
     let mut question = crate::output::stderr();
-    write!(question, "{asked}Delete them? [y/N] ")?;
+    writeln!(
+        question,
+        "{} kept file(s) in {} would be deleted. A file a program wrote to goes back to its path instead, or is kept where Marfa could not read its record:",
+        going.len(),
+        dir.display()
+    )?;
+    for path in going {
+        writeln!(question, "  {}", printable(path))?;
+    }
+    write!(question, "Delete them? [y/N] ")?;
     question.flush()?;
     let mut answer = String::new();
     std::io::stdin().lock().read_line(&mut answer)?;
@@ -2617,35 +2602,6 @@ impl Conflicts {
 #[cfg(test)]
 mod tests {
     use super::ForgetOutcome;
-
-    fn kept_at(path: &str) -> marfa_core::KeptFile {
-        marfa_core::KeptFile {
-            path: path.into(),
-            from: String::new(),
-            writers: "none",
-            until: None,
-            reason: "kept".into(),
-        }
-    }
-
-    #[test]
-    fn discard_asks_about_every_listed_file() {
-        let outside = "/elsewhere/.marfa-kept-1.tmp";
-        let inside = "Notes/.marfa-kept-2.tmp";
-        let question = super::discard_question(
-            std::path::Path::new("/folder"),
-            &[kept_at(outside), kept_at(inside)],
-        )
-        .unwrap_or_default();
-        for path in [outside, inside] {
-            assert!(question.contains(&format!("  {path}\n")), "{question}");
-        }
-        assert!(question.starts_with("2 kept file(s)"), "{question}");
-        assert_eq!(
-            super::discard_question(std::path::Path::new("/folder"), &[]),
-            None
-        );
-    }
 
     fn shown_listed(listed: bool) -> marfa_core::Remembered {
         marfa_core::Remembered {

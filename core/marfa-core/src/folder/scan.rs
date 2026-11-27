@@ -132,9 +132,8 @@ struct ScanState {
     /// Each path whose file waits while another file carries the item bound
     /// there.
     held_carried: HashMap<String, HeldCarried>,
-    /// Paths held for an unresolved removal or a write that never settles,
-    /// with the flag and the reason for each hold.
-    removing: HashMap<String, (&'static str, String)>,
+    /// Paths held for an unresolved removal, with the reason for each hold.
+    removing: HashMap<String, String>,
 }
 
 /// The item bound at a path whose file waits, and the file that carries it.
@@ -1220,22 +1219,6 @@ impl Folder {
         Ok(())
     }
 
-    /// Settles what removals it can and answers every path a scan holds:
-    /// each removal left unsettled, then each write `outside_waits` holds.
-    fn held_paths(&self) -> Result<HashMap<String, (&'static str, String)>> {
-        let mut held: HashMap<_, _> = self
-            .settle_taken()?
-            .into_iter()
-            .map(|(path, why)| (path, (super::pull::REMOVING, why)))
-            .collect();
-        held.extend(
-            self.outside_waits()?
-                .into_iter()
-                .map(|(path, why)| (path, ("waiting", why))),
-        );
-        Ok(held)
-    }
-
     /// Sends each read file to its item: a create, an update, a rename or a
     /// follow of an unread file, or flags it. Collects the edge work the
     /// files leave for the end. Ends the pass where the root goes.
@@ -1245,7 +1228,7 @@ impl Folder {
         claims: Vec<Option<Claim>>,
         mut waiting: Waiting,
     ) -> Result<ControlFlow<(), Vec<EdgeWork>>> {
-        scan.removing = self.held_paths()?;
+        scan.removing = self.settle_taken()?;
         let (mode, settle) = (scan.mode, scan.settle);
         let reread_embeds = scan.reread_embeds;
         let held_outside = self.hold_outside(scan, &claims, &waiting)?;
@@ -1281,10 +1264,10 @@ impl Folder {
                 });
                 continue;
             }
-            if let Some((flag, why)) = scan.removing.get(&file.key) {
+            if let Some(why) = scan.removing.get(&file.key) {
                 report.flagged.push(Flagged {
                     path: file.key.clone(),
-                    flag,
+                    flag: super::pull::REMOVING,
                     reason: why.clone(),
                     item: by_path
                         .get(file.key.as_str())
@@ -1816,13 +1799,13 @@ impl Folder {
                 report.root_gone = Some(gone);
                 return Ok(ControlFlow::Break(()));
             }
-            if let Some((flag, why)) = removing.get(&path) {
+            if let Some(why) = removing.get(&path) {
                 if held {
                     state::journal_clear(&*self.core.conn()?, &path, &item_id)?;
                 }
                 report.flagged.push(Flagged {
                     path: path.clone(),
-                    flag,
+                    flag: super::pull::REMOVING,
                     reason: why.clone(),
                     item: Some(item_id.clone()),
                 });

@@ -1461,17 +1461,6 @@ impl landing::Ledger for Rows<'_> {
     }
 }
 
-pub(super) const OUTSIDE: &str = "Marfa never changes files outside this folder, so it has not looked at this file and leaves it as it is. If the file is there and holds a change you need, move it back yourself";
-
-pub(super) const OUTSIDE_WAIT: &str = "Marfa will not settle the write at this path, because its record names a place outside this folder. Marfa holds this path, and `folders remove` ends the hold";
-
-fn outside_displaced(from: &str) -> String {
-    let from = if from.is_empty() { "a file" } else { from };
-    format!(
-        "Marfa moved {from} here as it took the file in from another folder, and stopped before it finished. {OUTSIDE}"
-    )
-}
-
 /// Whether `path`, relative to the root, has the file name `name`.
 fn named_as(path: &str, name: &str) -> bool {
     Path::new(path).file_name() == Some(std::ffi::OsStr::new(name))
@@ -1503,7 +1492,8 @@ fn settle_row(
         dir_at: row.dir_at,
         aside: aside_place.to_string(),
         aside_at: row.aside_at,
-        follow: (dir_place != row.dir).then(|| Follow {
+        // An absolute `dir` is another folder's, with no binding here to follow.
+        follow: (dir_place != row.dir && !Path::new(&row.dir).is_absolute()).then(|| Follow {
             from: joined(&row.dir, &row.displacement.target),
             dir,
             name: target,
@@ -1526,7 +1516,9 @@ fn settle_row(
     Ok(())
 }
 
-/// Under the verified root, a remount can change the device number.
+/// Whether `found`, a directory's device and inode, is the directory
+/// `recorded` names. A volume mounted again has another device number, so
+/// where the root's is not the one recorded, the inode alone decides.
 fn same_directory(found: (u64, u64), recorded: (u64, u64), root_device: Option<u64>) -> bool {
     found.1 == recorded.1 && (found.0 == recorded.0 || root_device != Some(recorded.0))
 }
@@ -1667,16 +1659,12 @@ impl Folder {
         Ok(directory)
     }
 
-    /// Opening a recorded place does not verify its identity.
+    /// Opens the recorded path without checking the directory's identity.
     fn place_dir(&self, place: &str) -> std::io::Result<Directory> {
-        if !state::in_folder(place) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "the place is outside the folder",
-            ));
-        }
         let place = Path::new(place);
-        Ok(if place.as_os_str().is_empty() {
+        Ok(if place.is_absolute() {
+            Directory::open(place)?
+        } else if place.as_os_str().is_empty() {
             self.root_dir.clone()
         } else if let Ok(below) = place.strip_prefix(STATE_DIR) {
             if below.as_os_str().is_empty() {
@@ -1699,30 +1687,13 @@ impl Folder {
 
     /// The bound paths of rows whose directory is not where it was, whose
     /// write a crash cut off is settled only once the row settles, against
-    /// the file wherever its directory went, and those `outside_waits` holds.
+    /// the file wherever its directory went.
     fn displaced_paths(&self) -> Result<HashSet<String>> {
         Ok(state::displaced(&*self.core.conn()?)?
             .into_iter()
             .flatten()
-            .filter(|row| state::in_folder(&row.dir) && (row.outside() || self.displaced_away(row)))
+            .filter(|row| !Path::new(&row.dir).is_absolute() && self.displaced_away(row))
             .map(|row| joined(&row.dir, &row.displacement.target))
-            .collect())
-    }
-
-    /// The path of each write in the folder whose row names a place outside
-    /// it, so never settles, with why it is held. Every scan and status holds
-    /// it as an unsettled removal, so no pass journals, trashes or sends it.
-    pub(super) fn outside_waits(&self) -> Result<HashMap<String, String>> {
-        Ok(state::displaced(&*self.core.conn()?)?
-            .into_iter()
-            .flatten()
-            .filter(|row| state::in_folder(&row.dir) && row.outside())
-            .map(|row| {
-                (
-                    joined(&row.dir, &row.displacement.target),
-                    OUTSIDE_WAIT.into(),
-                )
-            })
             .collect())
     }
 
@@ -1742,30 +1713,13 @@ impl Folder {
         for row in state::displaced(&conn)? {
             let row = match row {
                 Ok(row) => row,
-                Err((id, value)) => {
-                    if let Some((path, from, named)) = state::unread_outside(&id, &value) {
-                        let reason = if named || from.is_empty() {
-                            format!("{}: {}", retained::UNREAD, outside_displaced(&from))
-                        } else {
-                            format!("{}. {OUTSIDE}", retained::unplaced(&from, "moved to"))
-                        };
-                        state::put_kept(&conn, &path, &reason)?;
-                    } else {
-                        // What it moved stays under its reserved name, which
-                        // every scan reports.
-                        state::clear_displaced(&conn, &id)?;
-                    }
+                // What it moved stays under its reserved name, which every
+                // scan reports.
+                Err(id) => {
+                    state::clear_displaced(&conn, &id)?;
                     continue;
                 }
             };
-            if row.outside() {
-                state::put_kept(
-                    &conn,
-                    &joined(&row.aside, &row.displacement.kept),
-                    &outside_displaced(&joined(&row.dir, &row.displacement.target)),
-                )?;
-                continue;
-            }
             match self
                 .displaced_dir(&row.dir, row.dir_at)
                 .and_then(|dir| Ok((dir, self.displaced_dir(&row.aside, row.aside_at)?)))
@@ -1798,10 +1752,7 @@ impl Folder {
         let root_device = device(&self.root_dir);
         let mut settled = false;
         for row in state::displaced(&conn)?.into_iter().flatten() {
-            if row.outside()
-                || row.dir != row.aside
-                || self.displaced_dir(&row.aside, row.aside_at).is_ok()
-            {
+            if row.dir != row.aside || self.displaced_dir(&row.aside, row.aside_at).is_ok() {
                 continue;
             }
             let found = kept
@@ -1841,8 +1792,7 @@ impl Folder {
             .into_iter()
             .flatten()
             .filter(|row| {
-                !row.outside()
-                    && self.displaced_away(row)
+                self.displaced_away(row)
                     && !walked
                         .iter()
                         .any(|(_, path)| named_as(path, &row.displacement.kept))
@@ -1912,16 +1862,20 @@ impl Folder {
 
     /// Why each file kept for a pass to settle is kept, by its path.
     fn retained_reasons(&self) -> HashMap<String, String> {
-        let Ok(files) = self
-            .core
-            .conn()
-            .and_then(|conn| retained::record_files(&conn))
-        else {
+        let Ok(rows) = self.core.conn().and_then(|conn| state::retained(&conn)) else {
             return HashMap::new();
         };
-        files
-            .into_iter()
-            .map(|file| (file.path, file.reason))
+        rows.into_iter()
+            .map(|row| match row {
+                Ok(row) => {
+                    let retained = &row.retained;
+                    (
+                        joined(&row.aside, &retained.kept),
+                        retained::retained_reason(&joined(&row.dir, &retained.target), retained),
+                    )
+                }
+                Err(row) => (joined(&row.aside, &row.kept), retained::UNREAD.into()),
+            })
             .collect()
     }
 

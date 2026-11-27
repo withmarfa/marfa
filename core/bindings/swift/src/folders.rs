@@ -1403,8 +1403,7 @@ guarded! {
         /// Deletes each kept file that is unchanged since Marfa set it
         /// aside, whatever programs hold it, as `folders kept --discard`
         /// does once the person agrees. One a program wrote to goes back to
-        /// its path instead, and one kept outside the folder is left as it
-        /// is, in `kept`. Needs no server. Asks a watch that holds the
+        /// its path instead. Needs no server. Asks a watch that holds the
         /// folder to let it go, as `add` does.
         pub fn discard_kept(&self, dir: String) -> Result<KeptDiscarded, MarfaError> {
             let done = working(&dir, None, None)?.discard_kept()?;
