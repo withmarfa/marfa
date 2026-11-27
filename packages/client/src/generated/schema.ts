@@ -4882,7 +4882,7 @@ export interface components {
             id: string;
             /** @description The item's type. */
             type: string;
-            /** @description The item's title as it is stored, or `null` if the item has none. */
+            /** @description The item's title, or `null` if its title property is absent or does not hold text. */
             title: string | null;
         };
         /** @description An error response. */
@@ -13910,7 +13910,7 @@ export interface operations {
                             hash: string;
                             /** @description Up to 20 matching items, sorted by ID. */
                             items: components["schemas"]["BlobHolder"][];
-                            /** @description `true` if another matching item follows the 20 returned. */
+                            /** @description `true` if another item you can list follows the 20 returned. */
                             more: boolean;
                         }[];
                     };

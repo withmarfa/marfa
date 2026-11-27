@@ -4017,7 +4017,7 @@
               "string",
               "null"
             ],
-            "description": "The item's title as it is stored, or `null` if the item has none."
+            "description": "The item's title, or `null` if its title property is absent or does not hold text."
           }
         },
         "required": [
@@ -22560,7 +22560,7 @@
                           },
                           "more": {
                             "type": "boolean",
-                            "description": "`true` if another matching item follows the 20 returned."
+                            "description": "`true` if another item you can list follows the 20 returned."
                           }
                         },
                         "required": [
