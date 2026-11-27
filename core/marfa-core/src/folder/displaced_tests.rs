@@ -113,53 +113,6 @@ fn a_displacement_a_stopped_run_left_is_settled_by_the_next_scan() {
 }
 
 #[test]
-fn a_displacement_in_another_folders_directory_puts_the_persons_save_back() {
-    let (dir, folder) = scanned_folder();
-    let root = dir.path().canonicalize().unwrap();
-    let other = tempfile::tempdir_in(root.join("..")).unwrap();
-    let other = other.path().canonicalize().unwrap();
-    let target = other.join("Recovery.md");
-    std::fs::write(&target, "as the server has it\n").unwrap();
-    let read = object_of(&target);
-    let id = uuid::Uuid::now_v7().simple().to_string();
-    let kept = other.join(landing::reserved(&id));
-    std::fs::rename(&target, &kept).unwrap();
-    std::fs::write(&kept, "as the server has it\nthe person's edit\n").unwrap();
-    let place = other.to_string_lossy().into_owned();
-    state::set_displaced(
-        &folder.core.conn().unwrap(),
-        &state::Displaced {
-            dir: place.clone(),
-            dir_at: at(&other),
-            aside: place,
-            aside_at: at(&other),
-            displacement: Displacement {
-                id,
-                kind: Kind::Withdraw,
-                target: "Recovery.md".into(),
-                kept: kept.file_name().unwrap().to_string_lossy().into_owned(),
-                ours: None,
-                read,
-            },
-        },
-    )
-    .unwrap();
-
-    let report = folder.scan().unwrap();
-    assert_eq!(
-        std::fs::read(&target).unwrap(),
-        b"as the server has it\nthe person's edit\n"
-    );
-    assert!(!kept.exists());
-    assert!(kept_flags(&report).is_empty(), "{:?}", report.flagged);
-    assert!(
-        state::displaced(&folder.core.conn().unwrap())
-            .unwrap()
-            .is_empty()
-    );
-}
-
-#[test]
 fn a_save_kept_beside_its_path_after_a_stopped_run_is_reported_once() {
     let (dir, folder) = scanned_folder();
     let root = dir.path().canonicalize().unwrap();
@@ -666,4 +619,583 @@ fn a_second_save_of_the_settings_file_is_kept_in_the_root_and_reported() {
     let report = folder.scan().unwrap();
     assert_eq!(kept_flags(&report), [kept[0].as_str()]);
     assert_eq!(report.created, 0);
+}
+
+const TAKEN: &[u8] = b"as the server has it\n";
+const SAVE: &[u8] = b"as the server has it\nthe person's edit\n";
+
+/// A directory beside the folder's, as another folder's is.
+fn beside(root: &Path) -> (tempfile::TempDir, PathBuf) {
+    let other = tempfile::tempdir_in(root.join("..")).unwrap();
+    let path = other.path().canonicalize().unwrap();
+    (other, path)
+}
+
+fn text(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+/// A file under a fresh reserved name in `aside`. Answers the name.
+fn set_aside(aside: &Path, bytes: &[u8]) -> String {
+    let name = text(&landing::reserved(
+        &uuid::Uuid::now_v7().simple().to_string(),
+    ));
+    std::fs::write(aside.join(&name), bytes).unwrap();
+    name
+}
+
+fn id_of(kept: &str) -> String {
+    kept[".marfa-kept-".len()..kept.len() - ".tmp".len()].into()
+}
+
+/// A displacement of `Recovery.md` in `dir`, set aside as `kept` in
+/// `aside`, each named by the place the record gives it.
+fn displaced_record(folder: &Folder, dir: (&Path, &str), aside: (&Path, &str), kept: &str) {
+    state::set_displaced(
+        &folder.core.conn().unwrap(),
+        &state::Displaced {
+            dir: dir.1.into(),
+            dir_at: at(dir.0),
+            aside: aside.1.into(),
+            aside_at: at(aside.0),
+            displacement: Displacement {
+                id: id_of(kept),
+                kind: Kind::Withdraw,
+                target: "Recovery.md".into(),
+                kept: kept.into(),
+                ours: None,
+                read: taken_read(&aside.0.join(kept)),
+            },
+        },
+    )
+    .unwrap();
+}
+
+/// The file at `path` as read when it held `TAKEN`.
+fn taken_read(path: &Path) -> Object {
+    Object {
+        hash: Some(state::hash(TAKEN)),
+        ..object_of(path)
+    }
+}
+
+/// A kept file of `Recovery.md` past its wait, as `displaced_record` places it.
+fn retained_record(folder: &Folder, dir: (&Path, &str), aside: (&Path, &str), kept: &str) {
+    state::set_retained(
+        &folder.core.conn().unwrap(),
+        &state::Retained {
+            dir: dir.1.into(),
+            dir_at: at(dir.0),
+            aside: aside.1.into(),
+            aside_at: at(aside.0),
+            retained: landing::Retained {
+                id: id_of(kept),
+                kind: Kind::Withdraw,
+                target: "Recovery.md".into(),
+                kept: kept.into(),
+                ours: None,
+                read: taken_read(&aside.0.join(kept)),
+                changed: None,
+                since: landing::seconds(crate::clock::system_time())
+                    - landing::RETAINED_FOR
+                    - 24 * 60 * 60,
+                writers: Some(super::writers::Writers::Unknown),
+            },
+        },
+    )
+    .unwrap();
+}
+
+/// A discard's mark for the kept file `kept` in `aside`, renamed to a
+/// private name; unreadable where `readable` is not. Answers the private name.
+fn discard_mark(folder: &Folder, aside: (&Path, &str), kept: &str, readable: bool) -> String {
+    let private = text(&landing::reserved(
+        &uuid::Uuid::now_v7().simple().to_string(),
+    ));
+    std::fs::rename(aside.0.join(kept), aside.0.join(&private)).unwrap();
+    let conn = folder.core.conn().unwrap();
+    if readable {
+        state::set_discarding(
+            &conn,
+            &state::Discarding {
+                id: id_of(kept),
+                aside: aside.1.into(),
+                kept: kept.into(),
+                private: private.clone(),
+                from: text(&aside.0.join("Recovery.md")),
+                left: None,
+            },
+        )
+        .unwrap();
+    } else {
+        crate::store::meta_set(
+            &conn,
+            &format!("folder_discarding:{}", joined(aside.1, &private)),
+            "not a mark",
+        )
+        .unwrap();
+    }
+    private
+}
+
+/// A note scanned and answered, so a pull runs against the folder's copy.
+fn pullable(root: &Path, folder: &Folder) {
+    std::fs::write(root.join("Ready.md"), "ready\n").unwrap();
+    assert_eq!(folder.scan().unwrap().created, 1);
+    super::tests::landed(folder, "Ready.md");
+}
+
+/// Every file under `dirs`, with its bytes, leaving out each folder's state.
+fn files_under(dirs: &[&Path]) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut found = Vec::new();
+    let mut walking: Vec<PathBuf> = dirs.iter().map(|dir| dir.to_path_buf()).collect();
+    while let Some(dir) = walking.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let entry = entry.unwrap();
+            if entry.file_name() == std::ffi::OsStr::new(STATE_DIR) {
+                continue;
+            }
+            if entry.file_type().unwrap().is_dir() {
+                walking.push(entry.path());
+            } else {
+                found.push((entry.path(), std::fs::read(entry.path()).unwrap()));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// The store's records, bindings, journal, queue and items.
+fn store_rows(folder: &Folder) -> Vec<Vec<String>> {
+    let conn = folder.core.conn().unwrap();
+    let mut rows = Vec::new();
+    for table in ["meta", "folder_files", "folder_journal", "queue", "items"] {
+        let mut statement = conn.prepare(&format!("SELECT * FROM {table}")).unwrap();
+        let columns = statement.column_count();
+        let mut found = statement.query([]).unwrap();
+        while let Some(row) = found.next().unwrap() {
+            let mut line = vec![table.to_string()];
+            for column in 0..columns {
+                let value: rusqlite::types::Value = row.get(column).unwrap();
+                line.push(format!("{value:?}"));
+            }
+            rows.push(line);
+        }
+    }
+    rows.sort();
+    rows
+}
+
+/// Asserts `answer` is the refusal that names each of `named` and the way out.
+fn refused_naming(answer: Result<()>, named: &[String], what: &str) {
+    match answer {
+        Err(CoreError::Store(message)) => {
+            for name in named {
+                assert!(
+                    message.contains(name.as_str()),
+                    "{what}: {name} in {message}"
+                );
+            }
+            assert!(message.contains("folders remove"), "{what}: {message}");
+        }
+        other => panic!("{what}: {other:?}"),
+    }
+}
+
+/// Runs every command and pass that syncs, settles or reports the folder.
+fn every_command_refuses(folder: &Folder, root: &Path, named: &[String], case: &str) {
+    let check = |what: &str, answer: Result<()>| {
+        refused_naming(answer, named, &format!("{case}, {what}"));
+    };
+    check("scan", folder.scan().map(drop));
+    check(
+        "watch pass",
+        folder.scan_watching(true, Duration::ZERO).map(drop),
+    );
+    check(
+        "watch pull",
+        folder
+            .pull_selecting(&mut super::selective::Selection::default())
+            .map(drop),
+    );
+    check("pull", folder.pull().map(drop));
+    check("push", folder.send_only().map(drop));
+    check("sync", folder.sync().map(drop));
+    check("hydrate", folder.hydrate().map(drop));
+    let stop = AtomicBool::new(false);
+    match folder.watch(&stop, |_| Ok::<(), ()>(())) {
+        Err(WatchError::Core(error)) => check("watch", Err(error)),
+        other => panic!("{case}, watch: {:?}", other.is_ok()),
+    }
+    check("discard", folder.discard_kept().map(drop));
+    check(
+        "unmatched",
+        folder.remove_unmatched(&["Ready.md".into()]).map(drop),
+    );
+    check("confirm", folder.confirm().map(drop));
+    check("restore", folder.restore().map(drop));
+    check(
+        "held",
+        folder
+            .settle_held(&["Ready.md".into()], Settle::Keep { write_back: false })
+            .map(drop),
+    );
+    check("first sync", folder.confirm_first_sync().map(drop));
+    check("first sync plan", folder.plan_first_sync().map(drop));
+    check("status", Folder::status_of(root).map(drop));
+}
+
+/// Writes one kind of record that names a place outside the folder, in
+/// `other`. Answers what a refusal must name.
+type OutsideKind = fn(&Folder, &Path, &Path) -> Vec<String>;
+
+fn displaced_outside(folder: &Folder, _root: &Path, other: &Path) -> Vec<String> {
+    let kept = set_aside(other, SAVE);
+    let place = text(other);
+    displaced_record(folder, (other, &place), (other, &place), &kept);
+    vec![text(&other.join(&kept)), text(&other.join("Recovery.md"))]
+}
+
+fn kept_file_outside(folder: &Folder, _root: &Path, other: &Path) -> Vec<String> {
+    let kept = set_aside(other, TAKEN);
+    let place = text(other);
+    retained_record(folder, (other, &place), (other, &place), &kept);
+    vec![text(&other.join(&kept)), text(&other.join("Recovery.md"))]
+}
+
+fn aside_outside(folder: &Folder, root: &Path, other: &Path) -> Vec<String> {
+    let projects = root.join("Projects");
+    std::fs::create_dir_all(&projects).unwrap();
+    let kept = set_aside(other, SAVE);
+    displaced_record(
+        folder,
+        (&projects, "Projects"),
+        (other, &text(other)),
+        &kept,
+    );
+    vec![
+        text(&other.join(&kept)),
+        text(&projects.join("Recovery.md")),
+    ]
+}
+
+fn dir_outside(folder: &Folder, root: &Path, other: &Path) -> Vec<String> {
+    let projects = root.join("Projects");
+    std::fs::create_dir_all(&projects).unwrap();
+    let kept = set_aside(&projects, TAKEN);
+    retained_record(
+        folder,
+        (other, &text(other)),
+        (&projects, "Projects"),
+        &kept,
+    );
+    vec![
+        text(&projects.join(&kept)),
+        text(&other.join("Recovery.md")),
+    ]
+}
+
+fn parent_place(folder: &Folder, root: &Path, other: &Path) -> Vec<String> {
+    let place = format!("../{}", other.file_name().unwrap().to_string_lossy());
+    let kept = set_aside(other, SAVE);
+    displaced_record(folder, (other, &place), (other, &place), &kept);
+    vec![
+        text(&root.join(&place).join(&kept)),
+        text(&root.join(&place).join("Recovery.md")),
+    ]
+}
+
+fn unreadable_outside(folder: &Folder, _root: &Path, other: &Path) -> Vec<String> {
+    let kept = set_aside(other, SAVE);
+    let place = text(other);
+    crate::store::meta_set(
+        &folder.core.conn().unwrap(),
+        &format!("folder_displaced:{}", id_of(&kept)),
+        &serde_json::json!({
+            "dir": place,
+            "aside": place,
+            "displacement": { "id": id_of(&kept), "target": "Recovery.md", "kept": kept },
+        })
+        .to_string(),
+    )
+    .unwrap();
+    vec![text(&other.join(&kept)), text(&other.join("Recovery.md"))]
+}
+
+fn mark_outside(folder: &Folder, _root: &Path, other: &Path) -> Vec<String> {
+    let kept = set_aside(other, TAKEN);
+    let private = discard_mark(folder, (other, &text(other)), &kept, true);
+    vec![
+        text(&other.join(&private)),
+        text(&other.join("Recovery.md")),
+        text(&other.join(&kept)),
+    ]
+}
+
+fn unreadable_mark_outside(folder: &Folder, _root: &Path, other: &Path) -> Vec<String> {
+    let kept = set_aside(other, TAKEN);
+    let private = discard_mark(folder, (other, &text(other)), &kept, false);
+    vec![text(&other.join(&private))]
+}
+
+const OUTSIDE_KINDS: [(&str, OutsideKind); 8] = [
+    ("displaced", displaced_outside),
+    ("kept file", kept_file_outside),
+    ("aside outside", aside_outside),
+    ("directory outside", dir_outside),
+    ("parent place", parent_place),
+    ("unreadable", unreadable_outside),
+    ("mark", mark_outside),
+    ("unreadable mark", unreadable_mark_outside),
+];
+
+#[test]
+fn a_folder_with_an_outside_record_refuses_every_pass_and_changes_nothing() {
+    for (case, kind) in OUTSIDE_KINDS {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        pullable(&root, &folder);
+        // The witness: the folder runs until the record is there.
+        folder.scan().unwrap();
+        let (_other, other) = beside(&root);
+        let named = kind(&folder, &root, &other);
+        let files = files_under(&[&root, &other]);
+        let rows = store_rows(&folder);
+
+        every_command_refuses(&folder, &root, &named, case);
+
+        assert_eq!(files_under(&[&root, &other]), files, "{case}");
+        assert_eq!(store_rows(&folder), rows, "{case}");
+    }
+}
+
+const HELD: &str = "Moved/Plan.md";
+
+/// A write to `HELD` bound before its bytes landed, its file moved under a
+/// reserved name in `aside`, outside the folder, by a record that names
+/// `aside` as `place`. Answers the reserved file.
+fn blocked_write(folder: &Folder, root: &Path, aside: &Path, place: &str) -> PathBuf {
+    std::fs::create_dir(root.join("Moved")).unwrap();
+    std::fs::write(root.join(HELD), TAKEN).unwrap();
+    assert_eq!(folder.scan().unwrap().created, 1);
+    super::tests::landed(folder, HELD);
+    folder.pull().unwrap();
+    let read = object_of(&root.join(HELD));
+    let name = text(&landing::reserved(
+        &uuid::Uuid::now_v7().simple().to_string(),
+    ));
+    std::fs::rename(root.join(HELD), aside.join(&name)).unwrap();
+    let conn = folder.core.conn().unwrap();
+    let mut bound = state::bound_at(&conn, HELD).unwrap().unwrap();
+    bound.writes.landing = Some(state::Landing { before: None });
+    state::bind(&conn, &bound).unwrap();
+    state::set_displaced(
+        &conn,
+        &state::Displaced {
+            dir: "Moved".into(),
+            dir_at: at(&root.join("Moved")),
+            aside: place.into(),
+            aside_at: at(aside),
+            displacement: Displacement {
+                id: id_of(&name),
+                kind: Kind::Withdraw,
+                target: "Plan.md".into(),
+                kept: name.clone(),
+                ours: None,
+                read,
+            },
+        },
+    )
+    .unwrap();
+    aside.join(name)
+}
+
+/// Moves every journaled delete past the grace.
+fn age_the_journal(folder: &Folder) {
+    let long_ago =
+        crate::store::iso_at(crate::clock::system_time() - RENAME_GRACE - Duration::from_secs(1));
+    folder
+        .core
+        .conn()
+        .unwrap()
+        .execute(
+            "UPDATE folder_journal SET missing_since = ?1",
+            [long_ago.as_str()],
+        )
+        .unwrap();
+}
+
+#[test]
+fn the_cases_from_the_code_reviews_change_nothing_while_refused() {
+    let cases: [(&str, fn(&Path, &Path, &Path)); 7] = [
+        ("aside holds the file", |_, _, _| {}),
+        ("aside holds a save", |_, _, kept| {
+            std::fs::write(kept, SAVE).unwrap();
+        }),
+        ("aside gone", |_, other, _| {
+            std::fs::remove_dir_all(other).unwrap();
+        }),
+        ("parent place", |_, _, _| {}),
+        ("directory moved", |root, _, _| {
+            std::fs::rename(root.join("Moved"), root.join("Elsewhere")).unwrap();
+        }),
+        ("second file moved in", |root, _, _| {
+            std::fs::rename(root.join("Ready.md"), root.join(HELD)).unwrap();
+        }),
+        ("edit after a pull", |root, _, _| {
+            std::fs::write(root.join(HELD), "the person's edit\n").unwrap();
+        }),
+    ];
+    for (case, then) in cases {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        pullable(&root, &folder);
+        let (_other, other) = beside(&root);
+        let place = if case == "parent place" {
+            format!("../{}", other.file_name().unwrap().to_string_lossy())
+        } else {
+            text(&other)
+        };
+        let kept = blocked_write(&folder, &root, &other, &place);
+        then(&root, &other, &kept);
+        let files = files_under(&[&root, &other]);
+        let rows = store_rows(&folder);
+
+        for _ in 0..3 {
+            assert!(matches!(folder.scan(), Err(CoreError::Store(_))), "{case}");
+            age_the_journal(&folder);
+        }
+        assert!(matches!(folder.pull(), Err(CoreError::Store(_))), "{case}");
+
+        assert_eq!(files_under(&[&root, &other]), files, "{case}");
+        assert_eq!(store_rows(&folder), rows, "{case}");
+        let conn = folder.core.conn().unwrap();
+        assert!(state::journaled(&conn).unwrap().is_empty(), "{case}");
+        drop(conn);
+        assert!(super::tests::deletes_queued(&folder).is_empty(), "{case}");
+    }
+}
+
+#[test]
+fn removing_a_folder_with_an_outside_record_leaves_every_file() {
+    for (case, kind) in OUTSIDE_KINDS {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("Notes.md"), "notes\n").unwrap();
+        let (_other, other) = beside(&root);
+        kind(&folder, &root, &other);
+        let files = files_under(&[&root, &other]);
+
+        folder.remove().unwrap();
+
+        assert!(!root.join(STATE_DIR).join("core.sqlite").exists(), "{case}");
+        assert_eq!(files_under(&[&root, &other]), files, "{case}");
+    }
+}
+
+#[test]
+fn an_unparsable_record_keeps_mains_behaviour() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    pullable(&root, &folder);
+    let (_other, other) = beside(&root);
+    {
+        let conn = folder.core.conn().unwrap();
+        for key in [
+            "folder_displaced:0190a0000000700080000000000000a1".to_string(),
+            "folder_retained:0190a0000000700080000000000000a2".to_string(),
+        ] {
+            crate::store::meta_set(&conn, &key, &format!("{{\"dir\": \"{}\"", text(&other)))
+                .unwrap();
+        }
+        crate::store::meta_set(
+            &conn,
+            "folder_discarding:.marfa-kept-0190a0000000700080000000000000a3.tmp",
+            "not a mark",
+        )
+        .unwrap();
+    }
+    folder.scan().unwrap();
+    folder.pull().unwrap();
+    folder.discard_kept().unwrap();
+    Folder::status_of(&root).unwrap();
+    // The witness: the same record, parsable, is refused.
+    crate::store::meta_set(
+        &folder.core.conn().unwrap(),
+        "folder_displaced:0190a0000000700080000000000000a1",
+        &serde_json::json!({ "dir": text(&other) }).to_string(),
+    )
+    .unwrap();
+    assert!(matches!(folder.scan(), Err(CoreError::Store(_))));
+}
+
+#[test]
+fn a_folder_with_only_in_folder_records_runs_as_main() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    pullable(&root, &folder);
+    let projects = root.join("Projects");
+    std::fs::create_dir(&projects).unwrap();
+    let saved = set_aside(&projects, SAVE);
+    displaced_record(
+        &folder,
+        (&projects, "Projects"),
+        (&projects, "Projects"),
+        &saved,
+    );
+    let plans = root.join("Plans");
+    std::fs::create_dir(&plans).unwrap();
+    let kept = set_aside(&plans, TAKEN);
+    retained_record(&folder, (&plans, "Plans"), (&plans, "Plans"), &kept);
+    let notes = root.join("Notes");
+    std::fs::create_dir(&notes).unwrap();
+    let marked = set_aside(&notes, TAKEN);
+    retained_record(&folder, (&notes, "Notes"), (&notes, "Notes"), &marked);
+    let private = discard_mark(&folder, (&notes, "Notes"), &marked, true);
+    Folder::status_of(&root).unwrap();
+
+    folder.scan().unwrap();
+
+    assert_eq!(std::fs::read(projects.join("Recovery.md")).unwrap(), SAVE);
+    assert!(!projects.join(&saved).exists());
+    assert!(!plans.join(&kept).exists());
+    assert!(!notes.join(&private).exists());
+    assert!(!notes.join(&marked).exists());
+    let conn = folder.core.conn().unwrap();
+    assert!(state::displaced(&conn).unwrap().is_empty());
+    assert!(state::retained(&conn).unwrap().is_empty());
+    assert!(state::discarding(&conn).unwrap().is_empty());
+}
+
+#[test]
+fn place_dir_and_displaced_dir_refuse_places_outside_the_folder() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    let (_other, other) = beside(&root);
+    let parent = format!("../{}", other.file_name().unwrap().to_string_lossy());
+    std::fs::create_dir(root.join("Projects")).unwrap();
+    // The witness: a place in the folder opens.
+    assert!(folder.place_dir("Projects").is_ok());
+    assert!(
+        folder
+            .displaced_dir("Projects", at(&root.join("Projects")))
+            .is_ok()
+    );
+    for place in [text(&other), parent] {
+        let refused = |answer: std::io::Result<Directory>| answer.err().map(|error| error.kind());
+        assert_eq!(
+            refused(folder.place_dir(&place)),
+            Some(std::io::ErrorKind::InvalidInput),
+            "{place}"
+        );
+        assert_eq!(
+            refused(folder.displaced_dir(&place, at(&other))),
+            Some(std::io::ErrorKind::InvalidInput),
+            "{place}"
+        );
+    }
 }

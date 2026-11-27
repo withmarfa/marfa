@@ -2177,4 +2177,66 @@ mod tests {
         assert_eq!(said.code, "invalid", "{said:?}");
         assert!(said.message.contains("is not a folder"), "{said:?}");
     }
+
+    /// Opens no folder, and counts each time it is asked to.
+    #[derive(Default)]
+    struct Opener(std::sync::atomic::AtomicUsize);
+
+    impl EveryFolder for Opener {
+        type Error = ();
+
+        fn open(&self, _: &Path, _: Option<&str>) -> Result<Folder, Unwatched> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(reason("opened"))
+        }
+
+        fn tell(&self, _: Every<'_>) -> Result<(), ()> {
+            Ok(())
+        }
+
+        fn ended(&self, _: &Path, _: &Unwatched) {}
+    }
+
+    #[test]
+    fn a_watch_on_a_folder_with_an_outside_record_waits_as_a_paused_one_does() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let folder = |name: &str, key: &str, value: &str| {
+            let dir = temp.path().join(name);
+            std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
+            let core = Core::open(dir.join(STATE_DIR).join(store::FOLDER_STORE), None).unwrap();
+            super::super::settings_file::bind(&core, "01a00000-0000-7000-8000-0000000036b2")
+                .unwrap();
+            if !key.is_empty() {
+                store::meta_set(&core.conn().unwrap(), key, value).unwrap();
+            }
+            dir
+        };
+        let outside = folder(
+            "outside",
+            "folder_displaced:0190a0000000700080000000000000b1",
+            &serde_json::json!({ "dir": temp.path().join("elsewhere"), "aside": "" }).to_string(),
+        );
+        let paused = folder(
+            "paused",
+            super::super::paused::META_PAUSED,
+            "2026-01-01T00:00:00.000Z",
+        );
+        let plain = folder("plain", "", "");
+        let opener = Opener::default();
+        let machine = super::Machine(&opener);
+        let opened = || opener.0.load(Ordering::SeqCst);
+
+        let Err(refused) = machine.open(&outside) else {
+            panic!("a folder with an outside record was opened");
+        };
+        assert_eq!(refused.code, "store", "{refused:?}");
+        assert!(refused.message.contains("folders remove"), "{refused:?}");
+        assert_eq!(opened(), 0, "a folder with an outside record was watched");
+        // Refused as a paused folder is, so it is tried again as often.
+        assert_eq!(machine.open(&paused).err(), Some(Unwatched::paused()));
+        assert_eq!(opened(), 0);
+        // The witness: a folder with neither is opened.
+        assert_eq!(machine.open(&plain).err(), Some(reason("opened")));
+        assert_eq!(opened(), 1);
+    }
 }
