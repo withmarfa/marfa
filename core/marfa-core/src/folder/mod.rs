@@ -1463,6 +1463,8 @@ impl landing::Ledger for Rows<'_> {
 
 pub(super) const OUTSIDE: &str = "Marfa never changes files outside this folder, so it has not looked at this file and leaves it as it is. If the file is there and holds a change you need, move it back yourself";
 
+pub(super) const OUTSIDE_WAIT: &str = "Marfa will not settle the write at this path, because its record names a place outside this folder. Marfa holds this path, and `folders remove` ends the hold";
+
 fn outside_displaced(from: &str) -> String {
     let from = if from.is_empty() { "a file" } else { from };
     format!(
@@ -1697,18 +1699,30 @@ impl Folder {
 
     /// The bound paths of rows whose directory is not where it was, whose
     /// write a crash cut off is settled only once the row settles, against
-    /// the file wherever its directory went. A row whose directory is in the
-    /// folder and whose reserved names are outside it never settles, so its
-    /// path waits too.
+    /// the file wherever its directory went, and those `outside_waits` holds.
     fn displaced_paths(&self) -> Result<HashSet<String>> {
         Ok(state::displaced(&*self.core.conn()?)?
             .into_iter()
             .flatten()
-            .filter(|row| {
-                state::in_folder(&row.dir)
-                    && (!state::in_folder(&row.aside) || self.displaced_away(row))
-            })
+            .filter(|row| state::in_folder(&row.dir) && (row.outside() || self.displaced_away(row)))
             .map(|row| joined(&row.dir, &row.displacement.target))
+            .collect())
+    }
+
+    /// The path of each write in the folder whose row names a place outside
+    /// it, so never settles, with why it is held. Every scan and status holds
+    /// it as an unsettled removal, so no pass journals, trashes or sends it.
+    pub(super) fn outside_waits(&self) -> Result<HashMap<String, String>> {
+        Ok(state::displaced(&*self.core.conn()?)?
+            .into_iter()
+            .flatten()
+            .filter(|row| state::in_folder(&row.dir) && row.outside())
+            .map(|row| {
+                (
+                    joined(&row.dir, &row.displacement.target),
+                    OUTSIDE_WAIT.into(),
+                )
+            })
             .collect())
     }
 

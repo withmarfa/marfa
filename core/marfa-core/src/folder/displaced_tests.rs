@@ -1302,8 +1302,9 @@ fn blocked() -> Blocked {
 #[test]
 fn a_blocked_write_whose_aside_holds_the_file_unchanged_never_trashes_its_item() {
     let at = blocked();
+    let taken = std::fs::read(&at.kept).unwrap();
     held_past_the_grace(&at.folder, &at.root, &at.bound, "unchanged");
-    assert_eq!(std::fs::read(&at.kept).unwrap(), TAKEN);
+    assert_eq!(std::fs::read(&at.kept).unwrap(), taken);
 }
 
 #[test]
@@ -1347,9 +1348,10 @@ fn a_blocked_write_whose_aside_has_a_parent_component_never_trashes_its_item() {
 #[test]
 fn a_blocked_write_whose_directory_moved_away_never_trashes_its_item() {
     let at = blocked();
+    let taken = std::fs::read(&at.kept).unwrap();
     std::fs::rename(at.root.join("Moved"), at.root.join("Elsewhere")).unwrap();
     held_past_the_grace(&at.folder, &at.root, &at.bound, "moved away");
-    assert_eq!(std::fs::read(&at.kept).unwrap(), TAKEN);
+    assert_eq!(std::fs::read(&at.kept).unwrap(), taken);
     assert!(!at.root.join("Elsewhere/Plan.md").exists());
 }
 

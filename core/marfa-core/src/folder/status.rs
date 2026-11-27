@@ -428,13 +428,22 @@ impl Folder {
         if let Some(reads) = reads {
             reads.finish(self, &walked);
         }
-        let removing = self.taken_unsettled()?;
+        let mut removing: HashMap<String, Option<(&'static str, String)>> = self
+            .taken_unsettled()?
+            .into_iter()
+            .map(|(path, why)| (path, why.map(|why| (super::pull::REMOVING, why))))
+            .collect();
+        removing.extend(
+            self.outside_waits()?
+                .into_iter()
+                .map(|(path, why)| (path, Some(("waiting", why)))),
+        );
         files.retain(|file| !matches!(removing.get(&file.path), Some(None)));
         for file in &mut files {
-            if let Some(Some(why)) = removing.get(&file.path) {
+            if let Some(Some((flag, why))) = removing.get(&file.path) {
                 file.status = "held";
                 file.waits.clear();
-                file.flag = Some(super::pull::REMOVING);
+                file.flag = Some(flag);
                 file.reason = Some(why.clone());
             }
         }
