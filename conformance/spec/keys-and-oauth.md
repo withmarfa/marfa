@@ -3562,7 +3562,7 @@ When the sign-in form receives a `return_to` that resolves to a path on the inst
 
 ### `keys-and-oauth/sign-in-address-limit`
 
-If one address has made ten counted password sign-in attempts at one username in fifteen minutes, then the server MUST answer its next attempt at that username `429` with `Retry-After`, before it judges the password.
+If one address has made ten counted password sign-in attempts at one username in fifteen minutes, then the server MUST refuse its next attempt at that username with the redirect `keys-and-oauth/sign-in-form-limit` states, before it judges the password.
 
 **Reason:** The refusal comes before the password is judged, so it cannot tell anyone whether the password was right.
 
@@ -3570,7 +3570,7 @@ If one address has made ten counted password sign-in attempts at one username in
 
 ### `keys-and-oauth/sign-in-address-usernames-limit`
 
-If one address has made thirty counted password sign-in attempts in fifteen minutes, at any usernames, then the server MUST answer its next attempt at any username `429` with `Retry-After`, before it judges the password.
+If one address has made thirty counted password sign-in attempts in fifteen minutes, at any usernames, then the server MUST refuse its next attempt at any username with the redirect `keys-and-oauth/sign-in-form-limit` states, before it judges the password.
 
 **Reason:** An address cannot spread its attempts over many usernames, and the count is the same whether or not a username is the owner's (`keys-and-oauth/sign-in-limits-alike`).
 
@@ -3578,19 +3578,19 @@ If one address has made thirty counted password sign-in attempts in fifteen minu
 
 ### `keys-and-oauth/sign-in-form-limit`
 
-If the sign-in form's attempt is refused by a sign-in limit, then the server MUST redirect with `error=too_many_attempts`.
+If a password sign-in limit or the queue `keys-and-oauth/sign-in-decoy-queue` names refuses the sign-in form's attempt, then the server MUST redirect `302` to `/auth/sign-in` with `error=too_many_attempts`.
 
 **Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one username, and leaves the owner signing in from another`.
 
 ### `keys-and-oauth/sign-in-form-limit-cookie`
 
-If the sign-in form's attempt is refused by a sign-in limit, then the server MUST set no session cookie.
+If a password sign-in limit or the queue `keys-and-oauth/sign-in-decoy-queue` names refuses the sign-in form's attempt, then the server MUST set no session cookie.
 
 **Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one username, and leaves the owner signing in from another`.
 
 ### `keys-and-oauth/sign-in-form-limit-wait`
 
-If the sign-in form's attempt is refused by a sign-in limit, then the server MUST redirect with `retry_after_seconds` holding the whole seconds, from 1 to 86400, until another attempt will be allowed, which is the latest end among the sign-in limits that are spent, the value `Retry-After` carries on the same refusal.
+If a password sign-in limit or the queue `keys-and-oauth/sign-in-decoy-queue` names refuses the sign-in form's attempt, then the server MUST redirect with `retry_after_seconds` holding the whole seconds, from 1 to 86400, until another attempt will be allowed, which is the latest end among the sign-in limits that are spent.
 
 **Reason:** The sign-in page tells the owner how long to wait. The address limit and the limit every address shares end at different times, and an address that has spent both is refused again at the end of the shorter wait.
 
@@ -3614,7 +3614,7 @@ When a password sign-in attempt, or a password sent to `POST /auth/confirm`, pro
 
 ### `keys-and-oauth/sign-in-account-limit`
 
-If every address together has made a hundred counted password sign-in attempts in an hour without a known device cookie, at any usernames, then the server MUST answer the next such attempt from any address `429` with `Retry-After`, unless the owner's share (`keys-and-oauth/sign-in-owners-share`) signs it in.
+If every address together has made a hundred counted password sign-in attempts in an hour without a known device cookie, at any usernames, then the server MUST refuse the next such attempt from any address with the redirect `keys-and-oauth/sign-in-form-limit` states, unless the owner's share (`keys-and-oauth/sign-in-owners-share`) signs it in.
 
 **Reason:** An attempt one address makes past its own limit is not counted here, so one guessing address cannot fill it. The count is the same whatever username an attempt names (`keys-and-oauth/sign-in-limits-alike`), and a known device (`keys-and-oauth/sign-in-known-device`) and a passkey still sign the owner in while it is spent.
 
@@ -3654,13 +3654,13 @@ While the limit on attempts without a known device cookie (`keys-and-oauth/sign-
 
 ### `keys-and-oauth/sign-in-known-device-limit`
 
-If one device cookie has made ten counted password sign-in attempts in fifteen minutes, then the server MUST answer its next attempt `429` with `Retry-After`, before it judges the password.
+If one device cookie has made ten counted password sign-in attempts in fifteen minutes, then the server MUST refuse its next attempt with the redirect `keys-and-oauth/sign-in-form-limit` states, before it judges the password.
 
 **Tests:** `compliance/sign-in-limits.test.ts › holds a known device to ten wrong passwords across addresses`.
 
 ### `keys-and-oauth/sign-in-known-devices-limit`
 
-If every device cookie together has made a hundred counted password sign-in attempts in an hour, then the server MUST answer the next attempt that carries a device cookie `429` with `Retry-After`, before it judges the password.
+If every device cookie together has made a hundred counted password sign-in attempts in an hour, then the server MUST refuse the next attempt that carries a device cookie with the redirect `keys-and-oauth/sign-in-form-limit` states, before it judges the password.
 
 **Reason:** A device cookie only lifts the limit without a known device cookie for a browser the password signed in from, so many cookies together are held to the same hundred as every address without one.
 
@@ -3702,9 +3702,9 @@ The server MUST count an IPv6 address by its /64 for the password sign-in limits
 
 ### `keys-and-oauth/sign-in-limits-alike`
 
-When a password sign-in that carries no known device cookie names a username that is not the owner's, the server MUST answer it with the status and `Retry-After` it would answer the same attempt at the owner's username with a wrong password.
+When a password sign-in that carries no known device cookie names a username that is not the owner's, the server MUST answer it with the redirect, its `error` and its `retry_after_seconds` included, that it would answer the same attempt at the owner's username with a wrong password.
 
-**Reason:** A wrong username and a wrong password are both answered `401`, so no limit may tell them apart and say which username holds the account, before or after the owner changes the password.
+**Reason:** A wrong username and a wrong password are both answered with `error=invalid_credentials`, so no limit may tell them apart and say which username holds the account, before or after the owner changes the password.
 
 **Tests:** `compliance/sign-in-door-limits.test.ts › answers password sign-ins at any username alike, the owner's among them, until the address's limit refuses them all`, `compliance/sign-in-limits.test.ts › answers an address that spent its attempts at two usernames alike after the password is changed`.
 
@@ -3726,11 +3726,11 @@ When a password sign-in names the owner's username in capital letters or with sp
 
 ### `keys-and-oauth/sign-in-decoy-queue`
 
-If the queue a password sign-in that carries no known device cookie waits in for its password check is full, then the server MUST answer the sign-in `429` with `Retry-After`, whatever username it names.
+If the queue a password sign-in that carries no known device cookie waits in for its password check is full, then the server MUST refuse the sign-in with the redirect `keys-and-oauth/sign-in-form-limit` states, whatever username it names.
 
 **Reason:** Such sign-ins share one queue while the limit every address shares (`keys-and-oauth/sign-in-account-limit`) has room, and after that each username has a queue of its own of the same size. A sign-in at a username with no account still does the work of a password check. Each turn in these queues, whether its password is checked or not, lasts and is answered at the same length of time from when it began, longer than a check almost always takes, or when its check ends if that is later. So neither its time nor its queue tells it from a wrong password, and sign-ins at other usernames take no place from the owner's. The owner's own checks, from a known device or a browser session, wait in a queue of their own, so these can never hold them up. A client relies on the queue being bounded and on the refusal, not on its size.
 
-**Tests:** `compliance/sign-in-queue.test.ts › answers a sign-in 429 with Retry-After once the queue of waiting checks is full, at any username, and answers one alone 401`, `› answers sign-ins at one username 429 with Retry-After past the hour every address shares, and turns away at once those its queue has no place for`.
+**Tests:** `compliance/sign-in-queue.test.ts › refuses a sign-in with a wait once the queue of waiting checks is full, at any username, and answers one alone as wrong credentials`, `› refuses sign-ins at one username with a wait past the hour every address shares, and turns away at once those its queue has no place for`.
 
 ### `keys-and-oauth/register-address-limit`
 
@@ -3886,21 +3886,35 @@ When an owner's device code lookup window or the owner lane's collective window 
 
 ## Password sign-in
 
-`POST /auth/sign-in` takes the sign-in page's form, which it answers with a redirect, or a JSON body.
+`POST /auth/sign-in` takes only the sign-in page's form, which it answers with a redirect.
 
 ### `keys-and-oauth/password-sign-in-answer`
 
-When `POST /auth/sign-in` sends, as JSON, the owner's `username` and `password` and signs the owner in, the server MUST answer `200` with only `{"ok": true}` and set the owner's session cookie, `HttpOnly` and `SameSite=Lax`.
+When `POST /auth/sign-in` sends, as the sign-in page's form, the owner's `username` and `password` and signs the owner in, the server MUST answer `302` and set the owner's session cookie, `HttpOnly` and `SameSite=Lax`.
 
-**Reason:** A script that signs in needs the cookie and nothing else, and the session it opens is listed at `GET /owner/sign-ins`.
+**Reason:** The session it opens is listed at `GET /owner/sign-ins`.
 
-**Tests:** `compliance/sign-in-surface.test.ts › answers a password sign-in sent as JSON with only ok, and its session cookie`.
+**Tests:** `compliance/sign-in-surface.test.ts › answers a password sign-in sent as the form with a redirect, and its session cookie`.
 
 ### `keys-and-oauth/password-sign-in-fields`
 
-If `POST /auth/sign-in` sends, as JSON, a key other than `username` and `password`, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`, and set no cookie.
+If `POST /auth/sign-in` sends a body that is not the sign-in page's form, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/sign-in-surface.test.ts › refuses a password sign-in sent as JSON with a field it does not take, and sets no cookie`.
+**Reason:** The owner's password is taken only from the page's form, so a JSON body is refused as any body a form door does not take is.
+
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a password sign-in sent as JSON, and signs in with the form`.
+
+### `keys-and-oauth/password-sign-in-form-only-cookie`
+
+If `POST /auth/sign-in` sends a body that is not the sign-in page's form, then the server MUST set no cookie.
+
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a password sign-in sent as JSON, and signs in with the form`.
+
+### `keys-and-oauth/password-sign-in-refused`
+
+If the sign-in form names a username or a password that is wrong, then the server MUST redirect `302` to `/auth/sign-in` with `error=invalid_credentials`.
+
+**Tests:** `compliance/sign-in-surface.test.ts › answers a wrong password with a redirect that names invalid_credentials, and sets no cookie`.
 
 ### `keys-and-oauth/session-cookie-name`
 
@@ -3908,7 +3922,7 @@ Where the sign-in address is plain HTTP on this machine, the server MUST name th
 
 **Reason:** A browser takes a `__Host-` cookie only over HTTPS.
 
-**Tests:** `compliance/sign-in-surface.test.ts › answers a password sign-in sent as JSON with only ok, and its session cookie`.
+**Tests:** `compliance/sign-in-surface.test.ts › answers a password sign-in sent as the form with a redirect, and its session cookie`.
 
 ### `keys-and-oauth/session-cookie-https`
 
@@ -3936,9 +3950,9 @@ If a request carries a live browser session's token under a cookie name other th
 
 If `POST /auth/sign-in` or `POST /auth/passkeys/sign-in` carries neither `Origin` nor `Referer`, then the server MUST answer `403 forbidden`.
 
-**Reason:** A door that opens a browser session takes a post, as a form or as JSON, only from a page it trusts, so a post that does not say where it came from is refused.
+**Reason:** A door that opens a browser session takes a post only from a page it trusts, so a post that does not say where it came from is refused.
 
-**Tests:** `compliance/sign-in-surface.test.ts › refuses a sign-in that says neither Origin nor Referer, as a form or as JSON, and sets no cookie`, `compliance/passkeys.test.ts › refuses a passkey sign-in that says neither Origin nor Referer, and opens no session`.
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a sign-in that says neither Origin nor Referer, and sets no cookie`, `compliance/passkeys.test.ts › refuses a passkey sign-in that says neither Origin nor Referer, and opens no session`.
 
 ### `keys-and-oauth/sign-out-answer`
 
@@ -4692,7 +4706,7 @@ When an authorization answers with a code, the server MUST already hold the code
 
 ### `keys-and-oauth/audit-sign-in`
 
-When a password sign-in answers `200`, the server MUST already hold its audit record, readable at `GET /audit`.
+When a password sign-in signs the owner in and answers, the server MUST already hold its audit record, readable at `GET /audit`.
 
 **Tests:** `compliance/credential-audit.test.ts › is in the audit log when a password sign-in answers`.
 

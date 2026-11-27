@@ -262,7 +262,7 @@ When a request to `POST /auth/confirm` carries a password, the server MUST count
 
 ### `authentication/confirm-locked`
 
-If the attempt windows `authentication/confirm-lanes` names are spent, then the server MUST answer `429 rate_limited` with the `Retry-After` a password sign-in would be given, without judging the password.
+If the attempt windows `authentication/confirm-lanes` names are spent, then the server MUST answer `429 rate_limited` with a `Retry-After` of the whole seconds that `retry_after_seconds` holds when the sign-in form is refused by the same windows, without judging the password.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › counts a confirmation in the lane a password sign-in counts in, and answers the lockout with the wait`.
 
@@ -468,7 +468,7 @@ When the server judges the current password a request to `POST /auth/owner/passw
 
 ### `authentication/password-change-locked`
 
-If the attempt windows `authentication/password-change-lanes` names are spent, then the server MUST answer a request to `POST /auth/owner/password` with no `Accept` that names `text/html` ahead of any `application/json` with `429 rate_limited` and the `Retry-After` a password sign-in would be given, without judging the current password or changing the password.
+If the attempt windows `authentication/password-change-lanes` names are spent, then the server MUST answer a request to `POST /auth/owner/password` with no `Accept` that names `text/html` ahead of any `application/json` with `429 rate_limited` and a `Retry-After` of the whole seconds that `retry_after_seconds` holds when the sign-in form is refused by the same windows, without judging the current password or changing the password.
 
 **Tests:** `compliance/owner-pages.test.ts › counts a wrong current password where a password sign-in counts, and refuses a locked owner with the wait`.
 
@@ -566,7 +566,7 @@ When a request to `PUT /owner/password` carries a current password, the server M
 
 ### `authentication/password-replace-locked`
 
-If the attempt windows `authentication/password-replace-lanes` names are spent, then the server MUST answer `429 rate_limited` to `PUT /owner/password` with the `Retry-After` a password sign-in would be given, without judging the current password or changing the password.
+If the attempt windows `authentication/password-replace-lanes` names are spent, then the server MUST answer `429 rate_limited` to `PUT /owner/password` with a `Retry-After` of the whole seconds that `retry_after_seconds` holds when the sign-in form is refused by the same windows, without judging the current password or changing the password.
 
 **Tests:** `compliance/owner-password.test.ts › counts a wrong current password where a password sign-in counts, and refuses a locked owner with the wait`.
 
