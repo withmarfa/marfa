@@ -222,7 +222,7 @@ impl Core {
         }
         if matches!(
             streaming_of(&self.streaming).holder,
-            Some(Mover::Hydration | Mover::CatchUp)
+            Some(Mover::Hydration | Mover::CatchUp | Mover::Fill)
         ) {
             return Reclaim::Skipped;
         }

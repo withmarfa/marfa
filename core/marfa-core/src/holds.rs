@@ -226,8 +226,10 @@ impl Core {
         let was_held = busy::retrying(&self.conn, stop, || {
             tables::choose(&mut *self.conn()?, type_id, table)
         })?;
-        let fill = match self.try_claim_stream(Mover::CatchUp) {
+        let fill = match self.try_claim_stream(Mover::Fill) {
             Ok(_streaming) if store::hydration_complete(&*self.conn()?)? => {
+                #[cfg(debug_assertions)]
+                crate::fault::hold(|| "table-fill-claimed");
                 let context = reach::Context::capture(&*self.conn()?)?;
                 Some(tables::fill(self, &context, stop)?)
             }
@@ -259,7 +261,9 @@ impl Core {
     /// Fills each table the copy holds that is not whole.
     pub fn fill_tables(&self, stop: &AtomicBool) -> Result<FillReport> {
         self.lock.refuse_unless_writer()?;
-        let _streaming = self.claim_stream(Mover::CatchUp)?;
+        let _streaming = self.claim_stream(Mover::Fill)?;
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "table-fill-claimed");
         let context = reach::Context::capture(&*self.conn()?)?;
         tables::fill(self, &context, stop)
     }

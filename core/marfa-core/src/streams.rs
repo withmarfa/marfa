@@ -28,6 +28,8 @@ pub(crate) enum Mover {
     Hydration,
     CatchUp,
     Follow,
+    /// A table fill an app started, which moves no cursor.
+    Fill,
 }
 
 pub(crate) struct StreamClaim<'a>(&'a Mutex<Streaming>);
@@ -446,13 +448,17 @@ impl Core {
             };
             drop(conn);
             match answer {
-                Ok(()) => match self.try_claim_stream(Mover::Follow) {
-                    Ok(claim) => return Ok(Some(claim)),
-                    // The hydration waited for holds it until it has
-                    // settled, and a catch-up may have taken it since.
-                    Err(Mover::Hydration | Mover::CatchUp) if waited => {}
-                    Err(_) => return Err(one_at_a_time()),
-                },
+                Ok(()) => {
+                    #[cfg(debug_assertions)]
+                    fault::hold(|| "follow-claiming");
+                    match self.try_claim_stream(Mover::Follow) {
+                        Ok(claim) => return Ok(Some(claim)),
+                        // The hydration waited for holds it until it has
+                        // settled, and a catch-up may have taken it since.
+                        Err(Mover::Hydration | Mover::CatchUp | Mover::Fill) if waited => {}
+                        Err(_) => return Err(one_at_a_time()),
+                    }
+                }
                 Err(_) if waits => {
                     #[cfg(debug_assertions)]
                     if !waited {

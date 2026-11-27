@@ -920,6 +920,10 @@ pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<
                 |row| row.get::<_, i64>(0),
             )?
             .max(0) as u64;
+        #[cfg(debug_assertions)]
+        if crate::streaming_of(&core.streaming).holder == Some(crate::Mover::Fill) {
+            crate::fault::hold(|| "table-fill-ended");
+        }
         Ok(pass.report)
     };
     filled().map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
