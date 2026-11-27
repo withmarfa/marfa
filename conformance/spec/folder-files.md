@@ -874,7 +874,7 @@ When a person changes or replaces a file after a pull last read it, a device MUS
 
 ### `folder-files/write-displaced-put-back`
 
-If a person's save takes a file's path after a device last read the file and before the device replaces or removes it, then a device MUST put that save back at the path.
+If a person's save takes the path of a file in a directory in the folder after a device last read the file and before the device replaces or removes it, then a device MUST put that save back at the path.
 
 **Reason:** an editor saves by renaming a new file over the old one, so the file a device moves out of the path can be the person's save rather than the file it read.
 
@@ -910,7 +910,7 @@ While a file has a name of the form `.marfa-kept-<id>.tmp`, a device MUST NOT re
 
 ### `folder-files/write-crash-displaced-kept`
 
-When a device stops after it moved a file out of its path and before it settled what it moved, a device MUST, at its next scan or pull, put a person's save it moved back at the path or beside it.
+When a device stops after it moved a file in a directory in the folder out of its path and before it settled what it moved, a device MUST, at its next scan or pull, put a person's save it moved back at the path or beside it.
 
 **Tests:** `device/folders-contract-extra-c.test.ts › puts a save back when a pull is cut off after moving it out of its path`, `device/folders-placement.test.ts › counts nothing missing when it finishes taking an old buffer after a crash`.
 
@@ -964,7 +964,7 @@ While a file that a device moved out of its path and has not settled is in a dir
 
 ### `folder-files/write-crash-displaced-unfound-reported`
 
-When a full scan walks the whole folder and does not find a file that a device moved out of its path and has not settled, a device MUST report that file in `flagged` with the flag `kept` and a reason that says the file is no longer in the folder.
+When a full scan walks the whole folder and does not find a file that a device moved out of its path, whose record names a directory in the folder, and has not settled, a device MUST report that file in `flagged` with the flag `kept` and a reason that says the file is no longer in the folder.
 
 **Reason:** the file's directory left the folder or was deleted, so a device cannot put the file back. Where the directory went, the file stays under its `.marfa-kept-<id>.tmp` name.
 
@@ -980,9 +980,31 @@ When a full scan has reported a file as `folder-files/write-crash-displaced-unfo
 
 ### `folder-files/write-crash-displaced-unfound-status`
 
-While a device cannot find in the folder the directory of a file it moved out of its path and has not settled, and no full scan has reported that file as `folder-files/write-crash-displaced-unfound-reported` says, a device MUST list that file in the folder's status as `held` with the flag `kept`.
+While a device cannot find in the folder the directory of a file it moved out of its path, whose record names a directory in the folder, and has not settled, and no full scan has reported that file as `folder-files/write-crash-displaced-unfound-reported` says, a device MUST list that file in the folder's status as `held` with the flag `kept`.
 
 **Tests:** `device/folders-contract-extra-c.test.ts › reports a save it moved out of its path once, after the directory it was in left the folder`.
+
+### `folder-files/write-crash-outside-untouched`
+
+A device MUST NOT change, move or delete a file for a record that names a directory outside the folder.
+
+**Reason:** releases v0.0.86 to v0.0.108 wrote such records while taking a file in from another folder. A record holds a device number and an inode number and no birth time, and another directory at the path it names, such as another volume's, can have both, so no check tells it from the directory the record named, as `folder-files/write-crash-displaced-not-replaced` does in the folder.
+
+**Tests:** `device/folders-outside-records.test.ts › leaves a file a record keeps in a directory outside the folder, and reports it at every scan and pull`, `› lists a file kept %s, and leaves it through folders kept --discard and a binding only where it is outside the folder`, `› puts back or removes nothing, and keeps the record, where another volume at the directory a record outside the folder names %s its reserved name`.
+
+### `folder-files/write-crash-outside-kept`
+
+A device MUST keep each record that names a directory outside the folder until the folder is removed.
+
+**Reason:** the file can be on a volume that is not mounted, and the record is what names it.
+
+**Tests:** `device/folders-outside-records.test.ts › leaves a file a record keeps in a directory outside the folder, and reports it at every scan and pull`, `› keeps reporting a record outside the folder whose directory is gone, where a full scan ends one in the folder`, `› puts back or removes nothing, and keeps the record, where another volume at the directory a record outside the folder names %s its reserved name`.
+
+### `folder-files/write-crash-outside-reported`
+
+While a device keeps a record as `folder-files/write-crash-outside-kept` says, a device MUST report its file in `flagged` with the flag `kept`, its full path and a reason that names the path it came from, at each scan and pull that settles the folder's records.
+
+**Tests:** `device/folders-outside-records.test.ts › leaves a file a record keeps in a directory outside the folder, and reports it at every scan and pull`, `› keeps reporting a record outside the folder whose directory is gone, where a full scan ends one in the folder`.
 
 ### `folder-files/write-no-exchange`
 
@@ -1118,7 +1140,7 @@ When a device replaces or removes a file and cannot tell that no program holds i
 
 ### `folder-files/write-retained-put-back`
 
-When a program writes to a file a device keeps under a name of the form `.marfa-kept-<id>.tmp`, and the path the file came from holds the file the device wrote there, a device MUST move the kept file back to that path at its next scan or pull.
+When a program writes to a file a device keeps under a name of the form `.marfa-kept-<id>.tmp`, whose record names a directory in the folder, and the path the file came from holds the file the device wrote there, a device MUST move the kept file back to that path at its next scan or pull.
 
 **Tests:** `device/folders-open-writer.test.ts › keeps a file it set aside where it cannot tell whether a program writes to it, and puts back what the program wrote`.
 
@@ -1132,13 +1154,13 @@ When a device sends what a program wrote to a file with a `marfa_version` line t
 
 ### `folder-files/write-retained-beside`
 
-If a program writes to a file a device keeps under a name of the form `.marfa-kept-<id>.tmp`, and the path the file came from holds a file other than the one the device wrote, then a device MUST move the kept file to the first free numbered name beside the path, as `folder-files/placement-collision-number` numbers it.
+If a program writes to a file a device keeps under a name of the form `.marfa-kept-<id>.tmp`, whose record names a directory in the folder, and the path the file came from holds a file other than the one the device wrote, then a device MUST move the kept file to the first free numbered name beside the path, as `folder-files/placement-collision-number` numbers it.
 
 **Tests:** `device/folders-open-writer.test.ts › keeps what a program wrote to a file it set aside beside the path, where a person saved over the path meanwhile`.
 
 ### `folder-files/write-retained-discarded`
 
-When a file a device keeps under a name of the form `.marfa-kept-<id>.tmp` is unchanged since the device moved it out and no program holds it open for writing, a device MUST delete it at its next scan or pull.
+When a file a device keeps under a name of the form `.marfa-kept-<id>.tmp`, whose record names a directory in the folder, is unchanged since the device moved it out and no program holds it open for writing, a device MUST delete it at its next scan or pull.
 
 **Reason:** a change to the file's mode, times or extended attributes alone, as a tag in Finder makes, leaves it unchanged.
 
@@ -1146,7 +1168,7 @@ When a file a device keeps under a name of the form `.marfa-kept-<id>.tmp` is un
 
 ### `folder-files/write-retained-unknown-week`
 
-Where a device cannot tell whether a program holds a file it keeps under a name of the form `.marfa-kept-<id>.tmp` open for writing, a device MUST delete the file at its first scan or pull once seven days have passed since it moved the file out with the file unchanged.
+Where a device cannot tell whether a program holds a file it keeps under a name of the form `.marfa-kept-<id>.tmp`, whose record names a directory in the folder, open for writing, a device MUST delete the file at its first scan or pull once seven days have passed since it moved the file out with the file unchanged.
 
 **Reason:** a device that cannot tell would otherwise keep every file it replaces there for ever.
 
@@ -1154,7 +1176,7 @@ Where a device cannot tell whether a program holds a file it keeps under a name 
 
 ### `folder-files/write-retained-reported`
 
-While a device keeps a file under a name of the form `.marfa-kept-<id>.tmp` because a program may still write to it, a device MUST list the file in the folder's status with the flag `kept` and a reason that says why it is kept.
+While a device keeps a file under a name of the form `.marfa-kept-<id>.tmp`, whose record names a directory in the folder, because a program may still write to it, a device MUST list the file in the folder's status with the flag `kept` and a reason that says why it is kept.
 
 **Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`.
 
@@ -1164,15 +1186,23 @@ A device MUST list, in `folders kept` and through a binding, each file a folder 
 
 **Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`, `› keeps a file it set aside while a program holds it open, and deletes it once the program closes it unchanged`, `› lists through a binding a file a folder keeps, and discards it %s as folders kept does`.
 
+### `folder-files/write-retained-outside-undated`
+
+A device MUST list a file kept under a record that names a directory outside the folder with no date it will be deleted.
+
+**Reason:** a device never deletes such a file (`folder-files/write-crash-outside-untouched`).
+
+**Tests:** `device/folders-outside-records.test.ts › lists a file kept %s, and leaves it through folders kept --discard and a binding only where it is outside the folder`.
+
 ### `folder-files/write-retained-discard`
 
-When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST settle each file the folder keeps under a record it can read as `folder-files/write-retained-put-back`, `folder-files/write-retained-beside` and `folder-files/write-retained-discarded` settle it, taking it that no program holds the file open for writing.
+When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST settle each file the folder keeps under a record it can read that names a directory in the folder as `folder-files/write-retained-put-back`, `folder-files/write-retained-beside` and `folder-files/write-retained-discarded` settle it, taking it that no program holds the file open for writing.
 
 **Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`, `› puts back a file it kept that a program wrote to, when the owner discards the files it keeps`, `› lists through a binding a file a folder keeps, and discards it %s as folders kept does`.
 
 ### `folder-files/write-retained-unread-listed`
 
-A device MUST list, in `folders kept` and through a binding, each file a folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, with the reason `Marfa could not read its record`.
+A device MUST list, in `folders kept` and through a binding, each file a folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, with a reason that begins `Marfa could not read its record`.
 
 **Reason:** a device cannot tell whether a program wrote to such a file, so it keeps the file until the owner decides.
 
@@ -1180,7 +1210,7 @@ A device MUST list, in `folders kept` and through a binding, each file a folder 
 
 ### `folder-files/write-retained-unread-discard`
 
-When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST delete each file the folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, where the file holds the bytes the record says were set aside.
+When the owner confirms `folders kept --discard`, or an app discards a folder's kept files through a binding, a device MUST delete each file the folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read whose readable part names no directory outside the folder, where the file holds the bytes the record says were set aside.
 
 **Tests:** `device/folders-open-writer.test.ts › lists a file it keeps under a record it cannot read, and deletes it when the owner discards it`, `› lists through a binding a file kept under a record it cannot read, and discards it only %s as set aside`.
 
