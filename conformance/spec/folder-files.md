@@ -1202,11 +1202,19 @@ If a program writes to a file a folder keeps under a name of the form `.marfa-ke
 
 ### `folder-files/write-retained-discard-left-listed`
 
-If a discard leaves a kept file under a name other than the one it was listed at, as when the device stops or cannot delete the file, then a device MUST list the file in `folders kept` at the name that holds it until the file is put back or deleted.
+If a discard leaves a kept file under a name other than the one it was listed at, as when the device stops or cannot delete the file, then a device MUST list the file in `folders kept` at the name that holds it, including while its directory is not where its record says, until the file is put back or deleted.
 
 **Reason:** the owner needs the file's current name to recover or delete it.
 
-**Tests:** `device/folders-open-writer.test.ts › lists a kept file under the name it is left at where a discard %s, until it is deleted`.
+**Tests:** `device/folders-open-writer.test.ts › lists a kept file under the name it is left at where a discard %s, until it is deleted`, `› lists a kept file under its private name while its directory is replaced, and settles it when the directory is back`.
+
+### `folder-files/write-retained-discard-mark-kept`
+
+While the directory that a kept file's readable record names cannot be verified by the identity the record holds, a device MUST NOT end its record of a stopped discard of that file because the name the discard moved the file to is absent at that directory's path.
+
+**Reason:** another directory at that path, such as one put there while the original is away, does not show that the file is gone.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a kept file under its private name while its directory is replaced, and settles it when the directory is back`.
 
 ## Deletion, purges and missing directories
 

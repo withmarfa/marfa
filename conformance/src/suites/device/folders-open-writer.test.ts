@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   chmodSync,
   closeSync,
+  mkdirSync,
   openSync,
   readdirSync,
+  renameSync,
+  rmdirSync,
   utimesSync,
   writeSync,
 } from "node:fs";
@@ -598,6 +601,87 @@ describe("a file a program holds open for writing", () => {
       expect(after.ok && after.value.kept).toEqual([]);
     },
   );
+
+  it("lists a kept file under its private name while its directory is replaced, and settles it when the directory is back", async () => {
+    const harness = await noteFolder("folder-open-writer-discard-replaced");
+    mkdirSync(join(harness.dir, "Notes"));
+    renameSync(
+      join(harness.dir, "Note.md"),
+      join(harness.dir, "Notes/Note.md"),
+    );
+    await push(harness);
+    program = openSync(join(harness.dir, "Notes/Note.md"), "a");
+    write("first half\n");
+    close();
+    await setAsideUnknown(harness);
+    const inNotes = () =>
+      readdirSync(join(harness.dir, "Notes")).filter((name) =>
+        name.startsWith(".marfa-kept-"),
+      );
+    const [name] = inNotes();
+    expect(name).toBeDefined();
+    const before = read(harness, `Notes/${name!}`);
+    const discarded = await withFault(`discard-unlink-refused=${name!}`, () =>
+      harness.folder.discardKept(),
+    );
+    expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+    if (!discarded.ok) return;
+    expect(discarded.value.discarded).toEqual([]);
+    const [left] = inNotes();
+    expect(inNotes(), "the file is not under one name").toHaveLength(1);
+    expect(left, "the witness: the discard moved the file").not.toBe(name);
+
+    // Another directory takes the name while the original is away.
+    renameSync(join(harness.dir, "Notes"), join(harness.dir, "Notes.away"));
+    mkdirSync(join(harness.dir, "Notes"));
+    const listedAway = (kept: { path: string; reason: string }[]) => {
+      expect(kept, JSON.stringify(kept)).toEqual([
+        expect.objectContaining({
+          path: `Notes/${left!}`,
+          from: "Notes/Note.md",
+        }),
+      ]);
+      expect(kept[0]?.reason).toContain(
+        "the directory its record names is not where it was",
+      );
+    };
+    for (let pass = 0; pass < 2; pass += 1) {
+      const kept = await harness.folder.kept();
+      expect(kept.ok, JSON.stringify(kept)).toBe(true);
+      if (!kept.ok) return;
+      listedAway(kept.value.kept);
+      const scan = await harness.folder.scan();
+      expect(scan.ok, JSON.stringify(scan)).toBe(true);
+    }
+    const bound = await openBindingFolder(harness);
+    try {
+      const kept = await bound.bound.kept();
+      expect(kept.ok, JSON.stringify(kept)).toBe(true);
+      if (!kept.ok) return;
+      listedAway(kept.value);
+    } finally {
+      await bound.device.close();
+    }
+    expect(read(harness, `Notes.away/${left!}`)).toBe(before);
+
+    rmdirSync(join(harness.dir, "Notes"));
+    renameSync(join(harness.dir, "Notes.away"), join(harness.dir, "Notes"));
+    const scan = await withFault("writers-unknown", () =>
+      harness.folder.scan(),
+    );
+    expect(scan.ok, JSON.stringify(scan)).toBe(true);
+    expect(inNotes(), "the file was not put back").toEqual([name]);
+    expect(read(harness, `Notes/${name!}`)).toBe(before);
+    const kept = await harness.folder.kept();
+    expect(kept.ok, JSON.stringify(kept)).toBe(true);
+    if (!kept.ok) return;
+    expect(kept.value.kept).toEqual([
+      expect.objectContaining({
+        path: `Notes/${name!}`,
+        from: "Notes/Note.md",
+      }),
+    ]);
+  });
 
   it.each(["unchanged", "written to"] as const)(
     "lists through a binding a file a folder keeps, and discards it %s as folders kept does",
