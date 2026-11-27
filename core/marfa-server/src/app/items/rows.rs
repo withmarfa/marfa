@@ -960,18 +960,24 @@ impl<'tx> Holders<'tx> {
 
 fn holders_sql(reach: &Reach, limit: i64) -> Sql {
     // CROSS JOIN keeps SQLite from walking `items` in id order instead of seeking the hash.
+    // CASE reads properties only after state and reach: AND does not fix that order.
+    let types = reach.types().collect::<Vec<_>>();
     let mut sql = Sql::new(
         "SELECT i.seq, i.id, i.type FROM blob_references r \
          CROSS JOIN items i ON i.seq = r.seq \
          WHERE r.hash = ?1 AND r.kind = 'item' AND r.item_type IN (",
     );
-    sql.list(&reach.types().collect::<Vec<_>>());
-    sql.push(
-        ") AND i.state IN ('active', 'archived') \
-         AND i.properties ->> '$.blob_ref' = ?1 AND ",
-    );
-    reach.clause(&mut sql, "i", true);
-    sql.push(" ORDER BY i.id LIMIT ");
+    // A longer list is one JSON array, under SQLite's variable limit.
+    if types.len() > 4_000 {
+        sql.push("SELECT value FROM json_each(");
+        sql.bind(serde_json::json!(types).to_string());
+        sql.push(")");
+    } else {
+        sql.list(&types);
+    }
+    sql.push(") AND CASE WHEN i.state IN ('active', 'archived')");
+    reach.source_clause(&mut sql, "i");
+    sql.push(" THEN i.properties ->> '$.blob_ref' = ?1 ELSE 0 END ORDER BY i.id LIMIT ");
     sql.bind(limit);
     sql
 }
@@ -1261,6 +1267,139 @@ mod tests {
         let held = Holders::new(&tx, &files, 21).unwrap().of(&hash).unwrap();
         assert_eq!(held.len(), 21);
         assert!(held.windows(2).all(|pair| pair[0].id < pair[1].id));
+        assert!(
+            plan(&tx, &files).contains("COVERING INDEX blob_references_holders"),
+            "{}",
+            plan(&tx, &files)
+        );
+    }
+
+    #[test]
+    fn an_unlistable_holder_does_not_change_the_answer() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate::make_all(&conn).unwrap();
+        conn.pragma_update(None, "foreign_keys", false).unwrap();
+        let tx = conn.transaction().unwrap();
+        let hash = format!("sha256:{}", "b".repeat(64));
+        let valid = format!("{{\"blob_ref\":\"{hash}\",\"mime_type\":\"text/plain\"}}");
+        let refused = tx.execute(
+            "INSERT INTO items (seq, id, type, state, tier, source, version, schema_version, \
+             occurred_at, created_at, updated_at, last_activity_at, properties) \
+             VALUES (9, 'damaged', 'core.file', 'active', 'library', 'other', 1, 0, '', '', '', \
+             '', ?1)",
+            [&b"{bad"[..]],
+        );
+        assert!(
+            refused.is_err(),
+            "items_event_start and items_event_always parse properties on write"
+        );
+        let reference = |seq| {
+            tx.execute(
+                "INSERT INTO blob_references (hash, kind, seq, lends, item_type, edge_type) \
+                 VALUES (?1, 'item', ?2, 1, 'core.file', '')",
+                params![hash, seq],
+            )
+            .unwrap();
+        };
+        for (seq, id, state, source) in [
+            (1, "good", "active", "owner"),
+            (2, "foreign", "active", "other"),
+            (3, "binned", "trashed", "owner"),
+        ] {
+            tx.execute(
+                "INSERT INTO items (seq, id, type, state, tier, source, version, schema_version, \
+                 occurred_at, created_at, updated_at, last_activity_at, properties) \
+                 VALUES (?1, ?2, 'core.file', ?3, 'library', ?4, 1, 0, '', '', '', '', jsonb(?5))",
+                params![seq, id, state, source, valid],
+            )
+            .unwrap();
+            reference(seq);
+        }
+
+        let listed = |reach: Reach| Holders::new(&tx, &reach, 21).unwrap().of(&hash);
+        let owned = Reach::testing(&[], &["core.file"], &["owner"]);
+        let found = listed(owned.clone()).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, "good");
+        let connector = Reach::testing_own(&["core.file"], "owner");
+        let found = listed(connector.clone()).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, "good");
+        let ids = |reach: Reach| {
+            listed(reach)
+                .unwrap()
+                .into_iter()
+                .map(|row| row.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(Reach::testing(&["core.file"], &[], &[])),
+            vec!["foreign".to_string(), "good".to_string()]
+        );
+        assert_eq!(
+            ids(Reach::testing_own(&["core.file"], "other")),
+            vec!["foreign".to_string()]
+        );
+        for reach in [
+            &owned,
+            &connector,
+            &Reach::testing(&["core.file"], &[], &[]),
+        ] {
+            let plan = plan(&tx, reach);
+            assert!(
+                plan.contains("COVERING INDEX blob_references_holders"),
+                "{plan}"
+            );
+        }
+        let text = holders_sql(&owned, 21).text;
+        let case_at = text.find("CASE WHEN").expect("case");
+        let read_at = text.find("properties ->>").expect("read");
+        assert!(case_at < read_at, "{text}");
+    }
+
+    #[test]
+    fn a_reach_past_half_the_variable_limit_prepares() {
+        let types: Vec<String> = (0..20_000).map(|n| format!("type.{n}")).collect();
+        let refs: Vec<&str> = types.iter().map(String::as_str).collect();
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate::make_all(&conn).unwrap();
+        let tx = conn.transaction().unwrap();
+        for reach in [
+            Reach::testing(&refs, &[], &[]),
+            Reach::testing(&[], &refs, &["one-source"]),
+            Reach::testing_own(&refs, "connector"),
+        ] {
+            let sql = holders_sql(&reach, 21);
+            assert!(
+                sql.values.len() < 16,
+                "{} parameters for {} types",
+                sql.values.len(),
+                types.len()
+            );
+            Holders::new(&tx, &reach, 21).unwrap();
+            let plan = plan(&tx, &reach);
+            assert!(
+                plan.contains("COVERING INDEX blob_references_holders"),
+                "{plan}"
+            );
+        }
+    }
+
+    fn plan(tx: &Transaction<'_>, reach: &Reach) -> String {
+        let sql = holders_sql(reach, 21);
+        let mut statement = tx
+            .prepare(&format!("EXPLAIN QUERY PLAN {}", sql.text))
+            .unwrap();
+        statement.raw_bind_parameter(1, "sha256:aa").unwrap();
+        for (at, value) in sql.values.iter().enumerate() {
+            statement.raw_bind_parameter(at + 2, value).unwrap();
+        }
+        let mut rows = statement.raw_query();
+        let mut lines = Vec::new();
+        while let Some(row) = rows.next().unwrap() {
+            lines.push(row.get::<_, String>(3).unwrap());
+        }
+        lines.join("\n")
     }
 
     #[test]

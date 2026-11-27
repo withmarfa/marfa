@@ -178,6 +178,89 @@ impl Reach {
         sql.push(")");
     }
 
+    /// Source checks once `types` is already constrained. A mixed reach still names each list.
+    pub(crate) fn source_clause(&self, sql: &mut Sql, alias: &str) {
+        if self.own_alone() {
+            sql.push(&format!(" AND +{alias}.source = "));
+            sql.bind(self.own_source.clone());
+            return;
+        }
+        let open = !self.open.is_empty();
+        let held = !self.held.is_empty();
+        let own = !self.own.is_empty();
+        if held && !open && !own {
+            sql.push(&format!(
+                " AND +{alias}.source IN (SELECT value FROM json_each("
+            ));
+            sql.bind(serde_json::json!(self.sources).to_string());
+            sql.push("))");
+            return;
+        }
+        if open && !held && !own {
+            return;
+        }
+        if !open && !held && !own {
+            sql.push(" AND 0");
+            return;
+        }
+        sql.push(" AND ");
+        self.json_clause(sql, alias, true);
+    }
+
+    /// Column checks for this reach. Each type or source list is one JSON array.
+    pub(crate) fn json_clause(&self, sql: &mut Sql, alias: &str, unindexed: bool) {
+        let mark = if unindexed { "+" } else { "" };
+        let type_in = |sql: &mut Sql, types: &[String]| {
+            sql.push(&format!(
+                "{mark}{alias}.type IN (SELECT value FROM json_each("
+            ));
+            sql.bind(serde_json::json!(types).to_string());
+            sql.push("))");
+        };
+        if self.own_alone() {
+            sql.push("(");
+            type_in(sql, &self.own);
+            sql.push(&format!(" AND {mark}{alias}.source = "));
+            sql.bind(self.own_source.clone());
+            sql.push(")");
+            return;
+        }
+        sql.push("(");
+        let mut any = false;
+        if !self.open.is_empty() {
+            type_in(sql, &self.open);
+            any = true;
+        }
+        if !self.held.is_empty() {
+            if any {
+                sql.push(" OR ");
+            }
+            sql.push("(");
+            type_in(sql, &self.held);
+            sql.push(&format!(
+                " AND +{alias}.source IN (SELECT value FROM json_each("
+            ));
+            sql.bind(serde_json::json!(self.sources).to_string());
+            sql.push(")))");
+            any = true;
+        }
+        if !self.own.is_empty() {
+            if any {
+                sql.push(" OR ");
+            }
+            sql.push("(");
+            type_in(sql, &self.own);
+            sql.push(&format!(" AND +{alias}.source = "));
+            sql.bind(self.own_source.clone());
+            sql.push(")");
+            any = true;
+        }
+        if !any {
+            sql.push("0");
+        }
+        sql.push(")");
+    }
+
     #[cfg(test)]
     pub fn testing(open: &[&str], held: &[&str], sources: &[&str]) -> Reach {
         let owned = |list: &[&str]| list.iter().map(ToString::to_string).collect();
