@@ -452,11 +452,11 @@ The server MUST ship every type, field and status word with a `description` with
 
 ## Guarding a write with a revision
 
-A type's `revision` is an opaque string that names what is stored for the type: its stored definition and owner icon, the stored definitions and owner icons of the ancestors it inherits from, and its provenance. It is not a digest of a presented form, so a change the presented form folds away still changes it. A writer that read a type sends the `revision` back to refuse its write if the type has changed since.
+A type's `revision` is an opaque string that names what is stored for the type: its stored definition and owner icon, the stored definitions and owner icons of the ancestors it inherits from, and its provenance. A writer that read a type sends the `revision` back to refuse its write if the type has changed since.
 
 ### `types/revision-read`
 
-When a credential reads a type whose parent chain resolves through `GET /types/{id}` or `GET /types`, or a write of a type answers it, the server MUST answer the type with a `revision`.
+Where a type's parent chain resolves, when a credential reads the type through `GET /types/{id}` or `GET /types`, or a write of the type answers it, the server MUST answer the type with a `revision`.
 
 **Tests:** `compliance/type-revision.test.ts › is answered by every read of a type, and equals across them`.
 
@@ -478,7 +478,7 @@ When the stored definition of a type, its owner's icon, its provenance, or the s
 
 ### `types/revision-put-stale`
 
-If `PUT /types/{id}` names a `revision` that is not the type's current one, then the server MUST answer `409 version_conflict` with the current `revision` in `error.details.revision` where the type reads, whether or not `force` is `true`.
+If `PUT /types/{id}` names a `revision` that is not the type's current one, then the server MUST answer `409 version_conflict` with the type's current `revision` in `error.details.revision` where it has one, whether or not `force` is `true`.
 
 **Reason:** an app that reads a type, changes one field and sends it back would otherwise revert a change another writer made in between. The `version` of a type is its author's own number and is never compared.
 
@@ -506,7 +506,7 @@ When `PUT /types/{id}` names the type's current `revision`, the server MUST judg
 
 ### `types/revision-delete-stale`
 
-If `DELETE /types/{id}` names a `revision` query parameter that is not the type's current one, then the server MUST answer `409 version_conflict` with the current `revision` in `error.details.revision` where the type reads and keep the type, whether or not `force` is `true`.
+If `DELETE /types/{id}` names a `revision` query parameter that is not the type's current one, then the server MUST answer `409 version_conflict` with the type's current `revision` in `error.details.revision` where it has one, and keep the type, whether or not `force` is `true`.
 
 **Tests:** `compliance/type-revision.test.ts › makes DELETE /types/{id} refuse a stale revision and keep the type, and delete on the current one`.
 
@@ -754,7 +754,7 @@ Where a type names `enum_values` on a field whose `type` is neither `enum` nor a
 
 ### `types/unknown-key`
 
-If `POST /types`, or `PUT /types/{id}` other than in a top-level `revision`, names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `label`, `description`, `required`, `enum_values`, `status_values`, `items_type`, `items_fields`, `format`, `searchable`, `max_length`, `max_items`, `minimum` and `maximum`), in a member of `items_fields` (which takes only `type`, `label`, `description`, `required`, `enum_values`, `format`, `max_length`, `minimum` and `maximum`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
+If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level (where `PUT /types/{id}` also takes the `provenance`, `ancestor_guidance` and `revision` a read of the type answers), in a field definition (which takes only `type`, `label`, `description`, `required`, `enum_values`, `status_values`, `items_type`, `items_fields`, `format`, `searchable`, `max_length`, `max_items`, `minimum` and `maximum`), in a member of `items_fields` (which takes only `type`, `label`, `description`, `required`, `enum_values`, `format`, `max_length`, `minimum` and `maximum`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
 
 **Reason:** a key the server ignored would let a misspelled rule, or an `exclusiveMinimum` on an `integer` field, register as though it held, and the type would then accept what its author meant it to refuse.
 
