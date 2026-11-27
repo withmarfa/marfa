@@ -127,6 +127,11 @@ pub const MIGRATIONS: &[Migration] = &[
              WHERE name = 'state_writer_kind')",
         ),
     },
+    Migration {
+        version: 18,
+        sql: include_str!("migrations/0018_blob_holders.sql"),
+        done: None,
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

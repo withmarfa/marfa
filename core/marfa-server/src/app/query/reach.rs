@@ -90,6 +90,15 @@ impl Reach {
         Ok(reach)
     }
 
+    /// Every type within reach, whatever source it is held to.
+    pub fn types(&self) -> impl Iterator<Item = &str> {
+        self.open
+            .iter()
+            .chain(&self.held)
+            .chain(&self.own)
+            .map(String::as_str)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.open.is_empty() && self.held.is_empty() && self.own.is_empty()
     }

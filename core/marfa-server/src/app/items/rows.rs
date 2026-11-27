@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use super::{Item, Keys, Mark, Snapshot, Writer};
 use crate::app::blobs::references;
+use crate::app::query::{Reach, Sql};
 use crate::app::refusal::Result;
 
 const ITEM: &str = "SELECT seq, id, type, state, tier, source, source_id, json(properties), \
@@ -861,30 +862,34 @@ pub(super) fn active_tags(tx: &Transaction<'_>) -> Result<Vec<(String, String, S
 pub(super) struct Titled {
     pub id: String,
     pub type_id: String,
-    pub source: String,
     pub properties: String,
     pub has_blob: bool,
 }
 
+/// The first `limit` active or archived items within `reach` whose title folds to `key`, by id.
 pub(super) fn titled(
     tx: &Transaction<'_>,
     key: &str,
-    after: &str,
+    reach: &Reach,
     limit: i64,
 ) -> Result<Vec<Titled>> {
-    let mut statement = tx.prepare_cached(
-        "SELECT id, type, source, json(properties), \
-         properties ->> '$.blob_ref' IS NOT NULL AND json_type(properties, '$.blob_ref') = 'text' \
-         FROM items WHERE title_key = ?1 AND id > ?2 AND state IN ('active', 'archived') \
-         ORDER BY id LIMIT ?3",
-    )?;
-    let found = statement.query_map(params![key, after, limit], |row| {
+    let mut sql = Sql::new(
+        "SELECT i.id, i.type, json(i.properties), \
+         i.properties ->> '$.blob_ref' IS NOT NULL AND json_type(i.properties, '$.blob_ref') = 'text' \
+         FROM items i WHERE i.title_key = ",
+    );
+    sql.bind(key.to_string());
+    sql.push(" AND i.state IN ('active', 'archived') AND ");
+    reach.clause(&mut sql, "i", true);
+    sql.push(" ORDER BY i.id LIMIT ");
+    sql.bind(limit);
+    let mut statement = tx.prepare_cached(&sql.text)?;
+    let found = statement.query_map(params_from_iter(&sql.values), |row| {
         Ok(Titled {
             id: row.get(0)?,
             type_id: row.get(1)?,
-            source: row.get(2)?,
-            properties: row.get(3)?,
-            has_blob: row.get(4)?,
+            properties: row.get(2)?,
+            has_blob: row.get(3)?,
         })
     })?;
     Ok(found.collect::<rusqlite::Result<_>>()?)
@@ -894,36 +899,46 @@ pub(super) struct Holder {
     pub seq: i64,
     pub id: String,
     pub type_id: String,
-    pub source: String,
 }
 
-/// Each active or archived item whose `blob_ref` is `hash`, by id, until `keep` stops.
+/// The first `limit` active or archived items within `reach` whose `blob_ref` is `hash`, by id.
 pub(super) fn holders_of(
     tx: &Transaction<'_>,
     hash: &str,
-    mut keep: impl FnMut(Holder) -> Result<bool>,
-) -> Result<()> {
-    // CROSS JOIN keeps SQLite from walking `items` in id order instead of seeking the hash.
-    let mut statement = tx.prepare_cached(
-        "SELECT i.seq, i.id, i.type, i.source FROM blob_references r \
-         CROSS JOIN items i ON i.seq = r.seq \
-         WHERE r.hash = ?1 AND r.kind = 'item' AND i.state IN ('active', 'archived') \
-         AND i.properties ->> '$.blob_ref' = ?1 \
-         ORDER BY i.id",
-    )?;
-    let mut found = statement.query([hash])?;
-    while let Some(row) = found.next()? {
-        let holder = Holder {
+    reach: &Reach,
+    limit: i64,
+) -> Result<Vec<Holder>> {
+    let sql = holders_sql(hash, reach, limit);
+    let mut statement = tx.prepare_cached(&sql.text)?;
+    let found = statement.query_map(params_from_iter(&sql.values), |row| {
+        Ok(Holder {
             seq: row.get(0)?,
             id: row.get(1)?,
             type_id: row.get(2)?,
-            source: row.get(3)?,
-        };
-        if !keep(holder)? {
-            break;
-        }
-    }
-    Ok(())
+        })
+    })?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+fn holders_sql(hash: &str, reach: &Reach, limit: i64) -> Sql {
+    // CROSS JOIN keeps SQLite from walking `items` in id order instead of seeking the hash.
+    let mut sql = Sql::new(
+        "SELECT i.seq, i.id, i.type FROM blob_references r \
+         CROSS JOIN items i ON i.seq = r.seq WHERE r.hash = ",
+    );
+    sql.bind(hash.to_string());
+    sql.push(" AND r.kind = 'item' AND r.item_type IN (");
+    sql.list(&reach.types().collect::<Vec<_>>());
+    sql.push(
+        ") AND i.state IN ('active', 'archived') \
+         AND i.properties ->> '$.blob_ref' = ",
+    );
+    sql.bind(hash.to_string());
+    sql.push(" AND ");
+    reach.clause(&mut sql, "i", true);
+    sql.push(" ORDER BY i.id LIMIT ");
+    sql.bind(limit);
+    sql
 }
 
 pub(super) fn properties_of(tx: &Transaction<'_>, seq: i64) -> Result<String> {
@@ -1179,6 +1194,48 @@ mod tests {
     use rusqlite::{Connection, StatementStatus};
 
     use super::*;
+
+    #[test]
+    fn a_holder_outside_the_reach_costs_the_lookup_nothing() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate::make_all(&conn).unwrap();
+        conn.pragma_update(None, "foreign_keys", false).unwrap();
+        let tx = conn.transaction().unwrap();
+        let hash = format!("sha256:{}", "a".repeat(64));
+        let properties = format!("{{\"blob_ref\":\"{hash}\",\"mime_type\":\"text/plain\"}}");
+        for seq in 1..=5_000i64 {
+            tx.execute(
+                "INSERT INTO items (seq, id, type, state, tier, source, version, schema_version, \
+                 occurred_at, created_at, updated_at, last_activity_at, properties) \
+                 VALUES (?1, printf('01a1bdba-8640-72ba-b7d6-%012x', ?1), 'core.file', 'active', \
+                 'library', 'test', 1, 0, '', '', '', '', jsonb(?2))",
+                params![seq, properties],
+            )
+            .unwrap();
+            tx.execute(
+                "INSERT INTO blob_references (hash, kind, seq, lends, item_type, edge_type) \
+                 VALUES (?1, 'item', ?2, 1, 'core.file', '')",
+                params![hash, seq],
+            )
+            .unwrap();
+        }
+        let notes = Reach::testing(&["core.note"], &[], &[]);
+        assert!(holders_of(&tx, &hash, &notes, 21).unwrap().is_empty());
+        let sql = holders_sql(&hash, &notes, 21);
+        let steps = tx
+            .prepare_cached(&sql.text)
+            .unwrap()
+            .get_status(StatementStatus::VmStep);
+        assert!(
+            steps < 100,
+            "{steps} steps for a hash 5,000 unreachable items hold"
+        );
+
+        let files = Reach::testing(&["core.file"], &[], &[]);
+        let held = holders_of(&tx, &hash, &files, 21).unwrap();
+        assert_eq!(held.len(), 21);
+        assert!(held.windows(2).all(|pair| pair[0].id < pair[1].id));
+    }
 
     #[test]
     fn a_snapshot_lookup_costs_the_ids_asked_for_and_not_the_history_held() {
