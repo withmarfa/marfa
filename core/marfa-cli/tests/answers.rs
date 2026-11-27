@@ -99,7 +99,17 @@ fn an_upload_refused_before_its_body_is_read_reports_the_refusal() {
     let file = big_file(&home);
     let body = r#"{"error":{"code":"insufficient_storage","message":"The volume the blobs are kept on has no room for the upload.","details":{"reserve_bytes":134217728,"available_bytes":1515520}}}"#;
     let url = answers_from_the_head(Some(refusal("507 Insufficient Storage", body)));
-    let ran = run(&home, &url, &["items", "add", file.to_str().unwrap()]);
+    let ran = run(
+        &home,
+        &url,
+        &[
+            "items",
+            "add",
+            "--if-duplicate",
+            "add",
+            file.to_str().unwrap(),
+        ],
+    );
     assert_eq!(ran.code, 3, "{}", ran.stderr);
     assert!(
         ran.stderr.contains("507 insufficient_storage") && ran.stderr.contains("available_bytes"),
@@ -112,7 +122,14 @@ fn an_upload_refused_before_its_body_is_read_reports_the_refusal() {
     let ran = run(
         &home,
         &url,
-        &["--json", "items", "add", file.to_str().unwrap()],
+        &[
+            "--json",
+            "items",
+            "add",
+            "--if-duplicate",
+            "add",
+            file.to_str().unwrap(),
+        ],
     );
     let envelope: serde_json::Value =
         serde_json::from_str(ran.stderr.lines().last().unwrap()).unwrap();
@@ -127,7 +144,17 @@ fn an_upload_refused_before_its_body_is_read_reports_the_refusal() {
     let unauthorized =
         r#"{"error":{"code":"unauthorized","message":"A valid credential is required."}}"#;
     let url = answers_from_the_head(Some(refusal("401 Unauthorized", unauthorized)));
-    let ran = run(&home, &url, &["items", "add", file.to_str().unwrap()]);
+    let ran = run(
+        &home,
+        &url,
+        &[
+            "items",
+            "add",
+            "--if-duplicate",
+            "add",
+            file.to_str().unwrap(),
+        ],
+    );
     assert_eq!(ran.code, 5, "{}", ran.stderr);
     assert!(ran.stderr.contains("401 unauthorized"), "{}", ran.stderr);
 }
@@ -137,7 +164,17 @@ fn an_upload_cut_off_with_no_answer_still_says_the_network_failed() {
     let home = scratch("cut-off");
     let file = big_file(&home);
     let url = answers_from_the_head(None);
-    let ran = run(&home, &url, &["items", "add", file.to_str().unwrap()]);
+    let ran = run(
+        &home,
+        &url,
+        &[
+            "items",
+            "add",
+            "--if-duplicate",
+            "add",
+            file.to_str().unwrap(),
+        ],
+    );
     assert_eq!(ran.code, 3, "{}", ran.stderr);
     assert!(ran.stderr.contains("request to"), "{}", ran.stderr);
     assert!(ran.stderr.contains("failed"), "{}", ran.stderr);

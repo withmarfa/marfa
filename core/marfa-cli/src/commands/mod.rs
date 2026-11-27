@@ -7,6 +7,7 @@ pub mod cloud;
 pub mod config;
 pub mod connectors;
 pub mod docs;
+pub mod duplicate;
 pub mod edge_types;
 pub mod edges;
 pub mod events;

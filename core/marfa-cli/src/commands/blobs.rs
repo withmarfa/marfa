@@ -148,6 +148,13 @@ impl<'a, R: io::Read> HashingReader<'a, R> {
     }
 }
 
+/// The `sha256:<hex>` of what `reader` still has to give.
+pub(super) fn hash_read(reader: &mut impl io::Read) -> io::Result<String> {
+    let mut hashing = HashingReader::new(reader);
+    io::copy(&mut hashing, &mut io::sink())?;
+    Ok(hashing.digest())
+}
+
 impl<R: io::Read> io::Read for HashingReader<'_, R> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         let read = self.inner.read(buffer)?;

@@ -110,3 +110,34 @@ pub fn run_holding(
         stderr: read_err.map_or(piped_err, |read| read.join().unwrap()),
     }
 }
+
+/// Runs `command` with standard input and standard error on one terminal each
+/// and standard output a pipe, as at a person's keyboard, and types `typed`
+/// once it has started. Standard error is what the person saw.
+pub fn run_typed(command: &mut Command, typed: &str, lock: &std::sync::Mutex<()>) -> Ran {
+    use std::io::Write as _;
+    let (mut keyboard, keys) = terminal();
+    let (screen, shown) = terminal();
+    command
+        .stdin(keys.try_clone().unwrap())
+        .stdout(Stdio::piped())
+        .stderr(shown.try_clone().unwrap());
+    let mut child = {
+        let _held = lock.lock().unwrap();
+        command.spawn().unwrap()
+    };
+    command.stdin(Stdio::null()).stderr(Stdio::null());
+    drop((keys, shown));
+    let read_screen = std::thread::spawn(move || drain(screen));
+    keyboard.write_all(typed.as_bytes()).unwrap();
+    let mut piped = child.stdout.take().unwrap();
+    let mut stdout = Vec::new();
+    piped.read_to_end(&mut stdout).unwrap();
+    let status = child.wait().unwrap();
+    drop(keyboard);
+    Ran {
+        code: status.code().unwrap(),
+        stdout,
+        stderr: read_screen.join().unwrap(),
+    }
+}
