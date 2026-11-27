@@ -624,11 +624,14 @@ pub(crate) fn clear_displaced(conn: &Connection, id: &str) -> Result<(), CoreErr
     crate::store::meta_delete(conn, &format!("{DISPLACED}{id}"))
 }
 
+/// A displaced row that does not read: its id and its value.
+pub(crate) type UnreadDisplaced = (String, String);
+
 /// Every displacement not yet settled. A row that does not read is
 /// answered as its id and its value, so it is reported, not lost.
 pub(crate) fn displaced(
     conn: &Connection,
-) -> Result<Vec<Result<Displaced, (String, String)>>, CoreError> {
+) -> Result<Vec<Result<Displaced, UnreadDisplaced>>, CoreError> {
     Ok(under(conn, DISPLACED)?
         .into_iter()
         .map(|(id, value)| serde_json::from_str(&value).map_err(|_| (id, value)))
@@ -742,10 +745,12 @@ impl Unread {
 }
 
 /// Every file kept for a pass to settle.
-pub(crate) fn retained(conn: &Connection) -> Result<Vec<Result<Retained, Unread>>, CoreError> {
+pub(crate) fn retained(conn: &Connection) -> Result<Vec<Result<Retained, Box<Unread>>>, CoreError> {
     Ok(under(conn, RETAINED)?
         .into_iter()
-        .map(|(id, value)| serde_json::from_str(&value).map_err(|_| Unread::of(id, &value)))
+        .map(|(id, value)| {
+            serde_json::from_str(&value).map_err(|_| Box::new(Unread::of(id, &value)))
+        })
         .collect())
 }
 
