@@ -376,6 +376,80 @@ describe("a record that names a directory outside the folder", () => {
     },
   );
 
+  it("holds a write in the folder whose record names a directory outside it, and never trashes its item past the grace", async () => {
+    const harness = await noteFolder("outside-records-blocked");
+    const item = "01a00000-0000-7000-8000-0000000000e1";
+    const note = join(harness.dir, "Note.md");
+    const source = join(tempFolder("marfa-outside-"), "Source");
+    mkdirSync(source);
+    const id = newId();
+    const kept = join(source, reserved(id));
+    const pair = ([device, inode]: Identity) => `[${device},${inode}]`;
+    const [device, inode] = identity(note);
+    const bytes = readFileSync(note);
+    renameSync(note, kept);
+    // The pull's write bound before its bytes landed, and its record names
+    // `Note.md` in the folder with its reserved name outside it.
+    const value =
+      `{"dir":"","dir_at":${pair(identity(harness.dir))},` +
+      `"aside":${JSON.stringify(source)},"aside_at":${pair(identity(source))},` +
+      `"displacement":{"id":"${id}","kind":"withdraw","target":"Note.md",` +
+      `"kept":"${reserved(id)}",` +
+      `"read":{"device":${device},"inode":${inode},"hash":"0000000000000000"}}}`;
+    const db = new DatabaseSync(harness.folder.store);
+    try {
+      db.prepare(
+        `UPDATE folder_files SET writes = json_set(writes, '$.landing', json('{"before":null}')) WHERE path = 'Note.md'`,
+      ).run();
+      db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run(
+        `folder_displaced:${id}`,
+        value,
+      );
+    } finally {
+      db.close();
+    }
+
+    const flagged: FlaggedFile[][] = [];
+    for (let pass = 0; pass < 3; pass += 1) {
+      // Past the grace a missing file is given before its delete is sent.
+      if (pass === 1)
+        await new Promise((resolve) => setTimeout(resolve, 6_000));
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(pushed.value.scan.trashed).toEqual([]);
+      flagged.push(pushed.value.scan.flagged);
+    }
+    expect(
+      harness.server.requests.filter(
+        (request) =>
+          request.method === "DELETE" && request.pathname === `/items/${item}`,
+      ),
+      "the item's delete was sent",
+    ).toEqual([]);
+    for (const pass of flagged)
+      expect(
+        pass.filter(
+          (file) => file.path === "Note.md" && file.flag === "waiting",
+        ),
+        JSON.stringify(pass),
+      ).toHaveLength(1);
+    const status = await harness.folder.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    if (!status.ok) return;
+    expect(status.value.files).toContainEqual(
+      expect.objectContaining({
+        path: "Note.md",
+        item_id: item,
+        status: "held",
+        flag: "waiting",
+      }),
+    );
+    expect(existsSync(note), "a pass wrote the held path").toBe(false);
+    expect(readFileSync(kept)).toEqual(bytes);
+    expect(records(harness, "displaced")).toBe(1);
+  });
+
   describe("another volume at the directory a record names", ON_MACOS, () => {
     function image(scratch: string, name: string): string {
       const path = join(scratch, `${name}.sparseimage`);

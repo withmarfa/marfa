@@ -1008,6 +1008,20 @@ While a device keeps a record as `folder-files/write-crash-outside-kept` says, a
 
 **Tests:** `device/folders-outside-records.test.ts › leaves a file a record keeps in a directory outside the folder, and reports it at every scan and pull`, `› keeps reporting a record outside the folder whose directory is gone, where a full scan ends one in the folder`, `› lists a file kept %s, and leaves it through folders kept --discard and a binding only where its record names a directory outside the folder`.
 
+### `folder-files/write-crash-outside-target-held`
+
+While a write in the folder waits on a record that names a directory outside the folder, a device MUST NOT journal the write's path as missing, trash its item or send its delete.
+
+**Reason:** such a record never settles (`folder-files/write-crash-outside-kept`), so its write's file can stay absent until the folder is removed, and an absence that never ends is no proof the person deleted the file.
+
+**Tests:** `device/folders-outside-records.test.ts › holds a write in the folder whose record names a directory outside it, and never trashes its item past the grace`.
+
+### `folder-files/write-crash-outside-target-flagged`
+
+While a device holds a path as `folder-files/write-crash-outside-target-held` says, a device MUST report the path in `flagged` with the flag `waiting` at each scan.
+
+**Tests:** `device/folders-outside-records.test.ts › holds a write in the folder whose record names a directory outside it, and never trashes its item past the grace`.
+
 ### `folder-files/write-no-exchange`
 
 Where a volume cannot exchange two names in one step, if a file appears at a file's path while a device replaces that file, then a device MUST leave the file that appeared and count the item `unwritten`.
