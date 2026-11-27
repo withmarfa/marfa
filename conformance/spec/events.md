@@ -1208,7 +1208,15 @@ When `PATCH /webhooks/{id}` names no `version`, the server MUST apply the change
 
 ### `events/webhook-version-invalid`
 
-If `PATCH /webhooks/{id}` names a `version` that is not a whole number of 1 or more, then the server MUST answer `400 validation_error`.
+If `PATCH /webhooks/{id}` names a `version` that is not a whole number from 1 to 9007199254740991, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/webhook-delivery.test.ts › changes a subscription whose version the change names, and refuses a stale version with 409 version_conflict, changing nothing`.
+
+### `events/webhook-version-whole`
+
+When `PATCH /webhooks/{id}` names a `version` written as a whole number with a fraction of zero, such as `1.0`, the server MUST read it as that whole number.
+
+**Reason:** items and edges read a version this way, and an app's JSON writer may emit a whole number with a fraction.
 
 **Tests:** `compliance/webhook-delivery.test.ts › changes a subscription whose version the change names, and refuses a stale version with 409 version_conflict, changing nothing`.
 

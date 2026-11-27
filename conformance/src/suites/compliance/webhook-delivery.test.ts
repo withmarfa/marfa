@@ -1480,6 +1480,7 @@ describe("outbound webhook delivery", () => {
         expect((await read()).version).toBe(version);
       }
 
+      const before = (await read()).updated_at;
       const unchanged = await client.updateWebhook(sub.id, {
         url: hook.hookUrl("versioned-elsewhere"),
         events: ["item.created", "item.trashed"],
@@ -1489,15 +1490,23 @@ describe("outbound webhook delivery", () => {
       expect(unchanged.ok).toBe(true);
       expect(unchanged.data.version).toBe(6);
       expect((await read()).version).toBe(6);
+      expect(unchanged.data.updated_at).toBe(before);
+      expect((await read()).updated_at).toBe(before);
+
+      const together = await client.updateWebhook(sub.id, {
+        events: ["item.created"],
+        active: true,
+      });
+      expect(together.ok, JSON.stringify(together.error)).toBe(true);
+      expect(together.data.version).toBe(7);
+      expect((await read()).version).toBe(7);
     } finally {
       await hook.close();
     }
   });
 
   it("changes a subscription whose version the change names, and refuses a stale version with 409 version_conflict, changing nothing", async () => {
-    const hook = await startScriptedReceiver((_, n) => ({
-      status: n === 1 ? 500 : 200,
-    }));
+    const hook = await startScriptedReceiver(() => ({ status: 500 }));
     try {
       const sub = await subscribe(hook, "raced");
       await makeNote("raced");
@@ -1547,11 +1556,22 @@ describe("outbound webhook delivery", () => {
       expect(current.ok, JSON.stringify(current.error)).toBe(true);
       expect(current.data.version).toBe(seen + 2);
 
+      const written = await client.rawRequest<{ version: number }>(
+        `/webhooks/${sub.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: `{"active":false,"version":${seen + 2}.0}`,
+        },
+      );
+      expect(written.status, JSON.stringify(written.error)).toBe(200);
+      expect(written.data.version).toBe(seen + 2);
+
       const none = await client.updateWebhook(sub.id, { active: true });
       expect(none.ok).toBe(true);
       expect(none.data.version).toBe(seen + 3);
 
-      for (const version of [0, -1, 1.5, "2", null]) {
+      for (const version of [0, -1, 1.5, 2 ** 53, 1e300, "2", null]) {
         const refused = await client.rawRequest(`/webhooks/${sub.id}`, {
           method: "PATCH",
           body: { active: true, version },
