@@ -1,6 +1,3 @@
-//! `marfa metrics` as a process: it prints what the server answers, memory,
-//! CPU, database and blob storage figures included, and sends the key it was given.
-
 #[allow(dead_code)]
 #[path = "../src/door.rs"]
 mod door;
