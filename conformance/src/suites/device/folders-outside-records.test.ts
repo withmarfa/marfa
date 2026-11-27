@@ -266,6 +266,34 @@ describe("a folder whose store holds a record that names a place outside it", ()
     expect(files(source)).toEqual(outside);
   });
 
+  it("is taken off its machine by folders remove while a write waits unsent, naming the changed file and leaving it", async () => {
+    const { harness } = await noteFolder("outside-records-remove-unsent");
+    writeFileSync(join(harness.dir, "Note.md"), EDIT);
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+    const source = join(tempFolder("marfa-outside-"), "Source");
+    mkdirSync(source);
+    stoppedTakeIn(harness, source, source);
+    const inFolder = files(harness.dir);
+    const outside = files(source);
+    const sent = writes(harness).length;
+
+    const removed = await harness.folder.remove();
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) return;
+    expect(removed.value.unsent).toBe(1);
+    expect(removed.value.files).toEqual([
+      { change: "changed", path: "Note.md", item: NOTE },
+    ]);
+    expect(existsSync(harness.folder.store)).toBe(false);
+    expect(files(harness.dir)).toEqual(inFolder);
+    expect(readFileSync(join(harness.dir, "Note.md"), "utf8")).toBe(EDIT);
+    expect(files(source)).toEqual(outside);
+    expect(writes(harness).slice(sent), "a write reached the server").toEqual(
+      [],
+    );
+  });
+
   describe("another volume at the directory the record names", ON_MACOS, () => {
     function image(scratch: string, name: string): string {
       const path = join(scratch, `${name}.sparseimage`);

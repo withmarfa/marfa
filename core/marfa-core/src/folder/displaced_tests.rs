@@ -1101,6 +1101,65 @@ fn removing_a_folder_with_an_outside_record_leaves_every_file() {
     }
 }
 
+/// A folder whose scan queued an edit to `Notes/Plan.md` the server never
+/// received.
+fn unsent_edit() -> (super::tests::ScannedDir, Folder, PathBuf) {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("Notes")).unwrap();
+    std::fs::write(root.join("Notes/Plan.md"), "plan\n").unwrap();
+    assert_eq!(folder.scan().unwrap().created, 1);
+    super::tests::landed(&folder, "Notes/Plan.md");
+    // The server received the create.
+    folder
+        .core
+        .conn()
+        .unwrap()
+        .execute("DELETE FROM queue", [])
+        .unwrap();
+    std::fs::write(root.join("Notes/Plan.md"), "plan, edited\n").unwrap();
+    assert_eq!(folder.scan().unwrap().updated, 1);
+    (dir, folder, root)
+}
+
+#[test]
+fn removing_a_refused_folder_with_an_unsent_write_names_it_and_keeps_its_file() {
+    let (dir, folder, root) = unsent_edit();
+    let (_other, other) = beside(&root);
+    displaced_outside(&folder, &root, &other);
+    let files = files_under(&[&root, &other]);
+    let item = state::bound_at(&folder.core.conn().unwrap(), "Notes/Plan.md")
+        .unwrap()
+        .unwrap()
+        .item_id;
+
+    let unsent = folder.remove().unwrap();
+
+    assert_eq!(
+        unsent,
+        UnsentChanges {
+            writes: 1,
+            files: vec![UnsentFile {
+                change: UnsentChange::Changed,
+                path: Some("Notes/Plan.md".into()),
+                from: None,
+                item: Some(item),
+            }],
+            outside_records: true,
+        }
+    );
+    assert_eq!(files_under(&[&root, &other]), files);
+    assert!(!root.join(STATE_DIR).join("core.sqlite").exists());
+    drop(dir);
+
+    // The witness: with no outside record, the write still waits to be pushed.
+    let (_dir, folder, _root) = unsent_edit();
+    match folder.remove() {
+        Err(CoreError::Invalid(message)) => assert!(message.contains("push it first"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+}
+
 #[test]
 fn an_unparsable_record_keeps_mains_behaviour() {
     let (dir, folder) = scanned_folder();
