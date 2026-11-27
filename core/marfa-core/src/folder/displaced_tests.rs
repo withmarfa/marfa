@@ -953,3 +953,244 @@ fn place_dir_and_displaced_dir_refuse_places_outside_the_folder() {
         );
     }
 }
+
+/// A write to `Moved/Plan.md` bound before its bytes landed, with the file
+/// moved out under a reserved name in `aside`, outside the folder, where
+/// `aside_holds`. Answers the binding.
+fn waiting_write(folder: &Folder, root: &Path, aside: &Path, aside_holds: bool) -> state::Bound {
+    std::fs::create_dir(root.join("Moved")).unwrap();
+    std::fs::write(root.join("Moved/Plan.md"), TAKEN).unwrap();
+    assert_eq!(folder.scan().unwrap().created, 1);
+    super::tests::landed(folder, "Moved/Plan.md");
+    let read = object_of(&root.join("Moved/Plan.md"));
+    let name = landing::reserved(&uuid::Uuid::now_v7().simple().to_string());
+    if aside_holds {
+        std::fs::rename(root.join("Moved/Plan.md"), aside.join(&name)).unwrap();
+    } else {
+        std::fs::remove_file(root.join("Moved/Plan.md")).unwrap();
+    }
+    let conn = folder.core.conn().unwrap();
+    let mut bound = state::bound_at(&conn, "Moved/Plan.md").unwrap().unwrap();
+    bound.writes.landing = Some(state::Landing { before: None });
+    state::bind(&conn, &bound).unwrap();
+    let name = name.to_string_lossy().into_owned();
+    state::set_displaced(
+        &conn,
+        &state::Displaced {
+            dir: "Moved".into(),
+            dir_at: at(&root.join("Moved")),
+            aside: aside.to_string_lossy().into_owned(),
+            aside_at: at(aside),
+            displacement: Displacement {
+                id: name[".marfa-kept-".len()..name.len() - ".tmp".len()].into(),
+                kind: Kind::Withdraw,
+                target: "Plan.md".into(),
+                kept: name,
+                ours: None,
+                read,
+            },
+        },
+    )
+    .unwrap();
+    bound
+}
+
+#[test]
+fn a_row_with_an_outside_aside_keeps_its_in_folder_write_waiting() {
+    for state in ["directory moved", "aside absent", "aside present"] {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        let (_other, other) = beside(&root);
+        let bound = waiting_write(&folder, &root, &other, state == "aside present");
+        match state {
+            "directory moved" => {
+                std::fs::rename(root.join("Moved"), root.join("Elsewhere")).unwrap()
+            }
+            "aside absent" => std::fs::remove_dir_all(&other).unwrap(),
+            _ => {}
+        }
+        let binding = |folder: &Folder| {
+            state::bound_at(&folder.core.conn().unwrap(), "Moved/Plan.md").unwrap()
+        };
+
+        folder.scan_holding_missing().unwrap();
+        assert_eq!(
+            binding(&folder).as_ref(),
+            Some(&bound),
+            "{state}: quick pass"
+        );
+        // Held as missing, as any bound file a quick pass does not find is.
+        let journaled = state::journaled(&folder.core.conn().unwrap()).unwrap();
+        assert!(
+            journaled.iter().any(|row| row.path == "Moved/Plan.md"),
+            "{state}: {journaled:?}"
+        );
+        folder.scan().unwrap();
+        assert_eq!(
+            binding(&folder).as_ref(),
+            Some(&bound),
+            "{state}: writing scan"
+        );
+        assert_eq!(records(&folder), 1, "{state}");
+    }
+}
+
+#[test]
+fn an_unreadable_displaced_record_with_no_aside_is_reported_where_main_lists_it() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    let (_other, other) = beside(&root);
+    let name = landing::reserved("1").to_string_lossy().into_owned();
+    std::fs::write(other.join(&name), SAVE).unwrap();
+    // No `kind` and no `aside`, so the record does not read or show where its file is.
+    let value = serde_json::json!({
+        "dir": other.to_string_lossy(),
+        "dir_at": at(&other),
+        "displacement": { "id": "1", "target": "Recovery.md", "kept": name },
+    });
+    crate::store::meta_set(
+        &folder.core.conn().unwrap(),
+        "folder_displaced:1",
+        &value.to_string(),
+    )
+    .unwrap();
+
+    for _ in 0..2 {
+        let report = folder.scan().unwrap();
+        let reasons = reported(&report.flagged, Path::new(&name));
+        assert_eq!(reasons.len(), 1, "{:?}", report.flagged);
+        assert!(
+            reasons[0].contains(&*other.join("Recovery.md").to_string_lossy())
+                && reasons[0].contains("not the directory"),
+            "{reasons:?}"
+        );
+        assert!(reported(&report.flagged, &other.join(&name)).is_empty());
+    }
+    assert_eq!(std::fs::read(other.join(&name)).unwrap(), SAVE);
+    assert_eq!(records(&folder), 1);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_scan_that_finds_the_root_replaced_leaves_outside_notices_for_the_next() {
+    for case in ["locked", "outside"] {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        let (_other, other) = beside(&root);
+        // A record `main` also keeps and reports every pass is the witness.
+        let kept = if case == "outside" {
+            stopped_take_in(&folder, &other, &other.to_string_lossy(), true)
+        } else {
+            std::fs::create_dir(root.join("Locked")).unwrap();
+            let kept = stopped_take_in(&folder, &root.join("Locked"), "Locked", true);
+            Path::new("Locked").join(kept.file_name().unwrap())
+        };
+        let _locked =
+            (case == "locked").then(|| crate::test_folders::locked(root.join("Locked"), 0o000));
+        std::fs::create_dir(root.with_extension("replacement")).unwrap();
+
+        // SAFETY: nextest runs each test in a process of its own, and nothing
+        // else in this one reads the environment while it changes.
+        unsafe { std::env::set_var("MARFA_TEST_FAULT", "replace-root-before-capture") };
+        let ended = folder.scan();
+        // SAFETY: as above.
+        unsafe { std::env::remove_var("MARFA_TEST_FAULT") };
+        let ended = ended.unwrap();
+        assert!(ended.root_gone.is_some(), "{case}");
+        assert!(kept_flags(&ended).is_empty(), "{case}: {:?}", ended.flagged);
+        std::fs::rename(&root, root.with_extension("swapped")).unwrap();
+        std::fs::rename(root.with_extension("original"), &root).unwrap();
+
+        let report = folder.scan().unwrap();
+        assert_eq!(
+            reported(&report.flagged, &kept).len(),
+            1,
+            "{case}: {:?}",
+            report.flagged
+        );
+        assert_eq!(records(&folder), 1, "{case}");
+        drop(_locked);
+        std::fs::remove_dir_all(root.with_extension("swapped")).unwrap();
+    }
+}
+
+#[test]
+fn an_outside_record_survives_a_scoped_pass() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("Ready.md"), "ready\n").unwrap();
+    assert_eq!(folder.scan().unwrap().created, 1);
+    let (_other, other) = beside(&root);
+    let kept = stopped_take_in(&folder, &other, &other.to_string_lossy(), true);
+    let from = other.join("Recovery.md");
+    let settle = std::time::Duration::from_millis(0);
+    let captured = || super::tests::FILES_CAPTURED.with(std::cell::Cell::take);
+
+    captured();
+    let walked = folder
+        .scan_watching_within(false, settle, scoped::Reading::Keeping)
+        .unwrap();
+    reported_outside(&walked.flagged, &kept, &from);
+    assert!(captured() > 0, "the witness: a walk takes each file");
+    let scope = scoped::Scope::default();
+    let named = folder
+        .scan_watching_within(false, settle, scoped::Reading::Named(&scope))
+        .unwrap();
+    assert_eq!(captured(), 0, "the pass walked: {named:?}");
+    reported_outside(&named.flagged, &kept, &from);
+    assert_eq!(std::fs::read(&kept).unwrap(), SAVE);
+    assert!(!from.exists());
+    assert_eq!(records(&folder), 1);
+}
+
+#[test]
+fn removing_a_folder_ends_its_outside_records_and_touches_their_files() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    let (_other, other) = beside(&root);
+    let kept = stopped_take_in(&folder, &other, &other.to_string_lossy(), true);
+    let from = other.join("Recovery.md");
+    reported_outside(&folder.scan().unwrap().flagged, &kept, &from);
+
+    folder.remove().unwrap();
+    assert!(!root.join(STATE_DIR).join("core.sqlite").exists());
+    assert_eq!(std::fs::read(&kept).unwrap(), SAVE);
+    assert!(!from.exists());
+}
+
+#[test]
+fn a_reserved_name_met_in_the_folder_is_not_settled_against_an_outside_record() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    let (_other, other) = beside(&root);
+    let projects = root.join("Projects");
+    std::fs::create_dir(&projects).unwrap();
+    std::fs::write(projects.join("Recovery.md"), TAKEN).unwrap();
+    let read = object_of(&projects.join("Recovery.md"));
+    let name = landing::reserved(&uuid::Uuid::now_v7().simple().to_string());
+    std::fs::rename(projects.join("Recovery.md"), projects.join(&name)).unwrap();
+    std::fs::write(projects.join(&name), SAVE).unwrap();
+    // An absent directory outside the folder, recorded with `Projects`'s identity.
+    let place = other.join("Gone").to_string_lossy().into_owned();
+    displaced_at(
+        &folder,
+        &place,
+        at(&projects),
+        &name.to_string_lossy(),
+        read,
+    );
+    let met = Path::new("Projects").join(&name);
+
+    for _ in 0..2 {
+        let report = folder.scan().unwrap();
+        assert_eq!(
+            reported(&report.flagged, &met).len(),
+            1,
+            "{:?}",
+            report.flagged
+        );
+    }
+    assert_eq!(std::fs::read(projects.join(&name)).unwrap(), SAVE);
+    assert!(!projects.join("Recovery.md").exists());
+    assert_eq!(records(&folder), 1);
+}

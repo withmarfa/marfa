@@ -631,8 +631,10 @@ pub(crate) fn displaced(
         .collect())
 }
 
-/// Recover the kept path and source path for reporting an unreadable outside row.
-pub(crate) fn unread_outside(id: &str, value: &str) -> Option<(String, String)> {
+/// Recover the kept path, the source path and whether the row names the
+/// directory it moved the file to, for reporting an unreadable outside row.
+/// Without that directory, the kept path is in the root.
+pub(crate) fn unread_outside(id: &str, value: &str) -> Option<(String, String, bool)> {
     let row: serde_json::Value = serde_json::from_str(value).ok()?;
     let text = |value: &serde_json::Value| value.as_str().map(str::to_string);
     let dir = text(&row["dir"]);
@@ -646,13 +648,14 @@ pub(crate) fn unread_outside(id: &str, value: &str) -> Option<(String, String)> 
     }
     let kept = reserved_name(text(&row["displacement"]["kept"]), id);
     let from = dir
-        .clone()
         .zip(text(&row["displacement"]["target"]))
         .map(|(dir, target)| super::joined(&dir, &target))
         .unwrap_or_default();
+    let named = aside.is_some();
     Some((
-        super::joined(&aside.or(dir).unwrap_or_default(), &kept),
+        super::joined(&aside.unwrap_or_default(), &kept),
         from,
+        named,
     ))
 }
 
@@ -704,6 +707,8 @@ pub(crate) struct Unread {
     pub(crate) hash: Option<String>,
     /// Whether what of the row reads names a place outside the folder.
     pub(crate) outside: bool,
+    /// Whether the row names `aside`, which is otherwise the root.
+    pub(crate) aside_named: bool,
 }
 
 impl Unread {
@@ -724,8 +729,8 @@ impl Unread {
             .any(|place| !in_folder(place));
         Unread {
             hash: text(&row["retained"]["read"]["hash"]),
-            // Without an aside, the source directory is only a reporting hint.
-            aside: aside.or(dir.filter(|_| outside)).unwrap_or_default(),
+            aside_named: aside.is_some(),
+            aside: aside.unwrap_or_default(),
             kept,
             from,
             id,

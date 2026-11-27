@@ -1697,12 +1697,17 @@ impl Folder {
 
     /// The bound paths of rows whose directory is not where it was, whose
     /// write a crash cut off is settled only once the row settles, against
-    /// the file wherever its directory went.
+    /// the file wherever its directory went. A row whose directory is in the
+    /// folder and whose reserved names are outside it never settles, so its
+    /// path waits too.
     fn displaced_paths(&self) -> Result<HashSet<String>> {
         Ok(state::displaced(&*self.core.conn()?)?
             .into_iter()
             .flatten()
-            .filter(|row| !row.outside() && self.displaced_away(row))
+            .filter(|row| {
+                state::in_folder(&row.dir)
+                    && (!state::in_folder(&row.aside) || self.displaced_away(row))
+            })
             .map(|row| joined(&row.dir, &row.displacement.target))
             .collect())
     }
@@ -1724,12 +1729,13 @@ impl Folder {
             let row = match row {
                 Ok(row) => row,
                 Err((id, value)) => {
-                    if let Some((path, from)) = state::unread_outside(&id, &value) {
-                        state::put_kept(
-                            &conn,
-                            &path,
-                            &format!("{}: {}", retained::UNREAD, outside_displaced(&from)),
-                        )?;
+                    if let Some((path, from, named)) = state::unread_outside(&id, &value) {
+                        let reason = if named || from.is_empty() {
+                            format!("{}: {}", retained::UNREAD, outside_displaced(&from))
+                        } else {
+                            format!("{}. {OUTSIDE}", retained::unplaced(&from, "moved to"))
+                        };
+                        state::put_kept(&conn, &path, &reason)?;
                     } else {
                         // What it moved stays under its reserved name, which
                         // every scan reports.
@@ -1892,20 +1898,16 @@ impl Folder {
 
     /// Why each file kept for a pass to settle is kept, by its path.
     fn retained_reasons(&self) -> HashMap<String, String> {
-        let Ok(rows) = self.core.conn().and_then(|conn| state::retained(&conn)) else {
+        let Ok(files) = self
+            .core
+            .conn()
+            .and_then(|conn| retained::record_files(&conn))
+        else {
             return HashMap::new();
         };
-        rows.into_iter()
-            .map(|row| match row {
-                Ok(row) => {
-                    let retained = &row.retained;
-                    (
-                        joined(&row.aside, &retained.kept),
-                        retained::retained_reason(&joined(&row.dir, &retained.target), retained),
-                    )
-                }
-                Err(row) => (joined(&row.aside, &row.kept), retained::UNREAD.into()),
-            })
+        files
+            .into_iter()
+            .map(|file| (file.path, file.reason))
             .collect()
     }
 
