@@ -560,7 +560,8 @@ impl Disk {
     }
 
     /// Reaches the files area as [`Disk::reached`] does. Fails with why the area could not take
-    /// this store's pending marker where it holds one, and with `None` otherwise. It blocks.
+    /// this store's pending marker where it holds one, and with `None` otherwise. The failure is
+    /// of kind `ResourceBusy` where another server holds the folder's lock. It blocks.
     pub fn reach(&self) -> Result<(), Option<io::Error>> {
         if self.reachable() {
             return Ok(());
@@ -644,10 +645,14 @@ impl Disk {
     }
 
     fn refusing(&self, why: String) -> io::Error {
+        self.refusing_as(io::ErrorKind::Other, why)
+    }
+
+    fn refusing_as(&self, kind: io::ErrorKind, why: String) -> io::Error {
         if !self.returning.refused.swap(true, Ordering::AcqRel) {
             tracing::warn!(reason = %why, "A disk store refuses writes");
         }
-        io::Error::other(why)
+        io::Error::new(kind, why)
     }
 
     /// Takes a folder that came back holding this store's marker: locked, and for the blob
@@ -697,14 +702,21 @@ impl Disk {
             Err((why, _)) => Err(why),
         };
         let folder = folder.map_err(|why| {
+            let kind = match why {
+                Untaken::Held => io::ErrorKind::ResourceBusy,
+                _ => io::ErrorKind::Other,
+            };
             let failure = untaken(self.place, &self.root, why);
-            self.refusing(match self.place {
-                Place::Blobs => format!(
-                    "the blob folder could not be locked, so no file can be stored: {}",
-                    failure.message
-                ),
-                Place::BackupFiles => failure.message,
-            })
+            self.refusing_as(
+                kind,
+                match self.place {
+                    Place::Blobs => format!(
+                        "the blob folder could not be locked, so no file can be stored: {}",
+                        failure.message
+                    ),
+                    Place::BackupFiles => failure.message,
+                },
+            )
         })?;
         if promoting {
             if !claimed(folder.dir()) {
@@ -1851,6 +1863,28 @@ mod tests {
         assert_eq!(fs::read_to_string(area.join(MARKER)).unwrap(), id);
         assert!(!area.join(PENDING).exists());
         assert!(disk.reachable());
+    }
+
+    #[test]
+    fn a_claim_another_server_holds_the_folder_of_is_busy_and_not_missing() {
+        let dir = TempDir::new().unwrap();
+        let area = dir.path().join("area");
+        fs::create_dir_all(&area).unwrap();
+        let id = Uuid::now_v7().to_string();
+        fs::write(area.join(PENDING), &id).unwrap();
+        let disk = Disk::unmounted(id, area.clone(), Place::BackupFiles);
+        let other = folder_lock::lock_dir(folder_lock::open_dir(&area).unwrap()).unwrap();
+
+        let busy = disk.reach().unwrap_err().unwrap();
+        assert_eq!(busy.kind(), io::ErrorKind::ResourceBusy, "{busy}");
+        assert!(busy.to_string().contains("is open in another Marfa server"));
+        assert!(!area.join(MARKER).exists());
+
+        let missing = Disk::unmounted(Uuid::now_v7().to_string(), area.clone(), Place::BackupFiles);
+        assert!(missing.reach().unwrap_err().is_none());
+
+        drop(other);
+        assert!(disk.reach().is_ok());
     }
 
     #[test]

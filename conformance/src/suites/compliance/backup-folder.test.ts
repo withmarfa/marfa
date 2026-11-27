@@ -8,6 +8,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -47,7 +48,7 @@ import {
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { diskHolds, inspectStores } from "../../utils/store-faults.js";
 import { waitFor } from "../../utils/wait.js";
-import { tempFolder } from "../../utils/temp-folder.js";
+import { stopChildAtCleanup, tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * Backups to a folder the owner names with `backup_path`: one manifest
@@ -83,6 +84,35 @@ afterAll(async () => {
   rmSync(folder, { recursive: true, force: true });
   rmSync(away, { recursive: true, force: true });
 }, FRESH_SERVER_TIMEOUT_MS);
+
+/**
+ * Holds the lock another Marfa server takes on a folder, from a process of its
+ * own, until `release` is called.
+ */
+async function lockHeldOn(path: string): Promise<{ release(): Promise<void> }> {
+  const holder = spawn(
+    "perl",
+    [
+      "-e",
+      'open(my $d, "<", $ARGV[0]) or die; flock($d, 2 | 4) or die "busy"; $| = 1; print "held\\n"; <STDIN>;',
+      path,
+    ],
+    { stdio: ["pipe", "pipe", "inherit"] },
+  );
+  stopChildAtCleanup(holder);
+  const ended = new Promise<void>((done) => holder.once("close", () => done()));
+  await new Promise<void>((resolve, reject) => {
+    holder.stdout.once("data", () => resolve());
+    holder.once("error", reject);
+    holder.once("close", () => reject(new Error("the lock was not taken")));
+  });
+  return {
+    async release() {
+      holder.stdin.end();
+      await ended;
+    },
+  };
+}
 
 async function health(server: FreshServer) {
   const answer = await clientsFor(server).operator.rawRequest<{
@@ -1114,6 +1144,49 @@ describe("a backup folder that lacks a file or its disk", () => {
         recorded[0]!.id,
       );
       expect(existsSync(join(area, ".marfa-store.pending"))).toBe(false);
+    });
+  });
+
+  it("says in health and attention that another server holds the folder, not that it is not there, while an adopt's claim waits on its lock, and clears once that server lets go", async () => {
+    await withFolder("backup-folder-adopt-held", async (server, root) => {
+      const id = await instanceIdOf(server);
+      const area = join(root, "files", id);
+      const away = join(root, "away");
+      renameSync(area, join(root, "old files"));
+
+      await server.setFault("hold:folder-marker");
+      const adopting = ownerOf(server).adoptBackupFolder();
+      await server.waitForHold("hold:folder-marker");
+      await server.restart({
+        signal: "SIGKILL",
+        whileStopped: () => renameSync(area, away),
+      });
+      await adopting.catch(() => undefined);
+      renameSync(away, area);
+      expect(existsSync(join(area, ".marfa-store"))).toBe(false);
+
+      const other = await lockHeldOn(area);
+      try {
+        const said = (await health(server)).backups.store_error as string;
+        expect(said).toContain("open in another Marfa server");
+        expect(said).not.toContain("is not there");
+        const store = (await backupConcerns(server)).find(
+          (concern) => concern.reference === "store",
+        );
+        expect(store?.title).toBe(
+          "The backup folder is open in another Marfa server",
+        );
+        expect(store?.description).toContain("open in another Marfa server");
+        expect(existsSync(join(area, ".marfa-store"))).toBe(false);
+      } finally {
+        await other.release();
+      }
+
+      expect((await health(server)).backups.store_error).toBeNull();
+      expect(await referencesOf(server)).not.toContain("store");
+      expect(readFileSync(join(area, ".marfa-store"), "utf8").trim()).not.toBe(
+        "",
+      );
     });
   });
 

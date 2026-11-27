@@ -285,6 +285,10 @@ stays because that thing is what it checks.
   moves the files folder away while the server is stopped and back while it
   runs, and reads the adopt's claim in it, because only a disk that goes away
   and returns does that.
+  "says in health and attention that another server holds the folder" does the
+  same, then holds the lock on the files folder from a process of its own, as a
+  second server on the folder does. No door or fault takes the lock of a
+  server that is not running.
 - `device/working-copy.test.ts` and `device/folders-refused-store-live.test.ts`
   set the release a store records in its meta, or remove it, and set its schema
   version, to leave the store as another build would have: no door makes a store

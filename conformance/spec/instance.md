@@ -68,11 +68,19 @@ While the object store or the backup folder does not take the copies that wait f
 
 ### `instance/attention-backup-store-title`
 
-While the object store or the backup folder does not take the copies that wait for it, when `GET /attention` completes its checks, the server MUST title the entry with the reference `store` `The backup folder is not there` while the disk of the backup folder is not there, `The backup folder is not answering` while a look at it does not answer, and otherwise `Files are waiting for their copy in the object store` or `Files are waiting for their copy in the backup folder`.
+While the object store or the backup folder does not take the copies that wait for it, when `GET /attention` completes its checks, the server MUST title the entry with the reference `store` `The backup folder is not there` while the disk of the backup folder is not there, `The backup folder is not answering` while a look at it does not answer, and, except where `instance/attention-backup-folder-held` names the title, otherwise `Files are waiting for their copy in the object store` or `Files are waiting for their copy in the backup folder`.
 
 **Reason:** a run that copied nothing because one file was refused is not a store that is gone, and the title says what is known.
 
 **Tests:** `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`, `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `› tells one file the object store refused as files waiting for their copy, not as a store that is gone`.
+
+### `instance/attention-backup-folder-held`
+
+While another Marfa server holds the lock of the backup folder's files area and this server's adopt claim waits there to become the area's marker, when `GET /attention` completes its checks, the server MUST title the entry with the reference `store` `The backup folder is open in another Marfa server`.
+
+**Reason:** the folder is there, so an owner told it is not there goes looking for a missing disk, when the fault is a second server on the same folder. `POST /backups` names the same cause.
+
+**Tests:** `compliance/backup-folder.test.ts › says in health and attention that another server holds the folder, not that it is not there, while an adopt's claim waits on its lock, and clears once that server lets go`.
 
 ### `instance/attention-backup-run`
 
@@ -1335,6 +1343,14 @@ While an attached store leaves the questions of `blob-replicate` unanswered, the
 **Reason:** health reads what the last run found and never asks the object store itself, so a store that hangs cannot make the report that names it hang too.
 
 **Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`.
+
+### `instance/backup-health-folder-held`
+
+While another Marfa server holds the lock of the backup folder's files area and this server's adopt claim waits there to become the area's marker, the server MUST answer `GET /health` with a `backups.store_error` that says another Marfa server has the folder open.
+
+**Reason:** the folder is there, so a `backups.store_error` that says it is not there sends the owner looking for a missing disk, when the fault is a second server on the same folder (`instance/attention-backup-folder-held`).
+
+**Tests:** `compliance/backup-folder.test.ts › says in health and attention that another server holds the folder, not that it is not there, while an adopt's claim waits on its lock, and clears once that server lets go`.
 
 ### `instance/backup-health-folder-answers-in-time`
 
