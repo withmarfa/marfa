@@ -69,6 +69,8 @@ struct Held {
     omitted: Option<(String, u32)>,
     /// The next `GET` of the key finds this object in place of the one there.
     replaced: Option<(String, Object)>,
+    /// Every `GET` of the key answers with this status and error code.
+    failing_gets: Vec<(String, StatusCode, String)>,
     uploads: HashMap<String, Upload>,
     next_upload: u64,
     writes: u64,
@@ -406,6 +408,24 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
                 .unwrap()
         }
         Method::GET | Method::HEAD => {
+            let failing = held
+                .lock()
+                .unwrap()
+                .failing_gets
+                .iter()
+                .find(|(at, ..)| *at == key)
+                .cloned();
+            if method == Method::GET
+                && let Some((_, status, code)) = failing
+            {
+                return Response::builder()
+                    .status(status)
+                    .header(header::CONTENT_TYPE, "application/xml")
+                    .body(Body::from(format!(
+                        "<Error><Code>{code}</Code><Message>refused</Message></Error>"
+                    )))
+                    .unwrap();
+            }
             let found = {
                 let held = &mut *held.lock().unwrap();
                 if method == Method::GET
@@ -577,6 +597,16 @@ impl FakeS3 {
     /// between a listing and a read does.
     pub fn replace_before_next_get(&self, key: &str, object: Object) {
         self.held.lock().unwrap().replaced = Some((key.to_string(), object));
+    }
+
+    /// Answers every `GET` of `key` with `status` and the error `code`, as a store does for an
+    /// object it cannot give.
+    pub fn fail_gets(&self, key: &str, status: StatusCode, code: &str) {
+        self.held
+            .lock()
+            .unwrap()
+            .failing_gets
+            .push((key.to_string(), status, code.to_string()));
     }
 
     /// Puts bytes at `key` with no metadata, as a write the server did not make.

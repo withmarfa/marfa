@@ -1904,6 +1904,86 @@ async fn a_folder_part_that_cannot_be_read_is_damaged_and_stored_again_where_a_b
     assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
 }
 
+/// Two backups a day apart in an object store, then every part the third needs or keeps is
+/// rewritten with the same bytes under a new ETag, so the next run reads it, and `GET` of the old
+/// items part and of one both backups name answers `status` and `code`. Answers the origin, the
+/// old part's sha256, the shared part's sha256 and size, and the store.
+async fn parts_an_object_store_will_not_give(
+    status: StatusCode,
+    code: &str,
+) -> (Instance, String, String, u64, Place) {
+    let place = Place::bucket().await;
+    let origin = Instance::start(&place).await;
+    let id = origin.id();
+    let (first, second) = two_days(&origin, &place).await;
+    let (old_items, _) = entry_part(&first, "items.ndjson.gz");
+    let (_, shared, shared_size) = named(&second)
+        .into_iter()
+        .find(|(_, sha256, _)| named(&first).iter().any(|(_, old, _)| old == sha256))
+        .expect("a part both backups name");
+    let Place::Bucket(store) = &place else {
+        unreachable!()
+    };
+    for sha256 in [&old_items, &shared] {
+        let bytes = place.part(&id, sha256);
+        place.write("backup-parts", &id, &part_name(sha256), &bytes);
+        store.fail_gets(
+            &Place::key("backup-parts", &id, &part_name(sha256)),
+            status,
+            code,
+        );
+    }
+    origin.app.clock.advance(8 * DAY_MS).unwrap();
+    (origin, old_items, shared, shared_size, place)
+}
+
+#[tokio::test]
+async fn an_object_store_part_in_an_archived_storage_class_is_damaged_and_stored_again_where_a_backup_needs_it()
+ {
+    let (origin, _, shared, shared_size, place) =
+        parts_an_object_store_will_not_give(StatusCode::FORBIDDEN, "InvalidObjectState").await;
+    let id = origin.id();
+    let third = origin.back_up().await;
+    assert_eq!(third["sent_bytes"], shared_size, "{third}");
+    assert_eq!(sha_of(&place.part(&id, &shared)), shared);
+    let health = origin.backups_health().await;
+    assert_eq!(health["damaged_parts"], 1, "{health}");
+    assert_eq!(health["status"], "failing", "{health}");
+    assert!(
+        origin
+            .backup_concerns()
+            .await
+            .contains(&"parts_damaged".to_string())
+    );
+}
+
+#[tokio::test]
+async fn an_object_store_read_that_is_not_about_one_object_fails_the_run_and_records_no_damage() {
+    for (status, code) in [
+        (StatusCode::FORBIDDEN, "AccessDenied"),
+        (StatusCode::FORBIDDEN, "InvalidAccessKeyId"),
+        (StatusCode::FORBIDDEN, "SignatureDoesNotMatch"),
+        (StatusCode::SERVICE_UNAVAILABLE, "SlowDown"),
+        (StatusCode::FORBIDDEN, "SomeCodeNoOneListed"),
+    ] {
+        let (origin, ..) = parts_an_object_store_will_not_give(status, code).await;
+        let failed = origin.local(Method::POST, "/backups", None).await;
+        assert_eq!(
+            failed.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{code}: {}",
+            failed.body
+        );
+        assert_eq!(
+            failed.body["error"]["code"], "blob_store_unavailable",
+            "{code}: {}",
+            failed.body
+        );
+        let health = origin.backups_health().await;
+        assert_eq!(health["damaged_parts"], 0, "{code}: {health}");
+    }
+}
+
 #[tokio::test]
 async fn a_due_part_no_backup_names_is_not_found_damaged_when_its_delete_fails() {
     use std::os::unix::fs::PermissionsExt;
