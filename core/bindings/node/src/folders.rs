@@ -579,8 +579,9 @@ impl Folders {
     }
 
     /// Deletes each kept file unchanged since Marfa set it aside; one a
-    /// program wrote to goes back instead. Needs no server, and asks a watch
-    /// that holds the folder to let it go.
+    /// program wrote to goes back instead, and one kept outside the folder
+    /// is left as it is, in `kept`. Needs no server, and asks a watch that
+    /// holds the folder to let it go.
     #[napi(ts_return_type = "Promise<KeptDiscarded>")]
     pub fn discard_kept(&self, dir: String) -> AsyncTask<DiscardKept> {
         AsyncTask::new(DiscardKept { dir, failed: None })
