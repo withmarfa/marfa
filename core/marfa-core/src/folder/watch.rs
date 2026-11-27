@@ -321,7 +321,7 @@ impl Folder {
         mut tell: impl FnMut(WatchEvent) -> Result<(), E>,
     ) -> Result<WatchEnd, WatchError<E>> {
         let _lowered = lowered();
-        self.refuse_while_paused()?;
+        self.refuse_unsyncable()?;
         // Only a person's go-ahead lets it write or send, and none can reach
         // a folder this watch holds.
         self.refuse_while_waiting()?;
@@ -726,6 +726,7 @@ impl Folder {
         let asking = || asked.load(Ordering::SeqCst);
         telling.at_rest = false;
         telling.failing = false;
+        self.refuse_outside()?;
         let settings = self.send_settings_edit()?;
         if asking() {
             return Ok(None);

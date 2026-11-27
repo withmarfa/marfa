@@ -289,7 +289,7 @@ impl Folder {
     }
 
     pub fn scan(&self) -> Result<ScanReport> {
-        self.refuse_while_paused()?;
+        self.refuse_unsyncable()?;
         self.scan_as(true, None, Files::Write, Reading::Walk, Journal::Sweep)
     }
 
@@ -336,6 +336,7 @@ impl Folder {
         reading: Reading<'_>,
         journal: Journal,
     ) -> Result<ScanReport> {
+        self.refuse_outside()?;
         self.read_limit_if_holding();
         let start = match self.scan_root(mode)? {
             ControlFlow::Break(report) => return Ok(report),

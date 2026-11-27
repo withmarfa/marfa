@@ -697,6 +697,7 @@ impl Folder {
     /// watch and never keeps one from starting.
     pub fn status_of(root: impl AsRef<Path>) -> Result<StatusReport> {
         let folder = Folder::reading(root.as_ref())?;
+        folder.refuse_outside()?;
         let mut report = folder.status()?;
         report.sync_paused = folder.is_paused()?;
         report.unwatched = folder.observed_health().map_or(0, |observed| {
@@ -991,7 +992,7 @@ impl Folder {
     }
 
     pub fn hydrate(&self) -> Result<crate::model::HydrateReport> {
-        self.refuse_while_paused()?;
+        self.refuse_unsyncable()?;
         self.hydrate_until(&crate::NEVER_STOPPED)
     }
 
@@ -1661,10 +1662,14 @@ impl Folder {
 
     /// Opens the recorded path without checking the directory's identity.
     fn place_dir(&self, place: &str) -> std::io::Result<Directory> {
+        if !state::in_folder(place) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "a place outside the folder",
+            ));
+        }
         let place = Path::new(place);
-        Ok(if place.is_absolute() {
-            Directory::open(place)?
-        } else if place.as_os_str().is_empty() {
+        Ok(if place.as_os_str().is_empty() {
             self.root_dir.clone()
         } else if let Ok(below) = place.strip_prefix(STATE_DIR) {
             if below.as_os_str().is_empty() {

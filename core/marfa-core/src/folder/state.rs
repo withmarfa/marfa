@@ -757,6 +757,66 @@ pub(crate) fn clear_discarding_at(conn: &Connection, path: &str) -> Result<(), C
     crate::store::meta_delete(conn, &format!("{DISCARDING}{path}"))
 }
 
+/// A recovery record that names a place outside the folder: the path its
+/// file came from, the path of the file under its hidden name, and for a
+/// discard's mark the other name a stop can leave it under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OutsideRecord {
+    pub(crate) from: String,
+    pub(crate) path: String,
+    pub(crate) also: Option<String>,
+}
+
+/// Whether `place`, relative to the root, stays inside the folder.
+pub(super) fn in_folder(place: &str) -> bool {
+    std::path::Path::new(place)
+        .components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+/// Every recovery record that names a place outside the folder. A record
+/// whose value is not JSON at all names no place, and is not one.
+pub(crate) fn outside_records(conn: &Connection) -> Result<Vec<OutsideRecord>, CoreError> {
+    let text = |value: &serde_json::Value| value.as_str().map(str::to_string);
+    let mut found = Vec::new();
+    for (prefix, file) in [(DISPLACED, "displacement"), (RETAINED, "retained")] {
+        for (_, value) in under(conn, prefix)? {
+            let Ok(row) = serde_json::from_str::<serde_json::Value>(&value) else {
+                continue;
+            };
+            let (dir, aside) = (text(&row["dir"]), text(&row["aside"]));
+            if [&dir, &aside]
+                .into_iter()
+                .flatten()
+                .all(|place| in_folder(place))
+            {
+                continue;
+            }
+            let name = |key: &str| text(&row[file][key]).unwrap_or_default();
+            found.push(OutsideRecord {
+                from: super::joined(&dir.unwrap_or_default(), &name("target")),
+                path: super::joined(&aside.unwrap_or_default(), &name("kept")),
+                also: None,
+            });
+        }
+    }
+    for (path, value) in under(conn, DISCARDING)? {
+        let mark = serde_json::from_str::<serde_json::Value>(&value).unwrap_or_default();
+        let aside = text(&mark["aside"]);
+        if in_folder(&path) && aside.as_deref().is_none_or(in_folder) {
+            continue;
+        }
+        found.push(OutsideRecord {
+            from: text(&mark["from"]).unwrap_or_default(),
+            also: aside
+                .zip(text(&mark["kept"]))
+                .map(|(aside, kept)| super::joined(&aside, &kept)),
+            path,
+        });
+    }
+    Ok(found)
+}
+
 const KEPT: &str = "folder_kept:";
 
 /// A person's file a write or a removal kept beside its path, or could not

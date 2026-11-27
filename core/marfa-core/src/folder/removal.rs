@@ -48,7 +48,7 @@ pub struct Restored {
 impl Folder {
     pub fn confirm(&self) -> Result<Confirmed> {
         self.refuse_if_gone()?;
-        self.refuse_while_paused()?;
+        self.refuse_unsyncable()?;
         self.refuse_while_waiting()?;
         let copy = crate::reach::Context::capture(&*self.core.conn()?)?;
         let settings = self.settings()?;
@@ -292,7 +292,7 @@ impl Folder {
 
     pub fn restore(&self) -> Result<Restored> {
         self.refuse_if_gone()?;
-        self.refuse_while_paused()?;
+        self.refuse_unsyncable()?;
         self.refuse_while_waiting()?;
         let settings = self.settings()?;
         let (disk, pull) = {

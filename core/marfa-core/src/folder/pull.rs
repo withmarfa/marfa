@@ -336,7 +336,7 @@ impl Folder {
     /// Pulls again from the start where the copy changed under it, such as a
     /// catch-up applying a purge, since what it read is then stale.
     pub fn pull(&self) -> Result<PullReport> {
-        self.refuse_while_paused()?;
+        self.refuse_unsyncable()?;
         self.pull_with(None)
     }
 
@@ -347,6 +347,7 @@ impl Folder {
     }
 
     fn pull_with(&self, selection: Option<&mut Selection>) -> Result<PullReport> {
+        self.refuse_outside()?;
         let pulled = self.pull_writing(selection);
         if !pulled.as_ref().is_ok_and(super::scoped::keeps_the_files) {
             self.forget_inventory();

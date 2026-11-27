@@ -76,7 +76,7 @@ impl Folder {
     /// or a path that is not held, is left as it is and said.
     pub fn settle_held(&self, paths: &[String], settle: Settle) -> Result<Settled> {
         self.refuse_if_gone()?;
-        self.refuse_while_paused()?;
+        self.refuse_unsyncable()?;
         // Several items can be held at one path, and each is settled.
         let mut held: HashMap<String, Vec<String>> = HashMap::new();
         for file in self.held_files()? {

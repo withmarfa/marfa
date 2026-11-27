@@ -87,7 +87,7 @@ impl Folder {
     /// plainly inside the folder, or names no unmatched file, is kept.
     pub fn remove_unmatched(&self, paths: &[String]) -> Result<UnmatchedRemoved> {
         self.refuse_if_gone()?;
-        self.refuse_while_paused()?;
+        self.refuse_unsyncable()?;
         self.refuse_while_waiting()?;
         let mut done = UnmatchedRemoved::default();
         if paths.is_empty() {

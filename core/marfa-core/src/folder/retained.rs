@@ -395,6 +395,7 @@ impl Folder {
     /// aside. One a program wrote to goes back to its path, as a pass would
     /// put it back.
     pub fn discard_kept(&self) -> Result<KeptDiscarded> {
+        self.refuse_outside()?;
         let mut done = KeptDiscarded::default();
         for (row, settled) in self.settle_retained_as(true)? {
             match settled {

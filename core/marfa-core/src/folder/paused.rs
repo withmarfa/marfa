@@ -75,12 +75,47 @@ impl Folder {
     }
 
     /// Refuses a command that reads the server's side or writes either side.
-    pub(super) fn refuse_while_paused(&self) -> Result<()> {
+    pub(super) fn refuse_unsyncable(&self) -> Result<()> {
+        self.refuse_outside()?;
         if self.is_paused()? {
             return Err(CoreError::SyncPaused);
         }
         Ok(())
     }
+
+    /// Refuses while the store holds a record that names a place outside
+    /// the folder, which no pass may act on.
+    pub(super) fn refuse_outside(&self) -> Result<()> {
+        refuse_outside(&*self.core.conn()?, &self.root)
+    }
+}
+
+/// Refuses while the store of the folder at `root` holds a record that
+/// names a place outside it.
+pub(super) fn refuse_outside(conn: &rusqlite::Connection, root: &Path) -> Result<()> {
+    let records = super::state::outside_records(conn)?;
+    if records.is_empty() {
+        return Ok(());
+    }
+    let full = |place: &str| root.join(place).display().to_string();
+    let named: Vec<String> = records
+        .iter()
+        .map(|record| {
+            let mut said = full(&record.path);
+            if let Some(also) = &record.also {
+                said = format!("{said} or {}", full(also));
+            }
+            if !record.from.is_empty() {
+                said = format!("{said} (from {})", full(&record.from));
+            }
+            said
+        })
+        .collect();
+    Err(CoreError::Store(format!(
+        "Marfa will not sync this folder: its store holds records from an earlier release that name files outside it, which Marfa must not change. Each file is still where it was: {}. Move back anything you need, then run `marfa folders remove {}` and add the folder again.",
+        named.join("; "),
+        root.display()
+    )))
 }
 
 fn resumed(root: &Path, stop: &AtomicBool, look: Duration) -> bool {

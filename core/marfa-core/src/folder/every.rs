@@ -355,6 +355,8 @@ fn recorded(dir: &Path) -> crate::Result<Recorded> {
         match Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite")) {
             Ok(core) => {
                 let conn = core.conn()?;
+                // Refused as a pause is, so it is looked at no more often.
+                super::paused::refuse_outside(&conn, &root)?;
                 (
                     store::meta_get(&conn, store::META_SERVER_ORIGIN)?,
                     first::waiting(&conn)?,
