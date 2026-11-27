@@ -552,11 +552,51 @@ If a `marfa_update` call names a version other than the item's current version, 
 
 ### `mcp/update-changed-mid-call`
 
-If the item changes after a `marfa_update` call reads it and before one of the call's writes, then the server MUST refuse that write and every later one, and answer a tool error with code `version_conflict` that names the refused step in `failed_step` and the steps already written in `applied`.
+If the item's version changes after a `marfa_update` call reads it and before one of the call's writes, then the server MUST refuse that write and every later one, and answer a tool error with code `version_conflict` that names the refused step in `failed_step` and the steps already written in `applied`.
 
 **Reason:** each write names the version the call read or the one its own previous write left, so the agent's change never lands on a change it has not seen.
 
 **Tests:** `compliance/mcp-scripted.test.ts › tags nothing when the item changes between the call's read and its tag write`.
+
+### `mcp/update-from-required`
+
+If a `marfa_update` call names a `state` without `from`, or a `from` without `state`, then the server MUST refuse it as a tool error with code `validation_error` and write nothing.
+
+**Reason:** `from` is the state the agent read the item in, and a state change is only safe against it (`mcp/update-from-moved`).
+
+**Tests:** `compliance/mcp.test.ts › refuses a state without from and a from without state, and writes nothing`.
+
+### `mcp/update-from-moved`
+
+If a `marfa_update` call names a `state`, a `from` other than the state the item is in, and the item's current version, and either the item is not in the trash or the call names nothing but `id`, `version`, `state` and `from`, then the server MUST answer a tool error with code `state_conflict` that names `from` in `details.expected` and the state the item is in in `details.actual`.
+
+**Reason:** a move between states keeps the item's version, so the version cannot tell an item the agent read as archived from one trashed since.
+
+**Tests:** `compliance/mcp.test.ts › refuses a from the item is not in before any other step writes`, `› refuses a state change from a state the item has left, and restores only from the trash`.
+
+### `mcp/update-from-unchanged`
+
+If a `marfa_update` call names a `from` other than the state the item is in, and names the item's current version, then the server MUST NOT change the item's fields, tags, edges or state.
+
+**Reason:** the agent decided on the item it read, so no step of the call may land on an item in a state it has not seen.
+
+**Tests:** `compliance/mcp.test.ts › refuses a from the item is not in before any other step writes`, `› refuses a state change from a state the item has left, and restores only from the trash`.
+
+### `mcp/update-state-moved-mid-call`
+
+If the item moves to a state other than the call's `from` after a `marfa_update` call reads it and before the call's state step, then the server MUST refuse that step and every later one, and answer a tool error with code `state_conflict` that names `from` in `details.expected`, the state the item is in in `details.actual`, the refused step in `failed_step` and the steps already written in `applied`.
+
+**Reason:** a move between states keeps the item's version, so only `from` tells the agent that the item it read is no longer the one the step would change.
+
+**Tests:** `compliance/mcp-scripted.test.ts › refuses the state step when the item is trashed between the call's read and its state write`.
+
+### `mcp/update-restore-from-trashed`
+
+If a `marfa_update` call names the state `active` for an item in the trash, then the server MUST restore the item only when the call names `from` as `trashed`.
+
+**Reason:** an agent that read the item as archived or active did not read the bin, and must not bring the item out of it.
+
+**Tests:** `compliance/mcp.test.ts › refuses a state change from a state the item has left, and restores only from the trash`.
 
 ## Deleting items
 

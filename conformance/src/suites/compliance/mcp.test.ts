@@ -106,6 +106,16 @@ async function stateOf(id: string): Promise<string | null> {
   return read.ok ? read.data.item.state : null;
 }
 
+async function anyStateOf(id: string): Promise<string | undefined> {
+  const listed = await client.listItems({
+    state: "any",
+    filter: `id eq "${id}"`,
+    limit: 10,
+  });
+  expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+  return listed.data.data[0]?.state;
+}
+
 /** A note that is `parent-of` `children` other notes. */
 async function family(children: number): Promise<string> {
   const parent = await note("parent");
@@ -710,6 +720,7 @@ describe("marfa_update", () => {
       add_tags: ["late"],
       add_edges: [{ edge_type: "references", to_id: target.id }],
       state: "archived",
+      from: "active",
     };
     const error = toolError(
       await callTool(mcp, "marfa_update", { ...change, version: made.version }),
@@ -733,6 +744,145 @@ describe("marfa_update", () => {
     expect(changed.data.item.properties).toMatchObject({ title: "Renamed" });
     expect(changed.data.metadata.tags).toContain("late");
     expect(changed.data.item.edges?.references?.data).toHaveLength(1);
+  });
+});
+
+describe("marfa_update state", () => {
+  it("refuses a state change from a state the item has left, and restores only from the trash", async () => {
+    const made = await note("one");
+    expect((await client.transitionItem(made.id, "archived")).status).toBe(200);
+    expect((await client.deleteItem(made.id)).status).toBe(200);
+
+    // Lifecycle moves keep the version, so only from tells the agent's read
+    // of an archived item from the item as it is now.
+    const stale = toolError(
+      await callTool(mcp, "marfa_update", {
+        id: made.id,
+        version: made.version,
+        state: "active",
+        from: "archived",
+      }),
+    );
+    expect(stale.code).toBe("state_conflict");
+    expect(stale.details).toEqual({ expected: "archived", actual: "trashed" });
+    expect(await stateOf(made.id)).toBeNull();
+    expect(await anyStateOf(made.id)).toBe("trashed");
+
+    const active = toolError(
+      await callTool(mcp, "marfa_update", {
+        id: made.id,
+        version: made.version,
+        state: "active",
+        from: "active",
+      }),
+    );
+    expect(active.code).toBe("state_conflict");
+    expect(await anyStateOf(made.id)).toBe("trashed");
+
+    // The witness: from the state the agent read, the same call restores.
+    const restored = toolResult(
+      await callTool(mcp, "marfa_update", {
+        id: made.id,
+        version: made.version,
+        state: "active",
+        from: "trashed",
+      }),
+    );
+    expect(restored.state).toBe("active");
+    expect(await stateOf(made.id)).toBe("active");
+  });
+
+  it("archives and unarchives from the state the agent read", async () => {
+    const made = await note("one");
+    const archived = toolResult(
+      await callTool(mcp, "marfa_update", {
+        id: made.id,
+        version: made.version,
+        state: "archived",
+        from: "active",
+      }),
+    );
+    expect(archived.state).toBe("archived");
+    const back = toolResult(
+      await callTool(mcp, "marfa_update", {
+        id: made.id,
+        version: made.version,
+        state: "active",
+        from: "archived",
+      }),
+    );
+    expect(back.state).toBe("active");
+    expect(await stateOf(made.id)).toBe("active");
+  });
+
+  it("refuses a state without from and a from without state, and writes nothing", async () => {
+    const made = await note("one");
+    const noFrom = toolError(
+      await callTool(mcp, "marfa_update", {
+        id: made.id,
+        version: made.version,
+        state: "archived",
+        add_tags: ["late"],
+      }),
+    );
+    expect(noFrom.code).toBe("validation_error");
+    const noState = toolError(
+      await callTool(mcp, "marfa_update", {
+        id: made.id,
+        version: made.version,
+        from: "active",
+        add_tags: ["late"],
+      }),
+    );
+    expect(noState.code).toBe("validation_error");
+    const after = await client.getItem(made.id);
+    expect(after.data.item.version).toBe(made.version);
+    expect(after.data.item.state).toBe("active");
+    expect(after.data.metadata.tags).not.toContain("late");
+    // The witness: both together make the changes.
+    toolResult(
+      await callTool(mcp, "marfa_update", {
+        id: made.id,
+        version: made.version,
+        state: "archived",
+        from: "active",
+        add_tags: ["late"],
+      }),
+    );
+    const changed = await client.getItem(made.id);
+    expect(changed.data.item.state).toBe("archived");
+    expect(changed.data.metadata.tags).toContain("late");
+  });
+
+  it("refuses a from the item is not in before any other step writes", async () => {
+    const made = await note("one");
+    const refused = toolError(
+      await callTool(mcp, "marfa_update", {
+        id: made.id,
+        version: made.version,
+        properties: { title: "Renamed" },
+        state: "active",
+        from: "archived",
+      }),
+    );
+    expect(refused.code).toBe("state_conflict");
+    expect(refused.details).toEqual({ expected: "archived", actual: "active" });
+    expect(refused.applied).toBeUndefined();
+    const after = await client.getItem(made.id);
+    expect(after.data.item.version).toBe(made.version);
+    expect(after.data.item.properties).not.toHaveProperty("title");
+    // The witness: from the state it is in, the property change lands.
+    toolResult(
+      await callTool(mcp, "marfa_update", {
+        id: made.id,
+        version: made.version,
+        properties: { title: "Renamed" },
+        state: "active",
+        from: "active",
+      }),
+    );
+    const changed = await client.getItem(made.id);
+    expect(changed.data.item.properties).toMatchObject({ title: "Renamed" });
   });
 });
 

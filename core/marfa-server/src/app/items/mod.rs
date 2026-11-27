@@ -31,7 +31,7 @@ use super::item_links::Links;
 use super::refusal::{Code, Refusal, Result};
 
 pub(crate) use archived::{Archived, archived, versions};
-pub(crate) use plan::require_version;
+pub(crate) use plan::{require_version, state_moved};
 pub use read::{
     Caption, Choosing, Detail, GoesWith, Going, Listing, Many, PurgePreview, Selector, bin,
     bin_selection, bin_total, bulk_get, captions, counts_of_types, detail, extension, extensions,

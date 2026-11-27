@@ -19,8 +19,8 @@ const MAX_IDS: usize = 20;
 
 const PREVIEW_NEXT: &str = "Nothing has been deleted. Show the person what would go to the trash and ask them; only if they agree, call marfa_delete again with the same ids and confirm.";
 const TRASHED_NEXT: &str =
-    "Moved to the trash. Restore an item with marfa_update and state active.";
-const REPEATED_NEXT: &str = "This confirmation already moved these items to the trash, and nothing more was changed. Restore an item with marfa_update and state active.";
+    "Moved to the trash. Restore an item with marfa_update, state active and from trashed.";
+const REPEATED_NEXT: &str = "This confirmation already moved these items to the trash, and nothing more was changed. Restore an item with marfa_update, state active and from trashed.";
 
 pub fn definition() -> Definition {
     Definition {
