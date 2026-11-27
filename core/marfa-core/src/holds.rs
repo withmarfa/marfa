@@ -210,8 +210,9 @@ impl Core {
         Ok(pinned)
     }
 
-    /// Holds matching tables and fills them, or leaves them to the follow or
-    /// catch-up that holds the stream.
+    /// Holds matching tables and fills them. Where another call holds the
+    /// stream, or the copy is not hydrated, it leaves them owed for the next
+    /// follow or catch-up, or `fill_tables`, and never waits.
     pub fn hold_table(&self, type_id: &str, table: &str) -> Result<TableHold> {
         self.hold_table_until(type_id, table, &NEVER_STOPPED)
     }
@@ -226,8 +227,15 @@ impl Core {
         let was_held = busy::retrying(&self.conn, stop, || {
             tables::choose(&mut *self.conn()?, type_id, table)
         })?;
-        let fill = match self.try_claim_stream(Mover::CatchUp) {
+        let fill = match self.try_claim_stream(Mover::Fill) {
             Ok(_streaming) if store::hydration_complete(&*self.conn()?)? => {
+                #[cfg(debug_assertions)]
+                {
+                    crate::fault::hold(|| "table-fill-claimed");
+                    if crate::fault::fails(|| "table-fill-panics") {
+                        panic!("the table fill was made to panic");
+                    }
+                }
                 let context = reach::Context::capture(&*self.conn()?)?;
                 Some(tables::fill(self, &context, stop)?)
             }
@@ -259,7 +267,9 @@ impl Core {
     /// Fills each table the copy holds that is not whole.
     pub fn fill_tables(&self, stop: &AtomicBool) -> Result<FillReport> {
         self.lock.refuse_unless_writer()?;
-        let _streaming = self.claim_stream(Mover::CatchUp)?;
+        let _streaming = self.claim_stream(Mover::Fill)?;
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "table-fill-claimed");
         let context = reach::Context::capture(&*self.conn()?)?;
         tables::fill(self, &context, stop)
     }

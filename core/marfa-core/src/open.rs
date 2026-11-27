@@ -13,7 +13,7 @@ use crate::files::{keep_relocated_origin, write_down_renewals};
 use crate::{
     Core, CoreError, DEFAULT_CATCH_UP_IDLE, Handle, INCOMING_GRACE, Result, Server, SetAside,
     UnsentWrite, UnsentWrites, blob, damage, directory, file_cache, http, lock, owner_only,
-    remove_name, store, watch,
+    remove_name, store, streams::Stream, watch,
 };
 
 impl Core {
@@ -388,7 +388,7 @@ impl Core {
             cache: Some(blob::Cache::beside(path)),
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
             lock: Arc::new(lock::WriterLock::opened_to_read()),
-            streaming: Mutex::default(),
+            streaming: Stream::default(),
             draining: Mutex::new(()),
             removing,
             watch: watch::Watch::new(),
@@ -508,7 +508,7 @@ impl Core {
             cache,
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
             lock,
-            streaming: Mutex::default(),
+            streaming: Stream::default(),
             draining: Mutex::new(()),
             removing,
             watch: watch::Watch::new(),

@@ -148,8 +148,9 @@ impl MarfaCore {
         })
     }
 
-    /// Holds matching tables and fills them, or leaves them to the follow or
-    /// catch-up that holds the stream.
+    /// Holds matching tables and fills them. Where another call holds the
+    /// stream, or the copy is not hydrated, it leaves them owed for the next
+    /// follow or catch-up, or `fillTables`, and never waits.
     #[napi(
         ts_return_type = "Promise<{ type: string; table: string; was_held: boolean; fill: TableFill | null }>"
     )]

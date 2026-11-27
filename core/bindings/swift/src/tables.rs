@@ -57,7 +57,9 @@ pub struct TableHold {
     pub r#type: String,
     pub table: String,
     pub was_held: bool,
-    /// `None` where another call holds the stream, whose fill takes it.
+    /// `None` where another call held the stream or the copy was not
+    /// hydrated: the table is left owed for the next follow, catch-up or
+    /// table fill.
     pub fill: Option<TableFill>,
 }
 
@@ -178,8 +180,9 @@ guarded! {
     #[uniffi::export]
     impl Core {
         /// Holds the table named `table` of every item of `type_id`, a pattern as
-        /// a hydration reads it, and fills it, or leaves it to the follow or
-        /// catch-up that holds the stream.
+        /// a hydration reads it, and fills it. Where another call holds the
+        /// stream, or the copy is not hydrated, it leaves the table owed for
+        /// the next follow, catch-up or table fill, and never waits.
         pub fn hold_table(
             &self,
             type_id: String,

@@ -3123,6 +3123,75 @@ mod backoff_tests {
     }
 
     #[test]
+    fn a_folder_watch_shut_down_while_its_follow_waits_for_a_fill_ends_at_once() {
+        use crate::table_fill_waits_tests::{CLAIMED, LEDGER, LONG, STEPS, WAITING, hold_n1};
+        let (_dir, folder, server) = online_folder(nothing_found());
+        hold_n1(
+            &server,
+            folder.core(),
+            marfa_rules::builtin::catalog().unwrap(),
+        );
+        crate::folder::tests::settled_under(&folder, serde_json::json!({ "query": {} }));
+        {
+            let conn = folder.core().conn().unwrap();
+            crate::store::meta_set(&conn, crate::reach::FENCE, crate::scripted::FENCE).unwrap();
+            crate::store::meta_set(
+                &conn,
+                crate::store::META_INSTANCE_ID,
+                crate::scripted::INSTANCE,
+            )
+            .unwrap();
+            crate::store::mark_read_only_read(&conn).unwrap();
+        }
+        server.on(
+            "/keys/current",
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                r#"{"type_permissions":{"core.note":"write","system.folder":"write","app.acme.ledger":"read"}}"#,
+            ))],
+        );
+        crate::fault::observe(true);
+        crate::fault::arm(CLAIMED);
+        let (stop, ended) = (AtomicBool::new(false), AtomicBool::new(false));
+        std::thread::scope(|scope| {
+            let held = scope.spawn(|| folder.core().hold_table(LEDGER, STEPS));
+            crate::table_fill_waits_tests::held_at(CLAIMED);
+            let watching = scope.spawn(|| {
+                let watched = folder.watch(&stop, |_| Ok::<(), ()>(()));
+                ended.store(true, Ordering::SeqCst);
+                watched
+            });
+            let until = Instant::now() + LONG;
+            while crate::fault::reached(WAITING) == 0 && !ended.load(Ordering::SeqCst) {
+                assert!(
+                    Instant::now() < until,
+                    "the folder's follow never came to wait"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let waited = !ended.load(Ordering::SeqCst);
+            let shut = Instant::now();
+            stop.store(true, Ordering::SeqCst);
+            let watched = watching.join().unwrap();
+            let took = shut.elapsed();
+            crate::fault::release(CLAIMED);
+            let hold = held.join().unwrap().unwrap();
+            assert!(
+                waited,
+                "the watch ended before it was shut down: {watched:?}"
+            );
+            assert!(took < Duration::from_secs(1), "{took:?}");
+            assert_eq!(hold.fill.map(|fill| fill.whole), Some(1));
+        });
+        assert_eq!(
+            crate::tables::state(&folder.core().conn().unwrap(), "n1", STEPS)
+                .unwrap()
+                .as_deref(),
+            Some("whole")
+        );
+    }
+
+    #[test]
     fn a_stopped_folder_reads_the_root_once_to_learn_whether_its_instance_is_back() {
         let (_dir, folder, server) = online_folder(nothing_found());
         server.on("/", vec![root(OTHER_INSTANCE)]);

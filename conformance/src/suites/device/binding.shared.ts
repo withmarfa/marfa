@@ -118,6 +118,8 @@ export async function bindingHarness(
     hydrate?: boolean;
     /** The items the hydration lists, by type. */
     items?: Parameters<typeof scriptHydration>[1]["items"];
+    /** The catalog every read of `/types` answers, the scripted one unless named. */
+    catalog?: Answer;
   } = {},
 ): Promise<Followed> {
   const started = await startBindingHarness(label);
@@ -129,6 +131,7 @@ export async function bindingHarness(
       head: options.head ?? "10",
       instance: options.instance,
       items: options.items,
+      catalog: options.catalog,
     });
     options.setup?.(started);
     let next: Responder[] = options.streams ?? [HELD];

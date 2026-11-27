@@ -22,6 +22,7 @@ import {
   copyHeldLog,
   copyItemEvent,
   copyLiveReplay,
+  copyReplay,
   copyStreamCursor,
   typeCatalog,
   wireItem,
@@ -604,4 +605,133 @@ describe("a follow that waits for a hydration", () => {
     ).toEqual([undefined, "37", "37"]);
     expect(follow.isOver).toBe(true);
   });
+});
+
+describe("a call that waits for an app's table fill", () => {
+  const LEDGER = wireType("acme.ledger", {
+    tables: { lines: { columns: { amount: { type: "number" } } } },
+  });
+  const FILL_CLAIMED = "table-fill-claimed";
+  const WAITING_FOR_FILL = "stream-waiting-for-fill";
+
+  it.each(["catch-up", "hydration", "follow"] as const)(
+    "ends a %s stopped while it waits for a hold's fill as its stop ends it, having asked the server nothing",
+    async (call) => {
+      const followed = await bindingHarness(`binding-fill-stopped-${call}`, {
+        catalog: typeCatalog([LEDGER]),
+      });
+      harness = followed;
+      const { server, device, events } = followed;
+      const standing = async (): Promise<unknown> => {
+        const status = await device.status();
+        return status.ok
+          ? [
+              status.value.hydration,
+              status.value.eventCursor,
+              status.value.items,
+            ]
+          : status;
+      };
+      const moved = (from: number): string[] =>
+        server.requests
+          .slice(from)
+          .filter(
+            (request) =>
+              request.pathname === "/events" || request.pathname === "/types",
+          )
+          .map((request) => `${request.method} ${request.pathname}`);
+      const before = await standing();
+
+      await device.hooks.hold(FILL_CLAIMED);
+      const held = device.call<{ fill: unknown }>(
+        "holdTable",
+        "acme.ledger",
+        "lines",
+      );
+      await vi.waitFor(
+        async () => {
+          expect(await device.hooks.waiting(FILL_CLAIMED)).toBe(1);
+        },
+        { timeout: 10_000, interval: 20 },
+      );
+      const waited = await device.hooks.reached(WAITING_FOR_FILL);
+      const asked = server.requests.length;
+      const untilWaiting = (settled: () => boolean) =>
+        vi.waitFor(
+          async () => {
+            expect(
+              settled() ||
+                (await device.hooks.reached(WAITING_FOR_FILL)) > waited,
+              "the call neither waited for the fill nor ended",
+            ).toBe(true);
+          },
+          { timeout: 10_000, interval: 20 },
+        );
+
+      if (call === "follow") {
+        const follow = await device.follow();
+        await untilWaiting(() => follow.isOver);
+        expect(
+          follow.isOver ? await follow.ended : "waiting",
+          "the follow ended rather than wait for the fill",
+        ).toBe("waiting");
+        expect(
+          await follow.stop(),
+          "the stopped follow did not end as a stop ends it",
+        ).toBeNull();
+      } else {
+        const stop = await device.newStop();
+        const moving =
+          call === "catch-up"
+            ? device.catchUp(stop)
+            : device.hydrate(["core.note"], "library", stop);
+        await untilWaiting(() => moving.settled);
+        expect(
+          moving.settled ? await moving : "waiting",
+          "the call was answered rather than wait for the fill",
+        ).toBe("waiting");
+        await stop.raise();
+        const ended = await moving;
+        expect(
+          ended.ok ? "answered" : ended.refusal.code,
+          JSON.stringify(ended),
+        ).toBe("canceled");
+      }
+      expect(moved(asked), "the stopped call asked the server").toEqual([]);
+      expect(await standing(), "the stopped call changed the copy").toEqual(
+        before,
+      );
+
+      await device.hooks.release(FILL_CLAIMED);
+      expect(await held).toMatchObject({
+        ok: true,
+        value: { fill: expect.anything() },
+      });
+
+      // The witness: the same call, not stopped, asks the server.
+      const unstopped = server.requests.length;
+      if (call === "follow") {
+        const follow = await device.follow();
+        await vi.waitFor(
+          () => {
+            expect(moved(unstopped)).toContain("GET /events");
+          },
+          { timeout: 10_000, interval: 20 },
+        );
+        expect(await follow.stop()).toBeNull();
+      } else {
+        if (call === "catch-up") {
+          events.set(copyReplay("10", []), HELD);
+        } else {
+          events.set(copyHeadRead("10"), copyReplay("10", []), HELD);
+        }
+        const answered =
+          call === "catch-up"
+            ? await device.catchUp()
+            : await device.hydrate(["core.note"], "library");
+        expect(answered.ok, JSON.stringify(answered)).toBe(true);
+        expect(moved(unstopped)).toContain("GET /events");
+      }
+    },
+  );
 });
