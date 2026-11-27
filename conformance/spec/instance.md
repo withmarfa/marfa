@@ -1058,7 +1058,7 @@ When a caller holding `backups.manage` sends `POST /backups`, the server MUST an
 
 ### `instance/backup-part-stored-again`
 
-Where `object_store_bucket` or `backup_path` is set, if a backup the server takes names a part that `<root>/backup-parts/<instance id>/` lacks, or holds with bytes other than those whose SHA-256 its name gives and lists with another ETag, or in a backup folder another size, modified time, inode or birth time, than it had when the server last stored or hashed that part, or holds in a backup folder that answers but cannot give that part's bytes, where `<root>` is `<object_store_prefix>` or `<backup_path>`, then the server MUST store that part there again.
+Where `object_store_bucket` or `backup_path` is set, if a backup the server takes names a part that `<root>/backup-parts/<instance id>/` lacks, or holds with bytes other than those whose SHA-256 its name gives and lists with another ETag, or in a backup folder another size, modified time, inode or birth time, than it had when the server last stored or hashed that part, or holds in a backup folder that answers but cannot give that part's bytes, or holds in an object store whose answer to the read of it is the error code `InvalidObjectState`, where `<root>` is `<object_store_prefix>` or `<backup_path>`, then the server MUST store that part there again.
 
 **Reason:** each backup restores whole, not only the first one that named a part. A write through the store gives an object another ETag, and a write through the file system gives a file another modified time. An object store that changes an object's bytes and keeps its ETag breaks its own promise of durability, and the server finds that change only when a restore reads the part (`instance/backup-restore-parts-checked`). A disk can change a file's bytes and keep all four, which `instance/backup-folder-part-rehashed` bounds. A part whose read fails on a bad sector or a permission does not fail the backup: the server counts it as damaged and stores it again where the backup names it.
 
@@ -1066,7 +1066,7 @@ Where `object_store_bucket` or `backup_path` is set, if a backup the server take
 
 ### `instance/backup-part-archived`
 
-Where `object_store_bucket` is set, if the object store answers the read the server makes of a part under `<object_store_prefix>/backup-parts/<instance id>/` while it takes a backup with the error code `InvalidObjectState`, then the server MUST treat the part as found damaged, as `instance/backup-part-stored-again` and `instance/backup-health-parts-damaged` say of a part a backup folder that answers cannot give.
+Where `object_store_bucket` is set, if the object store answers the read the server makes of a part under `<object_store_prefix>/backup-parts/<instance id>/` while it takes a backup with the error code `InvalidObjectState`, then the server MUST complete the backup.
 
 **Reason:** the code names the one object, which an object store has moved to an archived storage class, and not the store, which answers every other request. A backup run that failed on it would fail every run and never store the part again. No other code is taken this way (`instance/backup-part-read-fails`).
 
@@ -1250,7 +1250,7 @@ Where `backup_interval_seconds` is above 0, while the copy record holds no copy 
 
 ### `instance/backup-health-parts-damaged`
 
-Where `object_store_bucket` or `backup_path` is set, while a part under `<root>/backup-parts/<instance id>/`, where `<root>` is `<object_store_prefix>` or `<backup_path>`, that the server found holding bytes other than those whose SHA-256 its name gives, or in a backup folder that answers could not read, is named by a backup it keeps, and the server has neither stored that part again nor found it whole since, the server MUST answer `GET /health` with `backups.status` `failing` and an overall `status` no better than `degraded`.
+Where `object_store_bucket` or `backup_path` is set, while a part under `<root>/backup-parts/<instance id>/`, where `<root>` is `<object_store_prefix>` or `<backup_path>`, that the server found holding bytes other than those whose SHA-256 its name gives, or in a backup folder that answers could not read, or in an object store whose answer to the read of it is the error code `InvalidObjectState`, is named by a backup it keeps, and the server has neither stored that part again nor found it whole since, the server MUST answer `GET /health` with `backups.status` `failing` and an overall `status` no better than `degraded`.
 
 **Reason:** a restore of a backup that names such a part is refused. The server finds a part damaged when a restore of one of its own backups reads it, and when a backup checks each part a backup it keeps names, as `instance/backup-part-stored-again` and `instance/backup-folder-part-rehashed` say.
 
