@@ -190,10 +190,10 @@ stays because that thing is what it checks.
   `folder_displaced` rows, and rewrites a `folder_retained` row's directories
   and the time it was set aside, so that a record names a directory outside the
   folder. Releases v0.0.86 to v0.0.108 recorded a take-in from another folder
-  that way, and no operation or fault of this release writes one. For a record
-  that blocks a write in the folder, it also marks that file's `folder_files`
-  row as a write whose bytes have not landed, which such a take-in left with
-  its record.
+  that way, and no operation or fault of this release writes one. To test a
+  damaged record with an in-folder target and an outside reserved file, the
+  fixture marks the target's write as pending in `folder_files`. Those
+  releases recorded the same directory for the target and the reserved file.
 - `compliance/hidden-types-saved-view.test.ts` rewrites the stored query of a
   view to name an app type while the server is stopped. A view door refuses a
   query that names a hidden type, so only a view saved by an earlier release
