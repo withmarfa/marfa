@@ -415,7 +415,7 @@ describe("starting on a database an earlier release wrote", () => {
         expect(type.ok, JSON.stringify(type.error)).toBe(true);
         // The one difference in what the type holds is the origin "user", named
         // "registered" since v0.0.91. A shipped parent may have gained fields,
-        // so the fields are read as a superset. The read also carries two
+        // so the fields are read as a superset. The read also carries three
         // members v0.0.90 did not have: `ancestor_guidance`, `revision` and
         // `provenance.plugin`, which is null for a type the owner registered.
         expect(type.data).toEqual({
