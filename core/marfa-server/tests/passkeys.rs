@@ -185,6 +185,14 @@ struct Reply {
 }
 
 impl Reply {
+    fn location(&self) -> String {
+        let location = self.headers.get(header::LOCATION);
+        location
+            .and_then(|line| line.to_str().ok())
+            .unwrap_or("")
+            .to_string()
+    }
+
     fn cookie(&self) -> Option<String> {
         let line = self.headers.get(header::SET_COOKIE)?.to_str().ok()?;
         Some(line.split(';').next()?.to_string())
@@ -303,6 +311,19 @@ impl Instance {
         send(self.public.clone(), request).await
     }
 
+    /// The sign-in page's form, as a browser posts it.
+    async fn sign_in_form(&self, password: &str) -> Reply {
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("username", USERNAME)
+            .append_pair("password", password)
+            .finish();
+        let request = request(Method::POST, "/auth/sign-in", "", &self.origin)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(body))
+            .unwrap();
+        send(self.public.clone(), request).await
+    }
+
     async fn ask(&self, path: &str, cookie: &str) -> Reply {
         let request = request(Method::POST, path, cookie, &self.origin);
         send(self.public.clone(), request.body(Body::empty()).unwrap()).await
@@ -314,9 +335,8 @@ impl Instance {
     }
 
     async fn signed_in(&self) -> String {
-        let body = json!({ "username": USERNAME, "password": PASSWORD });
-        let reply = self.post("/auth/sign-in", "", &body).await;
-        assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
+        let reply = self.sign_in_form(PASSWORD).await;
+        assert_eq!(reply.status, StatusCode::FOUND, "{}", reply.text);
         reply.cookie().unwrap()
     }
 
@@ -997,21 +1017,20 @@ async fn a_passkey_signs_in_through_a_password_lockout_and_leaves_it_in_place() 
     let instance = Instance::claimed().await;
     let device = Device::new();
     instance.add(&device).await;
-    let wrong = json!({ "username": USERNAME, "password": "not the password" });
     for _ in 0..10 {
-        let refused = instance.post("/auth/sign-in", "", &wrong).await;
-        assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+        let refused = instance.sign_in_form("not the password").await;
+        assert!(refused.location().contains("error=invalid_credentials"));
     }
-    let right = json!({ "username": USERNAME, "password": PASSWORD });
-    let held = instance.post("/auth/sign-in", "", &right).await;
-    assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS);
+    let held = instance.sign_in_form(PASSWORD).await;
+    assert!(held.location().contains("error=too_many_attempts"));
+    assert!(held.cookie().is_none());
 
     let signed = instance.sign_in_with(&device, 1).await;
     assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
     assert!(signed.session_cookie().is_some());
 
-    let still = instance.post("/auth/sign-in", "", &right).await;
-    assert_eq!(still.status, StatusCode::TOO_MANY_REQUESTS);
+    let still = instance.sign_in_form(PASSWORD).await;
+    assert!(still.location().contains("error=too_many_attempts"));
 }
 
 #[tokio::test]

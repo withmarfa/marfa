@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -1076,15 +1077,12 @@ describe("the caller's address through the tunnel", () => {
       await linked.link();
       const tunnel = tunnelOf(linked);
       const signIn = (username: string, password: string, address?: string) =>
-        fetch(`${tunnel}/auth/sign-in`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            origin,
-            ...(address === undefined ? {} : { "CF-Connecting-IP": address }),
-          },
-          body: JSON.stringify({ username, password }),
-        });
+        postSignInForm(
+          tunnel,
+          origin,
+          { username, password },
+          { ...(address === undefined ? {} : { "CF-Connecting-IP": address }) },
+        );
       await believed(linked.server, tunnel);
       // The stranger guesses until the limit refuses them.
       let refused = false;
@@ -1094,7 +1092,7 @@ describe("the caller's address through the tunnel", () => {
           "wrong",
           "198.51.100.50",
         );
-        refused = answer.status === 429;
+        refused = signInOutcome(answer) === "too_many_attempts";
         await answer.body?.cancel();
       }
       expect(refused).toBe(true);
@@ -1104,7 +1102,7 @@ describe("the caller's address through the tunnel", () => {
         TEST_OWNER.password,
         "198.51.100.50",
       );
-      expect(stranger.status).toBe(429);
+      expect(signInOutcome(stranger)).toBe("too_many_attempts");
       await stranger.body?.cancel();
       // The owner, from another address through the tunnel, and from loopback itself, is not.
       for (const address of ["198.51.100.51", undefined]) {
@@ -1113,7 +1111,7 @@ describe("the caller's address through the tunnel", () => {
           TEST_OWNER.password,
           address,
         );
-        expect(owner.status, String(address)).toBe(200);
+        expect(signInOutcome(owner), String(address)).toBe("signed_in");
         await owner.body?.cancel();
       }
     },
@@ -1139,15 +1137,12 @@ describe("the caller's address through the tunnel", () => {
         password: string,
         address?: string,
       ) =>
-        fetch(`${via}/auth/sign-in`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            origin,
-            ...(address === undefined ? {} : { "CF-Connecting-IP": address }),
-          },
-          body: JSON.stringify({ username, password }),
-        });
+        postSignInForm(
+          via,
+          origin,
+          { username, password },
+          { ...(address === undefined ? {} : { "CF-Connecting-IP": address }) },
+        );
       const named = "198.51.100.60";
       let refused = false;
       for (let n = 0; n < 80 && !refused; n++) {
@@ -1157,7 +1152,7 @@ describe("the caller's address through the tunnel", () => {
           "wrong",
           named,
         );
-        refused = answer.status === 429;
+        refused = signInOutcome(answer) === "too_many_attempts";
         await answer.body?.cancel();
       }
       expect(refused).toBe(true);
@@ -1167,7 +1162,7 @@ describe("the caller's address through the tunnel", () => {
         TEST_OWNER.username,
         TEST_OWNER.password,
       );
-      expect(peer.status).toBe(429);
+      expect(signInOutcome(peer)).toBe("too_many_attempts");
       await peer.body?.cancel();
       // The address the header named was never charged with them.
       const caller = await signIn(
@@ -1176,7 +1171,7 @@ describe("the caller's address through the tunnel", () => {
         TEST_OWNER.password,
         named,
       );
-      expect(caller.status).toBe(200);
+      expect(signInOutcome(caller)).toBe("signed_in");
       await caller.body?.cancel();
     },
     FRESH_SERVER_TIMEOUT_MS,

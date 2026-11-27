@@ -7,6 +7,12 @@ import {
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { ErrorResponse } from "../../client/types.js";
 import {
+  postSignInForm,
+  sessionCookieOf,
+  signInAnswerOf,
+  signInOutcome,
+} from "../../client/owner-session.js";
+import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
@@ -72,16 +78,14 @@ function postForm(
   });
 }
 
+/** The sign-in form's answer for a password from `address`, the redirect not followed. */
 function signIn(password: string, address: string): Promise<Response> {
-  return fetch(`${server!.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin,
-      [CLIENT_HEADER]: address,
-    },
-    body: JSON.stringify({ username: OWNER.username, password }),
-  });
+  return postSignInForm(
+    server!.apiUrl,
+    origin,
+    { username: OWNER.username, password },
+    { [CLIENT_HEADER]: address },
+  );
 }
 
 async function errorCode(response: Response): Promise<string> {
@@ -137,27 +141,15 @@ describe("the sign-in surface", () => {
     ).toBe("/auth/sign-in");
   });
 
-  it("refuses a sign-in that says neither Origin nor Referer, as a form or as JSON, and sets no cookie", async () => {
-    const unsaid = [
-      await postForm(
-        "/auth/sign-in",
-        { ...OWNER, return_to: "/" },
-        { [CLIENT_HEADER]: "192.0.2.5" },
-      ),
-      await fetch(`${server!.apiUrl}/auth/sign-in`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          [CLIENT_HEADER]: "192.0.2.5",
-        },
-        body: JSON.stringify(OWNER),
-      }),
-    ];
-    for (const refused of unsaid) {
-      expect(refused.status).toBe(403);
-      expect(await errorCode(refused)).toBe("forbidden");
-      expect(refused.headers.get("set-cookie")).toBeNull();
-    }
+  it("refuses a sign-in that says neither Origin nor Referer, and sets no cookie", async () => {
+    const refused = await postForm(
+      "/auth/sign-in",
+      { ...OWNER, return_to: "/" },
+      { [CLIENT_HEADER]: "192.0.2.5" },
+    );
+    expect(refused.status).toBe(403);
+    expect(await errorCode(refused)).toBe("forbidden");
+    expect(refused.headers.get("set-cookie")).toBeNull();
     // The witness: a form whose Referer is a page of the instance signs in.
     const referred = await postForm(
       "/auth/sign-in",
@@ -170,7 +162,7 @@ describe("the sign-in surface", () => {
 
   it("answers a sign-out with only ok, and ends the session cookie", async () => {
     const signedIn = await signIn(OWNER.password, "192.0.2.6");
-    const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0];
+    const cookie = sessionCookieOf(signedIn)!;
     const ended = await fetch(`${server!.apiUrl}/auth/sign-out`, {
       method: "POST",
       headers: { "content-type": "application/json", origin, cookie },
@@ -189,7 +181,7 @@ describe("the sign-in surface", () => {
 
   it("answers a sign-out from a page with a page that says so, and ends the session cookie", async () => {
     const signedIn = await signIn(OWNER.password, "192.0.2.16");
-    const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0];
+    const cookie = sessionCookieOf(signedIn)!;
     const ended = await fetch(`${server!.apiUrl}/auth/sign-out`, {
       method: "POST",
       headers: {
@@ -216,7 +208,7 @@ describe("the sign-in surface", () => {
 
   it("refuses a sign-out 403 from another origin or none and 401 from no live session, and keeps the session until the instance's own origin ends it", async () => {
     const signedIn = await signIn(OWNER.password, "192.0.2.7");
-    const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const cookie = sessionCookieOf(signedIn)!;
     const signOut = (headers: Record<string, string>): Promise<Response> =>
       fetch(`${server!.apiUrl}/auth/sign-out`, {
         method: "POST",
@@ -292,10 +284,10 @@ describe("the sign-in surface", () => {
     );
   });
 
-  it("answers a password sign-in sent as JSON with only ok, and its session cookie", async () => {
+  it("answers a password sign-in sent as the form with a redirect, and its session cookie", async () => {
     const signedIn = await signIn(OWNER.password, "192.0.2.3");
-    expect(signedIn.status).toBe(200);
-    expect(await signedIn.json()).toEqual({ ok: true });
+    expect(signedIn.status).toBe(302);
+    expect(signedIn.headers.get("location")).toBe("/");
     const line = signedIn.headers.get("set-cookie") ?? "";
     expect(line).toMatch(/^marfa_session=[^;]+;/);
     expect(line).toMatch(/;\s*HttpOnly/i);
@@ -307,60 +299,73 @@ describe("the sign-in surface", () => {
     expect(passkeys.status).toBe(200);
   });
 
-  it("refuses a password sign-in sent as JSON with a field it does not take, and sets no cookie", async () => {
-    const refused = await fetch(`${server!.apiUrl}/auth/sign-in`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        origin,
-        [CLIENT_HEADER]: "192.0.2.4",
-      },
-      body: JSON.stringify({ ...OWNER, rememberMe: false }),
-    });
-    expect(refused.status).toBe(400);
-    const body = (await refused.json()) as ErrorResponse & {
-      error: { details?: { unknown_body_fields?: string[] } };
-    };
-    expect(body.error.code).toBe("validation_error");
-    expect(body.error.details?.unknown_body_fields).toEqual(["rememberMe"]);
-    expect(refused.headers.get("set-cookie")).toBeNull();
-    // The witness: the same body without the field signs in.
-    expect((await signIn(OWNER.password, "192.0.2.4")).status).toBe(200);
+  it("refuses a password sign-in sent as anything but the form, and signs in with the form", async () => {
+    // The witness: the form with the same credentials signs the owner in.
+    const witness = await signIn(OWNER.password, "192.0.2.4");
+    expect(witness.status).toBe(302);
+    expect(sessionCookieOf(witness)).toBeDefined();
+    const asForm = new URLSearchParams(OWNER).toString();
+    const multipart = new FormData();
+    multipart.set("username", OWNER.username);
+    multipart.set("password", OWNER.password);
+    const bodies: [string, Record<string, string>, BodyInit][] = [
+      ["JSON", { "content-type": "application/json" }, JSON.stringify(OWNER)],
+      [
+        "JSON with another field",
+        { "content-type": "application/json" },
+        JSON.stringify({ ...OWNER, rememberMe: false }),
+      ],
+      ["plain text", { "content-type": "text/plain" }, asForm],
+      ["no content type", {}, new TextEncoder().encode(asForm)],
+      ["multipart", {}, multipart],
+    ];
+    for (const [kind, type, body] of bodies) {
+      const refused = await fetch(`${server!.apiUrl}/auth/sign-in`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { ...type, origin, [CLIENT_HEADER]: "192.0.2.4" },
+        body,
+      });
+      expect(refused.status, kind).toBe(400);
+      expect(await errorCode(refused), kind).toBe("validation_error");
+      expect(refused.headers.get("set-cookie"), kind).toBeNull();
+    }
+  });
+
+  it("answers a wrong password with a redirect that names invalid_credentials, and sets no cookie", async () => {
+    const wrong = await signIn("not the password", "192.0.2.8");
+    expect(wrong.status).toBe(302);
+    expect(signInAnswerOf(wrong).error).toBe("invalid_credentials");
+    expect(wrong.headers.get("set-cookie")).toBeNull();
+    // The witness: the right password from the same address signs in.
+    expect(signInOutcome(await signIn(OWNER.password, "192.0.2.8"))).toBe(
+      "signed_in",
+    );
   });
 
   it("holds one address to ten attempts at one username, and leaves the owner signing in from another", async () => {
     const guesser = "203.0.113.10";
     for (let i = 0; i < 10; i++) {
-      expect((await signIn("not the password", guesser)).status).toBe(401);
+      expect(
+        signInAnswerOf(await signIn("not the password", guesser)).error,
+      ).toBe("invalid_credentials");
     }
-    const throttled = await signIn("not the password", guesser);
-    expect(throttled.status).toBe(429);
-    expect(Number(throttled.headers.get("retry-after"))).toBeGreaterThan(0);
-    // Answered before the password is judged.
-    expect((await signIn(OWNER.password, guesser)).status).toBe(429);
-
-    // The form says so, rather than that the password is wrong.
-    const form = await postForm(
-      "/auth/sign-in",
-      { ...OWNER, return_to: "/" },
-      { origin, [CLIENT_HEADER]: guesser },
-    );
-    expect(form.status).toBe(302);
-    const refusal = new URL(form.headers.get("location") ?? "", origin);
-    expect(refusal.searchParams.get("error")).toBe("too_many_attempts");
-    expect(form.headers.get("set-cookie")).toBeNull();
-    // The wait is the one the address limit's own refusal carries, and no
-    // longer than its fifteen minutes.
-    const wait = Number(refusal.searchParams.get("retry_after_seconds"));
-    expect(Number.isInteger(wait)).toBe(true);
-    expect(wait).toBeGreaterThan(0);
-    expect(wait).toBeLessThanOrEqual(15 * 60);
-    expect(
-      Math.abs(wait - Number(throttled.headers.get("retry-after"))),
-    ).toBeLessThanOrEqual(2);
+    // The form says so, rather than that the password is wrong, and the
+    // right password is answered the same before it is judged.
+    const throttled = await signIn(OWNER.password, guesser);
+    expect(throttled.status).toBe(302);
+    const refusal = signInAnswerOf(throttled);
+    expect(refusal.error).toBe("too_many_attempts");
+    expect(throttled.headers.get("set-cookie")).toBeNull();
+    // The wait is no longer than the address limit's fifteen minutes.
+    expect(Number.isInteger(refusal.wait)).toBe(true);
+    expect(refusal.wait).toBeGreaterThan(0);
+    expect(refusal.wait).toBeLessThanOrEqual(15 * 60);
 
     // The owner, somewhere else, signs in.
-    expect((await signIn(OWNER.password, "198.51.100.20")).status).toBe(200);
+    const elsewhere = await signIn(OWNER.password, "198.51.100.20");
+    expect(elsewhere.status).toBe(302);
+    expect(signInAnswerOf(elsewhere).error).toBe(undefined);
   });
 
   it("limits anonymous device code entry per address and the owner's checks per owner", async () => {
@@ -391,7 +396,7 @@ describe("the sign-in surface", () => {
     );
 
     const signedIn = await signIn(OWNER.password, "198.51.100.31");
-    expect(signedIn.status).toBe(200);
+    expect(signInOutcome(signedIn)).toBe("signed_in");
     const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
       signedIn.headers.get("set-cookie") ?? "",
     )?.[1];
@@ -441,10 +446,8 @@ const NAVIGATION = {
 /** The session cookie a sign-in from `address` sets. */
 async function sessionCookie(address: string): Promise<string> {
   const signedIn = await signIn(OWNER.password, address);
-  expect(signedIn.status).toBe(200);
-  const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
-    signedIn.headers.get("set-cookie") ?? "",
-  )?.[1];
+  expect(signedIn.status).toBe(302);
+  const cookie = sessionCookieOf(signedIn)!;
   expect(cookie).toBeDefined();
   return cookie!;
 }
@@ -534,7 +537,9 @@ describe("the pages a person reads at sign-in", () => {
     // follow the form's redirect, and read the page it lands on.
     const guesser = "203.0.113.60";
     for (let i = 0; i < 10; i++)
-      expect((await signIn("not the password", guesser)).status).toBe(401);
+      expect(
+        signInAnswerOf(await signIn("not the password", guesser)).error,
+      ).toBe("invalid_credentials");
     const refused = await postForm(
       "/auth/sign-in",
       { ...OWNER, return_to: "/" },

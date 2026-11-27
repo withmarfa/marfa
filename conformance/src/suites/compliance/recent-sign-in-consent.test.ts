@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -55,16 +56,10 @@ function nextAddress(): string {
 }
 
 async function signIn(): Promise<string> {
-  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin,
-      [CLIENT_HEADER]: nextAddress(),
-    },
-    body: JSON.stringify(TEST_OWNER),
+  const response = await postSignInForm(server.apiUrl, origin, TEST_OWNER, {
+    [CLIENT_HEADER]: nextAddress(),
   });
-  expect(response.status).toBe(200);
+  expect(signInOutcome(response)).toBe("signed_in");
   const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
     response.headers.get("set-cookie") ?? "",
   )?.[1];

@@ -27,13 +27,19 @@ check_owner() {
     python3 -c 'import json,sys; from urllib.parse import urlparse
 issuer = urlparse(json.load(sys.stdin)["issuer"])
 print(f"{issuer.scheme}://{issuer.netloc}")')"
-  body="$(python3 -c 'import json,os; print(json.dumps({"username":os.environ["MARFA_TEST_OWNER_USERNAME"],"password":os.environ["MARFA_TEST_OWNER_PASSWORD"]}))')"
-  curl -fsS --max-time 10 -X POST "${MARFA_TEST_URL}/auth/sign-in" \
-    -H 'Content-Type: application/json' \
-    -H "Origin: ${origin}" \
-    --data-binary @- <<<"${body}" |
-    python3 -c 'import json,sys
-assert json.load(sys.stdin) == {"ok": True}, "the owner did not sign in"' 
+  body="$(python3 -c 'import os; from urllib.parse import urlencode; print(urlencode({"username":os.environ["MARFA_TEST_OWNER_USERNAME"],"password":os.environ["MARFA_TEST_OWNER_PASSWORD"]}), end="")')"
+  printf '%s' "${body}" |
+    curl -fsS --max-time 10 -o /dev/null -D - -X POST "${MARFA_TEST_URL}/auth/sign-in" \
+      -H 'Content-Type: application/x-www-form-urlencoded' \
+      -H "Origin: ${origin}" \
+      --data-binary @- |
+    python3 -c 'import sys
+lines = sys.stdin.read().splitlines()
+status = lines[0].split()[1]
+headers = [line.lower() for line in lines[1:]]
+assert status == "302", f"the sign-in answered {status}"
+assert not any(line.startswith("location:") and "error=" in line for line in headers), "the owner did not sign in"
+assert any(line.startswith("set-cookie:") and "session=" in line for line in headers), "the sign-in set no session cookie"'
 }
 
 up() {

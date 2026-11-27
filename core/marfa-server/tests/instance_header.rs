@@ -104,12 +104,16 @@ impl Instance {
             )
             .await;
         assert_eq!(claimed.status, StatusCode::CREATED, "{}", claimed.body);
+        let signing = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("username", "owner")
+            .append_pair("password", "the first password")
+            .finish();
         let signing_in = Request::builder()
             .method(Method::POST)
             .uri("/auth/sign-in")
-            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
             .header(header::ORIGIN, ORIGIN)
-            .body(Body::from(claim.to_string()))
+            .body(Body::from(signing))
             .unwrap();
         let response = instance.public.clone().oneshot(signing_in).await.unwrap();
         let line = response

@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { controlRequest } from "../../utils/control-request.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { createHash, randomBytes } from "node:crypto";
@@ -60,19 +61,16 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 async function signIn(userAgent = "browser-sessions"): Promise<string> {
-  const response = await fetch(`${server!.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin,
-      "user-agent": userAgent,
-    },
-    body: JSON.stringify({
+  const response = await postSignInForm(
+    server!.apiUrl,
+    origin,
+    {
       username: OWNER.username,
       password: OWNER.password,
-    }),
-  });
-  expect(response.status).toBe(200);
+    },
+    { "user-agent": userAgent },
+  );
+  expect(signInOutcome(response)).toBe("signed_in");
   const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
     response.headers.get("set-cookie") ?? "",
   )?.[1];

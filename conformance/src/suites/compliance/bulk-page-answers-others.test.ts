@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -219,20 +220,16 @@ describe("a write that waits behind a bulk page", () => {
     );
 
     const attempt = track(
-      fetch(`${server.apiUrl}/auth/sign-in`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin },
-        body: JSON.stringify({
-          username: TEST_OWNER.username,
-          password: "not the owner's password",
-        }),
+      postSignInForm(server.apiUrl, origin, {
+        username: TEST_OWNER.username,
+        password: "not the owner's password",
       }),
     );
     await new Promise((resolve) => setTimeout(resolve, 2 * BUDGET_MS));
     expect(attempt.state.answered).toBe(false);
 
     expect((await release(page)).status).toBe(200);
-    expect((await attempt.response).status).toBe(401);
+    expect(signInOutcome(await attempt.response)).toBe("invalid_credentials");
   }, 120_000);
 
   it("is still refused 503 write_contention behind a lock held for longer than the budget", async () => {

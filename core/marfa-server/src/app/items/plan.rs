@@ -32,6 +32,16 @@ fn reserved(type_id: &str) -> Refusal {
     )
 }
 
+/// The refusal of a state change that names a state the item is not in.
+pub(crate) fn state_moved(from: &str, actual: &str) -> Refusal {
+    Refusal::new(
+        Code::StateConflict,
+        format!("The item is {actual}, not {from}. Read it again."),
+    )
+    .with_detail("expected", from)
+    .with_detail("actual", actual)
+}
+
 pub(super) fn invalid_transition(from: &str, to: &str) -> Refusal {
     Refusal::new(
         Code::InvalidTransition,

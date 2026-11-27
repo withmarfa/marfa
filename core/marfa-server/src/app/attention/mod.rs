@@ -158,6 +158,9 @@ fn backing(health: &BackupHealth) -> Vec<Concern> {
         };
         let title = match fault {
             StoreFault::FolderGone => "The backup folder is not there".to_string(),
+            StoreFault::FolderHeld => {
+                "The backup folder is open in another Marfa server".to_string()
+            }
             StoreFault::FolderSilent => "The backup folder is not answering".to_string(),
             StoreFault::Refused => format!("Files are waiting for their copy in the {place}"),
             StoreFault::Unusable => "The backup destination cannot be used".to_string(),

@@ -14,6 +14,8 @@ pub struct Subscription {
     pub type_filter: Option<String>,
     pub secret: String,
     pub active: bool,
+    /// Advances with each change to `url`, `events`, `type_filter` or `active`, and no other.
+    pub version: i64,
     pub maker: Maker,
     pub starts_after: i64,
     pub created_at: String,
@@ -21,7 +23,7 @@ pub struct Subscription {
 }
 
 const SUBSCRIPTION: &str = "SELECT id, url, events, type_filter, secret, active, key_id, grant_id, \
-     starts_after, created_at, updated_at FROM webhooks";
+     starts_after, created_at, updated_at, version FROM webhooks";
 
 fn subscription_of(row: &Row<'_>) -> rusqlite::Result<Subscription> {
     let events: String = row.get(2)?;
@@ -51,6 +53,7 @@ fn subscription_of(row: &Row<'_>) -> rusqlite::Result<Subscription> {
         starts_after: row.get(8)?,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
+        version: row.get(11)?,
     })
 }
 
@@ -90,8 +93,13 @@ pub fn insert(tx: &Transaction<'_>, subscription: &Subscription) -> Result<()> {
 
 pub fn update(tx: &Transaction<'_>, subscription: &Subscription) -> Result<()> {
     tx.execute(
-        "UPDATE webhooks SET url = ?2, events = ?3, type_filter = ?4, active = ?5, updated_at = ?6, \
-         failing_since = CASE WHEN url = ?2 AND active = ?5 THEN failing_since END WHERE id = ?1",
+        "UPDATE webhooks SET \
+         version = version + (url IS NOT ?2 OR events IS NOT ?3 OR type_filter IS NOT ?4 \
+                              OR active IS NOT ?5), \
+         updated_at = CASE WHEN url IS NOT ?2 OR events IS NOT ?3 OR type_filter IS NOT ?4 \
+                                OR active IS NOT ?5 THEN ?6 ELSE updated_at END, \
+         failing_since = CASE WHEN url = ?2 AND active = ?5 THEN failing_since END, \
+         url = ?2, events = ?3, type_filter = ?4, active = ?5 WHERE id = ?1",
         params![
             subscription.id,
             subscription.url,
@@ -894,6 +902,45 @@ fn a_subscription_fails_from_its_first_failed_attempt_until_one_succeeds_or_it_c
     hook.active = true;
     update(&tx, &hook).unwrap();
     assert_eq!(since(), vec![], "turning it off and on starts afresh");
+}
+
+#[test]
+fn version_advances_only_with_what_an_owner_configures() {
+    let mut db = baseline();
+    let tx = db.transaction().unwrap();
+    tx.execute_batch(&webhooks(&[("a", "k1", "")])).unwrap();
+    tx.execute_batch(&deliveries(&[(1, "a", "pending", 0)]))
+        .unwrap();
+    let held = |tx: &Transaction<'_>| by_id(tx, "a", None).unwrap().unwrap();
+    assert_eq!(held(&tx).version, 1);
+    let mut hook = held(&tx);
+    hook.updated_at = "2026-01-02T00:00:00.000Z".to_string();
+    update(&tx, &hook).unwrap();
+    let same = held(&tx);
+    assert_eq!(same.version, 1, "a change that changes nothing");
+    assert_eq!(same.updated_at, "2026-01-01T00:00:00.000Z");
+    record(
+        &tx,
+        "d1",
+        &Recorded {
+            status: Status::Failed,
+            status_code: None,
+            error: None,
+            due_at: 0,
+        },
+        "2026-01-03T00:00:00.000Z",
+    )
+    .unwrap();
+    assert_eq!(held(&tx).version, 1, "a delivery outcome");
+    hook.type_filter = Some("core.note".to_string());
+    update(&tx, &hook).unwrap();
+    assert_eq!(held(&tx).version, 2, "a type filter");
+    hook.active = false;
+    hook.events = vec!["item.created".to_string()];
+    update(&tx, &hook).unwrap();
+    let changed = held(&tx);
+    assert_eq!(changed.version, 3, "several fields advance it once");
+    assert_eq!(changed.updated_at, "2026-01-02T00:00:00.000Z");
 }
 
 /// An empty database made from the baseline, with no foreign keys so a test need not make each maker.

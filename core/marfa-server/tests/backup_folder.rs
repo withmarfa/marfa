@@ -1303,6 +1303,28 @@ async fn a_files_area_whose_waiting_claim_another_server_holds_says_so_and_not_t
     let held = fs::File::open(&area).unwrap();
     held.try_lock().unwrap();
 
+    let health = again.health().await;
+    assert_eq!(health["status"], "failing", "{health}");
+    let told = health["store_error"].as_str().unwrap();
+    assert!(told.contains("open in another Marfa server"), "{health}");
+    assert!(!told.contains("is not there"), "{health}");
+    let concerns = again.backup_concerns().await;
+    let store = concerns
+        .iter()
+        .find(|concern| concern["reference"] == "store")
+        .unwrap();
+    assert_eq!(
+        store["title"], "The backup folder is open in another Marfa server",
+        "{store}"
+    );
+    assert!(
+        store["description"]
+            .as_str()
+            .unwrap()
+            .contains("open in another Marfa server"),
+        "{store}"
+    );
+
     let (status, refused) = again.back_up().await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refused}");
     let says = refused["error"]["message"].as_str().unwrap();
@@ -1311,6 +1333,14 @@ async fn a_files_area_whose_waiting_claim_another_server_holds_says_so_and_not_t
     assert!(area.join(".marfa-store.pending").is_file());
 
     drop(held);
+    let health = again.health().await;
+    assert!(health["store_error"].is_null(), "{health}");
+    assert!(
+        !again
+            .backup_references()
+            .await
+            .contains(&"store".to_string())
+    );
     let (status, body) = again.back_up().await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(area.join(".marfa-store").is_file());

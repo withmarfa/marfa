@@ -75,7 +75,7 @@ const UNPUBLISHED: &[(&str, &str)] = &[
     ("GET /auth/sign-in", "the sign-in page"),
     (
         "POST /auth/sign-in",
-        "password sign-in, by its form or by JSON",
+        "password sign-in, by the sign-in page's form",
     ),
     ("POST /auth/sign-out", "a browser's sign-out"),
     (

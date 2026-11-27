@@ -983,6 +983,8 @@ export interface Webhook {
   /** Plaintext on creation only; redacted to its last characters afterwards. */
   secret: string;
   active: boolean;
+  /** Starts at 1; goes up by 1 with each change to url, events, type_filter or active. */
+  version: number;
   created_at: string;
   updated_at: string;
 }

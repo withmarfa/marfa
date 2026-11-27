@@ -548,6 +548,37 @@ describe("marfa_update", () => {
     });
     expect((await owner().getItem(id)).data.metadata.tags).toEqual([]);
   });
+  it("refuses the state step when the item is trashed between the call's read and its state write", async () => {
+    const made = await owner().createItem({
+      type: "core.note",
+      properties: { body: "one" },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const { id, version } = made.data.item;
+    await server.setFault("hold:write=item.transition@1");
+    const pending = callTool(mcp, "marfa_update", {
+      id,
+      version,
+      state: "archived",
+      from: "active",
+    });
+    await server.waitForHold("hold:write");
+    const trashed = await owner().deleteItem(id);
+    expect(trashed.status, JSON.stringify(trashed.error)).toBe(200);
+    await server.clearFault("hold:write");
+    expect(toolError(await pending)).toMatchObject({
+      code: "state_conflict",
+      details: { expected: "active", actual: "trashed" },
+      failed_step: "state archived",
+      applied: [],
+    });
+    const listed = await owner().listItems({
+      state: "any",
+      filter: `id eq "${id}"`,
+      limit: 10,
+    });
+    expect(listed.data.data[0]?.state).toBe("trashed");
+  });
 });
 
 describe("marfa_delete", () => {

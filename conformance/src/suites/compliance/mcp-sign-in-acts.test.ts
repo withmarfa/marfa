@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import {
   afterAll,
   afterEach,
@@ -92,11 +93,7 @@ const cookieOf = (response: Response): string =>
     .join("; ");
 
 async function signedIn(): Promise<Response> {
-  return fetch(`${home.origin}/auth/sign-in`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Origin: home.origin },
-    body: JSON.stringify(TEST_OWNER),
-  });
+  return postSignInForm(home.origin, home.origin, TEST_OWNER);
 }
 
 beforeAll(async () => {
@@ -112,7 +109,7 @@ beforeAll(async () => {
   });
   expect(moved.status, JSON.stringify(moved.body)).toBe(200);
   const signIn = await signedIn();
-  expect(signIn.status).toBe(200);
+  expect(signInOutcome(signIn)).toBe("signed_in");
   ownerCookie = cookieOf(signIn);
   admin = await adminConnection("admin");
   otherAdmin = await adminConnection("other-admin");
@@ -178,7 +175,7 @@ async function passkeyIds(): Promise<string[]> {
 async function browser(): Promise<{ id: string; cookie: string }> {
   const before = new Set((await signIns()).map((row) => row.id));
   const answer = await signedIn();
-  expect(answer.status).toBe(200);
+  expect(signInOutcome(answer)).toBe("signed_in");
   const made = (await signIns()).filter(
     (row) => row.kind === "browser" && !before.has(row.id),
   );

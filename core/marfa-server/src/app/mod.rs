@@ -59,6 +59,7 @@ pub mod vendor_data;
 pub mod vendors;
 pub mod views;
 pub mod webhooks;
+pub mod whole;
 
 use std::net::SocketAddr;
 use std::path::Path;

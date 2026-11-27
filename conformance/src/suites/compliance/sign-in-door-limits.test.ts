@@ -1,3 +1,8 @@
+import {
+  postSignInForm,
+  signInAnswerOf,
+  signInOutcome,
+} from "../../client/owner-session.js";
 import http from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -113,15 +118,12 @@ function signIn(
   address: string,
   from = origin,
 ): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: from,
-      [CLIENT_HEADER]: address,
-    },
-    body: JSON.stringify({ username, password }),
-  });
+  return postSignInForm(
+    server.apiUrl,
+    from,
+    { username, password },
+    { [CLIENT_HEADER]: address },
+  );
 }
 
 /** The statuses of `count` calls answered before the first `429`, and that refusal. */
@@ -139,23 +141,48 @@ async function untilRefused(
   return { answered };
 }
 
+/** The outcomes of `count` sign-ins answered before the first refusal for too many attempts, and that refusal. */
+async function signInsUntilRefused(
+  count: number,
+  call: (n: number) => Promise<Response>,
+): Promise<{ answered: string[]; refused?: Response }> {
+  const answered: string[] = [];
+  for (let n = 0; n < count; n++) {
+    const response = await call(n);
+    const outcome = signInOutcome(response);
+    if (outcome === "too_many_attempts") return { answered, refused: response };
+    answered.push(outcome);
+  }
+  return { answered };
+}
+
 describe("the limits one address is held to", () => {
   it("answers password sign-ins at any username alike, the owner's among them, until the address's limit refuses them all", async () => {
     const address = nextAddress();
     // The witness: the owner's right password from this address signs in,
     // and spends nothing.
     expect(
-      (await signIn(limited, TEST_OWNER.username, TEST_OWNER.password, address))
-        .status,
-    ).toBe(200);
-    const atOwner = await untilRefused(10, () =>
+      signInOutcome(
+        await signIn(
+          limited,
+          TEST_OWNER.username,
+          TEST_OWNER.password,
+          address,
+        ),
+      ),
+    ).toBe("signed_in");
+    const atOwner = await signInsUntilRefused(10, () =>
       signIn(limited, TEST_OWNER.username, "wrong", address),
     );
-    expect(atOwner.answered).toEqual(Array<number>(10).fill(401));
-    const elsewhere = await untilRefused(20, (n) =>
+    expect(atOwner.answered).toEqual(
+      Array<string>(10).fill("invalid_credentials"),
+    );
+    const elsewhere = await signInsUntilRefused(20, (n) =>
       signIn(limited, `stranger-${String(n)}`, "wrong", address),
     );
-    expect(elsewhere.answered).toEqual(Array<number>(20).fill(401));
+    expect(elsewhere.answered).toEqual(
+      Array<string>(20).fill("invalid_credentials"),
+    );
     const owner = await signIn(
       limited,
       TEST_OWNER.username,
@@ -163,22 +190,15 @@ describe("the limits one address is held to", () => {
       address,
     );
     const stranger = await signIn(limited, "stranger-new", "wrong", address);
-    expect([owner.status, stranger.status]).toEqual([429, 429]);
-    expect(owner.headers.get("x-error-code")).toBe(
-      stranger.headers.get("x-error-code"),
-    );
-    const waits = [owner, stranger].map((response) =>
-      Number(response.headers.get("retry-after")),
+    expect([signInOutcome(owner), signInOutcome(stranger)]).toEqual([
+      "too_many_attempts",
+      "too_many_attempts",
+    ]);
+    const waits = [owner, stranger].map(
+      (response) => signInAnswerOf(response).wait!,
     );
     expect(waits[0]).toBeGreaterThan(0);
     expect(Math.abs(waits[0]! - waits[1]!)).toBeLessThanOrEqual(1);
-    const said = async (response: Response) => {
-      const { error } = (await response.json()) as {
-        error: { code: string; message: string };
-      };
-      return [error.code, error.message];
-    };
-    expect(await said(owner)).toEqual(await said(stranger));
   });
 
   it("answers the eleventh client registration from one address in a minute 429", async () => {
@@ -582,7 +602,7 @@ describe("an instance with no sign-in address", () => {
       "127.0.0.1",
       own,
     );
-    expect(here.status).toBe(200);
+    expect(signInOutcome(here)).toBe("signed_in");
   });
 });
 

@@ -23,7 +23,6 @@ use crate::http::caller::OnPage;
 use crate::http::pages::{self, Notice};
 use crate::http::query;
 
-const PASSWORD_FIELDS: [&str; 2] = ["username", "password"];
 const CONFIRM_FIELDS: [&str; 2] = ["password", "passkey"];
 const CURRENT_PASSWORD_CHARS: usize = 1024;
 const CHANGE_FIELDS: [&str; 2] = ["current_password", "new_password"];
@@ -77,7 +76,7 @@ fn signed_in(app: &App, response: axum::response::Response, signed: &SignedIn) -
     Ok(with_cookie(with_cookie(response, session), device))
 }
 
-/// The sign-in page's form gets a redirect; a JSON body gets `{"ok": true}`.
+/// The sign-in page's form, answered with a redirect.
 pub async fn sign_in(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
@@ -85,17 +84,9 @@ pub async fn sign_in(
     body: JsonBody,
 ) -> Answer {
     require_safe_caller(&app, &visit)?;
-    if body.declares_form() {
-        return form(&app, &headers, visit, body).await;
-    }
     require_own_page(&app, &headers)?;
-    let body = body.object(&PASSWORD_FIELDS).await?;
-    let username = text_field(&body, "username")?.to_string();
-    let password = text_field(&body, "password")?.to_string();
-    let mark = device_mark(&app, &headers);
-    let signed = sign_in::with_password(&app, username, password, mark, visit).await?;
-    let ok = json_answer(StatusCode::OK, &json!({ "ok": true }));
-    signed_in(&app, ok, &signed)
+    body.require_form()?;
+    form(&app, &headers, visit, body).await
 }
 
 fn back_to_sign_in(pairs: &[(&str, &str)]) -> String {
@@ -112,7 +103,6 @@ fn back_to_sign_in(pairs: &[(&str, &str)]) -> String {
 }
 
 async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody) -> Answer {
-    require_own_page(app, headers)?;
     let fields = body.form().await?;
     let field = |name: &str| fields.get(name).and_then(Value::as_str).unwrap_or("");
     let address = app.addresses().sign_in();

@@ -195,6 +195,7 @@ function mediaTypeHasExample(media: Json): boolean {
 const RULES = {
   summaryForm:
     "every summary starts with a capital letter, is at most 32 characters and has no final period",
+  summaryShared: "no two operations share a summary",
   descriptionLength: "every operation description is at most 250 characters",
   parameterUndescribed: "every parameter has a description",
   parameterLength: "every parameter description is at most 250 characters",
@@ -220,6 +221,7 @@ const BOOLEAN_WORDS = new Set(["true", "false", "1", "0", "yes", "no"]);
 function violations(doc: Json): Record<keyof typeof RULES, string[]> {
   const found: Record<keyof typeof RULES, string[]> = {
     summaryForm: [],
+    summaryShared: [],
     descriptionLength: [],
     parameterUndescribed: [],
     parameterLength: [],
@@ -234,8 +236,11 @@ function violations(doc: Json): Record<keyof typeof RULES, string[]> {
     idExample: [],
     timeExample: [],
   };
+  const bySummary = new Map<string, string[]>();
   for (const { key, operation } of operations(doc)) {
     const summary = text(operation.summary) ?? "";
+    if (summary !== "")
+      bySummary.set(summary, [...(bySummary.get(summary) ?? []), key]);
     if (
       summary.length > 32 ||
       summary.endsWith(".") ||
@@ -283,6 +288,10 @@ function violations(doc: Json): Record<keyof typeof RULES, string[]> {
         found.booleanSpelling.push(`${key} ${String(parameter.name)}`);
       }
     }
+  }
+  for (const [summary, keys] of bySummary) {
+    if (keys.length > 1)
+      found.summaryShared.push(`${summary}: ${keys.join(", ")}`);
   }
   const schemas = ((doc.components as Json | undefined)?.schemas ??
     {}) as Record<string, Json>;
@@ -364,6 +373,7 @@ describe("the API description follows API-STYLE.md", () => {
           },
         },
         "/things/{id}": {
+          get: { summary: "Delete a thing" },
           delete: {
             summary: "Delete a thing",
             responses: { "204": { description: "Gone." } },
@@ -426,6 +436,7 @@ describe("the API description follows API-STYLE.md", () => {
     };
     expect(violations(broken)).toEqual({
       summaryForm: ["GET /things"],
+      summaryShared: ["Delete a thing: GET /things/{id}, DELETE /things/{id}"],
       descriptionLength: ["GET /things"],
       parameterUndescribed: ["GET /things q"],
       parameterLength: ["GET /things limit"],

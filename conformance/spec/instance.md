@@ -68,11 +68,19 @@ While the object store or the backup folder does not take the copies that wait f
 
 ### `instance/attention-backup-store-title`
 
-While the object store or the backup folder does not take the copies that wait for it, when `GET /attention` completes its checks, the server MUST title the entry with the reference `store` `The backup folder is not there` while the disk of the backup folder is not there, `The backup folder is not answering` while a look at it does not answer, and otherwise `Files are waiting for their copy in the object store` or `Files are waiting for their copy in the backup folder`.
+While the object store or the backup folder does not take the copies that wait for it, when `GET /attention` completes its checks, the server MUST title the entry with the reference `store` `The backup folder is not there` while the disk of the backup folder is not there, `The backup folder is not answering` while a look at it does not answer, and, except where `instance/attention-backup-folder-held` names the title, otherwise `Files are waiting for their copy in the object store` or `Files are waiting for their copy in the backup folder`.
 
 **Reason:** a run that copied nothing because one file was refused is not a store that is gone, and the title says what is known.
 
 **Tests:** `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`, `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `› tells one file the object store refused as files waiting for their copy, not as a store that is gone`.
+
+### `instance/attention-backup-folder-held`
+
+While another Marfa server holds the lock of the backup folder's files area and this server's adopt claim waits there to become the area's marker, when `GET /attention` completes its checks, the server MUST title the entry with the reference `store` `The backup folder is open in another Marfa server`.
+
+**Reason:** the folder is there, so an owner told it is not there goes looking for a missing disk, when the fault is a second server on the same folder. `POST /backups` names the same cause.
+
+**Tests:** `compliance/backup-folder.test.ts › says in health and attention that another server holds the folder, not that it is not there, while an adopt's claim waits on its lock, and clears once that server lets go`.
 
 ### `instance/attention-backup-run`
 
@@ -1058,11 +1066,35 @@ When a caller holding `backups.manage` sends `POST /backups`, the server MUST an
 
 ### `instance/backup-part-stored-again`
 
-Where `object_store_bucket` or `backup_path` is set, if a backup the server takes names a part that `<root>/backup-parts/<instance id>/` lacks, or holds with bytes other than those whose SHA-256 its name gives and lists with another ETag, or in a backup folder another size, modified time, inode or birth time, than it had when the server last stored or hashed that part, or holds in a backup folder that answers but cannot give that part's bytes, where `<root>` is `<object_store_prefix>` or `<backup_path>`, then the server MUST store that part there again.
+Where `object_store_bucket` or `backup_path` is set, if a backup the server takes names a part that `<root>/backup-parts/<instance id>/` lacks, or holds with bytes other than those whose SHA-256 its name gives and lists with another ETag, or in a backup folder another size, modified time, inode or birth time, than it had when the server last stored or hashed that part, or holds in a backup folder that answers but cannot give that part's bytes, or holds in an object store whose answer to the read of it is the error code `InvalidObjectState`, where `<root>` is `<object_store_prefix>` or `<backup_path>`, then the server MUST store that part there again.
 
 **Reason:** each backup restores whole, not only the first one that named a part. A write through the store gives an object another ETag, and a write through the file system gives a file another modified time. An object store that changes an object's bytes and keeps its ETag breaks its own promise of durability, and the server finds that change only when a restore reads the part (`instance/backup-restore-parts-checked`). A disk can change a file's bytes and keep all four, which `instance/backup-folder-part-rehashed` bounds. A part whose read fails on a bad sector or a permission does not fail the backup: the server counts it as damaged and stores it again where the backup names it.
 
 **Tests:** `compliance/backup-parts.test.ts › stores again a part missing from its instance's parts folder or altered there, sends only those parts, and both backups then restore`, `› hashes a due folder part only an older backup names while a manifest does not read, and counts a part it cannot read as damaged, storing it again where a backup names it`.
+
+### `instance/backup-part-archived`
+
+Where `object_store_bucket` is set, if the object store answers the read the server makes of a part under `<object_store_prefix>/backup-parts/<instance id>/` while it takes a backup with the error code `InvalidObjectState`, then the server MUST complete the backup.
+
+**Reason:** the code names the one object, which an object store has moved to an archived storage class, and not the store, which answers every other request. A backup run that failed on it would fail every run and never store the part again. No other code is taken this way (`instance/backup-part-read-fails`).
+
+**Tests:** waiting on #3629.
+
+### `instance/backup-part-read-fails`
+
+Where `object_store_bucket` is set, if the object store answers the read the server makes of a part under `<object_store_prefix>/backup-parts/<instance id>/` while it takes a backup with any error but `InvalidObjectState` or a missing object, or does not answer in time, then the server MUST answer `POST /backups` with `503 blob_store_unavailable`.
+
+**Reason:** a refused credential, throttling, a network fault or a code the server does not know says the store cannot be used, not that the part is bad, so the run fails as the destination's error.
+
+**Tests:** waiting on #3629.
+
+### `instance/backup-part-read-damage-none`
+
+Where `object_store_bucket` is set, if the object store answers the read the server makes of a part under `<object_store_prefix>/backup-parts/<instance id>/` while it takes a backup with any error but `InvalidObjectState` or a missing object, or does not answer in time, then the server MUST NOT count the part as damaged.
+
+**Reason:** a part counted damaged on a refused credential would be stored again and reported to the owner as damage that the store's own fault caused.
+
+**Tests:** waiting on #3629.
 
 ### `instance/backup-folder-part-rehashed`
 
@@ -1226,7 +1258,7 @@ Where `backup_interval_seconds` is above 0, while the copy record holds no copy 
 
 ### `instance/backup-health-parts-damaged`
 
-Where `object_store_bucket` or `backup_path` is set, while a part under `<root>/backup-parts/<instance id>/`, where `<root>` is `<object_store_prefix>` or `<backup_path>`, that the server found holding bytes other than those whose SHA-256 its name gives, or in a backup folder that answers could not read, is named by a backup it keeps, and the server has neither stored that part again nor found it whole since, the server MUST answer `GET /health` with `backups.status` `failing` and an overall `status` no better than `degraded`.
+Where `object_store_bucket` or `backup_path` is set, while a part under `<root>/backup-parts/<instance id>/`, where `<root>` is `<object_store_prefix>` or `<backup_path>`, that the server found holding bytes other than those whose SHA-256 its name gives, or in a backup folder that answers could not read, or in an object store whose answer to the read of it is the error code `InvalidObjectState`, is named by a backup it keeps, and the server has neither stored that part again nor found it whole since, the server MUST answer `GET /health` with `backups.status` `failing` and an overall `status` no better than `degraded`.
 
 **Reason:** a restore of a backup that names such a part is refused. The server finds a part damaged when a restore of one of its own backups reads it, and when a backup checks each part a backup it keeps names, as `instance/backup-part-stored-again` and `instance/backup-folder-part-rehashed` say.
 
@@ -1311,6 +1343,14 @@ While an attached store leaves the questions of `blob-replicate` unanswered, the
 **Reason:** health reads what the last run found and never asks the object store itself, so a store that hangs cannot make the report that names it hang too.
 
 **Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`.
+
+### `instance/backup-health-folder-held`
+
+While another Marfa server holds the lock of the backup folder's files area and this server's adopt claim waits there to become the area's marker, the server MUST answer `GET /health` with a `backups.store_error` that says another Marfa server has the folder open.
+
+**Reason:** the folder is there, so a `backups.store_error` that says it is not there sends the owner looking for a missing disk, when the fault is a second server on the same folder (`instance/attention-backup-folder-held`).
+
+**Tests:** `compliance/backup-folder.test.ts › says in health and attention that another server holds the folder, not that it is not there, while an adopt's claim waits on its lock, and clears once that server lets go`.
 
 ### `instance/backup-health-folder-answers-in-time`
 

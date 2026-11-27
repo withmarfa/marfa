@@ -7,6 +7,11 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
+import {
+  postSignInForm,
+  signInAnswerOf,
+  signInOutcome,
+} from "../../client/owner-session.js";
 
 /**
  * The limits on password sign-in and device code lookups that count across
@@ -102,6 +107,7 @@ afterAll(async () => {
   ]);
 }, 10 * FRESH_SERVER_TIMEOUT_MS);
 
+/** The sign-in form's answer for a password from `address`, the redirect not followed. */
 async function signIn(
   server: FreshServer,
   password: string,
@@ -109,16 +115,15 @@ async function signIn(
   cookie?: string,
   username = OWNER.username,
 ): Promise<Response> {
-  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: await issuerOrigin(server),
+  const response = await postSignInForm(
+    server.apiUrl,
+    await issuerOrigin(server),
+    { username, password },
+    {
       [CLIENT_HEADER]: address,
       ...(cookie === undefined ? {} : { cookie }),
     },
-    body: JSON.stringify({ username, password }),
-  });
+  );
   await response.body?.cancel();
   return response;
 }
@@ -128,24 +133,15 @@ async function attempt(
   server: FreshServer,
   username: string,
   address: string,
-): Promise<{ status: number; code: string | null; message: string | null }> {
-  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: await issuerOrigin(server),
-      [CLIENT_HEADER]: address,
-    },
-    body: JSON.stringify({ username, password: "not the password" }),
-  });
-  const body = (await response.json()) as {
-    error?: { code?: string; message?: string };
-  };
-  return {
-    status: response.status,
-    code: body.error?.code ?? null,
-    message: body.error?.message ?? null,
-  };
+): Promise<{ status: number; outcome: string }> {
+  const response = await signIn(
+    server,
+    "not the password",
+    address,
+    undefined,
+    username,
+  );
+  return { status: response.status, outcome: signInOutcome(response) };
 }
 
 /** The `name=value` of the cookie a response sets whose name ends in `name`. */
@@ -163,7 +159,7 @@ async function deviceCookie(
   cookie?: string,
 ): Promise<string> {
   const response = await signIn(server, OWNER.password, address, cookie);
-  expect(response.status).toBe(200);
+  expect(signInOutcome(response)).toBe("signed_in");
   const device = setCookie(response, "marfa_device");
   expect(device, "the sign-in set no device cookie").toBeDefined();
   return device!;
@@ -202,13 +198,15 @@ async function fillAccount(server: FreshServer, block: number): Promise<void> {
         "not the password",
         `10.${String(block)}.${String(a)}.1`,
       );
-      expect(response.status).toBe(401);
+      expect(signInOutcome(response)).toBe("invalid_credentials");
     }
   }
   expect(
-    (await signIn(server, OWNER.password, `10.${String(block)}.99.1`)).status,
+    signInOutcome(
+      await signIn(server, OWNER.password, `10.${String(block)}.99.1`),
+    ),
     "the window every address shares is not spent",
-  ).toBe(429);
+  ).toBe("too_many_attempts");
 }
 
 /** Recovers the owner's password, as it was, through the private control socket. */
@@ -249,21 +247,23 @@ describe("password sign-in", () => {
         "not the password",
         `2001:db8:1:1::${i.toString(16)}`,
       );
-      expect(response.status).toBe(401);
+      expect(signInOutcome(response)).toBe("invalid_credentials");
     }
     const sameBlock = await signIn(shared, OWNER.password, "2001:db8:1:1::ff");
-    expect(sameBlock.status).toBe(429);
+    expect(signInOutcome(sameBlock)).toBe("too_many_attempts");
     // The witness: the next /64 has attempts left.
     expect(
-      (await signIn(shared, OWNER.password, "2001:db8:1:2::1")).status,
-    ).toBe(200);
+      signInOutcome(await signIn(shared, OWNER.password, "2001:db8:1:2::1")),
+    ).toBe("signed_in");
   });
 
   it("holds every address together to a hundred attempts in an hour, counting none an address made past its own limit", async () => {
     // One address past its own limit: ten counted, five refused uncounted.
     for (let i = 0; i < 15; i++) {
       const response = await signIn(account, "not the password", "192.0.2.1");
-      expect(response.status).toBe(i < 10 ? 401 : 429);
+      expect(signInOutcome(response)).toBe(
+        i < 10 ? "invalid_credentials" : "too_many_attempts",
+      );
     }
     // Then ten from each further address until the shared window
     // refuses one an address's own limit would still take. The window takes
@@ -278,9 +278,9 @@ describe("password sign-in", () => {
           "not the password",
           `192.0.2.${String(a)}`,
         );
-        if (response.status === 429) refused = true;
+        if (signInOutcome(response) === "too_many_attempts") refused = true;
         else {
-          expect(response.status).toBe(401);
+          expect(signInOutcome(response)).toBe("invalid_credentials");
           failures++;
         }
       }
@@ -288,25 +288,12 @@ describe("password sign-in", () => {
     expect(refused, "the window every address shares never closed").toBe(true);
     expect(failures).toBe(100);
     const elsewhere = await signIn(account, OWNER.password, "198.51.100.1");
-    expect(elsewhere.status).toBe(429);
-    expect(Number(elsewhere.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(signInOutcome(elsewhere)).toBe("too_many_attempts");
+    expect(signInAnswerOf(elsewhere).wait).toBeGreaterThan(0);
 
     // The form names the shared window's wait, which runs for an hour and
     // not the fifteen minutes an address is held for.
-    const form = await fetch(`${account.apiUrl}/auth/sign-in`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        origin: await issuerOrigin(account),
-        [CLIENT_HEADER]: "198.51.100.2",
-      },
-      body: new URLSearchParams({ ...OWNER, return_to: "/" }),
-      redirect: "manual",
-    });
-    expect(form.status).toBe(302);
-    const refusal = new URL(form.headers.get("location") ?? "", account.apiUrl);
-    expect(refusal.searchParams.get("error")).toBe("too_many_attempts");
-    const wait = Number(refusal.searchParams.get("retry_after_seconds"));
+    const wait = signInAnswerOf(elsewhere).wait!;
     expect(wait).toBeGreaterThan(15 * 60);
     expect(wait).toBeLessThanOrEqual(60 * 60);
 
@@ -314,23 +301,9 @@ describe("password sign-in", () => {
     // Both are spent, so the wait is the later end, the shared window's, and not
     // the address limit's quarter hour that would only meet the shared
     // limit again.
-    const both = await fetch(`${account.apiUrl}/auth/sign-in`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        origin: await issuerOrigin(account),
-        [CLIENT_HEADER]: "192.0.2.1",
-      },
-      body: new URLSearchParams({ ...OWNER, return_to: "/" }),
-      redirect: "manual",
-    });
-    expect(both.status).toBe(302);
-    const bothWait = Number(
-      new URL(
-        both.headers.get("location") ?? "",
-        account.apiUrl,
-      ).searchParams.get("retry_after_seconds"),
-    );
+    const both = await signIn(account, OWNER.password, "192.0.2.1");
+    expect(signInOutcome(both)).toBe("too_many_attempts");
+    const bothWait = signInAnswerOf(both).wait!;
     expect(bothWait).toBeGreaterThan(15 * 60);
     expect(bothWait).toBeLessThanOrEqual(60 * 60);
   }, 120_000);
@@ -339,22 +312,21 @@ describe("password sign-in", () => {
     // The witness: the owner's own username signs in, typed in capitals and with spaces too.
     const signed = (username: string, address: string) =>
       signIn(usernames, OWNER.password, address, undefined, username);
-    expect((await signed(OWNER.username, "10.20.1.1")).status).toBe(200);
+    expect(signInOutcome(await signed(OWNER.username, "10.20.1.1"))).toBe(
+      "signed_in",
+    );
     expect(
-      (await signed(` ${OWNER.username.toUpperCase()} `, "10.20.1.2")).status,
-    ).toBe(200);
+      signInOutcome(
+        await signed(` ${OWNER.username.toUpperCase()} `, "10.20.1.2"),
+      ),
+    ).toBe("signed_in");
     const wrong = await attempt(usernames, "nobody", "10.20.2.1");
-    expect(wrong).toEqual({
-      status: 401,
-      code: "unauthorized",
-      message: "Invalid username or password.",
-    });
+    expect(wrong).toEqual({ status: 302, outcome: "invalid_credentials" });
     const names = [
       "nobody",
       `${OWNER.username}@example.test`,
       `${OWNER.username} two`,
       `${OWNER.username}\u200b`,
-      "",
       "o".repeat(65),
     ];
     for (const [n, username] of names.entries()) {
@@ -366,8 +338,10 @@ describe("password sign-in", () => {
         ).toEqual(wrong);
       }
       const past = await attempt(usernames, username, address);
-      expect(past.status, JSON.stringify(username)).toBe(429);
-      expect(past.code).toBe("rate_limited");
+      expect(past, JSON.stringify(username)).toEqual({
+        status: 302,
+        outcome: "too_many_attempts",
+      });
     }
   });
 
@@ -387,11 +361,11 @@ describe("password sign-in", () => {
           undefined,
           username,
         );
-        expect(response.status).toBe(401);
+        expect(signInOutcome(response)).toBe("invalid_credentials");
       }
     }
     const owner = await signIn(every, "not the password", "203.0.113.50");
-    expect(owner.status).toBe(429);
+    expect(signInOutcome(owner)).toBe("too_many_attempts");
     const stranger = await signIn(
       every,
       "not the password",
@@ -399,36 +373,38 @@ describe("password sign-in", () => {
       undefined,
       "stranger",
     );
-    expect(stranger.status).toBe(429);
-    const waits = [owner, stranger].map((response) =>
-      Number(response.headers.get("retry-after")),
+    expect(signInOutcome(stranger)).toBe("too_many_attempts");
+    const waits = [owner, stranger].map(
+      (response) => signInAnswerOf(response).wait,
     );
     expect(waits[0]).toBeGreaterThan(15 * 60);
     expect(Math.abs(waits[0]! - waits[1]!)).toBeLessThanOrEqual(1);
     // Fifty of the hundred were at the owner's username, so the owner's share
     // has room: the right password signs in from a browser the server does
     // not know, and so does the known device.
-    expect((await signIn(every, OWNER.password, "203.0.113.53")).status).toBe(
-      200,
-    );
     expect(
-      (await signIn(every, OWNER.password, "203.0.113.52", device)).status,
-    ).toBe(200);
+      signInOutcome(await signIn(every, OWNER.password, "203.0.113.53")),
+    ).toBe("signed_in");
+    expect(
+      signInOutcome(
+        await signIn(every, OWNER.password, "203.0.113.52", device),
+      ),
+    ).toBe("signed_in");
   }, 120_000);
 
   it("answers the owner's right password as a wrong one once a hundred attempts at the owner's username are counted in an hour", async () => {
     // The witness: with the owner's share left, the right password signs in.
     expect(
-      (await signIn(ownersUsername, OWNER.password, "10.9.98.1")).status,
-    ).toBe(200);
+      signInOutcome(await signIn(ownersUsername, OWNER.password, "10.9.98.1")),
+    ).toBe("signed_in");
     await fillAccount(ownersUsername, 9);
     const wrong = await signIn(ownersUsername, "not the password", "10.9.97.1");
     const right = await signIn(ownersUsername, OWNER.password, "10.9.96.1");
-    expect(wrong.status).toBe(429);
-    expect(right.status).toBe(wrong.status);
+    expect(signInOutcome(wrong)).toBe("too_many_attempts");
+    expect(signInOutcome(right)).toBe(signInOutcome(wrong));
     expect(right.headers.getSetCookie()).toEqual([]);
-    const waits = [wrong, right].map((response) =>
-      Number(response.headers.get("retry-after")),
+    const waits = [wrong, right].map(
+      (response) => signInAnswerOf(response).wait,
     );
     expect(waits[0]).toBeGreaterThan(15 * 60);
     expect(Math.abs(waits[0]! - waits[1]!)).toBeLessThanOrEqual(1);
@@ -444,16 +420,16 @@ describe("password sign-in", () => {
       // hundred counted.
       await ownersCount.advanceClock(61 * 60 * 1000);
       expect(
-        (
+        signInOutcome(
           await signIn(
             ownersCount,
             "not the password",
             "10.8.0.1",
             undefined,
             "stranger",
-          )
-        ).status,
-      ).toBe(401);
+          ),
+        ),
+      ).toBe("invalid_credentials");
       await ownersCount.advanceClock(59 * 60 * 1000);
       for (let a = 1; a <= 10; a++) {
         for (let i = 0; i < 10; i++) {
@@ -462,24 +438,33 @@ describe("password sign-in", () => {
             "not the password",
             `10.8.${String(a)}.1`,
           );
-          expect([401, 429]).toContain(response.status);
+          expect(["invalid_credentials", "too_many_attempts"]).toContain(
+            signInOutcome(response),
+          );
         }
       }
       await ownersCount.advanceClock(2 * 60 * 1000);
-      const control: number[] = [];
+      const control: string[] = [];
       for (let i = 0; i < 11; i++) {
         control.push(
-          (await signIn(ownersCount, "not the password", "10.8.50.1")).status,
+          signInOutcome(
+            await signIn(ownersCount, "not the password", "10.8.50.1"),
+          ),
         );
       }
       // The witness: the address's own ten show in the answers.
-      expect(control).toEqual([...Array<number>(10).fill(401), 429]);
+      expect(control).toEqual([
+        ...Array<string>(10).fill("invalid_credentials"),
+        "too_many_attempts",
+      ]);
       const right = await signIn(ownersCount, OWNER.password, "10.8.51.1");
       expect(right.headers.getSetCookie()).toEqual([]);
-      const probe = [right.status];
+      const probe = [signInOutcome(right)];
       for (let i = 0; i < 10; i++) {
         probe.push(
-          (await signIn(ownersCount, "not the password", "10.8.51.1")).status,
+          signInOutcome(
+            await signIn(ownersCount, "not the password", "10.8.51.1"),
+          ),
         );
       }
       expect(probe).toEqual(control);
@@ -499,7 +484,7 @@ describe("password sign-in", () => {
         OWNER.password,
         `198.51.100.${String(n)}`,
       );
-      expect(refused.status).toBe(429);
+      expect(signInOutcome(refused)).toBe("too_many_attempts");
     }
     expect(await refusalsLogged(noted, "too_many_attempts")).toBe(1);
 
@@ -512,7 +497,7 @@ describe("password sign-in", () => {
         "not the password",
         `203.0.113.${String(n)}`,
       );
-      expect(refused.status).toBe(429);
+      expect(signInOutcome(refused)).toBe("too_many_attempts");
     }
     expect(await refusalsLogged(noted, "too_many_attempts")).toBe(2);
     expect(await refusalsLogged(noted, "invalid_credentials")).toBe(100);
@@ -524,10 +509,10 @@ describe("password sign-in", () => {
     const before = await refusalsLogged(noted, "too_many_attempts");
     await noted.setFault("fail:lock=1");
     const unrecorded = await signIn(noted, OWNER.password, "192.0.2.61");
-    expect(unrecorded.status).toBe(503);
+    expect(signInOutcome(unrecorded)).toBe("503");
     expect(await refusalsLogged(noted, "too_many_attempts")).toBe(before);
     const refused = await signIn(noted, OWNER.password, "192.0.2.62");
-    expect(refused.status).toBe(429);
+    expect(signInOutcome(refused)).toBe("too_many_attempts");
     const held = await refusals(noted, "too_many_attempts");
     expect(held).toHaveLength(before + 1);
     // Nine omissions from the previous case, plus the failed write.
@@ -539,9 +524,9 @@ describe("password sign-in", () => {
     await uncertain.advanceClock(15 * 60 * 1000);
     expect(await refusalsLogged(uncertain, "too_many_attempts")).toBe(1);
     await uncertain.setFault("fail:commit=auth.sign_in.failed");
-    expect((await signIn(uncertain, OWNER.password, "192.0.2.71")).status).toBe(
-      429,
-    );
+    expect(
+      signInOutcome(await signIn(uncertain, OWNER.password, "192.0.2.71")),
+    ).toBe("too_many_attempts");
     const failed = (await uncertain.faults()).find(
       (fault) => fault.name === "fail:commit",
     );
@@ -549,16 +534,17 @@ describe("password sign-in", () => {
     expect(failed?.fired).toBe(1);
     for (let n = 72; n <= 76; n++) {
       expect(
-        (await signIn(uncertain, OWNER.password, `192.0.2.${String(n)}`))
-          .status,
-      ).toBe(429);
+        signInOutcome(
+          await signIn(uncertain, OWNER.password, `192.0.2.${String(n)}`),
+        ),
+      ).toBe("too_many_attempts");
     }
     expect(await refusalsLogged(uncertain, "too_many_attempts")).toBe(1);
 
     await uncertain.advanceClock(15 * 60 * 1000);
-    expect((await signIn(uncertain, OWNER.password, "192.0.2.77")).status).toBe(
-      429,
-    );
+    expect(
+      signInOutcome(await signIn(uncertain, OWNER.password, "192.0.2.77")),
+    ).toBe("too_many_attempts");
     const held = await refusals(uncertain, "too_many_attempts");
     expect(held).toHaveLength(2);
     // The five after it, and not the one whose commit could not be told.
@@ -573,7 +559,7 @@ describe("counting only wrong passwords", () => {
     let session: string | undefined;
     for (let i = 0; i < 15; i++) {
       const response = await signIn(shared, OWNER.password, address);
-      expect(response.status).toBe(200);
+      expect(signInOutcome(response)).toBe("signed_in");
       session = setCookie(response, "marfa_session");
     }
     expect(session, "the sign-in set no session cookie").toBeDefined();
@@ -594,11 +580,13 @@ describe("counting only wrong passwords", () => {
     }
     // The witness: the same address is still held to ten wrong passwords.
     for (let i = 0; i < 10; i++) {
-      expect((await signIn(shared, "not the password", address)).status).toBe(
-        401,
-      );
+      expect(
+        signInOutcome(await signIn(shared, "not the password", address)),
+      ).toBe("invalid_credentials");
     }
-    expect((await signIn(shared, OWNER.password, address)).status).toBe(429);
+    expect(signInOutcome(await signIn(shared, OWNER.password, address))).toBe(
+      "too_many_attempts",
+    );
   }, 120_000);
 
   it("holds a known device to ten wrong passwords across addresses", async () => {
@@ -610,15 +598,15 @@ describe("counting only wrong passwords", () => {
         `192.0.2.${String(60 + i)}`,
         device,
       );
-      expect(response.status).toBe(401);
+      expect(signInOutcome(response)).toBe("invalid_credentials");
     }
     const held = await signIn(shared, OWNER.password, "192.0.2.80", device);
-    expect(held.status).toBe(429);
-    expect(Number(held.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(signInOutcome(held)).toBe("too_many_attempts");
+    expect(signInAnswerOf(held).wait).toBeGreaterThan(0);
     // The witness: the same address without the device's cookie signs in.
-    expect((await signIn(shared, OWNER.password, "192.0.2.80")).status).toBe(
-      200,
-    );
+    expect(
+      signInOutcome(await signIn(shared, OWNER.password, "192.0.2.80")),
+    ).toBe("signed_in");
   }, 120_000);
 
   it("keeps a known device signing in while strangers are limited", async () => {
@@ -626,10 +614,12 @@ describe("counting only wrong passwords", () => {
     await fillAccount(known, 1);
     const forged = first.replace(/.$/, (last) => (last === "0" ? "1" : "0"));
     expect(
-      (await signIn(known, OWNER.password, "198.51.100.2", forged)).status,
-    ).toBe(429);
+      signInOutcome(
+        await signIn(known, OWNER.password, "198.51.100.2", forged),
+      ),
+    ).toBe("too_many_attempts");
     const renewed = await signIn(known, OWNER.password, "198.51.100.3", first);
-    expect(renewed.status).toBe(200);
+    expect(signInOutcome(renewed)).toBe("signed_in");
     const device = setCookie(renewed, "marfa_device");
     expect(device).toBeDefined();
     expect(device!.split(".")[0]).toBe(first.split(".")[0]);
@@ -663,11 +653,13 @@ describe("counting only wrong passwords", () => {
     const fresh = await deviceCookie(known, "198.51.100.4");
     await fillAccount(known, 2);
     expect(
-      (await signIn(known, OWNER.password, "198.51.100.5", device)).status,
-    ).toBe(429);
+      signInOutcome(
+        await signIn(known, OWNER.password, "198.51.100.5", device),
+      ),
+    ).toBe("too_many_attempts");
     expect(
-      (await signIn(known, OWNER.password, "198.51.100.6", fresh)).status,
-    ).toBe(200);
+      signInOutcome(await signIn(known, OWNER.password, "198.51.100.6", fresh)),
+    ).toBe("signed_in");
   }, 240_000);
 
   it("forgets every known device when the password is recovered", async () => {
@@ -678,19 +670,19 @@ describe("counting only wrong passwords", () => {
     const after = await deviceCookie(known, "172.17.0.2");
     await fillAccount(known, 3);
     expect(
-      (await signIn(known, OWNER.password, "172.17.0.3", before)).status,
-    ).toBe(429);
+      signInOutcome(await signIn(known, OWNER.password, "172.17.0.3", before)),
+    ).toBe("too_many_attempts");
     // The witness: a cookie set after the recovery is still known.
     expect(
-      (await signIn(known, OWNER.password, "172.17.0.4", after)).status,
-    ).toBe(200);
+      signInOutcome(await signIn(known, OWNER.password, "172.17.0.4", after)),
+    ).toBe("signed_in");
   }, 240_000);
 
   it("forgets every other known device when the password is changed", async () => {
     await recover(known);
     const other = await deviceCookie(known, "172.18.0.1");
     const signedIn = await signIn(known, OWNER.password, "172.18.0.2");
-    expect(signedIn.status).toBe(200);
+    expect(signInOutcome(signedIn)).toBe("signed_in");
     const session = setCookie(signedIn, "marfa_session");
     const changing = setCookie(signedIn, "marfa_device");
     expect(session, "the sign-in set no session cookie").toBeDefined();
@@ -714,9 +706,13 @@ describe("counting only wrong passwords", () => {
     const kept = setCookie(changed, "marfa_device");
     expect(kept, "the change set no device cookie").toBeDefined();
     await fillAccount(known, 4);
-    expect((await signIn(known, next, "172.18.0.3", other)).status).toBe(429);
+    expect(signInOutcome(await signIn(known, next, "172.18.0.3", other))).toBe(
+      "too_many_attempts",
+    );
     // The witness: the browser that changed the password is still known.
-    expect((await signIn(known, next, "172.18.0.4", kept)).status).toBe(200);
+    expect(signInOutcome(await signIn(known, next, "172.18.0.4", kept))).toBe(
+      "signed_in",
+    );
     await recover(known);
   }, 240_000);
 
@@ -733,16 +729,18 @@ describe("counting only wrong passwords", () => {
           undefined,
           username,
         );
-        expect(response.status).toBe(401);
+        expect(signInOutcome(response)).toBe("invalid_credentials");
       }
     }
     for (const username of [OWNER.username, stranger]) {
       expect(
-        (await signIn(known, "wrong", address, undefined, username)).status,
-      ).toBe(429);
+        signInOutcome(
+          await signIn(known, "wrong", address, undefined, username),
+        ),
+      ).toBe("too_many_attempts");
     }
     const signedIn = await signIn(known, OWNER.password, "172.19.0.2");
-    expect(signedIn.status).toBe(200);
+    expect(signInOutcome(signedIn)).toBe("signed_in");
     const changed = await fetch(`${known.apiUrl}/auth/owner/password`, {
       method: "POST",
       headers: {
@@ -763,10 +761,11 @@ describe("counting only wrong passwords", () => {
         signIn(known, "wrong", address, undefined, username),
       ),
     );
-    expect(after.map((response) => response.status)).toEqual([429, 429]);
-    const waits = after.map((response) =>
-      Number(response.headers.get("retry-after")),
-    );
+    expect(after.map((response) => signInOutcome(response))).toEqual([
+      "too_many_attempts",
+      "too_many_attempts",
+    ]);
+    const waits = after.map((response) => signInAnswerOf(response).wait);
     expect(Math.abs(waits[0]! - waits[1]!)).toBeLessThanOrEqual(1);
     await recover(known);
   }, 240_000);
@@ -785,7 +784,7 @@ describe("counting only wrong passwords", () => {
           `172.16.${String(d)}.1`,
           devices[d],
         );
-        expect(response.status).toBe(401);
+        expect(signInOutcome(response)).toBe("invalid_credentials");
       }
     }
     const held = await signIn(
@@ -794,12 +793,12 @@ describe("counting only wrong passwords", () => {
       "172.16.10.1",
       devices[10],
     );
-    expect(held.status).toBe(429);
-    expect(Number(held.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(signInOutcome(held)).toBe("too_many_attempts");
+    expect(signInAnswerOf(held).wait).toBeGreaterThan(0);
     // The witness: the limit without a device cookie is untouched.
-    expect((await signIn(known, OWNER.password, "172.16.11.1")).status).toBe(
-      200,
-    );
+    expect(
+      signInOutcome(await signIn(known, OWNER.password, "172.16.11.1")),
+    ).toBe("signed_in");
   }, 240_000);
 });
 
@@ -826,12 +825,12 @@ describe("a confirmed move of the sign-in address", () => {
       const after = await deviceCookie(own, "172.18.0.2");
       await fillAccount(own, 3);
       expect(
-        (await signIn(own, OWNER.password, "172.18.0.3", old)).status,
-      ).toBe(429);
+        signInOutcome(await signIn(own, OWNER.password, "172.18.0.3", old)),
+      ).toBe("too_many_attempts");
       // The witness: a cookie set after the move is still known.
       expect(
-        (await signIn(own, OWNER.password, "172.18.0.4", after)).status,
-      ).toBe(200);
+        signInOutcome(await signIn(own, OWNER.password, "172.18.0.4", after)),
+      ).toBe("signed_in");
     } finally {
       await own.stop();
     }

@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -86,20 +87,16 @@ async function signIn(
 ): Promise<Browser> {
   addresses += 1;
   const address = `198.51.100.${String(addresses)}`;
-  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin,
-      "user-agent": userAgent,
-      [CLIENT_HEADER]: address,
-    },
-    body: JSON.stringify({
+  const response = await postSignInForm(
+    server.apiUrl,
+    origin,
+    {
       username: OWNER.username,
       password: OWNER.password,
-    }),
-  });
-  expect(response.status).toBe(200);
+    },
+    { "user-agent": userAgent, [CLIENT_HEADER]: address },
+  );
+  expect(signInOutcome(response)).toBe("signed_in");
   const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
     response.headers.get("set-cookie") ?? "",
   )?.[1];
