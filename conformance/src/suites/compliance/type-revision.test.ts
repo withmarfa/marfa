@@ -247,9 +247,9 @@ describe("a type's revision", () => {
     });
     expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
     const listed = await client.listTypes();
-    expect(listed.data.data.find((held) => held.id === child)?.own_roles).toEqual(
-      [],
-    );
+    expect(
+      listed.data.data.find((held) => held.id === child)?.own_roles,
+    ).toEqual([]);
     expect(dropped.data.revision).not.toBe(r0);
     expect(await revisionOf(child)).toBe(dropped.data.revision);
 
