@@ -956,12 +956,20 @@ fn place_dir_and_displaced_dir_refuse_places_outside_the_folder() {
 
 /// A write to `Moved/Plan.md` bound before its bytes landed, with the file
 /// moved out under a reserved name in `aside`, outside the folder, where
-/// `aside_holds`. Answers the binding.
-fn waiting_write(folder: &Folder, root: &Path, aside: &Path, aside_holds: bool) -> state::Bound {
+/// `aside_holds`. The record names `aside` as `place`. Answers the binding
+/// and the reserved file.
+fn waiting_write(
+    folder: &Folder,
+    root: &Path,
+    aside: &Path,
+    place: &str,
+    aside_holds: bool,
+) -> (state::Bound, PathBuf) {
     std::fs::create_dir(root.join("Moved")).unwrap();
     std::fs::write(root.join("Moved/Plan.md"), TAKEN).unwrap();
     assert_eq!(folder.scan().unwrap().created, 1);
     super::tests::landed(folder, "Moved/Plan.md");
+    folder.pull().unwrap();
     let read = object_of(&root.join("Moved/Plan.md"));
     let name = landing::reserved(&uuid::Uuid::now_v7().simple().to_string());
     if aside_holds {
@@ -973,13 +981,14 @@ fn waiting_write(folder: &Folder, root: &Path, aside: &Path, aside_holds: bool) 
     let mut bound = state::bound_at(&conn, "Moved/Plan.md").unwrap().unwrap();
     bound.writes.landing = Some(state::Landing { before: None });
     state::bind(&conn, &bound).unwrap();
+    let kept = aside.join(&name);
     let name = name.to_string_lossy().into_owned();
     state::set_displaced(
         &conn,
         &state::Displaced {
             dir: "Moved".into(),
             dir_at: at(&root.join("Moved")),
-            aside: aside.to_string_lossy().into_owned(),
+            aside: place.into(),
             aside_at: at(aside),
             displacement: Displacement {
                 id: name[".marfa-kept-".len()..name.len() - ".tmp".len()].into(),
@@ -992,7 +1001,7 @@ fn waiting_write(folder: &Folder, root: &Path, aside: &Path, aside_holds: bool) 
         },
     )
     .unwrap();
-    bound
+    (bound, kept)
 }
 
 #[test]
@@ -1001,7 +1010,8 @@ fn a_row_with_an_outside_aside_keeps_its_in_folder_write_waiting() {
         let (dir, folder) = scanned_folder();
         let root = dir.path().canonicalize().unwrap();
         let (_other, other) = beside(&root);
-        let bound = waiting_write(&folder, &root, &other, state == "aside present");
+        let place = other.to_string_lossy().into_owned();
+        let (bound, _) = waiting_write(&folder, &root, &other, &place, state == "aside present");
         match state {
             "directory moved" => {
                 std::fs::rename(root.join("Moved"), root.join("Elsewhere")).unwrap()
@@ -1019,12 +1029,7 @@ fn a_row_with_an_outside_aside_keeps_its_in_folder_write_waiting() {
             Some(&bound),
             "{state}: quick pass"
         );
-        // Held as missing, as any bound file a quick pass does not find is.
-        let journaled = state::journaled(&folder.core.conn().unwrap()).unwrap();
-        assert!(
-            journaled.iter().any(|row| row.path == "Moved/Plan.md"),
-            "{state}: {journaled:?}"
-        );
+        assert!(journal_row(&folder).is_none(), "{state}: quick pass");
         folder.scan().unwrap();
         assert_eq!(
             binding(&folder).as_ref(),
@@ -1193,4 +1198,261 @@ fn a_reserved_name_met_in_the_folder_is_not_settled_against_an_outside_record() 
     assert_eq!(std::fs::read(projects.join(&name)).unwrap(), SAVE);
     assert!(!projects.join("Recovery.md").exists());
     assert_eq!(records(&folder), 1);
+}
+
+const HELD: &str = "Moved/Plan.md";
+
+/// The journal row at the waiting write's path, if any.
+fn journal_row(folder: &Folder) -> Option<state::Journaled> {
+    state::journaled(&folder.core.conn().unwrap())
+        .unwrap()
+        .into_iter()
+        .find(|row| row.path == HELD)
+}
+
+/// Moves every journaled delete past the grace.
+fn age_the_journal(folder: &Folder) {
+    let long_ago = crate::store::iso_at(
+        crate::clock::system_time() - RENAME_GRACE - std::time::Duration::from_secs(1),
+    );
+    folder
+        .core
+        .conn()
+        .unwrap()
+        .execute(
+            "UPDATE folder_journal SET missing_since = ?1",
+            [long_ago.as_str()],
+        )
+        .unwrap();
+}
+
+fn waiting_at_held(flagged: &[Flagged]) -> usize {
+    flagged
+        .iter()
+        .filter(|flagged| flagged.path == HELD && flagged.flag == "waiting")
+        .count()
+}
+
+/// Runs a scan, two more past the grace and a pull, and asserts the write at
+/// `HELD`, whose file is absent, stayed held through each.
+fn held_past_the_grace(folder: &Folder, root: &Path, bound: &state::Bound, case: &str) {
+    let mut reports = vec![folder.scan().unwrap()];
+    for _ in 0..2 {
+        age_the_journal(folder);
+        reports.push(folder.scan().unwrap());
+    }
+    folder.pull().unwrap();
+    let trashed: Vec<&String> = reports.iter().flat_map(|report| &report.trashed).collect();
+    assert!(trashed.is_empty(), "{case}: {trashed:?}");
+    assert!(super::tests::deletes_queued(folder).is_empty(), "{case}");
+    let conn = folder.core.conn().unwrap();
+    let item = crate::store::items_by_ids(&conn, std::slice::from_ref(&bound.item_id))
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(item.state, ItemState::Active, "{case}");
+    assert_eq!(
+        state::bound_at(&conn, HELD).unwrap().as_ref(),
+        Some(bound),
+        "{case}"
+    );
+    drop(conn);
+    assert!(!root.join(HELD).exists(), "{case}: a pull wrote it");
+    assert!(journal_row(folder).is_none(), "{case}");
+    assert_eq!(records(folder), 1, "{case}");
+    for report in &reports {
+        assert_eq!(
+            waiting_at_held(&report.flagged),
+            1,
+            "{case}: {:?}",
+            report.flagged
+        );
+    }
+}
+
+/// A write at `HELD` blocked by a record whose `aside`, beside the folder,
+/// holds the file under its reserved name.
+struct Blocked {
+    _dir: super::tests::ScannedDir,
+    folder: Folder,
+    root: PathBuf,
+    _other: tempfile::TempDir,
+    other: PathBuf,
+    bound: state::Bound,
+    kept: PathBuf,
+}
+
+fn blocked() -> Blocked {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    let (other_dir, other) = beside(&root);
+    let place = other.to_string_lossy().into_owned();
+    let (bound, kept) = waiting_write(&folder, &root, &other, &place, true);
+    Blocked {
+        _dir: dir,
+        folder,
+        root,
+        _other: other_dir,
+        other,
+        bound,
+        kept,
+    }
+}
+
+#[test]
+fn a_blocked_write_whose_aside_holds_the_file_unchanged_never_trashes_its_item() {
+    let at = blocked();
+    held_past_the_grace(&at.folder, &at.root, &at.bound, "unchanged");
+    assert_eq!(std::fs::read(&at.kept).unwrap(), TAKEN);
+}
+
+#[test]
+fn a_blocked_write_whose_aside_holds_a_save_never_trashes_its_item() {
+    for before in [false, true] {
+        let at = blocked();
+        let (mut bound, kept) = (at.bound.clone(), at.kept.clone());
+        std::fs::write(&kept, SAVE).unwrap();
+        if before {
+            let mut prior = bound.clone();
+            prior.writes.landing = None;
+            bound.writes.landing = Some(state::Landing {
+                before: Some(Box::new(prior)),
+            });
+            state::bind(&at.folder.core.conn().unwrap(), &bound).unwrap();
+        }
+        held_past_the_grace(&at.folder, &at.root, &bound, &format!("before {before}"));
+        assert_eq!(std::fs::read(&kept).unwrap(), SAVE);
+    }
+}
+
+#[test]
+fn a_blocked_write_whose_aside_is_gone_never_trashes_its_item() {
+    let at = blocked();
+    std::fs::remove_dir_all(&at.other).unwrap();
+    held_past_the_grace(&at.folder, &at.root, &at.bound, "gone");
+}
+
+#[test]
+fn a_blocked_write_whose_aside_has_a_parent_component_never_trashes_its_item() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    let (_other, other) = beside(&root);
+    let place = format!("../{}", other.file_name().unwrap().to_string_lossy());
+    let (bound, kept) = waiting_write(&folder, &root, &other, &place, true);
+    std::fs::write(&kept, SAVE).unwrap();
+    held_past_the_grace(&folder, &root, &bound, "parent");
+    assert_eq!(std::fs::read(&kept).unwrap(), SAVE);
+}
+
+#[test]
+fn a_blocked_write_whose_directory_moved_away_never_trashes_its_item() {
+    let at = blocked();
+    std::fs::rename(at.root.join("Moved"), at.root.join("Elsewhere")).unwrap();
+    held_past_the_grace(&at.folder, &at.root, &at.bound, "moved away");
+    assert_eq!(std::fs::read(&at.kept).unwrap(), TAKEN);
+    assert!(!at.root.join("Elsewhere/Plan.md").exists());
+}
+
+#[test]
+fn a_bound_file_removed_with_no_record_is_trashed_after_the_grace() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("Moved")).unwrap();
+    std::fs::write(root.join(HELD), TAKEN).unwrap();
+    assert_eq!(folder.scan().unwrap().created, 1);
+    super::tests::landed(&folder, HELD);
+    folder.pull().unwrap();
+    std::fs::remove_file(root.join(HELD)).unwrap();
+
+    assert!(folder.scan().unwrap().trashed.is_empty());
+    age_the_journal(&folder);
+    assert_eq!(folder.scan().unwrap().trashed, [HELD]);
+    assert_eq!(super::tests::deletes_queued(&folder).len(), 1);
+}
+
+#[test]
+fn a_blocked_write_whose_target_holds_the_landed_bytes_stays_pending() {
+    let at = blocked();
+    let mut bound = at.bound.clone();
+    let landed = b"what the pull wrote\n";
+    std::fs::write(at.root.join(HELD), landed).unwrap();
+    bound.content_hash = state::hash(landed);
+    state::bind(&at.folder.core.conn().unwrap(), &bound).unwrap();
+
+    for _ in 0..3 {
+        assert!(at.folder.scan().unwrap().trashed.is_empty());
+        age_the_journal(&at.folder);
+    }
+    assert!(super::tests::deletes_queued(&at.folder).is_empty());
+    let conn = at.folder.core.conn().unwrap();
+    let held = state::bound_at(&conn, HELD).unwrap().unwrap();
+    assert!(held.writes.landing.is_some());
+    let item = crate::store::items_by_ids(&conn, std::slice::from_ref(&bound.item_id))
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(item.state, ItemState::Active);
+    drop(conn);
+    assert_eq!(std::fs::read(at.root.join(HELD)).unwrap(), landed);
+    assert_eq!(records(&at.folder), 1);
+}
+
+#[test]
+fn a_new_file_at_a_blocked_path_is_held_not_sent() {
+    let at = blocked();
+    let bound = &at.bound;
+    std::fs::write(at.root.join(HELD), "a new plan\n").unwrap();
+    let queued = at.folder.core.queue().unwrap().len();
+
+    for _ in 0..2 {
+        let report = at.folder.scan().unwrap();
+        assert_eq!(report.created, 0);
+        assert_eq!(waiting_at_held(&report.flagged), 1, "{:?}", report.flagged);
+    }
+    assert_eq!(at.folder.core.queue().unwrap().len(), queued);
+    assert_eq!(
+        state::bound_at(&at.folder.core.conn().unwrap(), HELD)
+            .unwrap()
+            .as_ref(),
+        Some(bound)
+    );
+    assert_eq!(std::fs::read(at.root.join(HELD)).unwrap(), b"a new plan\n");
+}
+
+#[test]
+fn a_watch_does_not_keep_passing_for_a_blocked_path() {
+    let at = blocked();
+    let report = at
+        .folder
+        .scan_watching(true, std::time::Duration::ZERO)
+        .unwrap();
+    assert_eq!(waiting_at_held(&report.flagged), 1, "{:?}", report.flagged);
+    assert!(
+        !at.folder
+            .grace_running(crate::clock::system_time())
+            .unwrap()
+    );
+    assert!(journal_row(&at.folder).is_none());
+}
+
+#[test]
+fn status_lists_a_blocked_path_as_held() {
+    let at = blocked();
+    let bound = &at.bound;
+    at.folder.scan().unwrap();
+    let status = at.folder.status().unwrap();
+    let file = status
+        .files
+        .iter()
+        .find(|file| file.path == HELD)
+        .unwrap_or_else(|| panic!("{:?}", status.files));
+    assert_eq!(file.status, "held");
+    assert_eq!(file.flag, Some("waiting"));
+    assert_eq!(file.item_id.as_deref(), Some(bound.item_id.as_str()));
+    assert!(
+        file.reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("folders remove")),
+        "{file:?}"
+    );
 }
