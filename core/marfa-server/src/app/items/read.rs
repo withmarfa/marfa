@@ -541,12 +541,15 @@ pub async fn titles(app: &App, caller: &Caller, names: Vec<String>) -> Result<St
     reading(app, caller, move |read| {
         let reach = listable(read)?;
         let rules = &read.catalog.rules;
+        let mut lookup = (!reach.is_empty())
+            .then(|| rows::Titles::new(read.tx, &reach, TITLES_PER_NAME + 1))
+            .transpose()?;
         let mut results = Vec::with_capacity(names.len());
         for name in names {
             let mut found = Vec::new();
             let mut more = false;
-            if let Some(key) = names::title_key(&name).filter(|_| !reach.is_empty()) {
-                let mut rows = rows::titled(read.tx, &key, &reach, TITLES_PER_NAME + 1)?;
+            if let (Some(key), Some(lookup)) = (names::title_key(&name), lookup.as_mut()) {
+                let mut rows = lookup.of(&key)?;
                 more = rows.len() as i64 > TITLES_PER_NAME;
                 rows.truncate(TITLES_PER_NAME as usize);
                 for row in rows {
@@ -570,6 +573,9 @@ pub async fn holders(app: &App, caller: &Caller, hashes: Vec<Hash>) -> Result<St
     reading(app, caller, move |read| {
         let reach = listable(read)?;
         let rules = &read.catalog.rules;
+        let mut lookup = (!reach.is_empty())
+            .then(|| rows::Holders::new(read.tx, &reach, HOLDERS_PER_HASH + 1))
+            .transpose()?;
         let mut answered: HashMap<&str, Value> = HashMap::new();
         let mut results = Vec::with_capacity(hashes.len());
         for hash in &hashes {
@@ -577,16 +583,16 @@ pub async fn holders(app: &App, caller: &Caller, hashes: Vec<Hash>) -> Result<St
                 results.push(held.clone());
                 continue;
             }
-            let mut rows = if reach.is_empty() {
-                Vec::new()
-            } else {
-                rows::holders_of(read.tx, hash.as_str(), &reach, HOLDERS_PER_HASH + 1)?
+            let Some(lookup) = lookup.as_mut() else {
+                results.push(json!({ "hash": hash.as_str(), "items": [], "more": false }));
+                continue;
             };
+            let mut rows = lookup.of(hash.as_str())?;
             let more = rows.len() as i64 > HOLDERS_PER_HASH;
             rows.truncate(HOLDERS_PER_HASH as usize);
             let mut found = Vec::with_capacity(rows.len());
             for row in rows {
-                let properties = super::parsed(&rows::properties_of(read.tx, row.seq)?)?;
+                let properties = super::parsed(&lookup.properties(row.seq)?)?;
                 found.push(json!({
                     "id": row.id,
                     "type": row.type_id,

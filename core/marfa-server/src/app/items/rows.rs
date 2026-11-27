@@ -1,6 +1,6 @@
 //! Private to `items`, and the only place that writes the `items` table.
 
-use rusqlite::{OptionalExtension, Row, ToSql, Transaction, params, params_from_iter};
+use rusqlite::{OptionalExtension, Row, Statement, ToSql, Transaction, params, params_from_iter};
 use serde::Serialize;
 
 use super::{Item, Keys, Mark, Snapshot, Writer};
@@ -859,6 +859,36 @@ pub(super) fn active_tags(tx: &Transaction<'_>) -> Result<Vec<(String, String, S
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
+/// One statement for every key a request looks up, so each key costs one run of it:
+/// the key is `?1`, and the reach and limit after it are bound once.
+struct Lookup<'tx> {
+    statement: Statement<'tx>,
+}
+
+impl<'tx> Lookup<'tx> {
+    fn prepare(tx: &'tx Transaction<'_>, sql: &Sql) -> Result<Lookup<'tx>> {
+        let mut statement = tx.prepare(&sql.text)?;
+        for (at, value) in sql.values.iter().enumerate() {
+            statement.raw_bind_parameter(at + 2, value)?;
+        }
+        Ok(Lookup { statement })
+    }
+
+    fn rows<T>(
+        &mut self,
+        key: &str,
+        read: impl Fn(&Row<'_>) -> rusqlite::Result<T>,
+    ) -> Result<Vec<T>> {
+        self.statement.raw_bind_parameter(1, key)?;
+        let mut rows = self.statement.raw_query();
+        let mut found = Vec::new();
+        while let Some(row) = rows.next()? {
+            found.push(read(row)?);
+        }
+        Ok(found)
+    }
+}
+
 pub(super) struct Titled {
     pub id: String,
     pub type_id: String,
@@ -866,33 +896,32 @@ pub(super) struct Titled {
     pub has_blob: bool,
 }
 
-/// The first `limit` active or archived items within `reach` whose title folds to `key`, by id.
-pub(super) fn titled(
-    tx: &Transaction<'_>,
-    key: &str,
-    reach: &Reach,
-    limit: i64,
-) -> Result<Vec<Titled>> {
-    let mut sql = Sql::new(
-        "SELECT i.id, i.type, json(i.properties), \
-         i.properties ->> '$.blob_ref' IS NOT NULL AND json_type(i.properties, '$.blob_ref') = 'text' \
-         FROM items i WHERE i.title_key = ",
-    );
-    sql.bind(key.to_string());
-    sql.push(" AND i.state IN ('active', 'archived') AND ");
-    reach.clause(&mut sql, "i", true);
-    sql.push(" ORDER BY i.id LIMIT ");
-    sql.bind(limit);
-    let mut statement = tx.prepare_cached(&sql.text)?;
-    let found = statement.query_map(params_from_iter(&sql.values), |row| {
-        Ok(Titled {
-            id: row.get(0)?,
-            type_id: row.get(1)?,
-            properties: row.get(2)?,
-            has_blob: row.get(3)?,
+/// The first `limit` active or archived items within a reach whose title folds to a key, by id.
+pub(super) struct Titles<'tx>(Lookup<'tx>);
+
+impl<'tx> Titles<'tx> {
+    pub(super) fn new(tx: &'tx Transaction<'_>, reach: &Reach, limit: i64) -> Result<Titles<'tx>> {
+        let mut sql = Sql::new(
+            "SELECT i.id, i.type, json(i.properties), \
+             i.properties ->> '$.blob_ref' IS NOT NULL AND json_type(i.properties, '$.blob_ref') = 'text' \
+             FROM items i WHERE i.title_key = ?1 AND i.state IN ('active', 'archived') AND ",
+        );
+        reach.clause(&mut sql, "i", true);
+        sql.push(" ORDER BY i.id LIMIT ");
+        sql.bind(limit);
+        Ok(Titles(Lookup::prepare(tx, &sql)?))
+    }
+
+    pub(super) fn of(&mut self, key: &str) -> Result<Vec<Titled>> {
+        self.0.rows(key, |row| {
+            Ok(Titled {
+                id: row.get(0)?,
+                type_id: row.get(1)?,
+                properties: row.get(2)?,
+                has_blob: row.get(3)?,
+            })
         })
-    })?;
-    Ok(found.collect::<rusqlite::Result<_>>()?)
+    }
 }
 
 pub(super) struct Holder {
@@ -901,50 +930,52 @@ pub(super) struct Holder {
     pub type_id: String,
 }
 
-/// The first `limit` active or archived items within `reach` whose `blob_ref` is `hash`, by id.
-pub(super) fn holders_of(
-    tx: &Transaction<'_>,
-    hash: &str,
-    reach: &Reach,
-    limit: i64,
-) -> Result<Vec<Holder>> {
-    let sql = holders_sql(hash, reach, limit);
-    let mut statement = tx.prepare_cached(&sql.text)?;
-    let found = statement.query_map(params_from_iter(&sql.values), |row| {
-        Ok(Holder {
-            seq: row.get(0)?,
-            id: row.get(1)?,
-            type_id: row.get(2)?,
-        })
-    })?;
-    Ok(found.collect::<rusqlite::Result<_>>()?)
+/// The first `limit` active or archived items within a reach whose `blob_ref` is a hash, by id.
+pub(super) struct Holders<'tx> {
+    lookup: Lookup<'tx>,
+    properties: Statement<'tx>,
 }
 
-fn holders_sql(hash: &str, reach: &Reach, limit: i64) -> Sql {
+impl<'tx> Holders<'tx> {
+    pub(super) fn new(tx: &'tx Transaction<'_>, reach: &Reach, limit: i64) -> Result<Holders<'tx>> {
+        Ok(Holders {
+            lookup: Lookup::prepare(tx, &holders_sql(reach, limit))?,
+            properties: tx.prepare("SELECT json(properties) FROM items WHERE seq = ?1")?,
+        })
+    }
+
+    pub(super) fn of(&mut self, hash: &str) -> Result<Vec<Holder>> {
+        self.lookup.rows(hash, |row| {
+            Ok(Holder {
+                seq: row.get(0)?,
+                id: row.get(1)?,
+                type_id: row.get(2)?,
+            })
+        })
+    }
+
+    pub(super) fn properties(&mut self, seq: i64) -> Result<String> {
+        Ok(self.properties.query_row([seq], |row| row.get(0))?)
+    }
+}
+
+fn holders_sql(reach: &Reach, limit: i64) -> Sql {
     // CROSS JOIN keeps SQLite from walking `items` in id order instead of seeking the hash.
+    // The type list keeps the seek to the types within reach, so holders outside it cost nothing.
     let mut sql = Sql::new(
         "SELECT i.seq, i.id, i.type FROM blob_references r \
-         CROSS JOIN items i ON i.seq = r.seq WHERE r.hash = ",
+         CROSS JOIN items i ON i.seq = r.seq \
+         WHERE r.hash = ?1 AND r.kind = 'item' AND r.item_type IN (",
     );
-    sql.bind(hash.to_string());
-    sql.push(" AND r.kind = 'item' AND r.item_type IN (");
     sql.list(&reach.types().collect::<Vec<_>>());
     sql.push(
         ") AND i.state IN ('active', 'archived') \
-         AND i.properties ->> '$.blob_ref' = ",
+         AND i.properties ->> '$.blob_ref' = ?1 AND ",
     );
-    sql.bind(hash.to_string());
-    sql.push(" AND ");
     reach.clause(&mut sql, "i", true);
     sql.push(" ORDER BY i.id LIMIT ");
     sql.bind(limit);
     sql
-}
-
-pub(super) fn properties_of(tx: &Transaction<'_>, seq: i64) -> Result<String> {
-    Ok(tx
-        .prepare_cached("SELECT json(properties) FROM items WHERE seq = ?1")?
-        .query_row([seq], |row| row.get(0))?)
 }
 
 pub(super) fn count_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<i64> {
@@ -1220,19 +1251,16 @@ mod tests {
             .unwrap();
         }
         let notes = Reach::testing(&["core.note"], &[], &[]);
-        assert!(holders_of(&tx, &hash, &notes, 21).unwrap().is_empty());
-        let sql = holders_sql(&hash, &notes, 21);
-        let steps = tx
-            .prepare_cached(&sql.text)
-            .unwrap()
-            .get_status(StatementStatus::VmStep);
+        let mut lookup = Holders::new(&tx, &notes, 21).unwrap();
+        assert!(lookup.of(&hash).unwrap().is_empty());
+        let steps = lookup.lookup.statement.get_status(StatementStatus::VmStep);
         assert!(
             steps < 100,
             "{steps} steps for a hash 5,000 unreachable items hold"
         );
 
         let files = Reach::testing(&["core.file"], &[], &[]);
-        let held = holders_of(&tx, &hash, &files, 21).unwrap();
+        let held = Holders::new(&tx, &files, 21).unwrap().of(&hash).unwrap();
         assert_eq!(held.len(), 21);
         assert!(held.windows(2).all(|pair| pair[0].id < pair[1].id));
     }
