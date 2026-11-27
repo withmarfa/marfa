@@ -155,15 +155,24 @@ impl Folder {
     /// runs. A folder is changed only while the registry lists it at its
     /// path, its store is the one shown, the registry did not list the
     /// directory when shown and does not now, and nothing stands there but an
-    /// empty directory, all read again as it is changed.
+    /// empty directory, all read again as it is changed. Where something
+    /// stands there, each folder shown is named in `not_changed`; only a
+    /// `shown` that names no folder, read or not, is refused.
     pub fn forget_remembered(shown: &Remembered) -> Result<Forgotten> {
         Folder::forget_waiting(shown, handover::HANDOVER_WAIT)
     }
 
     pub(super) fn forget_waiting(shown: &Remembered, wait: Duration) -> Result<Forgotten> {
         let listed = listed()?.iter().any(|entry| entry.dir == shown.dir);
-        if !listed {
-            nothing_stands(&shown.dir)?;
+        // Read once: every folder is decided on the same observation.
+        let standing = if listed { None } else { occupied(&shown.dir) };
+        if let Some(what) = &standing
+            && shown.folders.is_empty()
+            && shown.not_read.is_empty()
+        {
+            // Nothing was shown to carry the reason, and an empty result
+            // would read as a forget that succeeded.
+            return Err(refusal(&shown.dir, what));
         }
         let mut done = Forgotten {
             dir: shown.dir.clone(),
@@ -174,6 +183,8 @@ impl Folder {
         for holder in &shown.folders {
             let changed = if done.listed {
                 Err(Left::Listed)
+            } else if let Some(what) = &standing {
+                Err(Left::Because(occupied_reason(&shown.dir, what)))
             } else if shown.listed {
                 Err(Left::ShownListed)
             } else {
@@ -205,11 +216,24 @@ impl Folder {
 fn nothing_stands(dir: &Path) -> Result<()> {
     match occupied(dir) {
         None => Ok(()),
-        Some(what) => Err(CoreError::Invalid(format!(
-            "{} {what}, so it may still be the folder or hold a file moved into it, and nothing was forgotten; unmount its volume, or remove what is there or make it readable, then forget it again",
-            dir.display()
-        ))),
+        Some(what) => Err(refusal(dir, &what)),
     }
+}
+
+/// The refusal of a whole forget, which says what the person can do.
+fn refusal(dir: &Path, what: &str) -> CoreError {
+    CoreError::Invalid(format!(
+        "{} {what}, so it may still be the folder or hold a file moved into it, and nothing was forgotten; unmount its volume, or remove what is there or make it readable, then forget it again",
+        dir.display()
+    ))
+}
+
+/// Why a folder was left as it was while something stands at `dir`.
+fn occupied_reason(dir: &Path, what: &str) -> String {
+    format!(
+        "{} {what} now, so it may still be the folder or hold a file moved into it, and nothing in this folder was changed; unmount its volume, or remove what is there or make it readable, then forget it again",
+        dir.display()
+    )
 }
 
 /// What stands at `dir`, if anything but nothing or an empty directory, such
@@ -476,11 +500,7 @@ fn forget_in(
                 return Ok(Err(Left::Listed));
             }
             if let Some(what) = occupied(target) {
-                return Ok(Err(format!(
-                    "{} {what} now, so it may still be the folder or hold a file moved into it, and nothing in this folder was changed",
-                    target.display()
-                )
-                .into()));
+                return Ok(Err(occupied_reason(target, &what).into()));
             }
             let tx = conn.unchecked_transaction()?;
             let others = remembered_in(&tx)?;

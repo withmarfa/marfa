@@ -1159,96 +1159,112 @@ fn forget_remembered(dir: &Path, yes: bool, json: bool) -> Result<bool, CliError
     };
     let outcome = ForgetOutcome::of(&shown, done);
     let left = outcome.left();
-    let ForgetOutcome {
-        listed,
-        forgotten,
-        not_changed,
-    } = outcome;
     output::report(
-        &serde_json::json!({
-            "dir": shown.dir,
-            "listed": listed,
-            "folders": shown.folders,
-            "not_read": shown.not_read,
-            "alike": shown.alike,
-            "declined": asking && !agreed,
-            "forgotten": forgotten,
-            "not_changed": not_changed,
-        }),
+        &forget_json(&shown, &outcome, asking && !agreed),
         json,
-        || {
-            let mut lines = Vec::new();
-            // The question already showed what it would do.
-            if !asked {
-                lines.extend(describe_remembered(&shown));
-            }
-            if agreed {
-                for done in &forgotten {
-                    if done.released.is_empty() {
-                        lines.push(format!(
-                            "{} no longer remembers {}",
-                            shown_path(&done.dir),
-                            shown_path(&shown.dir)
-                        ));
-                    } else {
-                        lines.push(format!(
-                            "{} no longer remembers {}. Its next pass reconsiders these held deletions:",
-                            shown_path(&done.dir),
-                            shown_path(&shown.dir)
-                        ));
-                        lines.extend(
-                            done.released
-                                .iter()
-                                .map(|path| format!("  {}", printable(path))),
-                        );
-                    }
-                    if !done.still_held.is_empty() {
-                        lines.push(format!(
-                            "{} keeps these held deletions, which still wait on other folders:",
-                            shown_path(&done.dir)
-                        ));
-                        lines.extend(
-                            done.still_held
-                                .iter()
-                                .map(|held| still_waiting(&held.path, &held.still_waits_on, "  ")),
-                        );
-                    }
-                    if !done.not_released.is_empty() {
-                        lines.push(format!(
-                            "{} keeps these held deletions, which were shown as staying held and now wait on nothing else; run `folders forget` again or settle them with `folders held`:",
-                            shown_path(&done.dir)
-                        ));
-                        lines.extend(
-                            done.not_released
-                                .iter()
-                                .map(|path| format!("  {}", printable(path))),
-                        );
-                    }
-                }
-                // Those not read are named once, above.
-                lines.extend(
-                    not_changed
-                        .iter()
-                        .filter(|left| !shown.not_read.contains(left))
-                        .map(|left| {
-                            format!(
-                                "{} was left as it was: {}",
-                                shown_path(&left.dir),
-                                printable(&left.reason)
-                            )
-                        }),
-                );
-            } else if asking {
-                lines.push(if asked {
-                    "nothing was forgotten".into()
-                } else {
-                    "nothing was forgotten; pass --yes to forget it".into()
-                });
-            }
-            lines.join("\n")
-        },
+        || forget_lines(&shown, &outcome, asking, asked, agreed).join("\n"),
     )?;
     Ok(left)
+}
+
+fn forget_json(
+    shown: &marfa_core::Remembered,
+    outcome: &ForgetOutcome,
+    declined: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "dir": shown.dir,
+        "listed": outcome.listed,
+        "folders": shown.folders,
+        "not_read": shown.not_read,
+        "alike": shown.alike,
+        "declined": declined,
+        "forgotten": outcome.forgotten,
+        "not_changed": outcome.not_changed,
+    })
+}
+
+/// The human output of `folders forget`. Whether the registry lists the
+/// directory is as the confirm read it, not as the preview did, so the advice
+/// to remove it first is never given for a directory the confirm found
+/// unlisted.
+fn forget_lines(
+    shown: &marfa_core::Remembered,
+    outcome: &ForgetOutcome,
+    asking: bool,
+    asked: bool,
+    agreed: bool,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    // The question already showed what it would do.
+    if !asked {
+        lines.extend(describe_remembered(shown, outcome.listed));
+    }
+    if agreed {
+        for done in &outcome.forgotten {
+            if done.released.is_empty() {
+                lines.push(format!(
+                    "{} no longer remembers {}",
+                    shown_path(&done.dir),
+                    shown_path(&shown.dir)
+                ));
+            } else {
+                lines.push(format!(
+                    "{} no longer remembers {}. Its next pass reconsiders these held deletions:",
+                    shown_path(&done.dir),
+                    shown_path(&shown.dir)
+                ));
+                lines.extend(
+                    done.released
+                        .iter()
+                        .map(|path| format!("  {}", printable(path))),
+                );
+            }
+            if !done.still_held.is_empty() {
+                lines.push(format!(
+                    "{} keeps these held deletions, which still wait on other folders:",
+                    shown_path(&done.dir)
+                ));
+                lines.extend(
+                    done.still_held
+                        .iter()
+                        .map(|held| still_waiting(&held.path, &held.still_waits_on, "  ")),
+                );
+            }
+            if !done.not_released.is_empty() {
+                lines.push(format!(
+                    "{} keeps these held deletions, which were shown as staying held and now wait on nothing else; run `folders forget` again or settle them with `folders held`:",
+                    shown_path(&done.dir)
+                ));
+                lines.extend(
+                    done.not_released
+                        .iter()
+                        .map(|path| format!("  {}", printable(path))),
+                );
+            }
+        }
+        // Those not read are named once, above.
+        lines.extend(
+            outcome
+                .not_changed
+                .iter()
+                .filter(|left| !shown.not_read.contains(left))
+                .map(|left| {
+                    format!(
+                        "{} was left as it was: {}",
+                        shown_path(&left.dir),
+                        printable(&left.reason)
+                    )
+                }),
+        );
+    } else if asking {
+        lines.push(if asked {
+            "nothing was forgotten".into()
+        } else {
+            "nothing was forgotten; pass --yes to forget it".into()
+        });
+    }
+    lines
 }
 
 /// What `folders forget` reports.
@@ -1295,7 +1311,7 @@ fn shown_path(path: &Path) -> String {
     printable(&path.display().to_string())
 }
 
-fn describe_remembered(shown: &marfa_core::Remembered) -> Vec<String> {
+fn describe_remembered(shown: &marfa_core::Remembered, listed: bool) -> Vec<String> {
     let mut lines = Vec::new();
     if shown.folders.is_empty() {
         lines.push(format!(
@@ -1346,7 +1362,7 @@ fn describe_remembered(shown: &marfa_core::Remembered) -> Vec<String> {
             }
         }
     }
-    if shown.listed {
+    if listed {
         lines.push(format!(
             "{} is a folder the registry lists, so each folder finds it again at its next pass and forgetting it changes nothing; `folders remove` it first, then forget it",
             shown_path(&shown.dir)
@@ -1372,7 +1388,7 @@ fn describe_remembered(shown: &marfa_core::Remembered) -> Vec<String> {
 fn asks_to_forget(shown: &marfa_core::Remembered) -> Result<bool, CliError> {
     use std::io::{BufRead, Write};
     let mut question = crate::output::stderr();
-    for line in describe_remembered(shown) {
+    for line in describe_remembered(shown, shown.listed) {
         writeln!(question, "{line}")?;
     }
     write!(question, "Forget it? [y/N] ")?;
@@ -2601,7 +2617,7 @@ impl Conflicts {
 
 #[cfg(test)]
 mod tests {
-    use super::ForgetOutcome;
+    use super::{ForgetOutcome, forget_json, forget_lines};
 
     fn shown_listed(listed: bool) -> marfa_core::Remembered {
         marfa_core::Remembered {
@@ -2634,6 +2650,87 @@ mod tests {
         let outcome = ForgetOutcome::of(&shown_listed(false), Some(done));
         assert!(outcome.listed, "{outcome:?}");
         assert!(outcome.left());
+    }
+
+    /// The saved preview read `/gone` listed and one folder remembering it;
+    /// the confirm found it unlisted and occupied.
+    fn listed_when_shown_occupied_when_confirmed() -> (marfa_core::Remembered, ForgetOutcome) {
+        let shown = marfa_core::Remembered {
+            dir: "/gone".into(),
+            listed: true,
+            folders: vec![marfa_core::Remembering {
+                dir: "/folder".into(),
+                folder: "01a00000-0000-7000-8000-000000361505".into(),
+                store: String::new(),
+                held: Vec::new(),
+            }],
+            not_read: Vec::new(),
+            alike: Vec::new(),
+        };
+        let done = marfa_core::Forgotten {
+            dir: "/gone".into(),
+            listed: false,
+            forgotten: Vec::new(),
+            not_changed: vec![marfa_core::NotRead {
+                dir: "/folder".into(),
+                reason: "/gone is not empty now, so it may still be the folder".into(),
+            }],
+        };
+        let outcome = ForgetOutcome::of(&shown, Some(done));
+        (shown, outcome)
+    }
+
+    #[test]
+    fn a_confirm_that_found_the_directory_unlisted_and_occupied_exits_3_and_names_the_folder() {
+        let (shown, outcome) = listed_when_shown_occupied_when_confirmed();
+        assert!(!outcome.listed, "{outcome:?}");
+        assert!(outcome.left(), "{outcome:?}");
+        let json = forget_json(&shown, &outcome, false);
+        assert_eq!(json["listed"], false, "{json}");
+        assert_eq!(json["forgotten"], serde_json::json!([]), "{json}");
+        assert_eq!(
+            json["not_changed"],
+            serde_json::json!([{
+                "dir": "/folder",
+                "reason": "/gone is not empty now, so it may still be the folder"
+            }]),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn a_confirm_that_found_the_directory_unlisted_does_not_advise_removing_it() {
+        let (shown, outcome) = listed_when_shown_occupied_when_confirmed();
+        let lines = forget_lines(&shown, &outcome, false, false, true);
+        assert_eq!(
+            lines,
+            [
+                "Folders that remember /gone or have a deletion on hold for it (1)",
+                "  /folder",
+                "/folder was left as it was: /gone is not empty now, so it may still be the folder",
+            ],
+            "{lines:#?}"
+        );
+    }
+
+    #[test]
+    fn a_confirm_that_found_the_directory_listed_still_advises_removing_it() {
+        let (shown, _) = listed_when_shown_occupied_when_confirmed();
+        let done = marfa_core::Forgotten {
+            dir: "/gone".into(),
+            listed: true,
+            forgotten: Vec::new(),
+            not_changed: Vec::new(),
+        };
+        let outcome = ForgetOutcome::of(&shown, Some(done));
+        let lines = forget_lines(&shown, &outcome, false, false, true);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("is a folder the registry lists")
+                    && line.contains("`folders remove` it first")),
+            "{lines:#?}"
+        );
     }
 
     #[test]
