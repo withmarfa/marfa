@@ -2079,9 +2079,6 @@ struct FolderStatus<'a> {
     watch_stopped: Option<&'a str>,
 }
 
-/// What `folders remove` says of a folder whose state went, and where
-/// another instance at its server never received changes the folder held,
-/// each file that holds one and how to send them to that instance.
 fn removed_said(dir: &Path, folder: &str, unsent: &marfa_core::folder::UnsentChanges) -> String {
     use marfa_core::folder::UnsentChange;
     let shown = dir.display();

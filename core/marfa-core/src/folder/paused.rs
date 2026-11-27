@@ -112,7 +112,7 @@ pub(super) fn refuse_outside(conn: &rusqlite::Connection, root: &Path) -> Result
         })
         .collect();
     Err(CoreError::Store(format!(
-        "Marfa will not sync this folder: its store holds records from an earlier release that name files outside it, which Marfa must not change. Each file is still where it was: {}. Move back anything you need, then run `marfa folders remove {}` and add the folder again. `folders remove` lists any change not yet sent and leaves its file in place.",
+        "Marfa cannot sync this folder because its store names files outside it. The recorded paths are {}. Check these paths and save any files you need before running `marfa folders remove {}` and adding the folder again. Removal reports unsent file changes.",
         named.join("; "),
         root.display()
     )))

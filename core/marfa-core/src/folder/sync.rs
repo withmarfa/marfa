@@ -247,10 +247,8 @@ impl Folder {
         }
     }
 
-    /// Takes the folder at `dir` off this machine: its own state under
-    /// `.marfa` goes, and its files stay. Refused while writes wait, unless
-    /// the first sync still waits to be confirmed or another instance
-    /// answered at the folder's server (`Folder::remove`). No symbolic link is
+    /// Takes the folder at `dir` off this machine under the same conditions
+    /// as [`Folder::remove`]. No symbolic link is
     /// followed, and a path through one is taken only where it is the path
     /// the registry lists. A listed folder's state goes
     /// only where the store at its listed path is the one the registry lists
@@ -354,8 +352,8 @@ impl Folder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Removal {
     /// The folder's own state at this directory went; its files stay.
-    /// `unsent` is what waited that no server could take, because another
-    /// instance answers at the folder's server.
+    /// `unsent` reports pending changes when another instance answers or a
+    /// recovery record names a place outside the directory.
     Deleted {
         dir: PathBuf,
         folder: String,
