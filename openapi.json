@@ -4795,7 +4795,7 @@
               },
               "revision": {
                 "type": "string",
-                "description": "The type's `revision`, as `GET /types/{id}` answers it. Left out for a type that does not read."
+                "description": "The type's `revision`, as `GET /types/{id}` answers it. Left out when the type's parent chain does not resolve."
               }
             },
             "required": [
@@ -45688,7 +45688,7 @@
             }
           },
           "409": {
-            "description": "- `version_conflict`: `revision` is stale. `details.revision` names the current one.\n- `link_taken`: the replacement names a `link_field` in which two items, in any state, hold the same value.\n- `type_in_use`: rows hold a table or column the replacement removes or retypes, and `force` isn't `true`. `details.tables` names each.",
+            "description": "- `version_conflict`: `revision` is stale. `details.revision` names the current one, where the type reads.\n- `link_taken`: the replacement names a `link_field` in which two items of the type, in any state, hold the same value.\n- `type_in_use`: rows hold a table or column the replacement removes or retypes, and `force` isn't `true`. `details.tables` names each.",
             "content": {
               "application/json": {
                 "schema": {
@@ -46017,7 +46017,7 @@
             }
           },
           "409": {
-            "description": "- `version_conflict`: `revision` is stale. `details.revision` names the current one.\n- `type_has_subtypes`: other types name this one as `parent` (`details.subtype_ids`). Delete them or reparent them first.\n- `type_in_use`: an item, folder, view, webhook or column names the type and `force` isn't `true`. Move them with `POST /types/{id}/move`.",
+            "description": "- `version_conflict`: `revision` is stale. `details.revision` names the current one, where the type reads.\n- `type_has_subtypes`: other types name this one as `parent` (`details.subtype_ids`). Delete them or reparent them first.\n- `type_in_use`: an item of the type, or a folder, view, webhook or column naming it, exists and `force` isn't `true`. Move them with `POST /types/{id}/move`.",
             "content": {
               "application/json": {
                 "schema": {

@@ -5201,7 +5201,7 @@ export interface components {
             conflicts?: components["schemas"]["TypeConflict"][];
             /** @description The structural roles the type declares itself, without those it only inherits. Empty if it declares none. */
             own_roles: components["schemas"]["TypeRole"][];
-            /** @description The type's `revision`, as `GET /types/{id}` answers it. Left out for a type that does not read. */
+            /** @description The type's `revision`, as `GET /types/{id}` answers it. Left out when the type's parent chain does not resolve. */
             revision?: string;
         };
         /**
@@ -27205,8 +27205,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `version_conflict`: `revision` is stale. `details.revision` names the current one.
-             *     - `link_taken`: the replacement names a `link_field` in which two items, in any state, hold the same value.
+             * @description - `version_conflict`: `revision` is stale. `details.revision` names the current one, where the type reads.
+             *     - `link_taken`: the replacement names a `link_field` in which two items of the type, in any state, hold the same value.
              *     - `type_in_use`: rows hold a table or column the replacement removes or retypes, and `force` isn't `true`. `details.tables` names each.
              */
             409: {
@@ -27385,9 +27385,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `version_conflict`: `revision` is stale. `details.revision` names the current one.
+             * @description - `version_conflict`: `revision` is stale. `details.revision` names the current one, where the type reads.
              *     - `type_has_subtypes`: other types name this one as `parent` (`details.subtype_ids`). Delete them or reparent them first.
-             *     - `type_in_use`: an item, folder, view, webhook or column names the type and `force` isn't `true`. Move them with `POST /types/{id}/move`.
+             *     - `type_in_use`: an item of the type, or a folder, view, webhook or column naming it, exists and `force` isn't `true`. Move them with `POST /types/{id}/move`.
              */
             409: {
                 headers: {
