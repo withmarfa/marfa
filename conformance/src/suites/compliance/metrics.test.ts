@@ -14,12 +14,14 @@ import {
   getManagementClient,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { blobHash, itemsArchive } from "../../utils/archive.js";
 import { bootFreshServer } from "../../utils/fresh-server.js";
 import {
   clientsFor,
   DISK_ONLY,
   ownObjectStore,
   replicateUntilCaughtUp,
+  runJob,
 } from "../../utils/own-blob-server.js";
 
 let client: MarfaClient;
@@ -161,14 +163,17 @@ describe("the instance's metrics", () => {
     onTestFinished(() => server.stop());
     // Keep scheduled replication from replacing the disk copy.
     await server.pauseClock(true);
-    const { operator, working } = clientsFor(server);
-    const image = await working.uploadBlob(
-      new Uint8Array(11),
-      " Image/PNG ; x=y ",
+    const { local, operator, working } = clientsFor(server);
+    const image = new Uint8Array(11);
+    const imageHash = blobHash(image);
+    const imageType = " IMAGE/PNG ; x=y ";
+    const restored = await local.restoreArchive(
+      itemsArchive([], [{ data: image, mime_type: imageType }]),
     );
-    expect(image.status, JSON.stringify(image.error)).toBe(201);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data.blobs_imported).toBe(1);
     for (const [size, type] of [
-      [13, "APPLICATION/PDF"],
+      [13, "application/pdf"],
       [17, "audio/ogg"],
       [19, "video/mp4"],
       [23, "application/x-custom"],
@@ -181,16 +186,13 @@ describe("the instance's metrics", () => {
       expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
     }
     await replicateUntilCaughtUp(operator, "the object store copies");
-    const before = await operator.listBlobCopies(image.data.hash);
+    const before = await operator.listBlobCopies(imageHash);
     expect(before.status, JSON.stringify(before.error)).toBe(200);
     const disk = before.data.data.find((copy) => copy.kind === "disk");
     expect(disk).toBeDefined();
-    const dropped = await operator.deleteBlobCopy(
-      image.data.hash,
-      disk!.store_id,
-    );
+    const dropped = await operator.deleteBlobCopy(imageHash, disk!.store_id);
     expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
-    const copies = await operator.listBlobCopies(image.data.hash);
+    const copies = await operator.listBlobCopies(imageHash);
     expect(copies.status, JSON.stringify(copies.error)).toBe(200);
     expect(copies.data.data.map((copy) => copy.kind)).toEqual(["s3"]);
 
@@ -206,6 +208,15 @@ describe("the instance's metrics", () => {
     expect(blobs.total_bytes).toBe(
       kinds.reduce((sum, kind) => sum + kind.total_bytes, 0),
     );
+
+    await runJob(operator, "blob-orphans");
+    const orphans = await operator.listBlobOrphans();
+    expect(orphans.status, JSON.stringify(orphans.error)).toBe(200);
+    expect(
+      orphans.data.data.find((blob) => blob.hash === imageHash),
+    ).toMatchObject({
+      mime_type: imageType,
+    });
   });
 
   it("reports the blob disk volume figures and uses null for each unreadable figure", async () => {
