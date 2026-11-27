@@ -1,5 +1,5 @@
 //! `marfa metrics` as a process: it prints what the server answers, memory,
-//! CPU and database figures included, and sends the key it was given.
+//! CPU, database and blob storage figures included, and sends the key it was given.
 
 #[allow(dead_code)]
 #[path = "../src/door.rs"]
@@ -11,7 +11,37 @@ mod quiet;
 
 use door::{Answer, Door};
 
-const METRICS: &str = r#"{"items":{"total":3,"by_state":{"active":3}},"blobs":{"count":1,"total_bytes":10},"types":{"core":5,"registered":0},"keys":{"total":2},"webhooks":{"total":0},"uptime_seconds":42,"process":{"release":"v0.0.99","memory_rss_bytes":300000000,"memory_rss_peak_bytes":400000000,"cpu_user_seconds":12.5,"cpu_system_seconds":3.25},"storage":{"database_bytes":2000000,"wal_bytes":0,"rows":{"items":3,"versions":4,"event_log":5,"audit_log":6}}}"#;
+const METRICS: &str = r#"{
+    "items": {"total": 3, "by_state": {"active": 3}},
+    "blobs": {
+        "count": 3,
+        "total_bytes": 60,
+        "by_kind": {
+            "image": {"count": 1, "total_bytes": 10},
+            "pdf": {"count": 1, "total_bytes": 20},
+            "audio_video": {"count": 1, "total_bytes": 30},
+            "other": {"count": 0, "total_bytes": 0}
+        }
+    },
+    "types": {"core": 5, "registered": 0, "plugin": 0},
+    "keys": {"total": 2},
+    "webhooks": {"total": 0},
+    "uptime_seconds": 42,
+    "process": {
+        "version": "v0.0.99",
+        "memory_rss_bytes": 300000000,
+        "memory_rss_peak_bytes": 400000000,
+        "cpu_user_seconds": 12.5,
+        "cpu_system_seconds": 3.25
+    },
+    "storage": {
+        "database_bytes": 2000000,
+        "wal_bytes": 0,
+        "blob_volume_free_bytes": 5000000,
+        "blob_volume_size_bytes": 10000000,
+        "rows": {"items": 3, "versions": 4, "event_log": 5, "audit_log": 6}
+    }
+}"#;
 
 fn run(url: &str, args: &[&str]) -> (i32, String, String) {
     let nowhere =
@@ -52,6 +82,25 @@ fn metrics_prints_the_process_and_storage_figures_the_server_reports() {
     assert_eq!(code, 0, "{stderr}");
     for figure in ["memory_rss_bytes", "wal_bytes", "event_log", "v0.0.99"] {
         assert!(plain.contains(figure), "{figure} missing from:\n{plain}");
+    }
+    for (field, value) in [
+        ("blobs.by_kind.image.count", "1"),
+        ("blobs.by_kind.image.total_bytes", "10"),
+        ("blobs.by_kind.pdf.count", "1"),
+        ("blobs.by_kind.pdf.total_bytes", "20"),
+        ("blobs.by_kind.audio_video.count", "1"),
+        ("blobs.by_kind.audio_video.total_bytes", "30"),
+        ("blobs.by_kind.other.count", "0"),
+        ("blobs.by_kind.other.total_bytes", "0"),
+        ("storage.blob_volume_free_bytes", "5000000"),
+        ("storage.blob_volume_size_bytes", "10000000"),
+    ] {
+        assert!(
+            plain
+                .lines()
+                .any(|line| line.split_whitespace().eq([field, value])),
+            "{field} {value} missing from:\n{plain}"
+        );
     }
 
     let received = door.received();

@@ -3,21 +3,24 @@
 use std::path::{Path, PathBuf};
 
 use rusqlite::Transaction;
+use rusqlite::functions::{Aggregate, Context, FunctionFlags};
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 use tokio::sync::Semaphore;
 
+use crate::db::volume;
+
 use super::App;
 use super::clock::Stamp;
-use super::faults::HOLD_METRICS;
+use super::faults::{Faults, HOLD_METRICS, Volume};
 use super::instance::VERSION;
 use super::keys;
 use super::refusal::{Refusal, Result};
 
-pub struct Counts {
+struct Counts {
     by_state: Map<String, Value>,
     items: i64,
-    blobs: i64,
-    blob_bytes: i64,
+    blobs: Value,
     platform_types: i64,
     registered_types: i64,
     plugin_types: i64,
@@ -26,6 +29,120 @@ pub struct Counts {
     versions: i64,
     events: i64,
     audit: i64,
+}
+
+#[derive(Default, Serialize)]
+struct BlobTally {
+    count: i64,
+    total_bytes: i64,
+}
+
+impl BlobTally {
+    fn add(&mut self, bytes: i64) -> rusqlite::Result<()> {
+        self.total_bytes = self.total_bytes.checked_add(bytes).ok_or_else(|| {
+            rusqlite::Error::UserFunctionError(
+                std::io::Error::other("total blob size is too large to count").into(),
+            )
+        })?;
+        self.count += 1;
+        Ok(())
+    }
+}
+
+#[derive(Default, Serialize)]
+struct BlobKinds {
+    image: BlobTally,
+    pdf: BlobTally,
+    audio_video: BlobTally,
+    other: BlobTally,
+}
+
+#[derive(Default, Serialize)]
+struct BlobCounts {
+    #[serde(flatten)]
+    total: BlobTally,
+    by_kind: BlobKinds,
+}
+
+enum BlobKind {
+    Image,
+    Pdf,
+    AudioVideo,
+    Other,
+}
+
+fn blob_kind(mime_type: &str) -> BlobKind {
+    let essence = mime_type
+        .split_once(';')
+        .map_or(mime_type, |(essence, _)| essence)
+        .trim();
+    if essence.eq_ignore_ascii_case("application/pdf") {
+        return BlobKind::Pdf;
+    }
+    let Some((kind, subtype)) = essence.split_once('/') else {
+        return BlobKind::Other;
+    };
+    let kind = if kind.eq_ignore_ascii_case("image") {
+        BlobKind::Image
+    } else if kind.eq_ignore_ascii_case("audio") || kind.eq_ignore_ascii_case("video") {
+        BlobKind::AudioVideo
+    } else {
+        return BlobKind::Other;
+    };
+    if subtype.is_empty()
+        || subtype == "*"
+        || !subtype
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+    {
+        return BlobKind::Other;
+    }
+    kind
+}
+
+// Accumulate the four groups directly to avoid sorting the blob table.
+struct CountBlobs;
+
+impl Aggregate<BlobCounts, String> for CountBlobs {
+    fn init(&self, _: &mut Context<'_>) -> rusqlite::Result<BlobCounts> {
+        Ok(BlobCounts::default())
+    }
+
+    fn step(&self, row: &mut Context<'_>, counts: &mut BlobCounts) -> rusqlite::Result<()> {
+        let bytes = row.get::<i64>(1)?;
+        counts.total.add(bytes)?;
+        let group = match row.get_raw(0).as_str().map_or(BlobKind::Other, blob_kind) {
+            BlobKind::Image => &mut counts.by_kind.image,
+            BlobKind::Pdf => &mut counts.by_kind.pdf,
+            BlobKind::AudioVideo => &mut counts.by_kind.audio_video,
+            BlobKind::Other => &mut counts.by_kind.other,
+        };
+        group.add(bytes)
+    }
+
+    fn finalize(
+        &self,
+        _: &mut Context<'_>,
+        counts: Option<BlobCounts>,
+    ) -> rusqlite::Result<String> {
+        serde_json::to_string(&counts.unwrap_or_default())
+            .map_err(|error| rusqlite::Error::UserFunctionError(error.into()))
+    }
+}
+
+fn count_blobs(tx: &Transaction<'_>) -> Result<Value> {
+    tx.create_aggregate_function(
+        "marfa_blob_counts",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DIRECTONLY,
+        CountBlobs,
+    )?;
+    let counted: String = tx.query_row(
+        "SELECT marfa_blob_counts(mime_type, size_bytes) FROM blobs",
+        [],
+        |row| row.get(0),
+    )?;
+    serde_json::from_str(&counted).map_err(|_| Refusal::internal("blob counts could not be read"))
 }
 
 fn one(tx: &Transaction<'_>, sql: &str) -> Result<i64> {
@@ -43,11 +160,6 @@ fn count(tx: &Transaction<'_>, now: Stamp) -> Result<Counts> {
         items += total;
         by_state.insert(state, total.into());
     }
-    let (blobs, blob_bytes) = tx.query_row(
-        "SELECT count(*), coalesce(sum(size_bytes), 0) FROM blobs",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
     let types = |origin: &str| {
         tx.query_row(
             "SELECT count(*) FROM types WHERE origin = ?1",
@@ -58,8 +170,7 @@ fn count(tx: &Transaction<'_>, now: Stamp) -> Result<Counts> {
     Ok(Counts {
         by_state,
         items,
-        blobs,
-        blob_bytes,
+        blobs: count_blobs(tx)?,
         platform_types: types("platform")?,
         registered_types: types("registered")?,
         plugin_types: types("plugin")?,
@@ -90,10 +201,19 @@ fn file_sizes(database: Option<&Path>) -> (Value, Value) {
     }
 }
 
-fn storage(counts: &Counts, (database, wal): (Value, Value)) -> Value {
+fn storage(counts: &Counts, database: Option<&Path>, blob_path: &Path, faults: &Faults) -> Value {
+    let (database, wal) = file_sizes(database);
+    let free = faults
+        .free(Volume::Blobs)
+        .unwrap_or_else(|| volume::free_bytes(blob_path));
+    let size = faults
+        .size(Volume::Blobs)
+        .unwrap_or_else(|| volume::size_bytes(blob_path));
     json!({
         "database_bytes": database,
         "wal_bytes": wal,
+        "blob_volume_free_bytes": free,
+        "blob_volume_size_bytes": size,
         "rows": {
             "items": counts.items,
             "versions": counts.versions,
@@ -174,18 +294,20 @@ pub async fn read(app: &App) -> Result<Value> {
         .map_err(|_| Refusal::internal("the metrics permit has closed"))?;
     let now = app.clock.instant();
     let database = app.settings.start.database.file();
+    let blob_path = app.settings.start.blob_path.clone();
     let faults = app.faults.clone();
-    let (counts, files, resident) = app
+    let (counts, storage, resident) = app
         .db
         .read(move |tx| {
             faults.hold_blocking(HOLD_METRICS);
             let counts = count(tx, now)?;
-            Ok((counts, file_sizes(database.as_deref()), resident_bytes()))
+            let storage = storage(&counts, database.as_deref(), &blob_path, &faults);
+            Ok((counts, storage, resident_bytes()))
         })
         .await?;
     Ok(json!({
         "items": { "total": counts.items, "by_state": counts.by_state },
-        "blobs": { "count": counts.blobs, "total_bytes": counts.blob_bytes },
+        "blobs": counts.blobs,
         "types": {
             "core": counts.platform_types,
             "registered": counts.registered_types,
@@ -195,6 +317,6 @@ pub async fn read(app: &App) -> Result<Value> {
         "webhooks": { "total": counts.webhooks },
         "uptime_seconds": app.started.elapsed().as_secs(),
         "process": process(resident),
-        "storage": storage(&counts, files),
+        "storage": storage,
     }))
 }
