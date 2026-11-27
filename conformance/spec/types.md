@@ -450,6 +450,70 @@ The server MUST ship every type, field and status word with a `description` with
 
 **Tests:** `compliance/type-guidance.test.ts › ships every type, field and status word within the description limits`.
 
+## Guarding a write with a revision
+
+A type's `revision` is an opaque string that names what the type reads as. A writer that read a type sends the `revision` back to refuse its write if the type has changed since.
+
+### `types/revision-read`
+
+When a credential reads a type through `GET /types/{id}` or `GET /types`, or a write of a type answers it, the server MUST answer the type with a `revision`.
+
+**Tests:** `compliance/type-revision.test.ts › is answered by every read of a type, and equals across them`.
+
+### `types/revision-equal`
+
+While a type reads as the same content, the server MUST answer the same `revision` for it, whichever door answers and whether or not the type was deleted and registered again in between.
+
+**Reason:** a writer compares a `revision` it read earlier, so equal content that carried a different one would refuse a write that loses nothing.
+
+**Tests:** `compliance/type-revision.test.ts › is answered by every read of a type, and equals across them`, `› goes stale when the owner's icon alone changes`.
+
+### `types/revision-changes`
+
+When the definition of a type, its owner's icon, its provenance or anything it inherits from an ancestor changes, the server MUST answer a different `revision` for the type.
+
+**Tests:** `compliance/type-revision.test.ts › goes stale when the owner's icon alone changes`, `› goes stale when a type it inherits from changes`, `› answers 409 version_conflict to the second of two writers that read the same revision, and leaves the first writer's type`.
+
+### `types/revision-put-stale`
+
+If `PUT /types/{id}` names a `revision` that is not the type's current one, then the server MUST answer `409 version_conflict` with the current `revision` in `error.details.revision`, whether or not `force` is `true`.
+
+**Reason:** an app that reads a type, changes one field and sends it back would otherwise revert a change another writer made in between. The `version` of a type is its author's own number and is never compared.
+
+**Tests:** `compliance/type-revision.test.ts › answers 409 version_conflict to the second of two writers that read the same revision, and leaves the first writer's type`, `› refuses a stale revision with force=true too, and writes nothing`.
+
+### `types/revision-put-unchanged`
+
+If `PUT /types/{id}` answers `409 version_conflict` for a stale `revision`, then the server MUST NOT change the type or record an audit entry for the write.
+
+**Tests:** `compliance/type-revision.test.ts › answers 409 version_conflict to the second of two writers that read the same revision, and leaves the first writer's type`, `› refuses a stale revision with force=true too, and writes nothing`.
+
+### `types/revision-put-current`
+
+When `PUT /types/{id}` names the type's current `revision` and the replacement is otherwise accepted, the server MUST replace the type and answer it with its new `revision`.
+
+**Tests:** `compliance/type-revision.test.ts › is answered by every read of a type, and equals across them`, `› answers 409 version_conflict to the second of two writers that read the same revision, and leaves the first writer's type`.
+
+### `types/revision-not-stored`
+
+When `PUT /types/{id}` carries a `revision` in its body, the server MUST judge and store the definition as if the body had none, whether or not the `revision` is the current one.
+
+**Reason:** the `revision` a type answers is computed from what it holds, so a stored copy would only go stale.
+
+**Tests:** `compliance/type-revision.test.ts › is never stored: a revision in the body is dropped whether or not it matches`.
+
+### `types/revision-delete-stale`
+
+If `DELETE /types/{id}` names a `revision` query parameter that is not the type's current one, then the server MUST answer `409 version_conflict` with the current `revision` in `error.details.revision` and keep the type, whether or not `force` is `true`.
+
+**Tests:** `compliance/type-revision.test.ts › makes DELETE /types/{id} refuse a stale revision and keep the type, and delete on the current one`.
+
+### `types/revision-absent`
+
+Where a `PUT /types/{id}` or a `DELETE /types/{id}` names no `revision`, the server MUST NOT compare the type with any.
+
+**Tests:** `compliance/type-revision.test.ts › is not checked when a write names none`.
+
 ## Reading the registry
 
 ### `types/read`

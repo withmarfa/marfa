@@ -212,6 +212,8 @@ export interface TypeSchema {
     created_by: RecordedActor | null;
   };
   id: string; // Type identifier: "core.note", "acme.deal"
+  /** Opaque; what the type reads as now. Named on a write, it makes the write refuse a type that has changed since. */
+  revision?: string;
   version?: number; // Server defaults to 0 on registration
   label?: string; // Optional human-readable display name (server auto-generates from id if omitted)
   /** The label's plural; the server makes one from the label if omitted. */

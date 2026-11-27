@@ -13,9 +13,10 @@ pub use write::{Merge, change, clear_icon, delete, register, replace, set_icon};
 use marfa_rules::grammar;
 use marfa_rules::schema::{
     ChainFault, Issue, Obj, Registry, SchemaVerdict, ancestor_guidance, invalid_id_message,
-    plural_of,
+    plural_of, resolve,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use super::access::Caller;
 use super::catalog::{Catalog, Provenance, provenance_json};
@@ -85,6 +86,7 @@ fn require_reach(caller: &Caller, next: &Obj, stored: Option<&Obj>) -> Result<()
     Ok(())
 }
 
+/// What `GET /types/{id}` answers for a type, before it carries its `revision`.
 fn presented(mut schema: Obj, held: Option<&Provenance>, registry: &Registry) -> Value {
     let plural = plural_of(&schema);
     schema.insert("plural".into(), Value::String(plural));
@@ -99,4 +101,94 @@ fn presented(mut schema: Obj, held: Option<&Provenance>, registry: &Registry) ->
     }
     schema.insert("provenance".into(), provenance_json(held));
     Value::Object(schema)
+}
+
+/// Hex SHA-256 of `shown` with keys in sorted order, so equal content has one digest.
+fn digest(shown: &Value) -> String {
+    fn write(value: &Value, out: &mut String) {
+        match value {
+            Value::Object(members) => {
+                let mut keys: Vec<&String> = members.keys().collect();
+                keys.sort_unstable();
+                out.push('{');
+                for (at, key) in keys.into_iter().enumerate() {
+                    if at > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&Value::String(key.clone()).to_string());
+                    out.push(':');
+                    if let Some(member) = members.get(key) {
+                        write(member, out);
+                    }
+                }
+                out.push('}');
+            }
+            Value::Array(members) => {
+                out.push('[');
+                for (at, member) in members.iter().enumerate() {
+                    if at > 0 {
+                        out.push(',');
+                    }
+                    write(member, out);
+                }
+                out.push(']');
+            }
+            other => out.push_str(&other.to_string()),
+        }
+    }
+    let mut text = String::new();
+    write(shown, &mut text);
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The `revision` of type `id` in `registry`: the digest of what `GET /types/{id}` answers for it.
+/// `None` when the type does not read.
+pub(crate) fn revision_of(
+    registry: &Registry,
+    id: &str,
+    held: Option<&Provenance>,
+) -> Option<String> {
+    let resolved = resolve(registry, id, false).ok()??;
+    Some(digest(&presented(resolved, held, registry)))
+}
+
+/// `answer`, a type as a route presents it, carrying the `revision` of type `id` in `registry`.
+fn revised(mut answer: Value, registry: &Registry, id: &str, held: Option<&Provenance>) -> Value {
+    if let (Value::Object(members), Some(revision)) = (&mut answer, revision_of(registry, id, held))
+    {
+        members.insert("revision".into(), Value::String(revision));
+    }
+    answer
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn registry(icon: Option<&str>) -> Registry {
+        let row = json!({ "id": "acme.thing", "version": 1, "fields": {} });
+        let registry = Registry::new(vec![row.as_object().cloned().unwrap_or_default()]);
+        match icon {
+            Some(icon) => registry.with_icon("acme.thing", Some(icon)),
+            None => registry,
+        }
+    }
+
+    #[test]
+    fn a_revision_is_stable_for_equal_content_and_changes_with_the_icon() {
+        let held = Provenance {
+            origin: crate::app::catalog::Origin::Registered,
+            created_by: None,
+        };
+        let first = revision_of(&registry(None), "acme.thing", Some(&held));
+        let again = revision_of(&registry(None), "acme.thing", Some(&held));
+        let iconed = revision_of(&registry(Some("lucide:star")), "acme.thing", Some(&held));
+        assert!(first.as_ref().is_some_and(|text| text.len() == 64));
+        assert_eq!(first, again);
+        assert_ne!(first, iconed);
+        assert_eq!(revision_of(&registry(None), "acme.absent", None), None);
+    }
 }

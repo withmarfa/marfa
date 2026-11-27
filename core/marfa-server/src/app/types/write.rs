@@ -11,7 +11,8 @@ use rusqlite::{Transaction, params};
 use serde_json::{Value, json};
 
 use super::{
-    chain_refusal, check_id, invalid_id, missing_field, presented, require_reach, schema_refusal,
+    chain_refusal, check_id, invalid_id, missing_field, presented, require_reach, revised,
+    revision_of, schema_refusal,
 };
 use crate::app::App;
 use crate::app::access::{Axis, Caller, Door, Level, Permission, SchemaKind};
@@ -138,10 +139,12 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
                 origin: Origin::Registered,
                 created_by: Some(creator),
             };
-            Ok(presented(
-                schema.clone(),
+            let next = catalog.types.with(schema.clone());
+            Ok(revised(
+                presented(schema, Some(&held), &next),
+                &next,
+                &id,
                 Some(&held),
-                &catalog.types.with(schema),
             ))
         })
         .await?;
@@ -247,19 +250,48 @@ fn merged(catalog: &Catalog, id: &str, stored: &Obj, merge: Merge) -> Result<Obj
 }
 
 /// Forced schema changes retain stored row values.
+/// A `revision` in the body is the one the writer read: it is compared, never stored.
 pub async fn replace(
     app: &App,
     caller: &Caller,
     id: String,
-    body: Obj,
+    mut body: Obj,
     force: bool,
 ) -> Result<Value> {
-    replacing(app, caller, id, Replacement::Whole(body), force).await
+    let revision = match body.remove("revision") {
+        None => None,
+        Some(Value::String(revision)) => Some(revision),
+        Some(_) => {
+            return Err(
+                Refusal::validation("revision is a string").with_detail("field", "revision")
+            );
+        }
+    };
+    replacing(app, caller, id, Replacement::Whole(body), force, revision).await
+}
+
+/// Refuses a write that names a `revision` other than the type's current one.
+fn require_revision(catalog: &Catalog, id: &str, named: Option<&str>) -> Result<()> {
+    let Some(named) = named else {
+        return Ok(());
+    };
+    let current = revision_of(&catalog.types, id, catalog.provenance.get(id));
+    if current.as_deref() == Some(named) {
+        return Ok(());
+    }
+    let refusal = Refusal::new(
+        Code::VersionConflict,
+        format!("Type \"{id}\" has changed since that revision was read."),
+    );
+    Err(match current {
+        Some(current) => refusal.with_detail("revision", current),
+        None => refusal,
+    })
 }
 
 /// Merges into the definition the write commits, so a change made meanwhile is kept.
 pub async fn change(app: &App, caller: &Caller, id: String, merge: Merge) -> Result<Value> {
-    replacing(app, caller, id, Replacement::Merge(merge), false).await
+    replacing(app, caller, id, Replacement::Merge(merge), false, None).await
 }
 
 async fn replacing(
@@ -268,6 +300,7 @@ async fn replacing(
     id: String,
     replacement: Replacement,
     force: bool,
+    revision: Option<String>,
 ) -> Result<Value> {
     let cache = app.catalog_handle();
     let replaced = app
@@ -281,6 +314,7 @@ async fn replacing(
                 return Err(not_found(&id));
             }
             caller.require_type(&id, Level::Write)?;
+            require_revision(&catalog, &id, revision.as_deref())?;
             let stored = catalog.types.get(&id);
             let mut definition = match replacement {
                 Replacement::Whole(body) => body,
@@ -348,7 +382,8 @@ async fn replacing(
             let shown = next
                 .owned(&id)
                 .ok_or_else(|| Refusal::internal("a replaced type is not in its registry"))?;
-            Ok(presented(shown, catalog.provenance.get(&id), &next))
+            let held = catalog.provenance.get(&id);
+            Ok(revised(presented(shown, held, &next), &next, &id, held))
         })
         .await?;
     app.publish_catalog().await;
@@ -413,7 +448,13 @@ fn require_evolution(
 }
 
 /// `force` keeps a type's items, unregistered; the local command removes only unused types.
-pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Result<()> {
+pub async fn delete(
+    app: &App,
+    caller: &Caller,
+    id: String,
+    force: bool,
+    revision: Option<String>,
+) -> Result<()> {
     let cache = app.catalog_handle();
     app.write(caller, "type.delete", move |unit| {
         let caller = &unit.caller;
@@ -433,6 +474,7 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         } else {
             caller.require_type(&id, Level::Write)?;
         }
+        require_revision(&catalog, &id, revision.as_deref())?;
         let subtypes = subtypes_of(unit.tx(), &id)?;
         if !subtypes.is_empty() {
             let quoted: Vec<String> = subtypes.iter().map(|subtype| format!("\"{subtype}\"")).collect();
@@ -671,7 +713,13 @@ async fn change_icon(
             let resolved = resolve(&registry, &id, false)
                 .map_err(|fault| chain_refusal(&fault))?
                 .ok_or_else(|| not_found(&id))?;
-            Ok(presented(resolved, catalog.provenance.get(&id), &registry))
+            let held = catalog.provenance.get(&id);
+            Ok(revised(
+                presented(resolved, held, &registry),
+                &registry,
+                &id,
+                held,
+            ))
         })
         .await?;
     app.publish_catalog().await;
@@ -1179,5 +1227,20 @@ mod tests {
         };
         let ids = vec!["app.acme.a".to_string(), "app.acme.b".to_string()];
         assert!(children_first(&ids, parent_of).is_err());
+    }
+
+    #[test]
+    fn a_named_revision_never_matches_a_type_that_does_not_read() {
+        let mut catalog = Catalog::empty();
+        catalog.provenance.insert(
+            "acme.damaged".into(),
+            Provenance {
+                origin: Origin::Registered,
+                created_by: None,
+            },
+        );
+        assert!(require_revision(&catalog, "acme.damaged", None).is_ok());
+        let refused = require_revision(&catalog, "acme.damaged", Some("0")).unwrap_err();
+        assert_eq!(refused.code, Code::VersionConflict);
     }
 }
