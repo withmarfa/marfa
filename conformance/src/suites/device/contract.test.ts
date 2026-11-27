@@ -1083,6 +1083,7 @@ const invocations: Record<string, () => string[]> = {
   "items bulk-action cancel": () => [ID],
   "items bulk-get": () => [ID],
   "items titles": () => ["Ada"],
+  "items blobs": () => [`sha256:${"0".repeat(64)}`],
   "items lookup": () => ["--type", "core.note", "--id", ID],
   "items tombstones": () => [
     "--type",

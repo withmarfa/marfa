@@ -42,6 +42,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("bulkGetItems", "items bulk-get"),
     reached("countItemLinks", "items counts"),
     reached("findItemsByTitle", "items titles"),
+    reached("findItemsByBlob", "items blobs"),
     reached("lookupItems", "items lookup"),
     reached("settleTombstones", "items tombstones"),
     reached("listItemExtensions", "extensions list"),
