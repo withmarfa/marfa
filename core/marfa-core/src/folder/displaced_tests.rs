@@ -690,6 +690,13 @@ fn reported_outside(flagged: &[Flagged], path: &Path, from: &Path) {
     );
 }
 
+/// A note scanned and answered, so a pull runs against the folder's copy.
+fn pullable(root: &Path, folder: &Folder) {
+    std::fs::write(root.join("Ready.md"), "ready\n").unwrap();
+    assert_eq!(folder.scan().unwrap().created, 1);
+    super::tests::landed(folder, "Ready.md");
+}
+
 fn records(folder: &Folder) -> usize {
     state::displaced(&folder.core.conn().unwrap())
         .unwrap()
@@ -701,6 +708,7 @@ fn a_record_outside_the_folder_is_never_acted_on_and_is_reported_every_pass() {
     for save in [true, false] {
         let (dir, folder) = scanned_folder();
         let root = dir.path().canonicalize().unwrap();
+        pullable(&root, &folder);
         let (_other, other) = beside(&root);
         let kept = stopped_take_in(&folder, &other, &other.to_string_lossy(), save);
         // The witness: the same record in a directory in the folder settles.
@@ -891,6 +899,7 @@ fn an_unreadable_displaced_record_outside_the_folder_is_kept() {
 fn no_pass_writes_a_record_outside_the_folder() {
     let (dir, folder) = scanned_folder();
     let root = dir.path().canonicalize().unwrap();
+    pullable(&root, &folder);
     let (_other, other) = beside(&root);
     let kept = stopped_take_in(&folder, &other, &other.to_string_lossy(), false);
     std::fs::create_dir(root.join("Projects")).unwrap();

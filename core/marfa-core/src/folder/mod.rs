@@ -1461,6 +1461,18 @@ impl landing::Ledger for Rows<'_> {
     }
 }
 
+/// What each report of a file kept outside the folder ends with.
+pub(super) const OUTSIDE: &str = "Marfa never changes files outside this folder, so it has not looked at this file and leaves it as it is. If the file is there and holds a change you need, move it back yourself";
+
+/// Why a file a record keeps outside the folder, moved from `from`, is
+/// left there.
+fn outside_displaced(from: &str) -> String {
+    let from = if from.is_empty() { "a file" } else { from };
+    format!(
+        "Marfa moved {from} here as it took the file in from another folder, and stopped before it finished. {OUTSIDE}"
+    )
+}
+
 /// Whether `path`, relative to the root, has the file name `name`.
 fn named_as(path: &str, name: &str) -> bool {
     Path::new(path).file_name() == Some(std::ffi::OsStr::new(name))
@@ -1492,8 +1504,7 @@ fn settle_row(
         dir_at: row.dir_at,
         aside: aside_place.to_string(),
         aside_at: row.aside_at,
-        // An absolute `dir` is another folder's, with no binding here to follow.
-        follow: (dir_place != row.dir && !Path::new(&row.dir).is_absolute()).then(|| Follow {
+        follow: (dir_place != row.dir).then(|| Follow {
             from: joined(&row.dir, &row.displacement.target),
             dir,
             name: target,
@@ -1516,9 +1527,10 @@ fn settle_row(
     Ok(())
 }
 
-/// Whether `found`, a directory's device and inode, is the directory
-/// `recorded` names. A volume mounted again has another device number, so
-/// where the root's is not the one recorded, the inode alone decides.
+/// Whether `found`, a directory under the folder's verified root, is the
+/// directory `recorded` names by device and inode. A volume mounted again
+/// has another device number, so where the root's is not the one recorded,
+/// the inode alone decides.
 fn same_directory(found: (u64, u64), recorded: (u64, u64), root_device: Option<u64>) -> bool {
     found.1 == recorded.1 && (found.0 == recorded.0 || root_device != Some(recorded.0))
 }
@@ -1660,11 +1672,16 @@ impl Folder {
     }
 
     /// Opens the recorded path without checking the directory's identity.
+    /// A place outside the folder is refused, never opened.
     fn place_dir(&self, place: &str) -> std::io::Result<Directory> {
+        if !state::in_folder(place) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the place is outside the folder",
+            ));
+        }
         let place = Path::new(place);
-        Ok(if place.is_absolute() {
-            Directory::open(place)?
-        } else if place.as_os_str().is_empty() {
+        Ok(if place.as_os_str().is_empty() {
             self.root_dir.clone()
         } else if let Ok(below) = place.strip_prefix(STATE_DIR) {
             if below.as_os_str().is_empty() {
@@ -1692,7 +1709,7 @@ impl Folder {
         Ok(state::displaced(&*self.core.conn()?)?
             .into_iter()
             .flatten()
-            .filter(|row| !Path::new(&row.dir).is_absolute() && self.displaced_away(row))
+            .filter(|row| !row.outside() && self.displaced_away(row))
             .map(|row| joined(&row.dir, &row.displacement.target))
             .collect())
     }
@@ -1713,13 +1730,29 @@ impl Folder {
         for row in state::displaced(&conn)? {
             let row = match row {
                 Ok(row) => row,
-                // What it moved stays under its reserved name, which every
-                // scan reports.
-                Err(id) => {
-                    state::clear_displaced(&conn, &id)?;
+                Err((id, value)) => {
+                    if let Some((path, from)) = state::unread_outside(&id, &value) {
+                        state::put_kept(
+                            &conn,
+                            &path,
+                            &format!("{}: {}", retained::UNREAD, outside_displaced(&from)),
+                        )?;
+                    } else {
+                        // What it moved stays under its reserved name, which
+                        // every scan reports.
+                        state::clear_displaced(&conn, &id)?;
+                    }
                     continue;
                 }
             };
+            if row.outside() {
+                state::put_kept(
+                    &conn,
+                    &joined(&row.aside, &row.displacement.kept),
+                    &outside_displaced(&joined(&row.dir, &row.displacement.target)),
+                )?;
+                continue;
+            }
             match self
                 .displaced_dir(&row.dir, row.dir_at)
                 .and_then(|dir| Ok((dir, self.displaced_dir(&row.aside, row.aside_at)?)))
@@ -1752,7 +1785,10 @@ impl Folder {
         let root_device = device(&self.root_dir);
         let mut settled = false;
         for row in state::displaced(&conn)?.into_iter().flatten() {
-            if row.dir != row.aside || self.displaced_dir(&row.aside, row.aside_at).is_ok() {
+            if row.outside()
+                || row.dir != row.aside
+                || self.displaced_dir(&row.aside, row.aside_at).is_ok()
+            {
                 continue;
             }
             let found = kept
@@ -1792,7 +1828,8 @@ impl Folder {
             .into_iter()
             .flatten()
             .filter(|row| {
-                self.displaced_away(row)
+                !row.outside()
+                    && self.displaced_away(row)
                     && !walked
                         .iter()
                         .any(|(_, path)| named_as(path, &row.displacement.kept))

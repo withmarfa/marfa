@@ -3,8 +3,8 @@
 
 use super::fields::VERSION_FIELD;
 use super::{
-    Directory, Folder, Rows, carries_frontmatter, device, document, identity, in_state, joined,
-    landing, line_of, state, writers,
+    Directory, Folder, OUTSIDE, Rows, carries_frontmatter, device, document, identity, in_state,
+    joined, landing, line_of, state, writers,
 };
 use std::path::Path;
 
@@ -40,7 +40,9 @@ pub struct KeptDiscarded {
     /// The paths a file a program wrote to went back to, in place of being
     /// deleted, and those Marfa kept such a file beside.
     pub put_back: Vec<String>,
-    /// The files still kept, where Marfa could not reach them.
+    /// The files still kept, each with why: one Marfa could not reach, one
+    /// it does not change because it is outside the folder, or one a
+    /// program wrote to that could not go back.
     pub kept: Vec<KeptFile>,
 }
 
@@ -57,6 +59,15 @@ fn until(retained: &landing::Retained) -> String {
 fn kept_file(row: &state::Retained) -> KeptFile {
     let retained = &row.retained;
     let from = joined(&row.dir, &retained.target);
+    if row.outside() {
+        return KeptFile {
+            path: joined(&row.aside, &retained.kept),
+            writers: "none",
+            until: None,
+            reason: outside_retained(&from),
+            from,
+        };
+    }
     KeptFile {
         path: joined(&row.aside, &retained.kept),
         writers: match retained.writers {
@@ -78,7 +89,26 @@ fn unread_file(row: &state::Unread) -> KeptFile {
         from: row.from.clone(),
         writers: "unknown",
         until: None,
-        reason: UNREAD.into(),
+        reason: if row.outside {
+            outside_unread(&row.from)
+        } else {
+            UNREAD.into()
+        },
+    }
+}
+
+/// Why a file kept outside the folder, set aside from `from`, is left there.
+fn outside_retained(from: &str) -> String {
+    let from = if from.is_empty() { "a file" } else { from };
+    format!("Marfa set {from} aside here as it took the file in from another folder. {OUTSIDE}")
+}
+
+/// The same, for a file whose record does not read.
+fn outside_unread(from: &str) -> String {
+    if from.is_empty() {
+        format!("{UNREAD}. {OUTSIDE}")
+    } else {
+        format!("{UNREAD}, which names {from}. {OUTSIDE}")
     }
 }
 
@@ -341,50 +371,62 @@ impl Folder {
         let mut moved = std::collections::HashMap::new();
         let mut files = Vec::new();
         for (path, mark) in state::discarding(&conn)? {
+            let outside = !state::in_folder(&path);
             match mark {
                 Some(mark) => {
-                    let gone = self
-                        .place_dir(&mark.aside)
-                        .and_then(|aside| aside.entry_identity(Path::new(&mark.private)))
-                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+                    let gone = !outside
+                        && self
+                            .place_dir(&mark.aside)
+                            .and_then(|aside| aside.entry_identity(Path::new(&mark.private)))
+                            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
                     if !gone {
                         moved.insert(mark.id.clone(), (path, mark));
                     }
                 }
                 None => files.push(KeptFile {
+                    reason: if outside {
+                        outside_unread("")
+                    } else {
+                        format!("{UNREAD}; delete it when it is not needed")
+                    },
                     path,
                     from: String::new(),
                     writers: "unknown",
                     until: None,
-                    reason: format!("{UNREAD}; delete it when it is not needed"),
                 }),
             }
         }
         for row in state::retained(&conn)? {
-            let (id, mut file) = match &row {
-                Ok(row) => (&row.retained.id, kept_file(row)),
-                Err(row) => (&row.id, unread_file(row)),
+            let (id, mut file, outside) = match &row {
+                Ok(row) => (&row.retained.id, kept_file(row), row.outside()),
+                Err(row) => (&row.id, unread_file(row), row.outside),
             };
             if let Some((path, mark)) = moved.remove(id) {
-                file.path = path;
-                if let Some(left) = &mark.left {
+                if !state::in_folder(&path) {
+                    if !outside {
+                        file.reason = outside_retained(&mark.from);
+                    }
+                } else if let Some(left) = &mark.left {
                     file.reason = left_reason(left);
                 }
+                file.path = path;
             }
             files.push(file);
         }
-        files.extend(moved.into_values().map(|(path, mark)| {
-            KeptFile {
-                path,
-                reason: left_reason(
+        files.extend(moved.into_values().map(|(path, mark)| KeptFile {
+            reason: if state::in_folder(&path) {
+                left_reason(
                     mark.left
                         .as_deref()
                         .unwrap_or("Marfa stopped as it discarded it"),
-                ),
-                from: mark.from,
-                writers: "unknown",
-                until: None,
-            }
+                )
+            } else {
+                outside_retained(&mark.from)
+            },
+            path,
+            from: mark.from,
+            writers: "unknown",
+            until: None,
         }));
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)
@@ -430,7 +472,7 @@ impl Folder {
     /// it. Answers each file it looked at and what became of it.
     fn settle_retained_as(&self, discard: bool) -> Result<Vec<(KeptFile, RowSettled)>> {
         let conn = self.core.conn()?;
-        self.settle_discarding(&conn)?;
+        let marked = self.settle_discarding(&conn)?;
         let rows = state::retained(&conn)?;
         let mut waiting = false;
         let mut back = false;
@@ -442,6 +484,15 @@ impl Folder {
                 let mut opened = Vec::with_capacity(batch.len());
                 for row in batch {
                     match row {
+                        Ok(row) if row.outside() => {
+                            let file = kept_file(row);
+                            let path = marked.get(&row.retained.id).unwrap_or(&file.path);
+                            state::put_kept(&conn, path, &file.reason)?;
+                        }
+                        Err(row) if row.outside => {
+                            let file = unread_file(row);
+                            state::put_kept(&conn, &file.path, &file.reason)?;
+                        }
                         Ok(row) => {
                             if let Some(open) = self.retained_open(&conn, row, now)? {
                                 opened.push((row, open));
@@ -495,10 +546,16 @@ impl Folder {
     }
 
     /// Restore the kept name so the retained record can settle the file.
-    fn settle_discarding(&self, conn: &rusqlite::Connection) -> Result<()> {
+    /// A mark outside the folder is reported and left. Answers, by record,
+    /// the path each readable one names.
+    fn settle_discarding(
+        &self,
+        conn: &rusqlite::Connection,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let mut outside = std::collections::HashMap::new();
         let marks = state::discarding(conn)?;
         if marks.is_empty() {
-            return Ok(());
+            return Ok(outside);
         }
         let rows: std::collections::HashSet<String> = state::retained(conn)?
             .into_iter()
@@ -508,6 +565,16 @@ impl Folder {
             })
             .collect();
         for (path, mark) in marks {
+            if !state::in_folder(&path) {
+                let reason = mark
+                    .as_ref()
+                    .map_or_else(|| outside_unread(""), |mark| outside_retained(&mark.from));
+                state::put_kept(conn, &path, &reason)?;
+                if let Some(mark) = mark {
+                    outside.insert(mark.id, path);
+                }
+                continue;
+            }
             let Some(mark) = mark else { continue };
             let Ok(aside) = self.place_dir(&mark.aside) else {
                 continue;
@@ -542,7 +609,7 @@ impl Folder {
                 Err(_) => {}
             }
         }
-        Ok(())
+        Ok(outside)
     }
 
     /// Deletes the file of a row that does not read, which only the owner's
@@ -1201,6 +1268,13 @@ mod tests {
         (id, kept)
     }
 
+    /// A note scanned and answered, so a pull runs against the folder's copy.
+    fn pullable(root: &Path, folder: &Folder) {
+        std::fs::write(root.join("Ready.md"), "ready\n").unwrap();
+        assert_eq!(folder.scan().unwrap().created, 1);
+        landed(folder, "Ready.md");
+    }
+
     fn records(folder: &Folder) -> usize {
         state::retained(&folder.core.conn().unwrap()).unwrap().len()
     }
@@ -1231,6 +1305,7 @@ mod tests {
     fn a_kept_file_outside_the_folder_survives_every_door_and_discard() {
         let (dir, folder) = scanned_folder();
         let root = dir.path().canonicalize().unwrap();
+        pullable(&root, &folder);
         let (_other, other) = beside(&root);
         let (_, kept) = kept_by_a_take_in(&folder, &other, &path_of(&other));
         std::fs::create_dir(root.join("Projects")).unwrap();
@@ -1346,6 +1421,7 @@ mod tests {
         for readable in [true, false] {
             let (dir, folder) = scanned_folder();
             let root = dir.path().canonicalize().unwrap();
+            pullable(&root, &folder);
             let (_other, other) = beside(&root);
             let (id, kept) = kept_by_a_take_in(&folder, &other, &path_of(&other));
             let private = other.join(landing::reserved(

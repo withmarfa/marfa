@@ -583,9 +583,10 @@ const DISPLACED: &str = "folder_displaced:";
 
 /// A file a write or a removal moved out of its path, recorded before the
 /// rename. `dir` is the target's directory and `aside` the directory its
-/// reserved names are in, each relative to the folder's root, or absolute
-/// where outside it, and each with its device and inode, so a directory
-/// that took either's name is never settled against.
+/// reserved names are in, each relative to the folder's root and with its
+/// device and inode, so a directory that took either's name is never
+/// settled against. A record that names a place outside the folder is
+/// reported and never acted on.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Displaced {
     pub(crate) dir: String,
@@ -605,17 +606,66 @@ pub(crate) fn set_displaced(conn: &Connection, displaced: &Displaced) -> Result<
     )
 }
 
+impl Displaced {
+    pub(crate) fn outside(&self) -> bool {
+        !in_folder(&self.dir) || !in_folder(&self.aside)
+    }
+}
+
+/// Whether `place`, a directory a record names, is the folder's root or a
+/// plain path below it.
+pub(crate) fn in_folder(place: &str) -> bool {
+    Path::new(place)
+        .components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
 pub(crate) fn clear_displaced(conn: &Connection, id: &str) -> Result<(), CoreError> {
     crate::store::meta_delete(conn, &format!("{DISPLACED}{id}"))
 }
 
 /// Every displacement not yet settled. A row that does not read is
-/// answered as its id alone, so it is reported, not lost.
-pub(crate) fn displaced(conn: &Connection) -> Result<Vec<Result<Displaced, String>>, CoreError> {
+/// answered as its id and its value, so it is reported, not lost.
+pub(crate) fn displaced(
+    conn: &Connection,
+) -> Result<Vec<Result<Displaced, (String, String)>>, CoreError> {
     Ok(under(conn, DISPLACED)?
         .into_iter()
-        .map(|(id, value)| serde_json::from_str(&value).map_err(|_| id))
+        .map(|(id, value)| serde_json::from_str(&value).map_err(|_| (id, value)))
         .collect())
+}
+
+/// Where a displaced row that does not read keeps its file, and the path
+/// it came from, where what of it reads names a place outside the folder.
+pub(crate) fn unread_outside(id: &str, value: &str) -> Option<(String, String)> {
+    let row: serde_json::Value = serde_json::from_str(value).ok()?;
+    let text = |value: &serde_json::Value| value.as_str().map(str::to_string);
+    let dir = text(&row["dir"]);
+    let aside = text(&row["aside"]);
+    if [&dir, &aside]
+        .into_iter()
+        .flatten()
+        .all(|place| in_folder(place))
+    {
+        return None;
+    }
+    let kept = reserved_name(text(&row["displacement"]["kept"]), id);
+    let from = dir
+        .clone()
+        .zip(text(&row["displacement"]["target"]))
+        .map(|(dir, target)| super::joined(&dir, &target))
+        .unwrap_or_default();
+    Some((
+        super::joined(&aside.or(dir).unwrap_or_default(), &kept),
+        from,
+    ))
+}
+
+/// `name` where it is a reserved name in a directory, or the one `id`'s
+/// record would have used.
+fn reserved_name(name: Option<String>, id: &str) -> String {
+    name.filter(|name| !name.contains('/') && super::landing::is_reserved(Path::new(name)))
+        .unwrap_or_else(|| super::landing::reserved(id).to_string_lossy().into_owned())
 }
 
 const RETAINED: &str = "folder_retained:";
@@ -638,6 +688,12 @@ pub(crate) fn set_retained(conn: &Connection, retained: &Retained) -> Result<(),
     crate::store::meta_set(conn, &format!("{RETAINED}{}", retained.retained.id), &value)
 }
 
+impl Retained {
+    pub(crate) fn outside(&self) -> bool {
+        !in_folder(&self.dir) || !in_folder(&self.aside)
+    }
+}
+
 pub(crate) fn clear_retained(conn: &Connection, id: &str) -> Result<(), CoreError> {
     crate::store::meta_delete(conn, &format!("{RETAINED}{id}"))
 }
@@ -653,27 +709,34 @@ pub(crate) struct Unread {
     pub(crate) from: String,
     /// The hash of the bytes set aside, where the row still holds one.
     pub(crate) hash: Option<String>,
+    /// Whether what of the row reads names a place outside the folder.
+    pub(crate) outside: bool,
 }
 
 impl Unread {
     fn of(id: String, value: &str) -> Unread {
         let row: serde_json::Value = serde_json::from_str(value).unwrap_or_default();
         let text = |value: &serde_json::Value| value.as_str().map(str::to_string);
-        let kept = text(&row["retained"]["kept"])
-            .filter(|name| {
-                !name.contains('/') && super::landing::is_reserved(std::path::Path::new(name))
-            })
-            .unwrap_or_else(|| super::landing::reserved(&id).to_string_lossy().into_owned());
-        let from = text(&row["dir"])
+        let kept = reserved_name(text(&row["retained"]["kept"]), &id);
+        let dir = text(&row["dir"]);
+        let aside = text(&row["aside"]);
+        let from = dir
+            .clone()
             .zip(text(&row["retained"]["target"]))
             .map(|(dir, target)| super::joined(&dir, &target))
             .unwrap_or_default();
+        let outside = [&dir, &aside]
+            .into_iter()
+            .flatten()
+            .any(|place| !in_folder(place));
         Unread {
             hash: text(&row["retained"]["read"]["hash"]),
-            aside: text(&row["aside"]).unwrap_or_default(),
+            // Where only `dir` reads and is outside, the file is there, not in the root.
+            aside: aside.or(dir.filter(|_| outside)).unwrap_or_default(),
             kept,
             from,
             id,
+            outside,
         }
     }
 }
@@ -719,8 +782,13 @@ pub(crate) struct Discarding {
 }
 
 impl Discarding {
+    /// Its key's path, which names the file under its private name.
+    pub(crate) fn path(&self) -> String {
+        super::joined(&self.aside, &self.private)
+    }
+
     fn key(&self) -> String {
-        format!("{DISCARDING}{}", super::joined(&self.aside, &self.private))
+        format!("{DISCARDING}{}", self.path())
     }
 }
 
