@@ -123,6 +123,14 @@ fn post_json(path: &str, body: &Value) -> Request<Body> {
         .unwrap()
 }
 
+fn sign_in_form() -> Request<Body> {
+    post_form(
+        "/auth/sign-in",
+        None,
+        &[("username", USERNAME), ("password", PASSWORD)],
+    )
+}
+
 fn encoded(fields: &[(&str, &str)]) -> String {
     url::form_urlencoded::Serializer::new(String::new())
         .extend_pairs(fields)
@@ -182,8 +190,8 @@ impl Instance {
         .await;
         assert_eq!(claimed.status, StatusCode::CREATED);
         let public = public(app.clone());
-        let signed_in = send(public.clone(), post_json("/auth/sign-in", &claim)).await;
-        assert_eq!(signed_in.status, StatusCode::OK);
+        let signed_in = send(public.clone(), sign_in_form()).await;
+        assert_eq!(signed_in.status, StatusCode::FOUND);
         Instance {
             cookie: signed_in.cookie().unwrap(),
             _dir: dir,
@@ -1686,9 +1694,8 @@ async fn the_expired_go_and_a_rotated_token_waits_for_its_own_end() {
 #[tokio::test]
 async fn an_expired_browser_session_goes_and_a_live_one_stays() {
     let instance = Instance::signed_in().await;
-    let claim = json!({ "username": USERNAME, "password": PASSWORD });
-    let again = post_json("/auth/sign-in", &claim);
-    assert_eq!(instance.send(again).await.status, StatusCode::OK);
+    let again = sign_in_form();
+    assert_eq!(instance.send(again).await.status, StatusCode::FOUND);
     let sessions = "SELECT count(*) FROM sign_ins";
     assert_eq!(instance.count(sessions).await, 2);
     let app = &instance.app;
@@ -1968,9 +1975,8 @@ impl Instance {
 
     /// Whoever holds the instance's own cookie stays signed in.
     async fn sign_in_again(&self) -> String {
-        let claim = json!({ "username": USERNAME, "password": PASSWORD });
-        let signed_in = self.send(post_json("/auth/sign-in", &claim)).await;
-        assert_eq!(signed_in.status, StatusCode::OK, "{}", signed_in.text);
+        let signed_in = self.send(sign_in_form()).await;
+        assert_eq!(signed_in.status, StatusCode::FOUND, "{}", signed_in.text);
         signed_in.cookie().unwrap()
     }
 

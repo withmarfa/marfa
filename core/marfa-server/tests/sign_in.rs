@@ -33,6 +33,15 @@ struct Reply {
 }
 
 impl Reply {
+    /// The `error` the sign-in form's redirect carries back to the page.
+    fn sign_in_error(&self) -> Option<String> {
+        let location = self.headers.get(header::LOCATION)?.to_str().ok()?;
+        let (_, query) = location.split_once('?')?;
+        url::form_urlencoded::parse(query.as_bytes())
+            .find(|(name, _)| name == "error")
+            .map(|(_, value)| value.into_owned())
+    }
+
     fn cookie(&self) -> Option<String> {
         let line = self.headers.get(header::SET_COOKIE)?.to_str().ok()?;
         Some(line.split(';').next()?.to_string())
@@ -95,8 +104,19 @@ fn on_the_passkey_list(cookie: &str) -> Request<Body> {
         .unwrap()
 }
 
-fn sign_in_body(password: &str) -> Value {
-    json!({ "username": USERNAME, "password": password })
+/// The sign-in page's form, as a browser posts it.
+fn sign_in_form(password: &str) -> Request<Body> {
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("username", USERNAME)
+        .append_pair("password", password)
+        .finish();
+    Request::builder()
+        .method(Method::POST)
+        .uri("/auth/sign-in")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(header::ORIGIN, ORIGIN)
+        .body(Body::from(body))
+        .unwrap()
 }
 
 async fn boot(dir: &TempDir) -> Arc<App> {
@@ -167,11 +187,7 @@ impl Instance {
     }
 
     async fn sign_in(&self, password: &str) -> Reply {
-        send(
-            self.public.clone(),
-            post("/auth/sign-in", &sign_in_body(password)),
-        )
-        .await
+        send(self.public.clone(), sign_in_form(password)).await
     }
 }
 
@@ -188,7 +204,7 @@ async fn a_sign_in_whose_commit_is_unknown_sets_no_cookie_and_can_be_made_again(
     assert!(unknown.cookie().is_none());
     faults.clear(None);
     let again = instance.sign_in(PASSWORD).await;
-    assert_eq!(again.status, StatusCode::OK);
+    assert_eq!(again.status, StatusCode::FOUND);
     assert!(again.cookie().is_some());
 }
 
@@ -197,11 +213,14 @@ async fn a_restart_starts_every_count_afresh() {
     let instance = Instance::claimed().await;
     for _ in 0..10 {
         let wrong = instance.sign_in("not the password").await;
-        assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            wrong.sign_in_error().as_deref(),
+            Some("invalid_credentials")
+        );
     }
     let held = instance.sign_in(PASSWORD).await;
-    assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS);
-    assert!(held.headers.contains_key(header::RETRY_AFTER));
+    assert_eq!(held.sign_in_error().as_deref(), Some("too_many_attempts"));
+    assert!(held.cookie().is_none());
 
     let instance = instance.restarted().await;
     assert!(instance.sign_in(PASSWORD).await.cookie().is_some());
@@ -222,7 +241,7 @@ async fn a_wrong_password_whose_refusal_is_not_recorded_stays_counted() {
         }
     }
     let held = instance.sign_in(PASSWORD).await;
-    assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(held.sign_in_error().as_deref(), Some("too_many_attempts"));
 }
 
 #[tokio::test]
@@ -270,10 +289,7 @@ async fn a_password_changed_during_a_sign_in_ends_that_sign_in() {
     faults
         .set("hold:write", Some("auth.sign_in.success"))
         .unwrap();
-    let signing_in = tokio::spawn(send(
-        instance.public.clone(),
-        post("/auth/sign-in", &sign_in_body(PASSWORD)),
-    ));
+    let signing_in = tokio::spawn(send(instance.public.clone(), sign_in_form(PASSWORD)));
     while faults.list().iter().all(|fault| fault.waiting == 0) {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
@@ -288,11 +304,11 @@ async fn a_password_changed_during_a_sign_in_ends_that_sign_in() {
     assert_eq!(recovered.status, StatusCode::OK);
     faults.clear(None);
     let late = signing_in.await.unwrap();
-    assert_eq!(late.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(late.sign_in_error().as_deref(), Some("invalid_credentials"));
     assert!(late.cookie().is_none());
     assert_eq!(
         instance.sign_in("the second password").await.status,
-        StatusCode::OK
+        StatusCode::FOUND
     );
 }
 
@@ -303,10 +319,7 @@ async fn a_username_changed_during_a_sign_in_ends_that_sign_in() {
     faults
         .set("hold:write", Some("auth.sign_in.success"))
         .unwrap();
-    let signing_in = tokio::spawn(send(
-        instance.public.clone(),
-        post("/auth/sign-in", &sign_in_body(PASSWORD)),
-    ));
+    let signing_in = tokio::spawn(send(instance.public.clone(), sign_in_form(PASSWORD)));
     while faults.list().iter().all(|fault| fault.waiting == 0) {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
@@ -316,7 +329,7 @@ async fn a_username_changed_during_a_sign_in_ends_that_sign_in() {
     assert_eq!(changed.status, StatusCode::OK);
     faults.clear(None);
     let late = signing_in.await.unwrap();
-    assert_eq!(late.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(late.sign_in_error().as_deref(), Some("invalid_credentials"));
     assert!(late.cookie().is_none());
 }
 
@@ -352,7 +365,7 @@ const AWAY: &str = "203.0.113.9";
 const NO_ADDRESS_ORIGIN: &str = "http://localhost:8600";
 
 fn sign_in_at(origin: &str) -> Request<Body> {
-    let mut request = post("/auth/sign-in", &sign_in_body(PASSWORD));
+    let mut request = sign_in_form(PASSWORD);
     request
         .headers_mut()
         .insert(header::ORIGIN, origin.parse().unwrap());
@@ -387,7 +400,7 @@ async fn until_an_address_is_set_only_this_machine_gets_past_the_doors() {
         from("127.0.0.1", sign_in_at(NO_ADDRESS_ORIGIN)),
     )
     .await;
-    assert_eq!(here.status, StatusCode::OK);
+    assert_eq!(here.status, StatusCode::FOUND);
     let cookie = here.cookie().unwrap();
     let body = json!({ "password": PASSWORD });
     let request = from(AWAY, post_signed_in("/auth/confirm", &body, &cookie));
@@ -398,7 +411,7 @@ async fn until_an_address_is_set_only_this_machine_gets_past_the_doors() {
         from("::ffff:127.0.0.1", sign_in_at(NO_ADDRESS_ORIGIN)),
     )
     .await;
-    assert_eq!(mapped.status, StatusCode::OK);
+    assert_eq!(mapped.status, StatusCode::FOUND);
     let mut set = post(
         "/config",
         &json!({
@@ -415,14 +428,14 @@ async fn until_an_address_is_set_only_this_machine_gets_past_the_doors() {
         from(AWAY, sign_in_at("https://marfa.example")),
     )
     .await;
-    assert_eq!(away.status, StatusCode::OK);
+    assert_eq!(away.status, StatusCode::FOUND);
 }
 
 #[tokio::test]
 async fn a_seeded_address_counts_as_set_under_test_hooks() {
     let instance = Instance::claimed().await;
     let away = send(instance.public.clone(), from(AWAY, sign_in_at(ORIGIN))).await;
-    assert_eq!(away.status, StatusCode::OK);
+    assert_eq!(away.status, StatusCode::FOUND);
 }
 
 #[tokio::test]
@@ -469,7 +482,7 @@ async fn a_caller_is_on_this_machine_only_by_its_own_connection() {
         assert_eq!(refused.status, StatusCode::FORBIDDEN, "{trust:?}");
         // The witness: this machine, named as itself, gets past.
         let here = send(instance.public.clone(), forwarded("127.0.0.1", "127.0.0.1")).await;
-        assert_eq!(here.status, StatusCode::OK, "{trust:?}");
+        assert_eq!(here.status, StatusCode::FOUND, "{trust:?}");
     }
 }
 
@@ -607,10 +620,11 @@ async fn a_device_cookie_set_before_a_recovery_is_no_cookie_after_it() {
     let device = first.named("marfa_device").unwrap();
     let id = first.device_id().unwrap();
     let sign_in_from_device = || {
-        send(
-            instance.public.clone(),
-            post_signed_in("/auth/sign-in", &sign_in_body(PASSWORD), &device),
-        )
+        let mut request = sign_in_form(PASSWORD);
+        request
+            .headers_mut()
+            .insert(header::COOKIE, device.parse().unwrap());
+        send(instance.public.clone(), request)
     };
     // The witness: before the recovery the cookie names its device again.
     assert_eq!(sign_in_from_device().await.device_id(), Some(id.clone()));
@@ -621,7 +635,7 @@ async fn a_device_cookie_set_before_a_recovery_is_no_cookie_after_it() {
     .await;
     assert_eq!(recovered.status, StatusCode::OK);
     let after = sign_in_from_device().await;
-    assert_eq!(after.status, StatusCode::OK);
+    assert_eq!(after.status, StatusCode::FOUND);
     let renewed = after.device_id().unwrap();
     assert_ne!(renewed, id);
 }
@@ -696,22 +710,34 @@ async fn the_table_keeps_a_digest_and_never_the_token() {
 }
 
 #[tokio::test]
-async fn a_json_sign_in_answers_ok_and_sets_the_session_cookie() {
+async fn a_form_sign_in_redirects_and_sets_the_session_cookie() {
     let instance = Instance::claimed().await;
     let signed = instance.sign_in(PASSWORD).await;
-    assert_eq!(signed.status, StatusCode::OK);
-    assert_eq!(signed.body, json!({ "ok": true }));
+    assert_eq!(signed.status, StatusCode::FOUND);
+    assert_eq!(signed.headers[header::LOCATION], "/");
     let line = signed.headers[header::SET_COOKIE].to_str().unwrap();
     assert!(line.starts_with("marfa_session="), "{line}");
     assert!(line.contains("Max-Age="), "{line}");
 
     let wrong = instance.sign_in("not the password").await;
-    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        wrong.sign_in_error().as_deref(),
+        Some("invalid_credentials")
+    );
     assert!(wrong.cookie().is_none());
+}
 
-    let asked = json!({ "username": USERNAME, "password": PASSWORD, "rememberMe": false });
+#[tokio::test]
+async fn a_sign_in_sent_as_json_is_refused_and_a_form_signs_in() {
+    let instance = Instance::claimed().await;
+    let witness = instance.sign_in(PASSWORD).await;
+    assert_eq!(witness.status, StatusCode::FOUND);
+    assert!(witness.cookie().is_some());
+
+    let asked = json!({ "username": USERNAME, "password": PASSWORD });
     let refused = send(instance.public.clone(), post("/auth/sign-in", &asked)).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert_eq!(refused.body["error"]["code"], "validation_error");
     assert!(refused.cookie().is_none());
 }
 
@@ -808,15 +834,15 @@ async fn a_form_password_change_goes_back_to_the_page_with_what_happened() {
             "{fields:?}"
         );
     }
-    assert_eq!(instance.sign_in(PASSWORD).await.status, StatusCode::OK);
+    assert_eq!(instance.sign_in(PASSWORD).await.status, StatusCode::FOUND);
 
     let reply = change_from_the_page(&instance, &cookie, [PASSWORD, new, new]).await;
     assert_eq!(goes_to(&reply), "/auth/owner/passkeys?changed=1");
     assert_eq!(
-        instance.sign_in(PASSWORD).await.status,
-        StatusCode::UNAUTHORIZED
+        instance.sign_in(PASSWORD).await.sign_in_error().as_deref(),
+        Some("invalid_credentials")
     );
-    assert_eq!(instance.sign_in(new).await.status, StatusCode::OK);
+    assert_eq!(instance.sign_in(new).await.status, StatusCode::FOUND);
 }
 
 #[tokio::test]
@@ -954,7 +980,7 @@ async fn a_form_password_change_from_an_ended_session_is_sent_to_sign_in() {
         "{}",
         reply.text
     );
-    assert_eq!(instance.sign_in(PASSWORD).await.status, StatusCode::OK);
+    assert_eq!(instance.sign_in(PASSWORD).await.status, StatusCode::FOUND);
 }
 
 #[tokio::test]
@@ -1203,7 +1229,7 @@ async fn a_recovery_form_is_judged_for_its_owner_and_its_proof_before_its_passwo
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{confirm:?}");
         assert!(page.contains("recovery session ended"), "{page}");
     }
-    assert!(instance.sign_in(PASSWORD).await.status.is_success());
+    assert_eq!(instance.sign_in(PASSWORD).await.status, StatusCode::FOUND);
 }
 
 #[tokio::test]

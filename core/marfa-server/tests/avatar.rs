@@ -223,10 +223,20 @@ impl Instance {
     }
 
     async fn cookie(&self) -> String {
-        let body = json!({ "username": USERNAME, "password": PASSWORD });
-        let reply = self
-            .json(&self.public, Method::POST, "/auth/sign-in", &body)
-            .await;
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("username", USERNAME)
+            .append_pair("password", PASSWORD)
+            .finish();
+        let mut built = request(Method::POST, "/auth/sign-in", Body::from(body));
+        built.headers_mut().insert(
+            header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded".parse().unwrap(),
+        );
+        built
+            .headers_mut()
+            .insert(header::ORIGIN, ORIGIN.parse().unwrap());
+        let reply = send(&self.public, built).await;
+        assert_eq!(reply.status, StatusCode::FOUND);
         let line = reply.headers[header::SET_COOKIE].to_str().unwrap();
         line.split(';').next().unwrap().to_string()
     }

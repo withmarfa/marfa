@@ -362,6 +362,14 @@ impl JsonBody {
             })
     }
 
+    pub fn require_form(&self) -> Result<(), Refusal> {
+        if self.declares_form() {
+            Ok(())
+        } else {
+            Err(not_form())
+        }
+    }
+
     pub async fn form(self) -> Result<Map<String, Value>, Stopped> {
         let mut fields = Map::new();
         for (name, value) in form_urlencoded::parse(&self.bytes().await?) {
@@ -407,6 +415,12 @@ impl JsonBody {
 
 fn not_json() -> Refusal {
     Refusal::validation("Send the body as JSON, with Content-Type: application/json.")
+}
+
+fn not_form() -> Refusal {
+    Refusal::validation(
+        "Send the body as a form, with Content-Type: application/x-www-form-urlencoded.",
+    )
 }
 
 pub fn only_declared(
