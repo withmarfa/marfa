@@ -10948,6 +10948,26 @@
         ],
         "description": "An audit log entry records one action and who took it."
       },
+      "BlobKindMetrics": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of stored blobs of this kind."
+          },
+          "total_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total size in bytes of stored blobs of this kind."
+          }
+        },
+        "required": [
+          "count",
+          "total_bytes"
+        ],
+        "description": "Count and total size for one kind of blob, both zero when none are stored."
+      },
       "MetricCount": {
         "type": "object",
         "properties": {
@@ -77738,7 +77758,7 @@
           "Health and maintenance"
         ],
         "summary": "Get instance metrics",
-        "description": "Returns instance-wide counters, how much memory, CPU and disk this server uses, and process uptime. The counters are counted when you ask. Requires `instance.read`; the counters include records outside your content permissions.",
+        "description": "Returns current instance-wide counters, blob usage by kind, resource usage, blob disk capacity, and uptime. Requires `instance.read`; the counters include records outside your content permissions.",
         "security": [
           {
             "bearerAuth": []
@@ -77783,11 +77803,40 @@
                         "total_bytes": {
                           "type": "number",
                           "description": "Total size of stored blobs, in bytes."
+                        },
+                        "by_kind": {
+                          "type": "object",
+                          "properties": {
+                            "image": {
+                              "$ref": "#/components/schemas/BlobKindMetrics",
+                              "description": "Blobs with an `image/*` MIME type."
+                            },
+                            "pdf": {
+                              "$ref": "#/components/schemas/BlobKindMetrics",
+                              "description": "Blobs with the `application/pdf` MIME type."
+                            },
+                            "audio_video": {
+                              "$ref": "#/components/schemas/BlobKindMetrics",
+                              "description": "Blobs with an `audio/*` or `video/*` MIME type."
+                            },
+                            "other": {
+                              "$ref": "#/components/schemas/BlobKindMetrics",
+                              "description": "Blobs with all other MIME types, including missing or malformed types."
+                            }
+                          },
+                          "required": [
+                            "image",
+                            "pdf",
+                            "audio_video",
+                            "other"
+                          ],
+                          "description": "Stored blobs by MIME type, including blobs kept in object stores. Marfa trims whitespace and ignores case and parameters. The four kinds add up to the overall blob count and size."
                         }
                       },
                       "required": [
                         "count",
-                        "total_bytes"
+                        "total_bytes",
+                        "by_kind"
                       ],
                       "description": "Stored blob counts and size."
                     },
@@ -77893,6 +77942,22 @@
                           ],
                           "description": "Size of the database's write-ahead log file, in bytes. 0 when there is none. `null` if it can't be read."
                         },
+                        "blob_volume_free_bytes": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "description": "Bytes available on the volume that holds the disk store. `null` if Marfa can't read this figure."
+                        },
+                        "blob_volume_size_bytes": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "description": "Total size in bytes of the volume that holds the disk store. `null` if Marfa can't read this figure."
+                        },
                         "rows": {
                           "type": "object",
                           "properties": {
@@ -77937,9 +78002,11 @@
                       "required": [
                         "database_bytes",
                         "wal_bytes",
+                        "blob_volume_free_bytes",
+                        "blob_volume_size_bytes",
                         "rows"
                       ],
-                      "description": "Database size and row counts."
+                      "description": "Database size and row counts, and capacity of the volume that holds the disk store."
                     }
                   },
                   "required": [
@@ -77962,7 +78029,25 @@
                   },
                   "blobs": {
                     "count": 1,
-                    "total_bytes": 42
+                    "total_bytes": 42,
+                    "by_kind": {
+                      "image": {
+                        "count": 0,
+                        "total_bytes": 0
+                      },
+                      "pdf": {
+                        "count": 0,
+                        "total_bytes": 0
+                      },
+                      "audio_video": {
+                        "count": 0,
+                        "total_bytes": 0
+                      },
+                      "other": {
+                        "count": 1,
+                        "total_bytes": 42
+                      }
+                    }
                   },
                   "types": {
                     "core": 29,
@@ -77986,6 +78071,8 @@
                   "storage": {
                     "database_bytes": 909312,
                     "wal_bytes": 5051152,
+                    "blob_volume_free_bytes": 64424509440,
+                    "blob_volume_size_bytes": 107374182400,
                     "rows": {
                       "items": 9,
                       "versions": 4,

@@ -750,6 +750,22 @@ When a credential with `instance.read` requests `GET /metrics`, the server MUST 
 
 **Tests:** `compliance/metrics.test.ts › reports documented instance-wide counters with instance.read`.
 
+### `instance-claim/management-metrics-blob-kinds`
+
+When a credential with `instance.read` requests `GET /metrics`, the server MUST report `count` and `total_bytes` for each of `image`, `pdf`, `audio_video` and `other` in `blobs.by_kind`, classifying each stored blob by its MIME type after trimming whitespace and ignoring case and parameters (`image/*` for images, `application/pdf` for PDFs, `audio/*` and `video/*` for audio and video, and other for all remaining types, including missing or malformed types), with zero totals for empty kinds and the four kinds adding up to the overall blob count and size.
+
+**Reason:** Owners can see what takes up space, including blobs whose bytes are kept only in an object store.
+
+**Tests:** `compliance/metrics.test.ts › reports all four blob kinds with zero totals on an empty instance`, `› counts blobs and bytes by media type including blobs kept only in S3`.
+
+### `instance-claim/management-metrics-blob-volume`
+
+When a credential with `instance.read` requests `GET /metrics`, the server MUST report the free space and total size in bytes of the volume holding the disk store in `storage.blob_volume_free_bytes` and `storage.blob_volume_size_bytes`, respectively, with `null` for any figure it cannot read.
+
+**Reason:** Owners can see how much space remains on the disk that holds their blobs.
+
+**Tests:** `compliance/metrics.test.ts › reports the blob disk volume figures and uses null for each unreadable figure`.
+
 ### `instance-claim/management-metrics-current`
 
 When a credential with `instance.read` requests `GET /metrics`, the server MUST count the items, blobs, types, keys, webhooks and storage rows from the database as it stands when the request is read, the first request included.

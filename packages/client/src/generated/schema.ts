@@ -2845,7 +2845,7 @@ export interface paths {
         };
         /**
          * Get instance metrics
-         * @description Returns instance-wide counters, how much memory, CPU and disk this server uses, and process uptime. The counters are counted when you ask. Requires `instance.read`; the counters include records outside your content permissions.
+         * @description Returns current instance-wide counters, blob usage by kind, resource usage, blob disk capacity, and uptime. Requires `instance.read`; the counters include records outside your content permissions.
          */
         get: operations["getInstanceMetrics"];
         put?: never;
@@ -7973,6 +7973,13 @@ export interface components {
             details: {
                 [key: string]: unknown;
             };
+        };
+        /** @description Count and total size for one kind of blob, both zero when none are stored. */
+        BlobKindMetrics: {
+            /** @description Number of stored blobs of this kind. */
+            count: number;
+            /** @description Total size in bytes of stored blobs of this kind. */
+            total_bytes: number;
         };
         /** @description Number of keys that haven't been revoked or expired. */
         MetricCount: {
@@ -45789,7 +45796,25 @@ export interface operations {
                      *       },
                      *       "blobs": {
                      *         "count": 1,
-                     *         "total_bytes": 42
+                     *         "total_bytes": 42,
+                     *         "by_kind": {
+                     *           "image": {
+                     *             "count": 0,
+                     *             "total_bytes": 0
+                     *           },
+                     *           "pdf": {
+                     *             "count": 0,
+                     *             "total_bytes": 0
+                     *           },
+                     *           "audio_video": {
+                     *             "count": 0,
+                     *             "total_bytes": 0
+                     *           },
+                     *           "other": {
+                     *             "count": 1,
+                     *             "total_bytes": 42
+                     *           }
+                     *         }
                      *       },
                      *       "types": {
                      *         "core": 29,
@@ -45813,6 +45838,8 @@ export interface operations {
                      *       "storage": {
                      *         "database_bytes": 909312,
                      *         "wal_bytes": 5051152,
+                     *         "blob_volume_free_bytes": 64424509440,
+                     *         "blob_volume_size_bytes": 107374182400,
                      *         "rows": {
                      *           "items": 9,
                      *           "versions": 4,
@@ -45838,6 +45865,17 @@ export interface operations {
                             count: number;
                             /** @description Total size of stored blobs, in bytes. */
                             total_bytes: number;
+                            /** @description Stored blobs by MIME type, including blobs kept in object stores. Marfa trims whitespace and ignores case and parameters. The four kinds add up to the overall blob count and size. */
+                            by_kind: {
+                                /** @description Blobs with an `image/*` MIME type. */
+                                image: components["schemas"]["BlobKindMetrics"];
+                                /** @description Blobs with the `application/pdf` MIME type. */
+                                pdf: components["schemas"]["BlobKindMetrics"];
+                                /** @description Blobs with an `audio/*` or `video/*` MIME type. */
+                                audio_video: components["schemas"]["BlobKindMetrics"];
+                                /** @description Blobs with all other MIME types, including missing or malformed types. */
+                                other: components["schemas"]["BlobKindMetrics"];
+                            };
                         };
                         /** @description Built-in, registered and plugin type counts. */
                         types: {
@@ -45865,12 +45903,16 @@ export interface operations {
                             /** @description CPU seconds the process has spent in the operating system since it started. `null` if it can't be read. */
                             cpu_system_seconds: number | null;
                         };
-                        /** @description Database size and row counts. */
+                        /** @description Database size and row counts, and capacity of the volume that holds the disk store. */
                         storage: {
                             /** @description Size of the database file, in bytes. `null` if it can't be read. */
                             database_bytes: number | null;
                             /** @description Size of the database's write-ahead log file, in bytes. 0 when there is none. `null` if it can't be read. */
                             wal_bytes: number | null;
+                            /** @description Bytes available on the volume that holds the disk store. `null` if Marfa can't read this figure. */
+                            blob_volume_free_bytes: number | null;
+                            /** @description Total size in bytes of the volume that holds the disk store. `null` if Marfa can't read this figure. */
+                            blob_volume_size_bytes: number | null;
                             /** @description Row counts of the largest tables, counted when the request is read. `null` if a count can't be read. */
                             rows: {
                                 /** @description Number of items. */

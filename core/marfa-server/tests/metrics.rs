@@ -136,7 +136,13 @@ async fn a_reader_is_told_what_the_instance_holds_as_it_stands() {
     );
     assert_eq!(
         keys_of(&first.body["storage"]),
-        ["database_bytes", "rows", "wal_bytes"]
+        [
+            "blob_volume_free_bytes",
+            "blob_volume_size_bytes",
+            "database_bytes",
+            "rows",
+            "wal_bytes"
+        ]
     );
     assert_eq!(
         keys_of(&first.body["storage"]["rows"]),
