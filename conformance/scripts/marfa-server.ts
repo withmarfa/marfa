@@ -778,11 +778,12 @@ async function signInOwner(
 async function signInDoorAbsent(url: string): Promise<boolean> {
   const response = await fetch(`${url}${SIGN_IN_DOOR}`, {
     method: "POST",
+    redirect: "manual",
     headers: {
-      "content-type": "application/json",
+      "content-type": "application/x-www-form-urlencoded",
       origin: new URL(url).origin,
     },
-    body: "{}",
+    body: "",
   });
   const body = (await response.json().catch(() => undefined)) as
     { error?: { code?: unknown } } | undefined;
