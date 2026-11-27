@@ -10597,6 +10597,12 @@
             "type": "boolean",
             "description": "`true` if Marfa sends events to the webhook."
           },
+          "version": {
+            "type": "integer",
+            "description": "The webhook's version. It starts at 1 and goes up by 1 each time `url`, `events`, `type_filter` or `active` changes.",
+            "example": 3,
+            "minimum": 1
+          },
           "created_at": {
             "type": "string",
             "description": "When the webhook was created, in UTC.",
@@ -10615,6 +10621,7 @@
           "type_filter",
           "secret",
           "active",
+          "version",
           "created_at",
           "updated_at"
         ],
@@ -10712,6 +10719,50 @@
                 "type": "object",
                 "additionalProperties": {},
                 "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "WebhookVersionConflictRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "version_conflict"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "integer",
+                    "description": "The webhook's current version.",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "version"
+                ],
+                "description": "The webhook's current version."
               }
             },
             "required": [
@@ -51126,6 +51177,7 @@
                   "type_filter": "acme.deal",
                   "secret": "b65d38b03fdd936af205fe4d2468727c8be397a5decde1bdf1e07e43e4c4deb0",
                   "active": true,
+                  "version": 1,
                   "created_at": "2026-10-03T09:56:05.889Z",
                   "updated_at": "2026-10-03T09:56:05.889Z"
                 }
@@ -51430,6 +51482,7 @@
                       "type_filter": "acme.deal",
                       "secret": "****deb0",
                       "active": true,
+                      "version": 1,
                       "created_at": "2026-10-03T09:56:05.889Z",
                       "updated_at": "2026-10-03T09:56:05.889Z",
                       "maker": {
@@ -51673,6 +51726,7 @@
                   "type_filter": "acme.deal",
                   "secret": "****deb0",
                   "active": true,
+                  "version": 1,
                   "created_at": "2026-10-03T09:56:05.889Z",
                   "updated_at": "2026-10-03T09:56:05.889Z",
                   "maker": {
@@ -51967,6 +52021,11 @@
                   "active": {
                     "type": "boolean",
                     "description": "`false` stops sending events and cancels pending deliveries. `true` starts again."
+                  },
+                  "version": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The version of the webhook you read. If the webhook has changed since, Marfa refuses the change. Leave it out to change the webhook whatever its version."
                   }
                 },
                 "additionalProperties": false
@@ -51992,6 +52051,7 @@
                   "type_filter": "acme.deal",
                   "secret": "****deb0",
                   "active": true,
+                  "version": 2,
                   "created_at": "2026-10-03T09:56:05.889Z",
                   "updated_at": "2026-10-03T09:56:30.354Z"
                 }
@@ -52112,11 +52172,18 @@
             }
           },
           "409": {
-            "description": "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+            "description": "- `version_conflict`: `version` isn't the webhook's current version. `details.version` is. Nothing is changed. Read the webhook again and send the change over what it holds now.\n- `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InstanceChangedRefusal"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/WebhookVersionConflictRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InstanceChangedRefusal"
+                    }
+                  ]
                 }
               }
             },

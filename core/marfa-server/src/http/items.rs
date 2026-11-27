@@ -28,6 +28,7 @@ use crate::app::items::{self, Detail, Door, Many};
 use crate::app::query::{Counted, counts as run_counts};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::types::{check_id, missing_field};
+use crate::app::whole::{whole_of, whole_range};
 
 const CREATE_FIELDS: [&str; 14] = [
     "type",
@@ -267,25 +268,13 @@ fn number_of(body: &Map<String, Value>, field: &str) -> Result<Option<f64>> {
     }
 }
 
-fn whole_of(value: &Value) -> Option<i64> {
-    const LARGEST_EXACT: f64 = 9_007_199_254_740_992.0;
-    value.as_i64().or_else(|| {
-        value
-            .as_f64()
-            .filter(|number| number.fract() == 0.0 && number.abs() < LARGEST_EXACT)
-            .map(|number| number as i64)
-    })
-}
-
 pub(super) fn version_of(body: &Map<String, Value>) -> Result<Option<i64>> {
     match body.get("version") {
         None => Ok(None),
         Some(value) => whole_of(value)
             .filter(|version| *version >= 0)
             .map(Some)
-            .ok_or_else(|| {
-                invalid_field("version", "version must be a whole number of 0 or more.")
-            }),
+            .ok_or_else(|| invalid_field("version", whole_range("version", 0))),
     }
 }
 

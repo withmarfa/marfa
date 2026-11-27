@@ -305,6 +305,8 @@ describe("moving a type's items", () => {
     const result = await move(deal, { to: contract });
     expect(result.settings_rewritten).toBe(true);
     expect(result.settings).toHaveLength(7);
+    expect((await client.getWebhook(named)).data.version).toBe(2);
+    expect((await client.getWebhook(pattern)).data.version).toBe(1);
 
     const settings = await properties(folderId);
     expect(settings.query).toEqual({
