@@ -558,6 +558,38 @@ If the item changes after a `marfa_update` call reads it and before one of the c
 
 **Tests:** `compliance/mcp-scripted.test.ts › tags nothing when the item changes between the call's read and its tag write`.
 
+### `mcp/update-from-required`
+
+If a `marfa_update` call names a `state` without `from`, or a `from` without `state`, then the server MUST refuse it as a tool error with code `validation_error` and write nothing.
+
+**Reason:** `from` is the state the agent read the item in, and a state change is only safe against it (`mcp/update-from-moved`).
+
+**Tests:** `compliance/mcp.test.ts › refuses a state without from and a from without state, and writes nothing`.
+
+### `mcp/update-from-moved`
+
+If a `marfa_update` call names a `from` other than the state the item is in, and names the item's current version, then the server MUST answer a tool error with code `state_conflict` that names `from` in `details.expected` and the state the item is in in `details.actual`.
+
+**Reason:** a move between states keeps the item's version, so the version cannot tell an item the agent read as archived from one trashed since.
+
+**Tests:** `compliance/mcp.test.ts › refuses a from the item is not in before any other step writes`, `› refuses a state change from a state the item has left, and restores only from the trash`.
+
+### `mcp/update-from-unchanged`
+
+If a `marfa_update` call names a `from` other than the state the item is in, and names the item's current version, then the server MUST NOT change the item's fields, tags, edges or state.
+
+**Reason:** the agent decided on the item it read, so no step of the call may land on an item in a state it has not seen.
+
+**Tests:** `compliance/mcp.test.ts › refuses a from the item is not in before any other step writes`, `› refuses a state change from a state the item has left, and restores only from the trash`.
+
+### `mcp/update-restore-from-trashed`
+
+If a `marfa_update` call names the state `active` for an item in the trash, then the server MUST restore the item only when the call names `from` as `trashed`.
+
+**Reason:** an agent that read the item as archived or active did not read the bin, and must not bring the item out of it.
+
+**Tests:** `compliance/mcp.test.ts › refuses a state change from a state the item has left, and restores only from the trash`.
+
 ## Deleting items
 
 `marfa_delete` moves items to the trash in two calls: a preview that names everything the trash would take, with a `confirm` token, and a call with that token.

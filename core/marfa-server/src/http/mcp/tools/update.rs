@@ -36,7 +36,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Change an item",
-        description: "Use to change an item's fields, tags or edges, archive it, or restore it from the trash. Send the version you read with marfa_get; if the item changed since, nothing is written and you get it as it is now and which of your fields changed. Give the person the item's web_url.",
+        description: "Use to change an item's fields, tags or edges, archive it, or restore it from the trash. Send the version you read with marfa_get; if the item changed since, nothing is written and you get it as it is now and which of your fields changed. To archive or restore, send state with from, the state you read the item in; if it is in another state now, nothing is written. Give the person the item's web_url.",
         input: json!({
             "type": "object",
             "properties": {
@@ -56,7 +56,9 @@ pub fn definition() -> Definition {
                 "add_edges": { "type": "array", "items": edge, "description": "Edges to add from this item." },
                 "remove_edges": { "type": "array", "items": edge, "description": "Edges to remove from this item." },
                 "state": { "type": "string", "enum": ["active", "archived"],
-                    "description": "`archived` archives the item; `active` brings it back from the archive or the trash. An item in the trash takes no other change until restored." },
+                    "description": "`archived` archives the item; `active` brings it back from the archive or the trash. Send `from` with it. An item in the trash takes no other change until restored." },
+                "from": { "type": "string", "enum": ["active", "archived", "trashed"],
+                    "description": "The state you read the item in. Required with `state`, and sent only with it. If the item is in another state now, nothing is written." },
             },
             "required": ["id", "version"],
             "additionalProperties": false,
@@ -352,7 +354,29 @@ fn restore_only(arguments: &Map<String, Value>) -> bool {
     arguments.get("state").and_then(Value::as_str) == Some("active")
         && arguments
             .keys()
-            .all(|key| matches!(key.as_str(), "id" | "version" | "state"))
+            .all(|key| matches!(key.as_str(), "id" | "version" | "state" | "from"))
+}
+
+/// The state the agent read the item in, which goes with a state change and nothing else.
+fn read_state(arguments: &Map<String, Value>) -> Result<Option<(String, String)>, Stop> {
+    match (text(arguments, "state"), text(arguments, "from")) {
+        (Some(wanted), Some(from)) => Ok(Some((wanted, from))),
+        (None, None) => Ok(None),
+        (Some(_), None) => Err(Stop::invalid(
+            "from is required with state: send the state you read the item in.",
+        )),
+        (None, Some(_)) => Err(Stop::invalid("from goes with state: send both or neither.")),
+    }
+}
+
+/// Refuses a state change from a state other than the one the item is in.
+fn state_moved(from: &str, actual: &str) -> Refusal {
+    Refusal::new(
+        Code::StateConflict,
+        format!("The item is {actual}, not {from}. Read it again."),
+    )
+    .with_detail("expected", from)
+    .with_detail("actual", actual)
 }
 
 pub async fn run(
@@ -373,7 +397,7 @@ pub async fn run(
     let remove_edges = edge_refs(&arguments, "remove_edges")?;
     let add_tags = texts(&arguments, "add_tags");
     let remove_tags = texts(&arguments, "remove_tags");
-    let wanted_state = text(&arguments, "state");
+    let state_change = read_state(&arguments)?;
 
     let read = items::detail(app, caller, id.clone(), Detail::default(), Door::Write).await;
     let current = match read {
@@ -383,7 +407,7 @@ pub async fn run(
             let change = Change::Transition {
                 id: id.clone(),
                 state: "active".to_string(),
-                from: None,
+                from: state_change.as_ref().map(|(_, from)| from.clone()),
                 version: Some(version),
             };
             let done = write::run(app, caller, None, change)
@@ -409,6 +433,11 @@ pub async fn run(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    if let Some((_, from)) = &state_change
+        && *from != state
+    {
+        return Err(Stop::refused(state_moved(from, &state)));
+    }
     let mut version = version;
     let mut applied: Vec<String> = Vec::new();
 
@@ -493,12 +522,12 @@ pub async fn run(
         applied.push(format!("remove_edge {} {}", edge.edge_type, edge.to_id));
     }
 
-    if let Some(wanted) = wanted_state.filter(|wanted| *wanted != state) {
+    if let Some((wanted, from)) = state_change.filter(|(wanted, _)| *wanted != state) {
         let step = format!("state {wanted}");
         let change = Change::Transition {
             id: id.clone(),
             state: wanted.clone(),
-            from: None,
+            from: Some(from),
             version: Some(version),
         };
         let done = write::run(app, caller, None, change)
@@ -587,12 +616,40 @@ mod tests {
     }
 
     #[test]
+    fn a_state_and_the_state_read_go_together() {
+        let both = arguments(json!({ "state": "active", "from": "archived" }));
+        assert_eq!(
+            read_state(&both).ok().flatten(),
+            Some(("active".to_string(), "archived".to_string()))
+        );
+        assert!(read_state(&arguments(json!({}))).is_ok_and(|none| none.is_none()));
+        for sent in [json!({ "state": "active" }), json!({ "from": "active" })] {
+            let stop = read_state(&arguments(sent)).err();
+            assert_eq!(
+                stop.and_then(|stop| stop.error.get("code").cloned()),
+                Some(json!("validation_error"))
+            );
+        }
+    }
+
+    #[test]
+    fn a_state_moved_names_both_states() {
+        let stop = Stop::refused(state_moved("archived", "trashed"));
+        assert_eq!(stop.error["code"], "state_conflict");
+        assert_eq!(stop.error["details"]["expected"], "archived");
+        assert_eq!(stop.error["details"]["actual"], "trashed");
+    }
+
+    #[test]
     fn only_a_bare_state_active_is_a_restore() {
         assert!(restore_only(&arguments(
-            json!({ "id": "x", "version": 1, "state": "active" })
+            json!({ "id": "x", "version": 1, "state": "active", "from": "trashed" })
         )));
         assert!(!restore_only(&arguments(
-            json!({ "id": "x", "version": 1, "state": "active", "add_tags": ["a"] })
+            json!({ "id": "x", "version": 1, "state": "active", "from": "trashed", "add_tags": ["a"] })
+        )));
+        assert!(!restore_only(&arguments(
+            json!({ "id": "x", "version": 1, "state": "archived", "from": "trashed" })
         )));
         assert!(!restore_only(&arguments(
             json!({ "id": "x", "version": 1 })

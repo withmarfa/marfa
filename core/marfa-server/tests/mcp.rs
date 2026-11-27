@@ -739,7 +739,7 @@ async fn a_confirmation_works_once_and_a_second_use_says_so_without_trashing_aga
         .tool(
             &token,
             "marfa_update",
-            json!({ "id": id, "state": "active", "version": 1 }),
+            json!({ "id": id, "state": "active", "from": "trashed", "version": 1 }),
         )
         .await;
     assert!(!restored.failed, "{}", restored.value);
