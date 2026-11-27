@@ -1064,6 +1064,30 @@ Where `object_store_bucket` or `backup_path` is set, if a backup the server take
 
 **Tests:** `compliance/backup-parts.test.ts › stores again a part missing from its instance's parts folder or altered there, sends only those parts, and both backups then restore`, `› hashes a due folder part only an older backup names while a manifest does not read, and counts a part it cannot read as damaged, storing it again where a backup names it`.
 
+### `instance/backup-part-archived`
+
+Where `object_store_bucket` is set, if the object store answers the read the server makes of a part under `<object_store_prefix>/backup-parts/<instance id>/` while it takes a backup with the error code `InvalidObjectState`, then the server MUST treat the part as found damaged, as `instance/backup-part-stored-again` and `instance/backup-health-parts-damaged` say of a part a backup folder that answers cannot give.
+
+**Reason:** the code names the one object, which an object store has moved to an archived storage class, and not the store, which answers every other request. A backup run that failed on it would fail every run and never store the part again. No other code is taken this way (`instance/backup-part-read-fails`).
+
+**Tests:** waiting on #3629.
+
+### `instance/backup-part-read-fails`
+
+Where `object_store_bucket` is set, if the object store answers the read the server makes of a part under `<object_store_prefix>/backup-parts/<instance id>/` while it takes a backup with any error but `InvalidObjectState` or a missing object, or does not answer in time, then the server MUST answer `POST /backups` with `503 blob_store_unavailable`.
+
+**Reason:** a refused credential, throttling, a network fault or a code the server does not know says the store cannot be used, not that the part is bad, so the run fails as the destination's error.
+
+**Tests:** waiting on #3629.
+
+### `instance/backup-part-read-damage-none`
+
+Where `object_store_bucket` is set, if the object store answers the read the server makes of a part under `<object_store_prefix>/backup-parts/<instance id>/` while it takes a backup with any error but `InvalidObjectState` or a missing object, or does not answer in time, then the server MUST NOT count the part as damaged.
+
+**Reason:** a part counted damaged on a refused credential would be stored again and reported to the owner as damage that the store's own fault caused.
+
+**Tests:** waiting on #3629.
+
 ### `instance/backup-folder-part-rehashed`
 
 Where `backup_path` is set, when the server takes a backup, the server MUST read and hash the parts in `<backup_path>/backup-parts/<instance id>/` that it last stored or hashed 7 days or more before, oldest first, until their listed sizes reach 536870912 bytes, and always the oldest one, but for a part that backup's clean-up finds no backup names.

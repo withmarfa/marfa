@@ -14,6 +14,7 @@ use super::parts::{self, Checked, Part};
 use super::{Destination, Got, Stored, blocking};
 use crate::app::App;
 use crate::app::blobs::folder::Area;
+use crate::app::blobs::s3::names_one_object;
 use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Result};
 use crate::db::Write;
@@ -139,7 +140,7 @@ pub(super) async fn found_damaged(
 enum Found {
     Whole(Option<String>),
     Damaged(Option<String>),
-    /// A backup folder that answers could not give the part's bytes.
+    /// The destination answers, and could not give the part's bytes for a reason of the part's.
     Unreadable(std::io::Error),
     Absent,
 }
@@ -183,19 +184,23 @@ async fn hashed(
     Ok((found, checked.size()))
 }
 
-/// A failed read of one part, unless the destination is an object store, the read stalled, or the
-/// backup folder no longer answers.
+/// A failed read of one part, unless the read stalled, the backup folder no longer answers, or
+/// the object store's answer does not name that one object.
 async fn unreadable(destination: &Destination, error: std::io::Error) -> Result<Found> {
-    if let Destination::Folder(folder) = destination
-        && error.kind() != std::io::ErrorKind::TimedOut
-    {
-        let folder = folder.clone();
-        if blocking(move || Ok(folder.reachable()))
-            .await
-            .unwrap_or(false)
-        {
+    match destination {
+        Destination::Folder(folder) if error.kind() != std::io::ErrorKind::TimedOut => {
+            let folder = folder.clone();
+            if blocking(move || Ok(folder.reachable()))
+                .await
+                .unwrap_or(false)
+            {
+                return Ok(Found::Unreadable(error));
+            }
+        }
+        Destination::Bucket(_) if names_one_object(&error) => {
             return Ok(Found::Unreadable(error));
         }
+        _ => {}
     }
     Err(destination.unreachable("checking a part of the backup", &error))
 }

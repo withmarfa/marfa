@@ -153,6 +153,31 @@ fn is_silent(error: &object_store::Error) -> bool {
     false
 }
 
+/// The error codes an object store answers for one object while it answers other requests.
+const OBJECT_CODES: [&str; 1] = ["InvalidObjectState"];
+
+/// Whether the store's answer to a read names the one object, not the store: its error code is
+/// one of `OBJECT_CODES`. Any other answer, or none, is not.
+pub fn names_one_object(error: &io::Error) -> bool {
+    let mut cause = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<object_store::Error>())
+        .and_then(std::error::Error::source);
+    while let Some(error) = cause {
+        let said = error.to_string();
+        if said
+            .split("<Code>")
+            .skip(1)
+            .filter_map(|rest| rest.split_once("</Code>"))
+            .any(|(code, _)| OBJECT_CODES.contains(&code))
+        {
+            return true;
+        }
+        cause = error.source();
+    }
+    false
+}
+
 type Checked<'a> = Option<(&'a mut super::store::Hasher, &'a Hash, u64)>;
 
 fn seen(checked: &mut Checked<'_>, chunk: &Bytes) {
