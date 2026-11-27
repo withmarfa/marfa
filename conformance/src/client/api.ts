@@ -1887,6 +1887,7 @@ export class MarfaClient {
       events?: string[];
       type_filter?: string | null;
       active?: boolean;
+      version?: number;
     },
   ): Promise<ApiResponse<Webhook>> {
     return this.request<Webhook>(`/webhooks/${id}`, {

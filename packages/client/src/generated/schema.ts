@@ -1635,7 +1635,7 @@ export interface paths {
         head?: never;
         /**
          * Update a webhook
-         * @description Updates your webhook and returns it. Fields you leave out keep their values. Marfa cancels a pending delivery if you change `url`, set `active` to `false`, or change `events` or `type_filter` to exclude it. To change the secret, create a new webhook.
+         * @description Updates your webhook and returns it. Fields you leave out keep their values. Marfa cancels a pending delivery the change excludes. Name `version` to change it only if it is unchanged since you read it. To change the secret, create a new webhook.
          */
         patch: operations["updateWebhook"];
         trace?: never;
@@ -7839,6 +7839,11 @@ export interface components {
             /** @description `true` if Marfa sends events to the webhook. */
             active: boolean;
             /**
+             * @description The webhook's version. It starts at 1 and goes up by 1 each time `url`, `events`, `type_filter` or `active` changes.
+             * @example 3
+             */
+            version: number;
+            /**
              * @description When the webhook was created, in UTC.
              * @example 2026-10-03T09:30:00.000Z
              */
@@ -7888,6 +7893,24 @@ export interface components {
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        WebhookVersionConflictRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "version_conflict";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description The webhook's current version. */
+                details?: {
+                    /** @description The webhook's current version. */
+                    version: number;
                 };
             };
         };
@@ -30400,6 +30423,7 @@ export interface operations {
                      *           "type_filter": "acme.deal",
                      *           "secret": "****deb0",
                      *           "active": true,
+                     *           "version": 1,
                      *           "created_at": "2026-10-03T09:56:05.889Z",
                      *           "updated_at": "2026-10-03T09:56:05.889Z",
                      *           "maker": {
@@ -30559,6 +30583,7 @@ export interface operations {
                      *       "type_filter": "acme.deal",
                      *       "secret": "b65d38b03fdd936af205fe4d2468727c8be397a5decde1bdf1e07e43e4c4deb0",
                      *       "active": true,
+                     *       "version": 1,
                      *       "created_at": "2026-10-03T09:56:05.889Z",
                      *       "updated_at": "2026-10-03T09:56:05.889Z"
                      *     }
@@ -30739,6 +30764,7 @@ export interface operations {
                      *       "type_filter": "acme.deal",
                      *       "secret": "****deb0",
                      *       "active": true,
+                     *       "version": 1,
                      *       "created_at": "2026-10-03T09:56:05.889Z",
                      *       "updated_at": "2026-10-03T09:56:05.889Z",
                      *       "maker": {
@@ -31054,6 +31080,8 @@ export interface operations {
                     type_filter?: string | null;
                     /** @description `false` stops sending events and cancels pending deliveries. `true` starts again. */
                     active?: boolean;
+                    /** @description The version of the webhook you read. If the webhook has changed since, Marfa refuses the change. Leave it out to change the webhook whatever its version. */
+                    version?: number;
                 };
             };
         };
@@ -31077,6 +31105,7 @@ export interface operations {
                      *       "type_filter": "acme.deal",
                      *       "secret": "****deb0",
                      *       "active": true,
+                     *       "version": 2,
                      *       "created_at": "2026-10-03T09:56:05.889Z",
                      *       "updated_at": "2026-10-03T09:56:30.354Z"
                      *     }
@@ -31144,7 +31173,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTimeoutRefusal"];
                 };
             };
-            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            /**
+             * @description - `version_conflict`: `version` isn't the webhook's current version. `details.version` is. Nothing is changed. Read the webhook again and send the change over what it holds now.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -31153,7 +31185,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InstanceChangedRefusal"];
+                    "application/json": components["schemas"]["WebhookVersionConflictRefusal"] | components["schemas"]["InstanceChangedRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */

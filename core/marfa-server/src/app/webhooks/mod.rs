@@ -247,6 +247,7 @@ pub fn answer(subscription: &Subscription, secret_shown: bool) -> Map<String, Va
         "type_filter": subscription.type_filter,
         "secret": secret,
         "active": subscription.active,
+        "version": subscription.version,
         "created_at": subscription.created_at,
         "updated_at": subscription.updated_at,
     }) else {
@@ -320,6 +321,7 @@ pub fn insert_new(unit: &Unit<'_, '_>, request: Create) -> Result<Subscription> 
         type_filter: request.type_filter,
         secret,
         active: true,
+        version: 1,
         maker,
         starts_after: fanout::newest(tx)?,
         created_at: unit.at.clone(),
@@ -396,6 +398,9 @@ pub fn apply_update(
     let maker = unit.caller.webhook_maker()?;
     let tx = unit.tx();
     let existing = registered_by(tx, &unit.caller, &id, &maker)?;
+    if let Some(named) = request.version.filter(|named| *named != existing.version) {
+        return Err(stale(named, existing.version));
+    }
     let mut next = existing.clone();
     if let Some(address) = request.url {
         next.url = address.text;
@@ -411,6 +416,7 @@ pub fn apply_update(
     }
     next.updated_at = unit.at.clone();
     store::update(tx, &next)?;
+    let next = store::by_id(tx, &id, Some(&maker))?.ok_or_else(not_found)?;
     if next.url != existing.url {
         store::cancel_all(tx, &id, CANCEL_URL, &unit.at)?;
     } else if !next.active {
@@ -430,6 +436,17 @@ pub fn apply_update(
     }
     unit.audit("webhook", &id, Some(json!({ "fields": fields })))?;
     Ok(next)
+}
+
+fn stale(named: i64, current: i64) -> Refusal {
+    Refusal::new(
+        Code::VersionConflict,
+        format!(
+            "Version {named} is stale; the webhook is now at version {current}. Read it again and \
+             send the change over what it holds now."
+        ),
+    )
+    .with_detail("version", current)
 }
 
 pub async fn delete(app: &App, caller: &Caller, id: String) -> Result<()> {

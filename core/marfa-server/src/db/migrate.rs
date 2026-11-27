@@ -132,6 +132,14 @@ pub const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0018_blob_holders.sql"),
         done: None,
     },
+    Migration {
+        version: 19,
+        sql: include_str!("migrations/0019_webhook_version.sql"),
+        done: Some(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('webhooks') \
+             WHERE name = 'version')",
+        ),
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

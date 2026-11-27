@@ -23,7 +23,7 @@ pub const EVENTS: [&str; 12] = [
 ];
 
 pub const CREATE_FIELDS: [&str; 4] = ["url", "events", "type_filter", "secret"];
-pub const UPDATE_FIELDS: [&str; 4] = ["url", "events", "type_filter", "active"];
+pub const UPDATE_FIELDS: [&str; 5] = ["url", "events", "type_filter", "active", "version"];
 
 const SECRET_CHARS: usize = 32;
 
@@ -48,6 +48,8 @@ pub struct Update {
     pub events: Option<Vec<String>>,
     pub type_filter: Option<Option<String>>,
     pub active: Option<bool>,
+    /// The version the caller read; a change is refused when the subscription has moved on.
+    pub version: Option<i64>,
 }
 
 pub(super) fn invalid(path: &str, message: impl Into<String>) -> Refusal {
@@ -163,11 +165,19 @@ impl Update {
             Some(Value::Bool(active)) => Some(*active),
             Some(_) => return Err(invalid("active", "active is true or false.")),
         };
+        let version =
+            match body.get("version") {
+                None => None,
+                Some(value) => Some(value.as_i64().filter(|version| *version >= 1).ok_or_else(
+                    || invalid("version", "version is a whole number of 1 or more."),
+                )?),
+            };
         Ok(Update {
             url: body.get("url").map(url_of).transpose()?,
             events: body.get("events").map(events_of).transpose()?,
             type_filter: body.get("type_filter").map(filter_of).transpose()?,
             active,
+            version,
         })
     }
 }

@@ -1060,7 +1060,7 @@ If `POST /webhooks` names a `secret` shorter than 32 characters, the empty strin
 
 ### `events/webhook-shape`
 
-The server MUST answer a subscription with the members `id`, `url`, `events`, `type_filter`, `secret`, `active`, `created_at` and `updated_at`, adding `maker` only on list and get responses.
+The server MUST answer a subscription with the members `id`, `url`, `events`, `type_filter`, `secret`, `active`, `version`, `created_at` and `updated_at`, adding `maker` only on list and get responses.
 
 **Reason:** the subscription's position in the event log and its birth are not part of what an owner sees.
 
@@ -1151,6 +1151,66 @@ When private local authority sends `DELETE /webhooks/{id}`, the server MUST remo
 When `PATCH /webhooks/{id}` names `url`, `events`, `type_filter` or `active`, the server MUST change each in place, so that the next read answers it.
 
 **Tests:** `compliance/webhooks.test.ts › updates the url, events, type filter and active flag in place`.
+
+### `events/webhook-version-start`
+
+When the server creates a subscription, the server MUST answer it at `version` 1.
+
+**Tests:** `compliance/webhook-delivery.test.ts › starts a subscription at version 1, advances it only with a change to url, events, type_filter or active, and not with a delivery outcome`.
+
+### `events/webhook-version-advance`
+
+When a write changes a subscription's `url`, `events`, `type_filter` or `active`, the server MUST advance its `version` by 1, once however many of them the write changes.
+
+**Reason:** the version stands for what an owner configures, so an app that read it can tell that another app changed the subscription since. A type move that rewrites a `type_filter` is such a write.
+
+**Tests:** `compliance/webhook-delivery.test.ts › starts a subscription at version 1, advances it only with a change to url, events, type_filter or active, and not with a delivery outcome`, `compliance/type-move.test.ts › rewrites the folders, views and webhooks that name the type once every item has moved`.
+
+### `events/webhook-version-steady`
+
+If a write to a subscription changes none of its `url`, `events`, `type_filter` and `active`, then the server MUST leave its `version` and `updated_at` as they were.
+
+**Tests:** `compliance/webhook-delivery.test.ts › starts a subscription at version 1, advances it only with a change to url, events, type_filter or active, and not with a delivery outcome`.
+
+### `events/webhook-version-delivery`
+
+When the server records the outcome of a delivery, the server MUST leave its subscription's `version` as it was.
+
+**Reason:** a subscription that is busy sending, or failing, would otherwise change its version by itself, and an app holding what it read would be refused for a change nobody made.
+
+**Tests:** `compliance/webhook-delivery.test.ts › starts a subscription at version 1, advances it only with a change to url, events, type_filter or active, and not with a delivery outcome`.
+
+### `events/webhook-version-conflict`
+
+If `PATCH /webhooks/{id}` names a `version` other than the subscription's current one, then the server MUST answer `409 version_conflict` with `details.version` the current version.
+
+**Reason:** the app that sent it read the subscription before another write changed it, and applying its change would overwrite that write unseen. The app reads the subscription again and sends its change over what it holds now.
+
+**Tests:** `compliance/webhook-delivery.test.ts › changes a subscription whose version the change names, and refuses a stale version with 409 version_conflict, changing nothing`.
+
+### `events/webhook-version-refused`
+
+If `PATCH /webhooks/{id}` is refused with `409 version_conflict`, then the server MUST leave the subscription, its pending deliveries and the audit log as they were.
+
+**Tests:** `compliance/webhook-delivery.test.ts › changes a subscription whose version the change names, and refuses a stale version with 409 version_conflict, changing nothing`.
+
+### `events/webhook-version-current`
+
+When `PATCH /webhooks/{id}` names the subscription's current `version`, the server MUST apply the change as one that names none.
+
+**Tests:** `compliance/webhook-delivery.test.ts › changes a subscription whose version the change names, and refuses a stale version with 409 version_conflict, changing nothing`.
+
+### `events/webhook-version-unchecked`
+
+When `PATCH /webhooks/{id}` names no `version`, the server MUST apply the change whatever the subscription's version.
+
+**Tests:** `compliance/webhook-delivery.test.ts › changes a subscription whose version the change names, and refuses a stale version with 409 version_conflict, changing nothing`, `compliance/webhooks.test.ts › updates the url, events, type filter and active flag in place`.
+
+### `events/webhook-version-invalid`
+
+If `PATCH /webhooks/{id}` names a `version` that is not a whole number of 1 or more, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/webhook-delivery.test.ts › changes a subscription whose version the change names, and refuses a stale version with 409 version_conflict, changing nothing`.
 
 ### `events/webhook-update-undeclared-key`
 

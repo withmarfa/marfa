@@ -1429,6 +1429,7 @@ describe("outbound webhook delivery", () => {
       "type_filter",
       "updated_at",
       "url",
+      "version",
     ];
     const created = await client.createWebhook({
       url: receiver.hookUrl("shape"),
@@ -1450,6 +1451,117 @@ describe("outbound webhook delivery", () => {
     const mine = listed.data.data.find((w) => w.id === created.data.id);
     expect(Object.keys(mine ?? {}).sort()).toEqual([...keys, "maker"].sort());
     expect(listed.data.next_cursor).toBeNull();
+  });
+
+  it("starts a subscription at version 1, advances it only with a change to url, events, type_filter or active, and not with a delivery outcome", async () => {
+    const hook = await startScriptedReceiver(() => ({ status: 500 }));
+    try {
+      const sub = await subscribe(hook, "versioned");
+      const read = async () => (await client.getWebhook(sub.id)).data;
+      expect((await read()).version).toBe(1);
+      const listed = await client.listWebhooks();
+      expect(listed.data.data.find((w) => w.id === sub.id)?.version).toBe(1);
+
+      await makeNote("versioned");
+      await deliveryOf(sub.id, (r) => r.attempt === 1);
+      expect((await read()).version).toBe(1);
+
+      const steps: [Record<string, unknown>, number][] = [
+        [{ events: ["item.created", "item.trashed"] }, 2],
+        [{ type_filter: "core.note" }, 3],
+        [{ type_filter: null }, 4],
+        [{ active: false }, 5],
+        [{ url: hook.hookUrl("versioned-elsewhere") }, 6],
+      ];
+      for (const [change, version] of steps) {
+        const patched = await client.updateWebhook(sub.id, change);
+        expect(patched.ok, JSON.stringify(patched.error)).toBe(true);
+        expect(patched.data.version, JSON.stringify(change)).toBe(version);
+        expect((await read()).version).toBe(version);
+      }
+
+      const unchanged = await client.updateWebhook(sub.id, {
+        url: hook.hookUrl("versioned-elsewhere"),
+        events: ["item.created", "item.trashed"],
+        type_filter: null,
+        active: false,
+      });
+      expect(unchanged.ok).toBe(true);
+      expect(unchanged.data.version).toBe(6);
+      expect((await read()).version).toBe(6);
+    } finally {
+      await hook.close();
+    }
+  });
+
+  it("changes a subscription whose version the change names, and refuses a stale version with 409 version_conflict, changing nothing", async () => {
+    const hook = await startScriptedReceiver((_, n) => ({
+      status: n === 1 ? 500 : 200,
+    }));
+    try {
+      const sub = await subscribe(hook, "raced");
+      await makeNote("raced");
+      await deliveryOf(sub.id, (r) => r.attempt === 1);
+      const read = await client.getWebhook(sub.id);
+      const seen = read.data.version;
+
+      const first = await client.updateWebhook(sub.id, {
+        events: ["item.created", "item.updated"],
+        version: seen,
+      });
+      expect(first.ok, JSON.stringify(first.error)).toBe(true);
+      expect(first.data.version).toBe(seen + 1);
+      const audited = async () =>
+        (
+          await client.listAudit({
+            action: "webhook.update",
+            resource_id: sub.id,
+          })
+        ).data.data.length;
+      const before = await audited();
+
+      const second = await client.updateWebhook(sub.id, {
+        events: ["item.trashed"],
+        url: hook.hookUrl("raced-elsewhere"),
+        active: false,
+        version: seen,
+      });
+      expect(second.status).toBe(409);
+      expect(second.error?.error.code).toBe("version_conflict");
+      expect(second.error?.error.details?.version).toBe(seen + 1);
+
+      const now = (await client.getWebhook(sub.id)).data;
+      expect(now.version).toBe(seen + 1);
+      expect(now.events).toEqual(["item.created", "item.updated"]);
+      expect(now.url).toBe(hook.hookUrl("raced"));
+      expect(now.active).toBe(true);
+      expect(now.updated_at).toBe(first.data.updated_at);
+      expect(await audited()).toBe(before);
+      const rows = await client.listWebhookDeliveries(sub.id);
+      expect(rows.data.data.map((r) => r.status)).toEqual(["pending"]);
+
+      const current = await client.updateWebhook(sub.id, {
+        active: false,
+        version: seen + 1,
+      });
+      expect(current.ok, JSON.stringify(current.error)).toBe(true);
+      expect(current.data.version).toBe(seen + 2);
+
+      const none = await client.updateWebhook(sub.id, { active: true });
+      expect(none.ok).toBe(true);
+      expect(none.data.version).toBe(seen + 3);
+
+      for (const version of [0, -1, 1.5, "2", null]) {
+        const refused = await client.rawRequest(`/webhooks/${sub.id}`, {
+          method: "PATCH",
+          body: { active: true, version },
+        });
+        expect(refused.status, JSON.stringify(version)).toBe(400);
+        expect(refused.error?.error.code).toBe("validation_error");
+      }
+    } finally {
+      await hook.close();
+    }
   });
 
   it("signs deliveries under a secret the caller supplied, returned whole on creation, at the time of the attempt", async () => {
