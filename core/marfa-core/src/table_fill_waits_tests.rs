@@ -368,13 +368,15 @@ fn hydrate(core: &Arc<Core>, in_place: bool) -> (Arc<AtomicBool>, Receiver<Resul
     (stop, ended)
 }
 
+type Holding = (Arc<Core>, Sender<Result<TableHold>>);
+
 /// What a watch's listener was told.
 #[derive(Default)]
 struct Heard {
     told: Told,
     ended: Mutex<Vec<Option<CoreError>>>,
     /// Holds `steps` from inside `changed` at the first event, answering here.
-    holds: Mutex<Option<(Arc<Core>, Sender<Result<TableHold>>)>>,
+    holds: Mutex<Option<Holding>>,
     holding: AtomicBool,
 }
 
