@@ -102,6 +102,8 @@ mod sse;
 mod stop_tests;
 mod store;
 mod streams;
+#[cfg(all(test, debug_assertions))]
+mod table_fill_waits_tests;
 mod tables;
 mod telemetry;
 #[cfg(all(test, feature = "telemetry"))]

@@ -209,8 +209,8 @@ impl Core {
     ///
     /// Judged from the store's state alone, so a copy that let its rows go
     /// before this ran is reclaimed too. The writer's role is what lets it
-    /// rewrite the file, and a hydration (which a refill is) or a catch-up
-    /// owns the store until it ends.
+    /// rewrite the file, and a hydration (which a refill is), a catch-up or
+    /// a table fill owns the store until it ends.
     pub(crate) fn reclaim_space(&self, stopping: &AtomicBool) -> Reclaim {
         if self.handle() != Handle::Writer || stopping.load(Ordering::SeqCst) {
             return Reclaim::Skipped;

@@ -536,6 +536,21 @@ fn a_small_log_costs_a_round_nothing() {
 }
 
 #[test]
+fn space_reclaim_skips_while_a_table_fill_holds_the_stream() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = shrunk(dir.path(), 700, 9);
+    let claim = core.claim_stream(crate::Mover::Fill).unwrap();
+
+    assert!(matches!(core.reclaim_space(&go()), Reclaim::Skipped));
+
+    drop(claim);
+    assert!(matches!(
+        core.reclaim_space(&go()),
+        Reclaim::Reclaimed { .. }
+    ));
+}
+
+#[test]
 fn a_statement_of_this_process_holding_the_connection_is_skipped() {
     let dir = tempfile::tempdir().unwrap();
     let core = shrunk(dir.path(), 700, 9);

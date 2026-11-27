@@ -5262,7 +5262,11 @@ mod tests {
 
     #[test]
     fn a_follow_that_waited_waits_on_behind_a_hydration_or_catch_up_holding_the_stream() {
-        for holder in [crate::Mover::Hydration, crate::Mover::CatchUp] {
+        for holder in [
+            crate::Mover::Hydration,
+            crate::Mover::CatchUp,
+            crate::Mover::Fill,
+        ] {
             let server = Scripted::start();
             server.on("/types", vec![types(&[(NOTE, None)])]);
             server.on("/events", vec![stream(vec![], held())]);

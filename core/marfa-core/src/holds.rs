@@ -229,7 +229,12 @@ impl Core {
         let fill = match self.try_claim_stream(Mover::Fill) {
             Ok(_streaming) if store::hydration_complete(&*self.conn()?)? => {
                 #[cfg(debug_assertions)]
-                crate::fault::hold(|| "table-fill-claimed");
+                {
+                    crate::fault::hold(|| "table-fill-claimed");
+                    if crate::fault::fails(|| "table-fill-panics") {
+                        panic!("the table fill was made to panic");
+                    }
+                }
                 let context = reach::Context::capture(&*self.conn()?)?;
                 Some(tables::fill(self, &context, stop)?)
             }
