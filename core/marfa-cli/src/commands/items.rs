@@ -6,6 +6,7 @@ use marfa_core::http::BULK_GET_LIMIT;
 use marfa_core::{file_type_for, mime_type_for};
 use serde_json::{Map, Value, json};
 
+use super::duplicate::{self, Added, IfDuplicate};
 use super::{PageArgs, PropertyArgs, StateFilter, TierFilter, insert_opt, object, state_list};
 use crate::error::CliError;
 use crate::output::{self, Printer, printable};
@@ -199,7 +200,8 @@ pub enum ItemsCommand {
         names: Vec<String>,
     },
     /// Find the items the credential can read that hold each file hash, in
-    /// one request.
+    /// one request: what `items add` and `items attach` ask before they
+    /// upload.
     Blobs {
         /// The hashes to look for, each `sha256:` and 64 lowercase
         /// hexadecimal digits, at most 200.
@@ -569,6 +571,11 @@ pub struct AddArgs {
     /// The tier to write it at; the server's default is the library.
     #[arg(long)]
     pub tier: Option<Tier>,
+    /// What to do when an item already holds this file's bytes: `ask` says
+    /// what matches and asks at a terminal, and elsewhere adds the file and
+    /// says what matched; `add` adds without looking; `skip` adds nothing.
+    #[arg(long, value_enum, default_value_t, value_name = "WHAT")]
+    pub if_duplicate: IfDuplicate,
 }
 
 #[derive(Debug, Default, Args)]
@@ -587,6 +594,11 @@ pub struct AttachArgs {
     /// video or web page subtype when the MIME type says.
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: Option<String>,
+    /// What to do when an item already holds this file's bytes: `ask` says
+    /// what matches and asks at a terminal, and elsewhere adds the file and
+    /// says what matched; `add` adds without looking; `skip` adds nothing.
+    #[arg(long, value_enum, default_value_t, value_name = "WHAT")]
+    pub if_duplicate: IfDuplicate,
 }
 
 #[derive(Debug, Default, Args)]
@@ -972,12 +984,6 @@ pub fn titles_request(names: &[String]) -> Request {
         .reading()
 }
 
-pub fn blobs_request(hashes: &[String]) -> Request {
-    Request::post(&["items", "blobs"])
-        .json(json!({ "hashes": hashes }))
-        .reading()
-}
-
 fn key_selector(
     type_: &str,
     links: &[String],
@@ -1315,7 +1321,7 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
             table,
         } => counts_request(ids, backref.as_deref(), edge.as_deref(), table.as_deref()),
         ItemsCommand::Titles { names } => titles_request(names),
-        ItemsCommand::Blobs { hashes } => blobs_request(hashes),
+        ItemsCommand::Blobs { hashes } => duplicate::lookup_request(hashes),
         ItemsCommand::Lookup {
             type_,
             links,
@@ -1558,16 +1564,23 @@ fn edges(
 /// content-addressed, so a retry uploads nothing new.
 fn attach(args: &AttachArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let mime_type = mime_type_for(&args.file, args.mime_type.as_deref());
-    let (blob, hash) = upload(&args.file, &mime_type, remote)?;
+    let ((blob, hash), duplicates) =
+        match checked_upload(&args.file, &mime_type, args.if_duplicate, out, remote)? {
+            Added::Held(found) => return duplicate::report_held(&args.file, &found, out),
+            Added::Uploaded { uploaded, found } => (uploaded, found),
+        };
     let item = remote.json(&file_item_request(args, &mime_type, &hash))?;
     let (file_item, file_item_id) = file_item_of(&item)?;
     let edge = remote.json(&attached_to_request(&file_item_id, &args.id))?;
     out.report(
-        &json!({ "blob": blob, "item": file_item, "edge": edge }),
+        &duplicate::with_matches(
+            json!({ "blob": blob, "item": file_item, "edge": edge }),
+            duplicates.as_ref(),
+        ),
         |_| {
             format!(
                 "attached {} as {} ({}), linked to {}",
-                args.file.display(),
+                duplicate::shown(&args.file),
                 printable(&file_item_id),
                 printable(&hash),
                 args.id
@@ -1578,16 +1591,39 @@ fn attach(args: &AttachArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
 
 fn add(args: &AddArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let mime_type = mime_type_for(&args.file, args.mime_type.as_deref());
-    let (blob, hash) = upload(&args.file, &mime_type, remote)?;
+    let ((blob, hash), duplicates) =
+        match checked_upload(&args.file, &mime_type, args.if_duplicate, out, remote)? {
+            Added::Held(found) => return duplicate::report_held(&args.file, &found, out),
+            Added::Uploaded { uploaded, found } => (uploaded, found),
+        };
     let item = remote.json(&added_file_request(args, &mime_type, &hash))?;
     let (file_item, file_item_id) = file_item_of(&item)?;
-    out.report(&json!({ "blob": blob, "item": file_item }), |_| {
-        format!(
-            "added {} as {} ({})",
-            args.file.display(),
-            printable(&file_item_id),
-            printable(&hash)
-        )
+    out.report(
+        &duplicate::with_matches(
+            json!({ "blob": blob, "item": file_item }),
+            duplicates.as_ref(),
+        ),
+        |_| {
+            format!(
+                "added {} as {} ({})",
+                duplicate::shown(&args.file),
+                printable(&file_item_id),
+                printable(&hash)
+            )
+        },
+    )
+}
+
+fn checked_upload(
+    file: &std::path::Path,
+    mime_type: &str,
+    mode: IfDuplicate,
+    out: &Printer,
+    remote: &Remote,
+) -> Result<Added<(Value, String)>, CliError> {
+    duplicate::checked_upload(file, mode, out.json, remote, || {
+        let (blob, hash) = upload(file, mime_type, remote)?;
+        Ok(((blob, hash.clone()), hash))
     })
 }
 

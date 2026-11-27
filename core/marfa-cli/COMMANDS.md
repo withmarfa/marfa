@@ -1013,6 +1013,7 @@ marfa items add [OPTIONS] <FILE>
 | `--type <TYPE>` | The file item's type. Defaults to `core.file`, or the image, audio, video or web page subtype when the MIME type says. |
 | `--tag <TAG>` | A tag, repeatable. |
 | `--tier <TIER>` | The tier to write it at; the server's default is the library. One of `library`, `feed`. |
+| `--if-duplicate <WHAT>` | What to do when an item already holds this file's bytes: `ask` says what matches and asks at a terminal, and elsewhere adds the file and says what matched; `add` adds without looking; `skip` adds nothing. One of `ask`, `add`, `skip`. Default: `ask`. |
 
 ### marfa items attach
 
@@ -1032,6 +1033,7 @@ marfa items attach [OPTIONS] <ID> <FILE>
 | `--mime-type <TYPE>` | The file's MIME type. Guessed from the extension when omitted. |
 | `--title <TITLE>` | The file item's title. Defaults to the file's name. |
 | `--type <TYPE>` | The file item's type. Defaults to `core.file`, or the image, audio, video or web page subtype when the MIME type says. |
+| `--if-duplicate <WHAT>` | What to do when an item already holds this file's bytes: `ask` says what matches and asks at a terminal, and elsewhere adds the file and says what matched; `add` adds without looking; `skip` adds nothing. One of `ask`, `add`, `skip`. Default: `ask`. |
 
 ### marfa items stats
 
@@ -1123,7 +1125,7 @@ marfa items titles [OPTIONS] <NAMES>...
 
 ### marfa items blobs
 
-Find the items the credential can read that hold each file hash, in one request.
+Find the items the credential can read that hold each file hash, in one request: what `items add` and `items attach` ask before they upload.
 
 ```text
 marfa items blobs [OPTIONS] <HASHES>...

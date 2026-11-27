@@ -1236,6 +1236,164 @@ When `marfa device changes` is interrupted after it reports that it is watching,
 
 **Tests:** `device/working-copy.test.ts › ends a changes helper with status 130 when interrupted, where one whose time is up ends with 0`.
 
+## Adding a file that Marfa already holds
+
+`items add` and `items attach` hash a regular file, ask `POST /items/blobs` whether an item already holds those bytes, and then upload the path. `--if-duplicate` says what to do when that lookup returns a match: `ask`, the default, `add` or `skip`. A match is by the file's SHA-256 hash alone, among the items the key can read, so the same bytes under another name match and a file of the same name with other bytes does not. The lookup returns at most 20 matching items for a hash and says whether there are more, so the CLI names the items the lookup returned and says when it returned only some. A file that is not a regular file, such as a pipe, is uploaded without that lookup, as is a path that names a descriptor or a device, such as `/dev/stdin`. A file that changes between the check and the upload is still added.
+
+### `cli/add-file-duplicate-check`
+
+When a person runs `items add` or `items attach` with a regular file and `--if-duplicate` is not `add`, if the file's path does not name a descriptor or a device, then the CLI MUST ask `POST /items/blobs` for the SHA-256 hash of the bytes it read before it uploads that file.
+
+**Reason:** The CLI can report a match before uploading the file or creating another item. A file that is not a regular file, and a path that names a descriptor or a device, is `cli/add-file-duplicate-stream`.
+
+**Tests:** `cli/duplicate-file.test.ts › adds a file no item holds without a word, after asking which items hold its hash`, `cli/duplicate-file.test.ts › adds nothing under --if-duplicate skip and reports the item that holds the file, and adds a file no item holds`.
+
+### `cli/add-file-duplicate-none-adds`
+
+When the lookup returns no match, the CLI MUST add the file.
+
+**Tests:** `cli/duplicate-file.test.ts › adds a file no item holds without a word, after asking which items hold its hash`, `cli/duplicate-file.test.ts › adds nothing under --if-duplicate skip and reports the item that holds the file, and adds a file no item holds`, `cli/duplicate-file.test.ts › adds a file that changes while it is checked, and still adds one whose new bytes are already held`.
+
+### `cli/add-file-duplicate-none-silent`
+
+When the lookup returns no match and the upload answers the hash the CLI asked about, the CLI MUST write nothing about the check to standard error.
+
+**Reason:** A lookup that fails is a different case, and the CLI says so (`cli/add-file-duplicate-lookup-says`). A file that changes after the lookup is `cli/add-file-duplicate-changed`.
+
+**Tests:** `cli/duplicate-file.test.ts › adds a file no item holds without a word, after asking which items hold its hash`.
+
+### `cli/add-file-duplicate-ask-names`
+
+While standard input and standard error of the CLI are terminals and `--json` is not given, where `--if-duplicate` is `ask`, when a person runs `items add` or `items attach` with a file and the lookup returns a match, the CLI MUST name the title, type and id of each item it returned.
+
+**Tests:** `cli/duplicate-file.test.ts › asks at a terminal, names each match and adds the file on yes`.
+
+### `cli/add-file-duplicate-ask-terminal`
+
+While standard input and standard error of the CLI are terminals and `--json` is not given, where `--if-duplicate` is `ask`, when a person runs `items add` or `items attach` with a file and the lookup returns a match, the CLI MUST ask `Add it anyway? [y/N]` before it uploads the file.
+
+**Tests:** `cli/duplicate-file.test.ts › asks at a terminal, names each match and adds the file on yes`.
+
+### `cli/add-file-duplicate-ask-yes`
+
+When a person answers `y` or `yes` to `Add it anyway? [y/N]` and the upload answers the hash the CLI asked about, the CLI MUST add the file.
+
+**Reason:** Yes applies to the bytes that were checked. A file that changes before the upload is still added (`cli/add-file-duplicate-changed`).
+
+**Tests:** `cli/duplicate-file.test.ts › asks at a terminal, names each match and adds the file on yes`.
+
+### `cli/add-file-duplicate-ask-declined`
+
+When a person answers `Add it anyway? [y/N]` with anything but `y` or `yes` before the CLI uploads the file, the CLI MUST upload nothing.
+
+**Reason:** The decision uses the hash of the bytes that were read, so a path replaced during the lookup uploads nothing.
+
+**Tests:** `cli/duplicate-file.test.ts › adds nothing at a terminal on anything but yes, and reports the item that holds the file`.
+
+### `cli/add-file-duplicate-no-terminal`
+
+While standard input or standard error of the CLI is not a terminal, or `--json` is given, where `--if-duplicate` is `ask`, when a person runs `items add` or `items attach` with a file and the lookup returns a match, the CLI MUST add the file without asking.
+
+**Reason:** A script or an agent cannot answer, and a command that waited for it would hang.
+
+**Tests:** `cli/duplicate-file.test.ts › adds a file an item holds where no terminal can be asked, names the match on standard error and carries it under duplicates`.
+
+### `cli/add-file-duplicate-no-terminal-says`
+
+While standard input or standard error of the CLI is not a terminal, or `--json` is given, where `--if-duplicate` is `ask`, when the CLI adds a file and the upload answers the hash a lookup matched, the CLI MUST write one line to standard error that names each item that lookup returned.
+
+**Reason:** A person who reads the log afterward can see the file was already there.
+
+**Tests:** `cli/duplicate-file.test.ts › adds a file an item holds where no terminal can be asked, names the match on standard error and carries it under duplicates`.
+
+### `cli/add-file-duplicate-json-matches`
+
+Where `--json` is given, when the CLI adds or skips a file, the CLI MUST set `duplicates` to the items a lookup returned and whether there are more exactly when that lookup matched the bytes it added or skipped.
+
+**Tests:** `cli/duplicate-file.test.ts › adds a file an item holds where no terminal can be asked, names the match on standard error and carries it under duplicates`, `cli/duplicate-file.test.ts › adds a file no item holds without a word, after asking which items hold its hash`, `cli/duplicate-file.test.ts › adds a file that changes while it is checked, and still adds one whose new bytes are already held`, `cli/duplicate-file.test.ts › adds nothing under --if-duplicate skip and reports the item that holds the file, and adds a file no item holds`.
+
+### `cli/add-file-duplicate-skip`
+
+Where `--if-duplicate` is `skip`, when the lookup returns a match before the CLI uploads the file, the CLI MUST upload nothing.
+
+**Tests:** `cli/duplicate-file.test.ts › adds nothing under --if-duplicate skip and reports the item that holds the file, and adds a file no item holds`, `cli/duplicate-file.test.ts › checks an attached file the same way, and attaches nothing when skipped`, `cli/duplicate-file.test.ts › skips a held file when its path is replaced during the lookup, and uploads nothing`, `cli/duplicate-file.test.ts › adds the bytes a replaced path holds after the lookup, and skips a held file whose path is replaced`.
+
+### `cli/add-file-duplicate-held-reports`
+
+When the CLI creates no item because the lookup returns a match and `--json` is not given, the CLI MUST say that Marfa already holds a file with the same contents as this one when it was checked and print the id of each item that lookup returned.
+
+**Tests:** `cli/duplicate-file.test.ts › adds nothing at a terminal on anything but yes, and reports the item that holds the file`, `cli/duplicate-file.test.ts › adds nothing under --if-duplicate skip and reports the item that holds the file, and adds a file no item holds`.
+
+### `cli/add-file-duplicate-held-json`
+
+When the CLI creates no item because the lookup returns a match and `--json` is given, the CLI MUST print `added` as `false` with the items that lookup returned and whether there are more under `duplicates`.
+
+**Tests:** `cli/duplicate-file.test.ts › adds nothing under --if-duplicate skip and reports the item that holds the file, and adds a file no item holds`.
+
+### `cli/add-file-duplicate-held-exit`
+
+When the CLI creates no item because the lookup returns a match, the CLI MUST exit with status 0.
+
+**Reason:** Skipping a match or declining the prompt is an expected outcome.
+
+**Tests:** `cli/duplicate-file.test.ts › adds nothing at a terminal on anything but yes, and reports the item that holds the file`, `cli/duplicate-file.test.ts › adds nothing under --if-duplicate skip and reports the item that holds the file, and adds a file no item holds`.
+
+### `cli/add-file-duplicate-add`
+
+Where `--if-duplicate` is `add`, when a person runs `items add` or `items attach` with a file, the CLI MUST add the file without asking `POST /items/blobs` and write nothing about a check.
+
+**Reason:** The person chose to add it, so the check has nothing to change.
+
+**Tests:** `cli/duplicate-file.test.ts › adds under --if-duplicate add without asking which items hold the file`, `cli/duplicate-file.test.ts › adds a stream without checking it, and adds one under --if-duplicate add without a warning`, `› adds redirected standard input from a file without checking it, for ask and skip, and adds it under --if-duplicate add without a warning`.
+
+### `cli/add-file-duplicate-lookup-failed`
+
+If the CLI's request to `POST /items/blobs` fails, or its answer is not exactly one entry for the hash asked whose items each have a non-empty string `id`, a non-empty string `type` and a present `title` that is a string or null, or whose `more` is not a boolean, or that entry holds more than 20 items, or `more` is true while it holds fewer than 20, then the CLI MUST add the file.
+
+**Reason:** A check that cannot be made must never stop a person from saving a file, and an answer that contradicts `items/blobs` or `items/blobs-list` proves nothing about the file.
+
+**Tests:** `cli/duplicate-file.test.ts › adds the file and says the check could not be made when the lookup fails`, `cli/duplicate-file.test.ts › treats an answer that is not a whole lookup as a failed lookup, and adds the file`, `cli/duplicate-file.test.ts › believes a full page of holders and treats a contradictory more as a failed lookup`.
+
+### `cli/add-file-duplicate-lookup-says`
+
+If the CLI asks `POST /items/blobs` and the request fails or the answer is not a whole lookup, then the CLI MUST write one line to standard error that says the check could not be made.
+
+**Tests:** `cli/duplicate-file.test.ts › adds the file and says the check could not be made when the lookup fails`, `cli/duplicate-file.test.ts › treats an answer that is not a whole lookup as a failed lookup, and adds the file`, `cli/duplicate-file.test.ts › believes a full page of holders and treats a contradictory more as a failed lookup`.
+
+### `cli/add-file-duplicate-stream`
+
+Where `--if-duplicate` is not `add`, when a person runs `items add` or `items attach` with a file that is not a regular file, or whose path names a descriptor or a device, the CLI MUST add the file without asking `POST /items/blobs` and write one line to standard error that says a stream cannot be checked.
+
+**Reason:** A pipe, a fifo, or a path under `/dev/` such as `/dev/stdin` can be read once, so hashing it would consume the upload.
+
+**Tests:** `cli/duplicate-file.test.ts › adds a stream without checking it, and adds one under --if-duplicate add without a warning`, `› adds redirected standard input from a file without checking it, for ask and skip, and adds it under --if-duplicate add without a warning`.
+
+### `cli/add-file-duplicate-changed`
+
+When an upload answers with a hash other than the hash the CLI asked `POST /items/blobs` about, the CLI MUST add the file, ask `POST /items/blobs` no further time, and write one line to standard error saying the file changed while it was being checked.
+
+**Tests:** `cli/duplicate-file.test.ts › adds a file that changes while it is checked, and still adds one whose new bytes are already held`, `cli/duplicate-file.test.ts › adds the bytes a replaced path holds after the lookup, and skips a held file whose path is replaced`.
+
+### `cli/add-file-duplicate-upload-once`
+
+When a person runs `items add` or `items attach` with a file, the CLI MUST upload that file at most once.
+
+**Tests:** `cli/duplicate-file.test.ts › adds a file no item holds without a word, after asking which items hold its hash`, `cli/duplicate-file.test.ts › adds a file that changes while it is checked, and still adds one whose new bytes are already held`, `cli/duplicate-file.test.ts › adds a stream without checking it, and adds one under --if-duplicate add without a warning`, `› adds redirected standard input from a file without checking it, for ask and skip, and adds it under --if-duplicate add without a warning`.
+
+### `cli/add-file-duplicate-file-name`
+
+When the CLI prints a file name or an item title without `--json`, if that name or title holds a control character, then the CLI MUST print each such character as an escape.
+
+**Reason:** A file name or a title can hold a newline or an escape sequence that would move the cursor or erase a line of what the person reads. `--json` carries the title as JSON, unchanged.
+
+**Tests:** `cli/duplicate-file.test.ts › prints a file name or an item title that holds a newline or an escape sequence without either`.
+
+### `cli/add-file-duplicate-unreadable`
+
+If the file cannot be read, then the CLI MUST fail with an error naming the file and send no upload.
+
+**Tests:** `cli/duplicate-file.test.ts › fails on a file it cannot read, naming the file, before any upload`.
+
 ## Terminal output
 
 The CLI draws bold and color for the lines a person reads, on a terminal.

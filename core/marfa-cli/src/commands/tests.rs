@@ -1952,6 +1952,7 @@ fn every_mapped_command_parses() {
 
 mod dispatch {
     use super::*;
+    use crate::commands::duplicate::IfDuplicate;
     use crate::door::{Answer, Door};
     use crate::output::Printer;
     use crate::remote::Remote;
@@ -2385,6 +2386,7 @@ mod dispatch {
                 mime_type: None,
                 title: None,
                 type_: None,
+                if_duplicate: IfDuplicate::Add,
             }),
             &remote_at(&door),
             &QUIET,
@@ -2406,6 +2408,174 @@ mod dispatch {
         assert_eq!(edge["edge_type"], "attached-to");
     }
 
+    const HELD: &str = r#"{"data":[{"hash":"sha256:227dae38658f29c3a8494e65302e70b406162c2f581845339dfa19cbfad839d4","items":[{"id":"old","type":"core.file","title":"Novel"}],"more":false}]}"#;
+
+    fn added_in(
+        mode: IfDuplicate,
+        answers: Vec<Answer>,
+    ) -> (Vec<crate::door::Received>, Result<(), CliError>) {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("novel.epub");
+        std::fs::write(&file, b"epub bytes").unwrap();
+        let door = Door::open(answers);
+        let ran = items::run(
+            items::ItemsCommand::Add(items::AddArgs {
+                file,
+                if_duplicate: mode,
+                ..Default::default()
+            }),
+            &remote_at(&door),
+            &QUIET,
+        );
+        (door.received(), ran)
+    }
+
+    fn lookup_answer(body: &str) -> Answer {
+        Answer::json("200 OK", body)
+    }
+
+    fn upload_and_item() -> Vec<Answer> {
+        vec![
+            Answer::json(
+                "201 Created",
+                r#"{"hash":"sha256:227dae38658f29c3a8494e65302e70b406162c2f581845339dfa19cbfad839d4","mime_type":"application/epub+zip","size_bytes":10}"#,
+            ),
+            Answer::json("201 Created", r#"{"item":{"id":"f1","type":"core.file"}}"#),
+        ]
+    }
+
+    #[test]
+    fn a_file_is_hashed_whole_and_looked_up_before_its_upload() {
+        let none = r#"{"data":[{"hash":"sha256:227dae38658f29c3a8494e65302e70b406162c2f581845339dfa19cbfad839d4","items":[],"more":false}]}"#;
+        let mut answers = vec![lookup_answer(none)];
+        answers.extend(upload_and_item());
+        let (received, ran) = added_in(IfDuplicate::Ask, answers);
+        ran.unwrap();
+        assert_eq!(received.len(), 3);
+        assert_eq!(received[0].path(), "/items/blobs");
+        let asked: serde_json::Value = serde_json::from_str(&received[0].body).unwrap();
+        let hash = asked["hashes"][0].as_str().unwrap();
+        assert_eq!(asked["hashes"].as_array().unwrap().len(), 1);
+        assert_eq!(hash.len(), "sha256:".len() + 64);
+        assert_eq!(received[1].path(), "/blobs");
+    }
+
+    #[test]
+    fn a_match_with_no_terminal_adds() {
+        let mut answers = vec![lookup_answer(HELD)];
+        answers.extend(upload_and_item());
+        let (received, ran) = added_in(IfDuplicate::Ask, answers);
+        ran.unwrap();
+        assert_eq!(received.len(), 3);
+        assert_eq!(received[2].path(), "/items");
+    }
+
+    #[test]
+    fn skip_adds_nothing_when_an_item_holds_the_file_and_adds_when_none_does() {
+        let (received, ran) = added_in(IfDuplicate::Skip, vec![lookup_answer(HELD)]);
+        ran.unwrap();
+        assert_eq!(
+            received.len(),
+            1,
+            "a skipped file sent more than its lookup"
+        );
+        let none = r#"{"data":[{"hash":"sha256:227dae38658f29c3a8494e65302e70b406162c2f581845339dfa19cbfad839d4","items":[],"more":false}]}"#;
+        let mut answers = vec![lookup_answer(none)];
+        answers.extend(upload_and_item());
+        let (received, ran) = added_in(IfDuplicate::Skip, answers);
+        ran.unwrap();
+        assert_eq!(received.len(), 3);
+    }
+
+    #[test]
+    fn a_lookup_that_fails_never_stops_the_add() {
+        for failing in [
+            Answer::json(
+                "404 Not Found",
+                r#"{"error":{"code":"not_found","message":"no"}}"#,
+            ),
+            Answer::json(
+                "405 Method Not Allowed",
+                r#"{"error":{"code":"method_not_allowed","message":"no"}}"#,
+            ),
+            Answer::json(
+                "403 Forbidden",
+                r#"{"error":{"code":"type_not_permitted","message":"no"}}"#,
+            ),
+            Answer::json("200 OK", r#"{"unexpected":true}"#),
+            Answer::hung_up(),
+        ] {
+            let mut answers = vec![failing];
+            answers.extend(upload_and_item());
+            let (received, ran) = added_in(IfDuplicate::Skip, answers);
+            ran.unwrap();
+            assert!(
+                received.iter().any(|request| request.path() == "/items"),
+                "the add did not go ahead"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unreadable_file_fails_before_any_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("novel.epub");
+        std::fs::write(&file, b"epub bytes").unwrap();
+        let witness = Door::open(upload_and_item());
+        items::run(
+            items::ItemsCommand::Add(items::AddArgs {
+                file,
+                if_duplicate: IfDuplicate::Add,
+                ..Default::default()
+            }),
+            &remote_at(&witness),
+            &QUIET,
+        )
+        .unwrap();
+        assert!(
+            witness
+                .received()
+                .iter()
+                .any(|request| request.path() == "/blobs"),
+            "a readable file's upload was not recorded"
+        );
+
+        let missing = PathBuf::from("/nonexistent/marfa-dup/none.epub");
+        let door = Door::open(vec![Answer::json("200 OK", r#"{"ok":true}"#)]);
+        let ran = items::run(
+            items::ItemsCommand::Add(items::AddArgs {
+                file: missing,
+                ..Default::default()
+            }),
+            &remote_at(&door),
+            &QUIET,
+        );
+        assert!(matches!(ran, Err(CliError::Io(_))), "{ran:?}");
+        let _ = remote_at(&door).json(&Request::get(&["health"]));
+        let received = door.received();
+        assert_eq!(received.len(), 1, "the missing file sent a request");
+        assert_eq!(received[0].path(), "/health");
+
+        let folder = dir.path().join("a-directory");
+        std::fs::create_dir(&folder).unwrap();
+        let door = Door::open(vec![Answer::json("200 OK", r#"{"ok":true}"#)]);
+        let ran = items::run(
+            items::ItemsCommand::Add(items::AddArgs {
+                file: folder,
+                if_duplicate: IfDuplicate::Add,
+                ..Default::default()
+            }),
+            &remote_at(&door),
+            &QUIET,
+        );
+        let message = ran.expect_err("a directory was added").to_string();
+        assert!(message.contains("a-directory"), "{message}");
+        let _ = remote_at(&door).json(&Request::get(&["health"]));
+        let received = door.received();
+        assert_eq!(received.len(), 1, "the directory sent a request");
+        assert_eq!(received[0].path(), "/health");
+    }
+
     #[test]
     fn add_uploads_then_creates_the_file_item_and_links_nothing() {
         let dir = std::env::temp_dir().join(format!("marfa-add-{}", std::process::id()));
@@ -2423,6 +2593,7 @@ mod dispatch {
             items::ItemsCommand::Add(items::AddArgs {
                 file,
                 tags: vec!["reading".into()],
+                if_duplicate: IfDuplicate::Add,
                 ..Default::default()
             }),
             &remote_at(&door),
