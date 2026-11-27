@@ -5114,6 +5114,60 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     );
   });
 
+  it("names each folder as not changed when a directory removed from the registry after the preview holds a file at the confirm, and forgets it once it holds nothing", async () => {
+    const held = "01a00000-0000-7000-8000-0000000036f1";
+    const { a, b } = await remembering("forget-removed-occupied", [
+      "01a00000-0000-7000-8000-0000000036f0",
+      held,
+    ]);
+    const there = realpathSync(b.dir);
+    rmSync(b.dir, { recursive: true });
+    await deletedByHand(a);
+    expect((await a.folder.push()).ok).toBe(true);
+    await heldUnsure(a);
+    const self = realpathSync(a.dir);
+    const bound = await openBindingFolder(a);
+    try {
+      const shown = await bound.device.remembering(there);
+      expect(shown.ok, JSON.stringify(shown)).toBe(true);
+      if (!shown.ok) return;
+      expect(shown.value.listed).toBe(true);
+      // Removed, and a file left where the folder was.
+      expect((await b.folder.remove()).ok).toBe(true);
+      mkdirSync(there);
+      writeFileSync(join(there, "Held.md"), "moved in\n");
+      const stale = await bound.device.forgetRemembered(shown.value);
+      expect(stale.ok, JSON.stringify(stale)).toBe(true);
+      if (!stale.ok) return;
+      expect(stale.value.listed).toBe(false);
+      expect(stale.value.forgotten).toEqual([]);
+      expect(
+        stale.value.notChanged.map((left) => [
+          left.dir,
+          left.reason.includes("is not empty now"),
+        ]),
+      ).toEqual([[self, true]]);
+      expect(await heldIn(a)).toEqual(["Held.md"]);
+
+      // The witness: with nothing left there, the same folder forgets it.
+      rmSync(join(there, "Held.md"));
+      const again = await bound.device.remembering(there);
+      expect(again.ok, JSON.stringify(again)).toBe(true);
+      if (!again.ok) return;
+      const done = await bound.device.forgetRemembered(again.value);
+      expect(done.ok, JSON.stringify(done)).toBe(true);
+      expect(
+        done.ok &&
+          done.value.forgotten.map((folder) => [folder.dir, folder.released]),
+      ).toEqual([[self, ["Held.md"]]]);
+    } finally {
+      await bound.device.close();
+    }
+    const kept = await a.folder.push();
+    expect(kept.ok && kept.value.scan.trashed).toEqual(["Held.md"]);
+    expect(deletesOf(a.server, held)).toBe(1);
+  });
+
   it("forgets through the binding only in a folder whose store is still the one it showed, and the next sync sends the delete it released", async () => {
     const held = "01a00000-0000-7000-8000-0000000035e8";
     const { a, there } = await heldForGone("forget-binding", [

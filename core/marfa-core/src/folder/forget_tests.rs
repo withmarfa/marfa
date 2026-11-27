@@ -636,12 +636,25 @@ fn a_path_where_something_stands_is_not_forgotten() {
     std::fs::create_dir(other.path()).unwrap();
     std::fs::write(other.path().join("held.txt"), "held.txt words\n").unwrap();
     assert!(Folder::remembering(other.path()).is_err());
-    assert!(Folder::forget_remembered(&shown).is_err());
+    let filled = Folder::forget_remembered(&shown).unwrap();
+    assert_eq!(filled.forgotten, [], "{filled:?}");
+    assert_eq!(filled.not_changed.len(), 1, "{filled:?}");
+    assert_eq!(filled.not_changed[0].dir, from.path(), "{filled:?}");
+    assert!(
+        filled.not_changed[0].reason.contains("is not empty now"),
+        "{filled:?}"
+    );
     std::fs::remove_file(other.path().join("held.txt")).unwrap();
     {
         let _sealed = crate::test_folders::locked(other.path(), 0o000);
         assert!(Folder::remembering(other.path()).is_err());
-        assert!(Folder::forget_remembered(&shown).is_err());
+        let sealed = Folder::forget_remembered(&shown).unwrap();
+        assert_eq!(sealed.forgotten, [], "{sealed:?}");
+        assert_eq!(sealed.not_changed.len(), 1, "{sealed:?}");
+        assert!(
+            sealed.not_changed[0].reason.contains("cannot be read"),
+            "{sealed:?}"
+        );
     }
     let a = Folder::open(from.path(), None).unwrap();
     assert!(elsewhere::remembered_dirs(&a).contains(&other.path().to_path_buf()));
@@ -1152,6 +1165,56 @@ fn a_directory_removed_from_the_registry_after_the_preview_is_reported_as_read_t
     assert_eq!(held_in(from.path()), ["held.txt"]);
 }
 
+/// The registry listed the directory when the preview read it and does not
+/// now, and a file stands there: each folder shown is named, not the whole
+/// command refused.
+#[test]
+fn a_directory_removed_from_the_registry_after_the_preview_and_left_occupied_names_each_folder() {
+    let (registry, _guard) = registry::tests::own_registry();
+    let (from, a, other) = holding_for_a_gone_folder([
+        "01a00000-0000-7000-8000-000000361503",
+        "01a00000-0000-7000-8000-000000361504",
+    ]);
+    list_raw(
+        &registry,
+        Registered {
+            dir: other.path().to_path_buf(),
+            folder: "01a00000-0000-7000-8000-000000361504".into(),
+            store: None,
+            root: None,
+        },
+    );
+    let shown = Folder::remembering(other.path()).unwrap();
+    assert!(shown.listed);
+    drop(a);
+    assert!(Folder::forget(other.path()).unwrap());
+    std::fs::create_dir(other.path()).unwrap();
+    std::fs::write(other.path().join("held.txt"), "held.txt words\n").unwrap();
+    let forgotten = Folder::forget_remembered(&shown).unwrap();
+    assert!(!forgotten.listed, "{forgotten:?}");
+    assert_eq!(forgotten.forgotten, [], "{forgotten:?}");
+    assert_eq!(forgotten.not_changed.len(), 1, "{forgotten:?}");
+    assert_eq!(forgotten.not_changed[0].dir, from.path(), "{forgotten:?}");
+    assert!(
+        forgotten.not_changed[0].reason.contains("is not empty now"),
+        "{forgotten:?}"
+    );
+    assert!(
+        remembered_at(&from.path().join(STATE_DIR).join("core.sqlite"))
+            .contains(&other.path().to_path_buf())
+    );
+    assert_eq!(held_in(from.path()), ["held.txt"]);
+    // The witness: with the file gone, the same confirm names the folder
+    // for the listing the preview saw.
+    std::fs::remove_file(other.path().join("held.txt")).unwrap();
+    let emptied = Folder::forget_remembered(&shown).unwrap();
+    assert_eq!(emptied.not_changed.len(), 1, "{emptied:?}");
+    assert!(
+        emptied.not_changed[0].reason.contains("listed"),
+        "{emptied:?}"
+    );
+}
+
 /// A listed folder's directory holds its own state, and is reported listed
 /// rather than refused as occupied.
 #[test]
@@ -1179,4 +1242,79 @@ fn a_listed_directory_where_its_folder_stands_is_reported_listed() {
     assert!(forgotten.listed, "{forgotten:?}");
     assert_eq!(forgotten.forgotten, [], "{forgotten:?}");
     assert_eq!(held_in(from.path()), ["held.txt"]);
+}
+
+/// A preview that found nothing to name, taken before the directory was
+/// filled, has no folder to carry the refusal, so the confirm throws it.
+#[test]
+fn a_confirm_with_no_folder_shown_still_refuses_an_occupied_directory() {
+    let (_, _registry) = registry::tests::own_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let shown = Remembered {
+        dir: dir.path().to_path_buf(),
+        listed: false,
+        folders: Vec::new(),
+        not_read: Vec::new(),
+        alike: Vec::new(),
+    };
+    std::fs::write(dir.path().join("held.txt"), "held.txt words\n").unwrap();
+    let error = Folder::forget_remembered(&shown).unwrap_err().to_string();
+    assert!(error.contains("is not empty"), "{error}");
+    assert!(error.contains("unmount its volume"), "{error}");
+    std::fs::remove_file(dir.path().join("held.txt")).unwrap();
+    let nothing = Folder::forget_remembered(&shown).unwrap();
+    assert_eq!(nothing.not_changed, [], "{nothing:?}");
+}
+
+/// A preview that named only folders it could not read still has those
+/// failures to report once the directory is occupied.
+#[test]
+fn a_confirm_with_only_unread_folders_shown_names_them_when_the_directory_is_occupied() {
+    let (_, _registry) = registry::tests::own_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let unread = NotRead {
+        dir: "/folder/that/cannot/be/read".into(),
+        reason: "its directory cannot be opened".into(),
+    };
+    let shown = Remembered {
+        dir: dir.path().to_path_buf(),
+        listed: false,
+        folders: Vec::new(),
+        not_read: vec![unread.clone()],
+        alike: Vec::new(),
+    };
+    std::fs::write(dir.path().join("held.txt"), "held.txt words\n").unwrap();
+    let done = Folder::forget_remembered(&shown).unwrap();
+    assert_eq!(done.forgotten, [], "{done:?}");
+    assert_eq!(done.not_changed, [unread], "{done:?}");
+}
+
+/// The same occupied directory names each folder shown, with the unread
+/// ones, once.
+#[test]
+fn a_confirm_names_each_folder_and_each_unread_one_when_the_directory_is_occupied() {
+    let (registry, _guard) = registry::tests::own_registry();
+    let (from, a, other) = holding_for_a_gone_folder([
+        "01a00000-0000-7000-8000-000000361501",
+        "01a00000-0000-7000-8000-000000361502",
+    ]);
+    let mut shown = Folder::remembering(other.path()).unwrap();
+    let unread = NotRead {
+        dir: "/folder/that/cannot/be/read".into(),
+        reason: "its directory cannot be opened".into(),
+    };
+    shown.not_read.push(unread.clone());
+    drop(a);
+    std::fs::create_dir(other.path()).unwrap();
+    std::fs::write(other.path().join("held.txt"), "held.txt words\n").unwrap();
+    let done = Folder::forget_remembered(&shown).unwrap();
+    assert_eq!(done.forgotten, [], "{done:?}");
+    assert_eq!(done.not_changed.len(), 2, "{done:?}");
+    assert_eq!(done.not_changed[0], unread, "{done:?}");
+    assert_eq!(done.not_changed[1].dir, from.path(), "{done:?}");
+    assert!(
+        done.not_changed[1].reason.contains("is not empty now"),
+        "{done:?}"
+    );
+    let _ = registry;
 }

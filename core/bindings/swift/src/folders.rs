@@ -848,8 +848,10 @@ guarded! {
         /// nothing while the registry lists `dir`. A folder another process
         /// does not let go, whose store is not the one shown or has moved, or
         /// that is no longer at its listed path, is left as it was and named
-        /// in `not_changed`. Asks a watch that holds a folder to let it go, as
-        /// `add` does.
+        /// in `not_changed`, as is each folder while anything but an empty
+        /// directory stands at `dir`. Throws `invalid` for that only when
+        /// `remembered` named no folder, read or not. Asks a watch that holds a
+        /// folder to let it go, as `add` does.
         pub fn forget_remembered(&self, remembered: Remembered) -> Result<Forgotten, MarfaError> {
             let done = marfa_core::Folder::forget_remembered(&shown(remembered))?;
             Ok(Forgotten {

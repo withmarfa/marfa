@@ -518,8 +518,11 @@ impl Folders {
     /// Forgets the directory in each folder `remembered` names and takes it
     /// off each held file shown: one that waits on nothing else is decided
     /// again at its folder's next sync. Changes nothing while the registry
-    /// lists `dir`. Asks a watch that holds a
-    /// folder to let it go.
+    /// lists `dir`. A folder that cannot be changed, such as one whose store
+    /// is not the one shown, is left as it was and named in `notChanged`, as
+    /// is each folder while anything but an empty directory stands at `dir`.
+    /// Rejects with `invalid` for that only when `remembered` named no folder,
+    /// read or not. Asks a watch that holds a folder to let it go.
     #[napi(ts_return_type = "Promise<Forgotten>")]
     pub fn forget_remembered(&self, remembered: Remembered) -> AsyncTask<ForgetRemembered> {
         AsyncTask::new(ForgetRemembered {
