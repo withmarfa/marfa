@@ -306,9 +306,12 @@ async fn a_password_changed_during_a_sign_in_ends_that_sign_in() {
     let late = signing_in.await.unwrap();
     assert_eq!(late.sign_in_error().as_deref(), Some("invalid_credentials"));
     assert!(late.cookie().is_none());
-    assert_eq!(
-        instance.sign_in("the second password").await.status,
-        StatusCode::FOUND
+    assert!(
+        instance
+            .sign_in("the second password")
+            .await
+            .cookie()
+            .is_some()
     );
 }
 
@@ -834,7 +837,7 @@ async fn a_form_password_change_goes_back_to_the_page_with_what_happened() {
             "{fields:?}"
         );
     }
-    assert_eq!(instance.sign_in(PASSWORD).await.status, StatusCode::FOUND);
+    assert!(instance.sign_in(PASSWORD).await.cookie().is_some());
 
     let reply = change_from_the_page(&instance, &cookie, [PASSWORD, new, new]).await;
     assert_eq!(goes_to(&reply), "/auth/owner/passkeys?changed=1");
@@ -842,7 +845,7 @@ async fn a_form_password_change_goes_back_to_the_page_with_what_happened() {
         instance.sign_in(PASSWORD).await.sign_in_error().as_deref(),
         Some("invalid_credentials")
     );
-    assert_eq!(instance.sign_in(new).await.status, StatusCode::FOUND);
+    assert!(instance.sign_in(new).await.cookie().is_some());
 }
 
 #[tokio::test]
@@ -980,7 +983,7 @@ async fn a_form_password_change_from_an_ended_session_is_sent_to_sign_in() {
         "{}",
         reply.text
     );
-    assert_eq!(instance.sign_in(PASSWORD).await.status, StatusCode::FOUND);
+    assert!(instance.sign_in(PASSWORD).await.cookie().is_some());
 }
 
 #[tokio::test]
@@ -1229,7 +1232,7 @@ async fn a_recovery_form_is_judged_for_its_owner_and_its_proof_before_its_passwo
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{confirm:?}");
         assert!(page.contains("recovery session ended"), "{page}");
     }
-    assert_eq!(instance.sign_in(PASSWORD).await.status, StatusCode::FOUND);
+    assert!(instance.sign_in(PASSWORD).await.cookie().is_some());
 }
 
 #[tokio::test]
