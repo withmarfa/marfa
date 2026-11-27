@@ -116,7 +116,6 @@ fn matches_in(answer: &Value, hash: &str) -> Result<Matches, CliError> {
         .get("more")
         .and_then(Value::as_bool)
         .ok_or_else(|| invalid("more is not a boolean"))?;
-    // A page is at most 20, and `more` is true only when that page is full.
     if items.len() > HOLDER_PAGE || (more && items.len() != HOLDER_PAGE) {
         return Err(invalid("more does not match the number of items"));
     }
@@ -160,7 +159,7 @@ fn warn_stream(file: &Path) {
 
 fn warn_changed(file: &Path) {
     crate::errln!(
-        "{}: the file changed while it was being checked, so the check did not cover what was added",
+        "{}: the file changed while it was being checked, so the check did not cover what was uploaded",
         shown(file)
     );
 }
@@ -551,7 +550,6 @@ mod tests {
                 hash_read(&mut opened).unwrap(),
             ))
         });
-        // A run that never looked up still owes the server its one accept.
         let looked_up = asked.lock().unwrap().clone();
         if looked_up.is_empty() {
             let _ = remote.json(&lookup_request(&["sha256:none".into()]));
