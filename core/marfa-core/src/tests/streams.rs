@@ -103,29 +103,60 @@ fn no_stream_runs_across_a_hydration() {
 #[test]
 fn claims_made_at_once_never_both_win() {
     use std::sync::atomic::AtomicUsize;
+    use std::time::{Duration, Instant};
     let core = Core::open_in_memory(None).unwrap();
     let holding = AtomicUsize::new(0);
     let (won, overlapped) = (AtomicUsize::new(0), AtomicBool::new(false));
+    let hold = |claim: crate::streams::StreamClaim<'_>| {
+        won.fetch_add(1, Ordering::SeqCst);
+        if holding.fetch_add(1, Ordering::SeqCst) > 0 {
+            overlapped.store(true, Ordering::SeqCst);
+        }
+        std::thread::yield_now();
+        holding.fetch_sub(1, Ordering::SeqCst);
+        drop(claim);
+    };
     for _ in 0..300 {
-        let go = AtomicBool::new(false);
+        let (go, stop, ended) = (
+            AtomicBool::new(false),
+            AtomicBool::new(false),
+            AtomicUsize::new(0),
+        );
         std::thread::scope(|scope| {
-            for _ in 0..8 {
-                scope.spawn(|| {
+            for at in 0..8 {
+                let (core, go, stop, ended, hold) = (&core, &go, &stop, &ended, &hold);
+                scope.spawn(move || {
                     while !go.load(Ordering::Acquire) {
                         std::hint::spin_loop();
                     }
-                    if let Ok(claim) = core.claim_stream(Mover::CatchUp) {
-                        won.fetch_add(1, Ordering::SeqCst);
-                        if holding.fetch_add(1, Ordering::SeqCst) > 0 {
-                            overlapped.store(true, Ordering::SeqCst);
+                    match at % 3 {
+                        0 => {
+                            if let Ok(claim) = core.try_claim_stream(Mover::Fill) {
+                                hold(claim);
+                            }
                         }
-                        std::thread::yield_now();
-                        holding.fetch_sub(1, Ordering::SeqCst);
-                        drop(claim);
+                        1 => {
+                            if let Ok(Some(claim)) = core.claim_stream_waiting(Mover::CatchUp, stop)
+                            {
+                                hold(claim);
+                            }
+                        }
+                        _ => {
+                            if let Ok(claim) = core.claim_stream(Mover::CatchUp) {
+                                hold(claim);
+                            }
+                        }
                     }
+                    ended.fetch_add(1, Ordering::SeqCst);
                 });
             }
             go.store(true, Ordering::Release);
+            let started = Instant::now();
+            while ended.load(Ordering::SeqCst) < 8 && started.elapsed() < Duration::from_millis(50)
+            {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            stop.store(true, Ordering::SeqCst);
         });
     }
     assert!(won.load(Ordering::SeqCst) >= 300);

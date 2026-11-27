@@ -597,7 +597,10 @@ fn a_hydration_that_starts_while_a_hold_fills_waits_and_then_hydrates() {
         still_running(&hydrated, "the hydration");
         assert!(copy.server.seen("/events").len() <= usize::from(in_place));
         fault::release(CLAIMED);
-        held.recv_timeout(LONG).unwrap().unwrap();
+        let hold = held.recv_timeout(LONG).unwrap();
+        // A stale copy refuses the fill once it has held the stream.
+        let refused = in_place && hold == Err(CoreError::HydrationIncomplete);
+        assert!(hold.is_ok() || refused, "in place {in_place}: {hold:?}");
         let report = hydrated.recv_timeout(LONG).unwrap();
         assert!(report.is_ok(), "in place {in_place}: {report:?}");
         assert_eq!(report.unwrap().in_place, in_place);
@@ -818,6 +821,9 @@ fn a_hold_made_after_a_fills_last_step_is_filled_by_the_follow_that_waited() {
     assert!(second.fill.is_none());
     fault::release(ENDED);
     assert_eq!(filled(&held).whole, 1);
+    wait_until("the follow never told the table filled", || {
+        !filled_told(&follow.told).is_empty()
+    });
     through_sentinel(&copy, &follow);
     assert_eq!(filled_told(&follow.told), vec![NOTES.to_string()]);
     assert_eq!(state(&copy.core, NOTES).as_deref(), Some("whole"));

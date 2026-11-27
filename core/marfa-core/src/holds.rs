@@ -210,8 +210,9 @@ impl Core {
         Ok(pinned)
     }
 
-    /// Holds matching tables and fills them, or leaves them to the follow or
-    /// catch-up that holds the stream.
+    /// Holds matching tables and fills them. Where another call holds the
+    /// stream, or the copy is not hydrated, it leaves them owed for the next
+    /// follow or catch-up, or `fill_tables`, and never waits.
     pub fn hold_table(&self, type_id: &str, table: &str) -> Result<TableHold> {
         self.hold_table_until(type_id, table, &NEVER_STOPPED)
     }

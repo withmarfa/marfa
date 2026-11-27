@@ -209,7 +209,7 @@ pub(crate) use files::queue_upload;
 pub(crate) use files::{name_bytes, unpin_held};
 #[cfg(test)]
 pub(crate) use holds::pin_pass_ends;
-pub(crate) use streams::{Mover, Streaming, one_at_a_time, streaming_of};
+pub(crate) use streams::{Mover, Stream, one_at_a_time, streaming_of};
 pub(crate) use write::{Based, Body, check_create, queue_create, queue_update};
 
 pub type Result<T> = std::result::Result<T, CoreError>;
@@ -317,8 +317,9 @@ pub struct Core {
     lock: Arc<lock::WriterLock>,
     /// Hydration, catch-up and follow each move the one cursor, so two at
     /// once could move it backwards, apply an event twice, or apply one to a
-    /// copy a hydration has replaced.
-    streaming: Mutex<Streaming>,
+    /// copy a hydration has replaced. A table fill holds it so that no event
+    /// lands between a page's read and its write, and they wait for it.
+    streaming: Stream,
     /// Two drains at once would each send every unanswered write, so a
     /// second waits for the one under way.
     draining: Mutex<()>,
@@ -332,8 +333,9 @@ pub struct Core {
     renewals: Arc<Mutex<Vec<(String, String)>>>,
     /// Before when a `VACUUM` that was refused or failed is not tried again.
     reclaim_held_until: Mutex<Option<std::time::Instant>>,
-    /// Raised by a table held while another call held the stream; a follow
-    /// looks at it each time it waits for a frame.
+    /// Raised by a hold that left its table owed, as another call held the
+    /// stream or the copy was not hydrated; a follow looks at it each time
+    /// it waits for a frame.
     tables_owed: AtomicBool,
     /// `damage::seen` as the core opened, so its close keeps the
     /// write-ahead log of a store found damaged since.

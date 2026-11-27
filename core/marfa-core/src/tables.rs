@@ -84,7 +84,9 @@ pub struct TableHold {
     pub type_id: String,
     pub table: String,
     pub was_held: bool,
-    /// `None` where another call held the stream, whose fill takes it.
+    /// `None` where another call held the stream or the copy was not
+    /// hydrated: the table is left owed for the next follow or catch-up, or
+    /// `fill_tables`.
     pub fill: Option<FillReport>,
 }
 
