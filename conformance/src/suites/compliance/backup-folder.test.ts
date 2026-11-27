@@ -48,7 +48,7 @@ import {
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { diskHolds, inspectStores } from "../../utils/store-faults.js";
 import { waitFor } from "../../utils/wait.js";
-import { tempFolder } from "../../utils/temp-folder.js";
+import { stopChildAtCleanup, tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * Backups to a folder the owner names with `backup_path`: one manifest
@@ -99,9 +99,11 @@ async function lockHeldOn(path: string): Promise<{ release(): Promise<void> }> {
     ],
     { stdio: ["pipe", "pipe", "inherit"] },
   );
+  stopChildAtCleanup(holder);
   const ended = new Promise<void>((done) => holder.once("close", () => done()));
   await new Promise<void>((resolve, reject) => {
     holder.stdout.once("data", () => resolve());
+    holder.once("error", reject);
     holder.once("close", () => reject(new Error("the lock was not taken")));
   });
   return {

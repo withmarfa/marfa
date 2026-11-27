@@ -1324,7 +1324,7 @@ While an attached store leaves the questions of `blob-replicate` unanswered, the
 
 While another Marfa server holds the lock of the backup folder's files area and this server's adopt claim waits there to become the area's marker, the server MUST answer `GET /health` with a `backups.store_error` that says another Marfa server has the folder open.
 
-**Reason:** `backups.store_error` says `is not there` only for a folder whose disk is missing (`instance/attention-backup-folder-held`).
+**Reason:** the folder is there, so a `backups.store_error` that says it is not there sends the owner looking for a missing disk, when the fault is a second server on the same folder (`instance/attention-backup-folder-held`).
 
 **Tests:** `compliance/backup-folder.test.ts › says in health and attention that another server holds the folder, not that it is not there, while an adopt's claim waits on its lock, and clears once that server lets go`.
 

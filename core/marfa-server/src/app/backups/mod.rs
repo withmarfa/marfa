@@ -505,8 +505,7 @@ enum Look {
     There,
     /// The folder, or its marker, is not there.
     Gone,
-    /// Another Marfa server holds the folder's lock while this store's claim waits; the words
-    /// say so.
+    /// Another Marfa server holds the folder while this store's claim waits, as the words say.
     Held(String),
 }
 
