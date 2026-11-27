@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { authenticateOwner } from "../client/owner-session.js";
+import { authenticateOwner, signInAnswerOf } from "../client/owner-session.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -63,4 +63,29 @@ it("stops on a sign-in the form sends back with an error", async () => {
   await expect(
     authenticateOwner("http://instance.test", "old", OWNER),
   ).rejects.toThrow("refused");
+});
+
+it("reads the error and the wait a sign-in form's redirect carries", () => {
+  const limited = new Response(null, {
+    status: 302,
+    headers: {
+      location:
+        "/auth/sign-in?error=too_many_attempts&retry_after_seconds=90&username=owner",
+    },
+  });
+  expect(signInAnswerOf(limited)).toEqual({
+    status: 302,
+    location:
+      "/auth/sign-in?error=too_many_attempts&retry_after_seconds=90&username=owner",
+    error: "too_many_attempts",
+    wait: 90,
+  });
+  const signedIn = new Response(null, {
+    status: 302,
+    headers: { location: "/" },
+  });
+  expect(signInAnswerOf(signedIn)).toMatchObject({
+    error: undefined,
+    wait: undefined,
+  });
 });

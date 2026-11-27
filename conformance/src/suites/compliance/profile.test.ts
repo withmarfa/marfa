@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { rm } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -84,15 +85,18 @@ describe("owner and delegated profile changes", () => {
     await expectMatchesSchema("GET", "/profile", 200, shown);
 
     const signin = (username: string) =>
-      fetch(server.apiUrl + "/auth/sign-in", {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: server.apiUrl },
-        body: JSON.stringify({ username, password: TEST_OWNER.password }),
+      postSignInForm(server.apiUrl, server.apiUrl, {
+        username,
+        password: TEST_OWNER.password,
       });
-    expect((await signin(TEST_OWNER.username)).status).toBe(401);
-    expect((await signin("changed.owner@example.test")).status).toBe(401);
-    expect((await signin("changed.owner")).status).toBe(200);
-    expect((await signin(" Changed.OWNER ")).status).toBe(200);
+    expect(signInOutcome(await signin(TEST_OWNER.username))).toBe(
+      "invalid_credentials",
+    );
+    expect(signInOutcome(await signin("changed.owner@example.test"))).toBe(
+      "invalid_credentials",
+    );
+    expect(signInOutcome(await signin("changed.owner"))).toBe("signed_in");
+    expect(signInOutcome(await signin(" Changed.OWNER "))).toBe("signed_in");
     expect(
       (
         await fetch(server.apiUrl + "/owner/passkeys", {
@@ -193,17 +197,16 @@ describe("owner and delegated profile changes", () => {
   it("refuses a password sign-in whose username changed while its password was being checked", async () => {
     const { username } = (await read()) as { username: string };
     const signin = () =>
-      fetch(server.apiUrl + "/auth/sign-in", {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: server.apiUrl },
-        body: JSON.stringify({ username, password: TEST_OWNER.password }),
+      postSignInForm(server.apiUrl, server.apiUrl, {
+        username,
+        password: TEST_OWNER.password,
       });
     // The witness: held the same way and left alone, the sign-in lands.
     await server.setFault("hold:write=auth.sign_in.success@1");
     const left = signin();
     await server.waitForHold("hold:write");
     await server.clearFault("hold:write");
-    expect((await left).status).toBe(200);
+    expect(signInOutcome(await left)).toBe("signed_in");
 
     await server.setFault("hold:write=auth.sign_in.success@1");
     const pending = signin();
@@ -212,7 +215,7 @@ describe("owner and delegated profile changes", () => {
     await server.clearFault("hold:write");
     const late = await pending;
     try {
-      expect(late.status).toBe(401);
+      expect(signInOutcome(late)).toBe("invalid_credentials");
       expect(late.headers.getSetCookie()).toEqual([]);
     } finally {
       expect((await owner({ username })).status).toBe(200);

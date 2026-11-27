@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { checkDeviceCode } from "../../utils/device-check.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -88,12 +89,10 @@ describe("GET /auth/device/consent", () => {
     verificationUri: string,
   ): Promise<{ origin: string; cookie: string }> {
     const origin = new URL(verificationUri).origin;
-    const signIn = await fetch(`${origin}/auth/sign-in`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin },
-      body: JSON.stringify(OWNER),
-    });
-    expect(signIn.status, `sign-in at ${server.apiUrl}`).toBe(200);
+    const signIn = await postSignInForm(origin, origin, OWNER);
+    expect(signInOutcome(signIn), `sign-in at ${server.apiUrl}`).toBe(
+      "signed_in",
+    );
     const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
       signIn.headers.get("set-cookie") ?? "",
     )?.[1];

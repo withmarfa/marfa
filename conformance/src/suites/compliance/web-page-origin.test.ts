@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { request as httpRequest } from "node:http";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { controlRequest } from "../../utils/control-request.js";
@@ -723,11 +724,7 @@ describe("an approved page's address and the sign-in surface", () => {
         }),
       });
     const passwordSignIn = (from: string) =>
-      fetch(`${server.apiUrl}/auth/sign-in`, {
-        method: "POST",
-        headers: { origin: from, "content-type": "application/json" },
-        body: JSON.stringify(TEST_OWNER),
-      });
+      postSignInForm(server.apiUrl, from, TEST_OWNER);
     const ownerForm = (path: string, from: string) =>
       fetch(`${server.apiUrl}${path}`, {
         method: "POST",
@@ -772,7 +769,7 @@ describe("an approved page's address and the sign-in surface", () => {
     );
     const accepted = await passwordSignIn(issuer);
     await accepted.body?.cancel();
-    expect(accepted.status).toBe(200);
+    expect(signInOutcome(accepted)).toBe("signed_in");
     const device = await ownerForm("/auth/device", issuer);
     await device.body?.cancel();
     expect(device.status).not.toBe(403);

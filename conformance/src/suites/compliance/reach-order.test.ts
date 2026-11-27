@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -735,12 +736,8 @@ describe("the reach of an approved app", () => {
     );
     origin = new URL(((await discovery.json()) as { issuer: string }).issuer)
       .origin;
-    const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin },
-      body: JSON.stringify(OWNER),
-    });
-    expect(response.status).toBe(200);
+    const response = await postSignInForm(server.apiUrl, origin, OWNER);
+    expect(signInOutcome(response)).toBe("signed_in");
     const session = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
       response.headers.get("set-cookie") ?? "",
     )?.[1];

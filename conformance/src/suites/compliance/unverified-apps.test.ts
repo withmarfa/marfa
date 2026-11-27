@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import {
   readControls,
   readRows,
@@ -34,12 +35,8 @@ beforeAll(async () => {
   );
   const { issuer } = (await discovery.json()) as { issuer: string };
   origin = new URL(issuer).origin;
-  const signedIn = await fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin },
-    body: JSON.stringify(OWNER),
-  });
-  expect(signedIn.status).toBe(200);
+  const signedIn = await postSignInForm(server.apiUrl, origin, OWNER);
+  expect(signInOutcome(signedIn)).toBe("signed_in");
   const session = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
     signedIn.headers.get("set-cookie") ?? "",
   )?.[1];

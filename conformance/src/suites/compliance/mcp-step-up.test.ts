@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { everythingOffered, heldOn } from "../../utils/approval-form.js";
 import { checkDeviceCode } from "../../utils/device-check.js";
@@ -95,16 +96,10 @@ async function call(
 /** A new browser session, by password, from an address of its own. */
 async function signIn(): Promise<string> {
   addresses += 1;
-  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin,
-      [CLIENT_HEADER]: `198.51.100.${String(addresses)}`,
-    },
-    body: JSON.stringify(TEST_OWNER),
+  const response = await postSignInForm(server.apiUrl, origin, TEST_OWNER, {
+    [CLIENT_HEADER]: `198.51.100.${String(addresses)}`,
   });
-  expect(response.status).toBe(200);
+  expect(signInOutcome(response)).toBe("signed_in");
   const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
     response.headers.get("set-cookie") ?? "",
   )?.[1];

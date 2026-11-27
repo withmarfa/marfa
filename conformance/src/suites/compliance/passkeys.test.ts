@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rm } from "node:fs/promises";
 import {
@@ -52,6 +53,9 @@ const cookie = (response: Response) =>
     .getSetCookie()
     .map((value) => value.split(";")[0])
     .join("; ");
+function signInForm(credentials: { username: string; password: string }) {
+  return postSignInForm(base, base, credentials);
+}
 function post(path: string, body: unknown, cookies = "") {
   return fetch(base + path, {
     method: "POST",
@@ -135,8 +139,8 @@ beforeAll(async () => {
   expect(
     (await post("/owner", { ...owner, code: setup.body.code })).status,
   ).toBe(201);
-  const login = await post("/auth/sign-in", owner);
-  expect(login.status).toBe(200);
+  const login = await signInForm(owner);
+  expect(signInOutcome(login)).toBe("signed_in");
   ownerCookie = cookie(login);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 afterAll(async () => {
@@ -531,15 +535,12 @@ describe("owner passkeys", () => {
       );
       expect(rejected.status).toBe(401);
     }
-    expect((await post("/auth/sign-in", owner)).status).toBe(200);
+    expect(signInOutcome(await signInForm(owner))).toBe("signed_in");
     for (let i = 0; i < 11; i++)
-      await post("/auth/sign-in", {
-        ...owner,
-        password: "incorrect password",
-      });
-    expect((await post("/auth/sign-in", owner)).status).toBe(429);
+      await signInForm({ ...owner, password: "incorrect password" });
+    expect(signInOutcome(await signInForm(owner))).toBe("too_many_attempts");
     expect((await signIn(first, 3)).status).toBe(200);
-    expect((await post("/auth/sign-in", owner)).status).toBe(429);
+    expect(signInOutcome(await signInForm(owner))).toBe("too_many_attempts");
   });
   it("signs in on an unanswered challenge however many others are asked for, and only once", async () => {
     const device = testAuthenticator();

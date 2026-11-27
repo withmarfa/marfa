@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { everythingOffered } from "../../utils/approval-form.js";
 import {
@@ -146,12 +147,8 @@ describe("the owner", () => {
     // which is where the link points, the check step, the consent screen, an
     // approval of everything the screen offers.
     const origin = new URL(first.verification_uri_complete).origin;
-    const signIn = await fetch(`${origin}/auth/sign-in`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin },
-      body: JSON.stringify(TEST_OWNER),
-    });
-    expect(signIn.status).toBe(200);
+    const signIn = await postSignInForm(origin, origin, TEST_OWNER);
+    expect(signInOutcome(signIn)).toBe("signed_in");
     const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
       signIn.headers.get("set-cookie") ?? "",
     )?.[1];
@@ -245,12 +242,8 @@ describe("the owner", () => {
 
 describe("a fresh sign-in", () => {
   async function ownerCookie(origin: string): Promise<string> {
-    const signIn = await fetch(`${origin}/auth/sign-in`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin },
-      body: JSON.stringify(TEST_OWNER),
-    });
-    expect(signIn.status).toBe(200);
+    const signIn = await postSignInForm(origin, origin, TEST_OWNER);
+    expect(signInOutcome(signIn)).toBe("signed_in");
     const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
       signIn.headers.get("set-cookie") ?? "",
     )?.[1];

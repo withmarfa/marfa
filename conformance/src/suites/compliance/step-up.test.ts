@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -119,16 +120,10 @@ function nextAddress(): string {
 
 /** A new browser session, by password, at the sign-in address `at`. */
 async function signIn(at = origin): Promise<string> {
-  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: at,
-      [CLIENT_HEADER]: nextAddress(),
-    },
-    body: JSON.stringify(TEST_OWNER),
+  const response = await postSignInForm(server.apiUrl, at, TEST_OWNER, {
+    [CLIENT_HEADER]: nextAddress(),
   });
-  expect(response.status).toBe(200);
+  expect(signInOutcome(response)).toBe("signed_in");
   const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
     response.headers.get("set-cookie") ?? "",
   )?.[1];

@@ -1,3 +1,4 @@
+import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { controlRequest } from "../../utils/control-request.js";
 import {
@@ -29,11 +30,7 @@ beforeAll(async () => {
 afterAll(stopFreshServers, FRESH_SERVER_TIMEOUT_MS);
 
 function signIn(): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/sign-in`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: ADDRESS },
-    body: JSON.stringify(TEST_OWNER),
-  });
+  return postSignInForm(server.apiUrl, ADDRESS, TEST_OWNER);
 }
 
 function passkeyList(cookie: string): Promise<Response> {
@@ -43,7 +40,7 @@ function passkeyList(cookie: string): Promise<Response> {
 describe("the owner's session cookie on an HTTPS sign-in address", () => {
   it("is __Host-marfa_session, Secure, on path / and with no Domain", async () => {
     const signedIn = await signIn();
-    expect(signedIn.status, await signedIn.clone().text()).toBe(200);
+    expect(signInOutcome(signedIn)).toBe("signed_in");
     const line = signedIn.headers.get("set-cookie") ?? "";
     expect(line).toMatch(/^__Host-marfa_session=[^;]+;/);
     expect(line).toMatch(/;\s*Secure/i);
@@ -53,7 +50,7 @@ describe("the owner's session cookie on an HTTPS sign-in address", () => {
 
   it("signs no one in when its token comes under the name a plain HTTP address uses", async () => {
     const signedIn = await signIn();
-    expect(signedIn.status).toBe(200);
+    expect(signInOutcome(signedIn)).toBe("signed_in");
     const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0];
     const token = cookie.slice(cookie.indexOf("=") + 1);
     // The witness: the token under its own name is a live session.
