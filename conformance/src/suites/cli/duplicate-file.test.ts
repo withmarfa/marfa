@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest } from "node:http";
 import type { Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -65,9 +65,13 @@ function reply(res: ServerResponse, status: number, body: unknown): void {
 
 /** A server on a local port that forwards every request to `upstream`, and
  *  answers `POST /items/blobs` itself as `lookup` says. */
-async function forwarding(upstream: string, lookup: Lookup): Promise<Server> {
+async function forwarding(
+  upstream: string,
+  lookup: Lookup,
+  record: string[] = seen,
+): Promise<Server> {
   const server = createServer((req, res) => {
-    seen.push(`${req.method ?? ""} ${req.url ?? ""}`);
+    record.push(`${req.method ?? ""} ${req.url ?? ""}`);
     if (lookup !== "pass" && req.url === "/items/blobs") {
       const chunks: Buffer[] = [];
       req.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -272,18 +276,33 @@ describe("adding a file an item already holds", () => {
     const mark = seen.length;
     const outcome = await frontCli.run(["--json", "items", "add", path]);
     expect(outcome.code, outcome.stderr).toBe(0);
-    expect(notes(outcome.stderr)).toEqual([]);
     const answer = JSON.parse(outcome.stdout) as ItemEnvelope & {
       duplicates?: unknown;
     };
     trackItem(c.ctx, answer.item.id);
-    expect(answer.duplicates).toBeUndefined();
     expect(sentSince(mark)).toEqual([
       "POST /items/blobs",
       "POST /blobs",
       "POST /items",
     ]);
     expect(await holders(hash)).toEqual([answer.item.id]);
+
+    // The same path, once an item holds it, produces the warning and duplicates.
+    const again = await frontCli.run(["--json", "items", "add", path]);
+    expect(again.code, again.stderr).toBe(0);
+    const matched = JSON.parse(again.stdout) as ItemEnvelope & {
+      duplicates: { items: { id: string }[] };
+    };
+    trackItem(c.ctx, matched.item.id);
+    expect(notes(again.stderr)).toHaveLength(1);
+    expect(again.stderr).toContain("already in Marfa");
+    expect(matched.duplicates.items.map((item) => item.id)).toContain(
+      answer.item.id,
+    );
+
+    // That was producible, so the first add's silence is the check finding nothing.
+    expect(notes(outcome.stderr)).toEqual([]);
+    expect(answer.duplicates).toBeUndefined();
   });
 
   it("adds a file an item holds where no terminal can be asked, names the match on standard error and carries it under duplicates", async () => {
@@ -428,22 +447,42 @@ describe("adding a file an item already holds", () => {
   });
 
   it("adds under --if-duplicate add without asking which items hold the file", async () => {
-    const { path, hash } = newFile("chosen.txt");
-    const first = await c.cli.json<ItemEnvelope>(["items", "add", path]);
-    trackItem(c.ctx, first.item.id);
-    const mark = seen.length;
-    const outcome = await frontCli.run([
-      "--json",
-      "items",
-      "add",
-      "--if-duplicate",
-      "add",
-      path,
-    ]);
-    expect(outcome.code, outcome.stderr).toBe(0);
-    expect(notes(outcome.stderr)).toEqual([]);
-    expect(sentSince(mark)).toEqual(["POST /blobs", "POST /items"]);
-    expect(await holders(hash)).toHaveLength(2);
+    const recorded: string[] = [];
+    const own = await forwarding(c.apiUrl, "pass", recorded);
+    const posts = (from: number) =>
+      recorded.slice(from).filter((line) => line.startsWith("POST "));
+    try {
+      const cli = c.cli.at(addressOf(own));
+      const { path, hash } = newFile("chosen.txt");
+      // This recorder sees a default run ask before the add run is judged.
+      const witness = await cli.run(["--json", "items", "add", path]);
+      expect(witness.code, witness.stderr).toBe(0);
+      const first = JSON.parse(witness.stdout) as ItemEnvelope;
+      trackItem(c.ctx, first.item.id);
+      expect(posts(0)).toEqual([
+        "POST /items/blobs",
+        "POST /blobs",
+        "POST /items",
+      ]);
+
+      const mark = recorded.length;
+      const outcome = await cli.run([
+        "--json",
+        "items",
+        "add",
+        "--if-duplicate",
+        "add",
+        path,
+      ]);
+      expect(outcome.code, outcome.stderr).toBe(0);
+      expect(notes(outcome.stderr)).toEqual([]);
+      const answer = JSON.parse(outcome.stdout) as ItemEnvelope;
+      trackItem(c.ctx, answer.item.id);
+      expect(posts(mark)).toEqual(["POST /blobs", "POST /items"]);
+      expect(await holders(hash)).toHaveLength(2);
+    } finally {
+      own.close();
+    }
   });
 
   it("adds the file and says the check could not be made when the lookup fails", async () => {
@@ -941,6 +980,71 @@ describe("adding a file an item already holds", () => {
     }
   });
 
+  it("adds redirected standard input from a file without checking it, for ask and skip, and adds it under --if-duplicate add without a warning", async () => {
+    const regular = newFile("regular-before-stdin.txt");
+    const witness = seen.length;
+    const added = await frontCli.json<ItemEnvelope>([
+      "items",
+      "add",
+      regular.path,
+    ]);
+    trackItem(c.ctx, added.item.id);
+    expect(sentSince(witness)).toEqual([
+      "POST /items/blobs",
+      "POST /blobs",
+      "POST /items",
+    ]);
+
+    // Skip of bytes already held must still add: a check would see the match and add nothing.
+    const held = newFile("stdin-held.txt");
+    const seeded = await c.cli.json<ItemEnvelope>([
+      "items",
+      "add",
+      "--if-duplicate",
+      "add",
+      held.path,
+    ]);
+    trackItem(c.ctx, seeded.item.id);
+
+    for (const mode of ["ask", "skip"] as const) {
+      const file = mode === "skip" ? held : newFile(`stdin-${mode}.txt`);
+      const mark = seen.length;
+      const outcome = await frontCli.run(
+        ["--json", "items", "add", "--if-duplicate", mode, "/dev/stdin"],
+        { stdinPath: file.path },
+      );
+      expect(outcome.code, outcome.stderr).toBe(0);
+      const answer = JSON.parse(outcome.stdout) as ItemEnvelope & {
+        added?: boolean;
+        duplicates?: unknown;
+      };
+      trackItem(c.ctx, answer.item.id);
+      expect(answer.duplicates).toBeUndefined();
+      expect(answer.added).toBeUndefined();
+      expect(notes(outcome.stderr)).toHaveLength(1);
+      expect(outcome.stderr).toContain("a stream cannot be checked");
+      expect(sentSince(mark)).toEqual(["POST /blobs", "POST /items"]);
+      expect(await holders(file.hash)).toContain(answer.item.id);
+    }
+    expect(await holders(held.hash)).toHaveLength(2);
+
+    const silent = newFile("stdin-add.txt");
+    const mark = seen.length;
+    const outcome = await frontCli.run(
+      ["--json", "items", "add", "--if-duplicate", "add", "/dev/stdin"],
+      { stdinPath: silent.path },
+    );
+    expect(outcome.code, outcome.stderr).toBe(0);
+    const answer = JSON.parse(outcome.stdout) as ItemEnvelope & {
+      duplicates?: unknown;
+    };
+    trackItem(c.ctx, answer.item.id);
+    expect(answer.duplicates).toBeUndefined();
+    expect(notes(outcome.stderr)).toEqual([]);
+    expect(sentSince(mark)).toEqual(["POST /blobs", "POST /items"]);
+    expect(await holders(silent.hash)).toEqual([answer.item.id]);
+  });
+
   it("prints a file name or an item title that holds a newline or an escape sequence without either", async () => {
     const path = join(dir, `${randomUUID()}-a\nb\u001b[2Jc.txt`);
     const hash = replaceBytes(path, `named ${randomUUID()}`);
@@ -952,6 +1056,8 @@ describe("adding a file an item already holds", () => {
       path,
     ]);
     trackItem(c.ctx, first.item.id);
+    expect(String(first.item.properties.title)).toContain("\n");
+    expect(String(first.item.properties.title)).toContain("\u001b");
     const plain = await c.cli.run(["items", "add", path]);
     expect(plain.code, plain.stderr).toBe(0);
     expect(notes(plain.stderr)).toHaveLength(1);
@@ -978,11 +1084,38 @@ describe("adding a file an item already holds", () => {
   });
 
   it("fails on a file it cannot read, naming the file, before any upload", async () => {
+    const readable = newFile("readable-before-missing.txt");
+    const witness = seen.length;
+    const added = await frontCli.json<ItemEnvelope>([
+      "items",
+      "add",
+      readable.path,
+    ]);
+    trackItem(c.ctx, added.item.id);
+    expect(sentSince(witness)).toEqual([
+      "POST /items/blobs",
+      "POST /blobs",
+      "POST /items",
+    ]);
+
     const missing = join(dir, "never-written.txt");
     const mark = seen.length;
     const outcome = await frontCli.run(["--json", "items", "add", missing]);
     expect(outcome.code).not.toBe(0);
     expect(outcome.stderr).toContain("never-written.txt");
     expect(sentSince(mark)).toEqual([]);
+
+    const folder = join(dir, `not-a-file-${randomUUID()}`);
+    mkdirSync(folder);
+    for (const mode of [undefined, "add"] as const) {
+      const args = ["--json", "items", "add"];
+      if (mode !== undefined) args.push("--if-duplicate", mode);
+      args.push(folder);
+      const at = seen.length;
+      const refused = await frontCli.run(args);
+      expect(refused.code, refused.stderr).not.toBe(0);
+      expect(refused.stderr).toContain("not-a-file-");
+      expect(sentSince(at)).toEqual([]);
+    }
   });
 });

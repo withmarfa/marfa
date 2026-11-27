@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
 import type { TestContext } from "../../client/types.js";
 import { keychainEnv } from "../../utils/keychain.js";
 import { createTestContext } from "../../utils/setup.js";
@@ -151,6 +152,8 @@ export class Cli {
     args: string[],
     options: {
       stdin?: string;
+      /** A file redirected onto standard input. A pipe would not stat as that file. */
+      stdinPath?: string;
       undecodable?: { name: string; text: string };
     } = {},
   ): Promise<Outcome> {
@@ -171,15 +174,27 @@ export class Cli {
               ...this.args(args),
             ],
           ];
+    const stdinFd =
+      options.stdinPath === undefined
+        ? undefined
+        : openSync(options.stdinPath, "r");
     return new Promise((resolve, reject) => {
-      const child = spawn(program, argv, {
-        env: this.env(),
-        stdio: [
-          options.stdin === undefined ? "ignore" : "pipe",
-          "pipe",
-          "pipe",
-        ],
-      });
+      let child: ChildProcess;
+      try {
+        child = spawn(program, argv, {
+          env: this.env(),
+          stdio: [
+            stdinFd ?? (options.stdin === undefined ? "ignore" : "pipe"),
+            "pipe",
+            "pipe",
+          ],
+        });
+      } catch (error) {
+        if (stdinFd !== undefined) closeSync(stdinFd);
+        reject(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      if (stdinFd !== undefined) closeSync(stdinFd);
       let stdout = "";
       let stderr = "";
       child.stdout!.on("data", (chunk: Buffer) => {

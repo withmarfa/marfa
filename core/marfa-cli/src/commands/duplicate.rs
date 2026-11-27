@@ -1,8 +1,8 @@
 //! Duplicate checking before file uploads.
 
 use std::fs::File;
-use std::io::{self, BufRead, IsTerminal, Write};
-use std::path::Path;
+use std::io::{self, BufRead, IsTerminal, Read, Write};
+use std::path::{Component, Path, PathBuf};
 
 use clap::ValueEnum;
 use serde_json::{Value, json};
@@ -134,11 +134,79 @@ fn hash_file(file: &Path) -> Result<String, CliError> {
     hash_read(&mut opened).map_err(|error| named(file, error))
 }
 
-/// A pipe, a device or a fifo can be read once, so a check would consume the upload.
-fn regular_file(file: &Path) -> Result<bool, CliError> {
-    match std::fs::metadata(file) {
-        Ok(meta) => Ok(meta.is_file()),
-        Err(error) => Err(named(file, error)),
+/// Opening a path under `/dev/` shares its offset with that descriptor.
+fn names_descriptor(file: &Path) -> bool {
+    let mut path = lexical(file);
+    for _ in 0..32 {
+        if inside_dev(&path) {
+            return true;
+        }
+        let Ok(target) = std::fs::read_link(&path) else {
+            return false;
+        };
+        let joined = if target.is_absolute() {
+            target
+        } else {
+            path.parent().unwrap_or(Path::new("/")).join(target)
+        };
+        path = lexical(&joined);
+    }
+    inside_dev(&path)
+}
+
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn inside_dev(path: &Path) -> bool {
+    let mut parts = path.components();
+    matches!(parts.next(), Some(Component::RootDir))
+        && matches!(parts.next(), Some(Component::Normal(name)) if name == "dev")
+        && parts.next().is_some()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Source {
+    File,
+    Stream,
+}
+
+/// A directory or a missing file fails here, before any request.
+fn source(file: &Path) -> Result<Source, CliError> {
+    if names_descriptor(file) {
+        return Ok(Source::Stream);
+    }
+    let meta = std::fs::metadata(file).map_err(|error| named(file, error))?;
+    if meta.is_file() {
+        File::open(file).map_err(|error| named(file, error))?;
+        return Ok(Source::File);
+    }
+    if meta.is_dir() {
+        return Err(unreadable(file));
+    }
+    Ok(Source::Stream)
+}
+
+fn unreadable(file: &Path) -> CliError {
+    match File::open(file) {
+        Err(error) => named(file, error),
+        Ok(mut opened) => match opened.read(&mut [0u8; 1]) {
+            Err(error) => named(file, error),
+            Ok(_) => named(
+                file,
+                io::Error::new(io::ErrorKind::InvalidInput, "not a regular file"),
+            ),
+        },
     }
 }
 
@@ -219,15 +287,11 @@ pub fn checked_upload<T>(
     remote: &Remote,
     upload: impl FnOnce() -> Result<(T, String), CliError>,
 ) -> Result<Added<T>, CliError> {
-    if mode == IfDuplicate::Add {
-        let (uploaded, _) = upload()?;
-        return Ok(Added::Uploaded {
-            uploaded,
-            found: None,
-        });
-    }
-    if !regular_file(file)? {
-        warn_stream(file);
+    let source = source(file)?;
+    if mode == IfDuplicate::Add || source == Source::Stream {
+        if source == Source::Stream && mode != IfDuplicate::Add {
+            warn_stream(file);
+        }
         let (uploaded, _) = upload()?;
         return Ok(Added::Uploaded {
             uploaded,
@@ -463,6 +527,7 @@ mod tests {
     }
 
     use crate::door::{Answer, Received, read_request};
+    use std::os::fd::AsRawFd;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -678,6 +743,80 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(stream, Added::Uploaded { found: None, .. }));
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn a_descriptor_opened_from_a_file_is_uploaded_without_a_lookup() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, mode, via_link) in [
+            ("ask", IfDuplicate::Ask, false),
+            ("skip", IfDuplicate::Skip, false),
+            ("add", IfDuplicate::Add, false),
+            ("link", IfDuplicate::Skip, true),
+        ] {
+            let file = dir.path().join(name);
+            let bytes = format!("bytes-{name}");
+            std::fs::write(&file, &bytes).unwrap();
+            let held = File::open(&file).unwrap();
+            let dev = std::path::PathBuf::from(format!("/dev/fd/{}", held.as_raw_fd()));
+            let link = dir.path().join(format!("{name}-link"));
+            if via_link {
+                std::os::unix::fs::symlink(&dev, &link).unwrap();
+            }
+            let target: &Path = if via_link { &link } else { &dev };
+            let asked = Arc::new(Mutex::new(Vec::new()));
+            let seen = asked.clone();
+            let url = serve(1, move |_, received| {
+                seen.lock().unwrap().push(asked_hash(received));
+                holders(received, true)
+            });
+            let remote = Remote::keyed(&url, "k").unwrap();
+            let uploads = AtomicUsize::new(0);
+            let reading = target.to_path_buf();
+            let ran = checked_upload(target, mode, true, &remote, || {
+                uploads.fetch_add(1, Ordering::SeqCst);
+                let mut opened = File::open(&reading).unwrap();
+                let mut got = Vec::new();
+                std::io::Read::read_to_end(&mut opened, &mut got).unwrap();
+                Ok((got, "sha256:unused".into()))
+            });
+            let looked_up = asked.lock().unwrap().clone();
+            if looked_up.is_empty() {
+                let _ = remote.json(&lookup_request(&["sha256:none".into()]));
+            }
+            assert!(
+                matches!(ran, Ok(Added::Uploaded { found: None, ref uploaded }) if uploaded == bytes.as_bytes()),
+                "{name}: {ran:?}"
+            );
+            assert!(looked_up.is_empty(), "{name} looked up a descriptor");
+            assert_eq!(uploads.load(Ordering::SeqCst), 1, "{name}");
+            drop(held);
+        }
+    }
+
+    #[test]
+    fn a_directory_fails_before_the_upload() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let remote = Remote::keyed(&url, "k").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("notes");
+        std::fs::create_dir(&folder).unwrap();
+        for mode in [IfDuplicate::Ask, IfDuplicate::Skip, IfDuplicate::Add] {
+            let uploads = AtomicUsize::new(0);
+            let ran = checked_upload(&folder, mode, true, &remote, || {
+                uploads.fetch_add(1, Ordering::SeqCst);
+                Ok(((), "sha256:h".into()))
+            });
+            let message = ran.expect_err("a directory was added").to_string();
+            assert!(message.contains("notes"), "{mode:?}: {message}");
+            assert_eq!(uploads.load(Ordering::SeqCst), 0, "{mode:?}");
+        }
         assert_eq!(
             listener.accept().unwrap_err().kind(),
             io::ErrorKind::WouldBlock

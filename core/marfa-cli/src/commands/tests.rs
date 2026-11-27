@@ -2518,17 +2518,62 @@ mod dispatch {
 
     #[test]
     fn an_unreadable_file_fails_before_any_request() {
-        let door = Door::open(vec![]);
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("novel.epub");
+        std::fs::write(&file, b"epub bytes").unwrap();
+        let witness = Door::open(upload_and_item());
+        items::run(
+            items::ItemsCommand::Add(items::AddArgs {
+                file,
+                if_duplicate: IfDuplicate::Add,
+                ..Default::default()
+            }),
+            &remote_at(&witness),
+            &QUIET,
+        )
+        .unwrap();
+        assert!(
+            witness
+                .received()
+                .iter()
+                .any(|request| request.path() == "/blobs"),
+            "a readable file's upload was not recorded"
+        );
+
+        let missing = PathBuf::from("/nonexistent/marfa-dup/none.epub");
+        let door = Door::open(vec![Answer::json("200 OK", r#"{"ok":true}"#)]);
         let ran = items::run(
             items::ItemsCommand::Add(items::AddArgs {
-                file: PathBuf::from("/nonexistent/marfa-dup/none.epub"),
+                file: missing,
                 ..Default::default()
             }),
             &remote_at(&door),
             &QUIET,
         );
-        assert!(matches!(ran, Err(CliError::Io(_))));
-        assert!(door.received().is_empty());
+        assert!(matches!(ran, Err(CliError::Io(_))), "{ran:?}");
+        let _ = remote_at(&door).json(&Request::get(&["health"]));
+        let received = door.received();
+        assert_eq!(received.len(), 1, "the missing file sent a request");
+        assert_eq!(received[0].path(), "/health");
+
+        let folder = dir.path().join("a-directory");
+        std::fs::create_dir(&folder).unwrap();
+        let door = Door::open(vec![Answer::json("200 OK", r#"{"ok":true}"#)]);
+        let ran = items::run(
+            items::ItemsCommand::Add(items::AddArgs {
+                file: folder,
+                if_duplicate: IfDuplicate::Add,
+                ..Default::default()
+            }),
+            &remote_at(&door),
+            &QUIET,
+        );
+        let message = ran.expect_err("a directory was added").to_string();
+        assert!(message.contains("a-directory"), "{message}");
+        let _ = remote_at(&door).json(&Request::get(&["health"]));
+        let received = door.received();
+        assert_eq!(received.len(), 1, "the directory sent a request");
+        assert_eq!(received[0].path(), "/health");
     }
 
     #[test]

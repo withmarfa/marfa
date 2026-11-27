@@ -1238,13 +1238,13 @@ When `marfa device changes` is interrupted after it reports that it is watching,
 
 ## Adding a file that Marfa already holds
 
-`items add` and `items attach` hash a regular file, ask `POST /items/blobs` whether an item already holds those bytes, and then upload the path. `--if-duplicate` says what to do when that lookup returns a match: `ask`, the default, `add` or `skip`. A match is by the file's SHA-256 hash alone, among the items the key can read, so the same bytes under another name match and a file of the same name with other bytes does not. The lookup returns at most 20 matching items for a hash and says whether there are more, so the CLI names the items the lookup returned and says when it returned only some. A file that is not a regular file, such as a pipe, is uploaded without that lookup. A file that changes between the check and the upload is still added.
+`items add` and `items attach` hash a regular file, ask `POST /items/blobs` whether an item already holds those bytes, and then upload the path. `--if-duplicate` says what to do when that lookup returns a match: `ask`, the default, `add` or `skip`. A match is by the file's SHA-256 hash alone, among the items the key can read, so the same bytes under another name match and a file of the same name with other bytes does not. The lookup returns at most 20 matching items for a hash and says whether there are more, so the CLI names the items the lookup returned and says when it returned only some. A file that is not a regular file, such as a pipe, is uploaded without that lookup, as is a path that names a descriptor or a device, such as `/dev/stdin`. A file that changes between the check and the upload is still added.
 
 ### `cli/add-file-duplicate-check`
 
-When a person runs `items add` or `items attach` with a regular file and `--if-duplicate` is not `add`, the CLI MUST ask `POST /items/blobs` for the SHA-256 hash of the bytes it read before it uploads that file.
+When a person runs `items add` or `items attach` with a regular file and `--if-duplicate` is not `add`, if the file's path does not name a descriptor or a device, then the CLI MUST ask `POST /items/blobs` for the SHA-256 hash of the bytes it read before it uploads that file.
 
-**Reason:** The CLI can report a match before uploading the file or creating another item. A file that is not a regular file is `cli/add-file-duplicate-stream`.
+**Reason:** The CLI can report a match before uploading the file or creating another item. A file that is not a regular file, and a path that names a descriptor or a device, is `cli/add-file-duplicate-stream`.
 
 **Tests:** `cli/duplicate-file.test.ts › adds a file no item holds without a word, after asking which items hold its hash`, `cli/duplicate-file.test.ts › adds nothing under --if-duplicate skip and reports the item that holds the file, and adds a file no item holds`.
 
@@ -1344,7 +1344,7 @@ Where `--if-duplicate` is `add`, when a person runs `items add` or `items attach
 
 **Reason:** The person chose to add it, so the check has nothing to change.
 
-**Tests:** `cli/duplicate-file.test.ts › adds under --if-duplicate add without asking which items hold the file`, `cli/duplicate-file.test.ts › adds a stream without checking it, and adds one under --if-duplicate add without a warning`.
+**Tests:** `cli/duplicate-file.test.ts › adds under --if-duplicate add without asking which items hold the file`, `cli/duplicate-file.test.ts › adds a stream without checking it, and adds one under --if-duplicate add without a warning`, `› adds redirected standard input from a file without checking it, for ask and skip, and adds it under --if-duplicate add without a warning`.
 
 ### `cli/add-file-duplicate-lookup-failed`
 
@@ -1362,11 +1362,11 @@ If the CLI asks `POST /items/blobs` and the request fails or the answer is not a
 
 ### `cli/add-file-duplicate-stream`
 
-Where `--if-duplicate` is not `add`, when a person runs `items add` or `items attach` with a file that is not a regular file, the CLI MUST add the file without asking `POST /items/blobs` and write one line to standard error that says a stream cannot be checked.
+Where `--if-duplicate` is not `add`, when a person runs `items add` or `items attach` with a file that is not a regular file, or whose path names a descriptor or a device, the CLI MUST add the file without asking `POST /items/blobs` and write one line to standard error that says a stream cannot be checked.
 
-**Reason:** A pipe or a fifo can be read once, so hashing it would consume the upload.
+**Reason:** A pipe, a fifo, or a path under `/dev/` such as `/dev/stdin` can be read once, so hashing it would consume the upload.
 
-**Tests:** `cli/duplicate-file.test.ts › adds a stream without checking it, and adds one under --if-duplicate add without a warning`.
+**Tests:** `cli/duplicate-file.test.ts › adds a stream without checking it, and adds one under --if-duplicate add without a warning`, `› adds redirected standard input from a file without checking it, for ask and skip, and adds it under --if-duplicate add without a warning`.
 
 ### `cli/add-file-duplicate-changed`
 
@@ -1378,13 +1378,13 @@ When an upload answers with a hash other than the hash the CLI asked `POST /item
 
 When a person runs `items add` or `items attach` with a file, the CLI MUST upload that file at most once.
 
-**Tests:** `cli/duplicate-file.test.ts › adds a file no item holds without a word, after asking which items hold its hash`, `cli/duplicate-file.test.ts › adds a file that changes while it is checked, and still adds one whose new bytes are already held`, `cli/duplicate-file.test.ts › adds a stream without checking it, and adds one under --if-duplicate add without a warning`.
+**Tests:** `cli/duplicate-file.test.ts › adds a file no item holds without a word, after asking which items hold its hash`, `cli/duplicate-file.test.ts › adds a file that changes while it is checked, and still adds one whose new bytes are already held`, `cli/duplicate-file.test.ts › adds a stream without checking it, and adds one under --if-duplicate add without a warning`, `› adds redirected standard input from a file without checking it, for ask and skip, and adds it under --if-duplicate add without a warning`.
 
 ### `cli/add-file-duplicate-file-name`
 
-If a file name or an item title the CLI prints holds a control character, then the CLI MUST print each such character as an escape.
+When the CLI prints a file name or an item title without `--json`, if that name or title holds a control character, then the CLI MUST print each such character as an escape.
 
-**Reason:** A file name or a title can hold a newline or an escape sequence that would move the cursor or erase a line of what the person reads.
+**Reason:** A file name or a title can hold a newline or an escape sequence that would move the cursor or erase a line of what the person reads. `--json` carries the title as JSON, unchanged.
 
 **Tests:** `cli/duplicate-file.test.ts › prints a file name or an item title that holds a newline or an escape sequence without either`.
 
