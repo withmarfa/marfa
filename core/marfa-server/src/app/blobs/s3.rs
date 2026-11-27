@@ -156,26 +156,24 @@ fn is_silent(error: &object_store::Error) -> bool {
 /// The error codes an object store answers for one object while it answers other requests.
 const OBJECT_CODES: [&str; 1] = ["InvalidObjectState"];
 
-/// Whether the store's answer to a read names the one object, not the store: its error code is
-/// one of `OBJECT_CODES`. Any other answer, or none, is not.
+/// How `object_store` writes a `403` answer ahead of its body.
+const FORBIDDEN: &str = "non-2xx status code: 403 Forbidden:";
+
+/// Whether the store's answer to a read names the one object, not the store: a `403` whose body's
+/// first error code is one of `OBJECT_CODES`. Any other answer, or none, is not.
 pub fn names_one_object(error: &io::Error) -> bool {
-    let mut cause = error
+    let Some(said) = error
         .get_ref()
         .and_then(|inner| inner.downcast_ref::<object_store::Error>())
-        .and_then(std::error::Error::source);
-    while let Some(error) = cause {
-        let said = error.to_string();
-        if said
-            .split("<Code>")
-            .skip(1)
-            .filter_map(|rest| rest.split_once("</Code>"))
-            .any(|(code, _)| OBJECT_CODES.contains(&code))
-        {
-            return true;
-        }
-        cause = error.source();
-    }
-    false
+        .and_then(std::error::Error::source)
+        .map(ToString::to_string)
+    else {
+        return false;
+    };
+    said.split_once(FORBIDDEN)
+        .and_then(|(_, body)| body.split_once("<Code>"))
+        .and_then(|(_, rest)| rest.split_once("</Code>"))
+        .is_some_and(|(code, _)| OBJECT_CODES.contains(&code))
 }
 
 type Checked<'a> = Option<(&'a mut super::store::Hasher, &'a Hash, u64)>;
@@ -846,6 +844,31 @@ mod tests {
                 .body(HttpResponseBody::from(String::new()))
                 .unwrap())
         }
+    }
+
+    fn answered(said: &str) -> io::Error {
+        io::Error::other(object_store::Error::Generic {
+            store: "S3",
+            source: said.to_string().into(),
+        })
+    }
+
+    #[test]
+    fn names_one_object_takes_only_a_403_whose_first_code_is_invalid_object_state() {
+        let archived = "Server returned non-2xx status code: 403 Forbidden: <?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidObjectState</Code><Message>The operation is not valid for the object's storage class</Message></Error>";
+        assert!(names_one_object(&answered(archived)));
+        assert!(!names_one_object(&answered(
+            "Server returned non-2xx status code: 403 Forbidden: the object is in InvalidObjectState"
+        )));
+        assert!(!names_one_object(&answered(
+            "Server returned non-2xx status code: 403 Forbidden: <Error><Code>AccessDenied</Code><Message><Code>InvalidObjectState</Code></Message></Error>"
+        )));
+        assert!(!names_one_object(&answered(
+            "Server returned non-2xx status code: 400 Bad Request: <Error><Code>InvalidObjectState</Code></Error>"
+        )));
+        assert!(!names_one_object(&io::Error::other(
+            "<Code>InvalidObjectState</Code>"
+        )));
     }
 
     fn settings(endpoint: &str, path_style: bool) -> ObjectStoreSettings {
