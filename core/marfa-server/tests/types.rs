@@ -660,6 +660,48 @@ async fn a_definition_an_unreadable_fault_names_is_refused_to_a_read_and_replace
 }
 
 #[tokio::test]
+async fn repairing_an_unreadable_type_that_has_an_icon_answers_the_revision_a_read_gives() {
+    let instance = Instance::start().await;
+    instance.register(simple("acme.damaged")).await;
+    let iconed = instance
+        .local(
+            Method::PUT,
+            "/types/acme.damaged/icon",
+            Some(json!({ "icon": "lucide:star" })),
+        )
+        .await;
+    assert_eq!(iconed.status, StatusCode::OK, "{}", iconed.body);
+    instance
+        .app
+        .faults
+        .set("unreadable:type-definition", Some("acme.damaged"))
+        .unwrap();
+
+    let repaired = instance
+        .local(
+            Method::PUT,
+            "/types/acme.damaged",
+            Some(simple("acme.damaged")),
+        )
+        .await;
+    assert_eq!(repaired.status, StatusCode::OK, "{}", repaired.body);
+
+    instance.app.faults.clear(None);
+    let read = instance
+        .local(Method::GET, "/types/acme.damaged", None)
+        .await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+    assert_eq!(read.body["revision"], repaired.body["revision"]);
+
+    let mut again = simple("acme.damaged");
+    again["revision"] = repaired.body["revision"].clone();
+    let sent_back = instance
+        .local(Method::PUT, "/types/acme.damaged", Some(again))
+        .await;
+    assert_eq!(sent_back.status, StatusCode::OK, "{}", sent_back.body);
+}
+
+#[tokio::test]
 async fn a_stored_definition_the_program_cannot_read_is_kept_and_does_not_stop_the_start() {
     let instance = Instance::start().await;
     instance.register(simple("acme.fine")).await;

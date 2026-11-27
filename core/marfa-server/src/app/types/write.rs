@@ -16,7 +16,7 @@ use super::{
 };
 use crate::app::App;
 use crate::app::access::{Axis, Caller, Door, Level, Permission, SchemaKind};
-use crate::app::catalog::{self, Catalog, Origin, Provenance, Snapshot};
+use crate::app::catalog::{self, Catalog, Origin, Snapshot};
 use crate::app::instance;
 use crate::app::items;
 use crate::app::oauth::scope::Registries;
@@ -135,16 +135,10 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             items::drop_tombstones(unit.tx(), &id)?;
             items::reindex_changed(unit.tx(), &catalog.rules, &after.rules)?;
             unit.audit("type", &id, None)?;
-            let held = Provenance {
-                origin: Origin::Registered,
-                created_by: Some(creator),
-            };
-            let next = catalog.types.with(schema.clone());
             Ok(revised(
-                presented(schema, Some(&held), &next),
-                &next,
+                presented(schema, after.provenance.get(&id), &after.types),
+                &after,
                 &id,
-                Some(&held),
             ))
         })
         .await?;
@@ -372,18 +366,18 @@ async fn replacing(
                 instance::raise_reach(unit.tx())?;
             }
             store(unit.tx(), &id, &schema, &unit.at)?;
-            let next = catalog.types.with(schema);
             let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, &family)?;
             tables::rekey_types(unit.tx(), &catalog, &after, &family, &unit.at)?;
             items::relink_changed(unit.tx(), &catalog, &after, std::slice::from_ref(&id))?;
             items::reindex_changed(unit.tx(), &catalog.rules, &after.rules)?;
             unit.audit("type", &id, None)?;
-            let shown = next
+            let shown = after
+                .types
                 .owned(&id)
                 .ok_or_else(|| Refusal::internal("a replaced type is not in its registry"))?;
-            let held = catalog.provenance.get(&id);
-            Ok(revised(presented(shown, held, &next), &next, &id, held))
+            let held = after.provenance.get(&id);
+            Ok(revised(presented(shown, held, &after.types), &after, &id))
         })
         .await?;
     app.publish_catalog().await;
@@ -709,16 +703,15 @@ async fn change_icon(
             )?;
             catalog::raise(unit.tx())?;
             unit.audit("type", &id, None)?;
-            let registry = catalog.types.with_icon(&id, icon.as_deref());
-            let resolved = resolve(&registry, &id, false)
+            let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
+            let resolved = resolve(&after.types, &id, false)
                 .map_err(|fault| chain_refusal(&fault))?
                 .ok_or_else(|| not_found(&id))?;
-            let held = catalog.provenance.get(&id);
+            let held = after.provenance.get(&id);
             Ok(revised(
-                presented(resolved, held, &registry),
-                &registry,
+                presented(resolved, held, &after.types),
+                &after,
                 &id,
-                held,
             ))
         })
         .await?;
@@ -1189,6 +1182,7 @@ pub fn write_install(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::catalog::Provenance;
 
     #[test]
     fn a_set_of_types_is_deleted_children_before_parents() {

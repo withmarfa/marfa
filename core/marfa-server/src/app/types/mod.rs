@@ -12,8 +12,8 @@ pub use write::{Merge, change, clear_icon, delete, register, replace, set_icon};
 
 use marfa_rules::grammar;
 use marfa_rules::schema::{
-    ChainFault, Issue, Obj, Registry, SchemaVerdict, ancestor_guidance, invalid_id_message,
-    plural_of, resolve,
+    ChainFault, Issue, Obj, Registry, SchemaVerdict, ancestor_guidance, chain, invalid_id_message,
+    plural_of,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -103,8 +103,8 @@ fn presented(mut schema: Obj, held: Option<&Provenance>, registry: &Registry) ->
     Value::Object(schema)
 }
 
-/// Hex SHA-256 of `shown` with keys in sorted order, so equal content has one digest.
-fn digest(shown: &Value) -> String {
+/// Hex SHA-256 of `stored` with keys in sorted order, so equal content has one digest.
+fn digest(stored: &Value) -> String {
     fn write(value: &Value, out: &mut String) {
         match value {
             Value::Object(members) => {
@@ -137,28 +137,34 @@ fn digest(shown: &Value) -> String {
         }
     }
     let mut text = String::new();
-    write(shown, &mut text);
-    Sha256::digest(text.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    write(stored, &mut text);
+    hex::encode(Sha256::digest(text.as_bytes()))
 }
 
-/// The `revision` of type `id` in `registry`: the digest of what `GET /types/{id}` answers for it.
-/// `None` when the type does not read.
+/// The `revision` of type `id` in `registry`: the digest of what is stored, never of a presented form.
+/// That is the chain from root to leaf as stored, each row with its owner icon, and the type's provenance.
+/// `None` when the type is absent or its chain does not resolve.
 pub(crate) fn revision_of(
     registry: &Registry,
     id: &str,
     held: Option<&Provenance>,
 ) -> Option<String> {
-    let resolved = resolve(registry, id, false).ok()??;
-    Some(digest(&presented(resolved, held, registry)))
+    let stored = chain(registry, id).ok()?;
+    if stored.is_empty() {
+        return None;
+    }
+    Some(digest(&json!({
+        "chain": stored,
+        "provenance": provenance_json(held),
+    })))
 }
 
-/// `answer`, a type as a route presents it, carrying the `revision` of type `id` in `registry`.
-fn revised(mut answer: Value, registry: &Registry, id: &str, held: Option<&Provenance>) -> Value {
-    if let (Value::Object(members), Some(revision)) = (&mut answer, revision_of(registry, id, held))
-    {
+/// `answer`, a type as a route presents it, carrying the `revision` of type `id` in `catalog`.
+fn revised(mut answer: Value, catalog: &Catalog, id: &str) -> Value {
+    if let (Value::Object(members), Some(revision)) = (
+        &mut answer,
+        revision_of(&catalog.types, id, catalog.provenance.get(id)),
+    ) {
         members.insert("revision".into(), Value::String(revision));
     }
     answer
@@ -190,5 +196,34 @@ mod tests {
         assert_eq!(first, again);
         assert_ne!(first, iconed);
         assert_eq!(revision_of(&registry(None), "acme.absent", None), None);
+    }
+
+    #[test]
+    fn a_revision_covers_what_a_read_folds_away() {
+        let row = |value: Value| value.as_object().cloned().unwrap_or_default();
+        let parent = row(json!({
+            "id": "acme.parent", "roles": ["container"], "fields": { "s": { "type": "string" } }
+        }));
+        let restating = row(json!({
+            "id": "acme.child", "parent": "acme.parent", "roles": ["container"],
+            "fields": { "s": { "type": "string" } }
+        }));
+        let bare = row(json!({ "id": "acme.child", "parent": "acme.parent", "fields": {} }));
+        let held = Provenance {
+            origin: crate::app::catalog::Origin::Registered,
+            created_by: None,
+        };
+        let before = revision_of(
+            &Registry::new(vec![parent.clone(), restating]),
+            "acme.child",
+            Some(&held),
+        );
+        let after = revision_of(
+            &Registry::new(vec![parent, bare]),
+            "acme.child",
+            Some(&held),
+        );
+        assert!(before.is_some() && after.is_some());
+        assert_ne!(before, after);
     }
 }

@@ -84,12 +84,7 @@ pub async fn get(app: &App, id: String) -> Result<Value> {
             match resolve(&catalog.types, &id, false) {
                 Ok(Some(schema)) => {
                     let shown = presented(schema, catalog.provenance.get(&id), &catalog.types);
-                    Ok(revised(
-                        shown,
-                        &catalog.types,
-                        &id,
-                        catalog.provenance.get(&id),
-                    ))
+                    Ok(revised(shown, &catalog, &id))
                 }
                 Ok(None) => Err(Refusal::new(
                     Code::TypeNotFound,

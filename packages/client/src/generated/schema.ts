@@ -5347,7 +5347,7 @@ export interface components {
             provenance: components["schemas"]["TypeProvenance"] & unknown;
             /** @description The guidance of the types above this one, nearest first. Present only where one of them carries some. The type's own guidance is `guidance`. */
             ancestor_guidance?: components["schemas"]["TypeGuidance"][];
-            /** @description What the type reads as now, as an opaque string. It changes with the definition, the owner's icon, the provenance or anything inherited. Send it as `revision` on `PUT` or `DELETE /types/{id}` to refuse a stale write. */
+            /** @description An opaque string for what is stored for the type: its definition, owner's icon, provenance, and its ancestors' definitions and icons. Send it as `revision` on `PUT` or `DELETE /types/{id}` to refuse a stale write. */
             revision: string;
         };
         /** @description One type's guidance, as read for a type below it. */

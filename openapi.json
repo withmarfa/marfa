@@ -5185,7 +5185,7 @@
               },
               "revision": {
                 "type": "string",
-                "description": "What the type reads as now, as an opaque string. It changes with the definition, the owner's icon, the provenance or anything inherited. Send it as `revision` on `PUT` or `DELETE /types/{id}` to refuse a stale write."
+                "description": "An opaque string for what is stored for the type: its definition, owner's icon, provenance, and its ancestors' definitions and icons. Send it as `revision` on `PUT` or `DELETE /types/{id}` to refuse a stale write."
               }
             },
             "required": [
