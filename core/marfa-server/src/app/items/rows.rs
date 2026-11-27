@@ -859,8 +859,7 @@ pub(super) fn active_tags(tx: &Transaction<'_>) -> Result<Vec<(String, String, S
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// One statement for every key a request looks up, so each key costs one run of it:
-/// the key is `?1`, and the reach and limit after it are bound once.
+/// Parameter 1 changes per lookup. The reach and limit stay bound for the request.
 struct Lookup<'tx> {
     statement: Statement<'tx>,
 }
@@ -961,7 +960,6 @@ impl<'tx> Holders<'tx> {
 
 fn holders_sql(reach: &Reach, limit: i64) -> Sql {
     // CROSS JOIN keeps SQLite from walking `items` in id order instead of seeking the hash.
-    // The type list keeps the seek to the types within reach, so holders outside it cost nothing.
     let mut sql = Sql::new(
         "SELECT i.seq, i.id, i.type FROM blob_references r \
          CROSS JOIN items i ON i.seq = r.seq \
@@ -1227,7 +1225,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_holder_outside_the_reach_costs_the_lookup_nothing() {
+    fn blob_lookup_uses_the_item_type_index() {
         let mut conn = Connection::open_in_memory().unwrap();
         crate::db::migrate::make_all(&conn).unwrap();
         conn.pragma_update(None, "foreign_keys", false).unwrap();

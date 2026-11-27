@@ -888,7 +888,7 @@ When a key sends `POST /items/titles`, the server MUST read an item's title from
 
 When a key sends `POST /items/titles`, the server MUST leave out every item that the key could not list through `GET /items` in any state.
 
-**Reason:** a name looked up must not tell a key that an item exists which it may not list. A connector key lists its own items of a type its mapping targets (`plugins/reach-list-own`), and of a type its mapping targeted before while a rewrite is open (`plugins/reach-former-read`), so it finds those items by title too, and never the owner's.
+**Reason:** a title lookup reveals only items the key can list. A connector mapping gives the key access to its own source on the current target type (`plugins/reach-list-own`) and on a former target type during its rewrite (`plugins/reach-former-read`).
 
 **Tests:** `compliance/item-titles.test.ts › leaves out an item whose type the key may not read, and refuses a key that reads no type`, `compliance/connector-reach.test.ts › finds its own items of the mapped type by bytes and by title and none of the owner's, and on the former target type only while a rewrite is open`.
 
@@ -930,7 +930,7 @@ When a key sends `POST /items/blobs` with `hashes`, the server MUST answer `200`
 
 When a key sends `POST /items/blobs`, the server MUST decide whether an item holds a hash by its `blob_ref` property alone, whatever its other properties name.
 
-**Reason:** only an item whose file is the bytes holds them; an item that names the hash in its text points at a file and is not one, and an item whose file is the bytes holds them whatever its text says.
+**Reason:** an item can mention a file's hash in its text without holding the file.
 
 **Tests:** `compliance/item-blobs.test.ts › leaves out an item that names the hash in another property`, `› finds an item by its blob_ref when another of its properties also names the hash`.
 
@@ -946,7 +946,7 @@ When a key sends `POST /items/blobs`, the server MUST read an item's `title` fro
 
 When a key sends `POST /items/blobs`, the server MUST leave out every item that the key could not list through `GET /items` in any state.
 
-**Reason:** knowing a file's bytes must not tell a key that an item holding them exists which it may not list. A connector key lists its own items of a type its mapping targets (`plugins/reach-list-own`), and of a type its mapping targeted before while a rewrite is open (`plugins/reach-former-read`), so it finds those items by their bytes too, and never the owner's.
+**Reason:** knowing a file's bytes reveals only holders the key can list. The same connector mapping rules apply as for a title lookup (`items/titles-scope`).
 
 **Tests:** `compliance/item-blobs.test.ts › leaves out an item whose type the key may not read, and refuses a key that reads no type`, `compliance/connector-reach.test.ts › finds its own items of the mapped type by bytes and by title and none of the owner's, and on the former target type only while a rewrite is open`.
 

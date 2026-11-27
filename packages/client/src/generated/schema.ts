@@ -13910,7 +13910,7 @@ export interface operations {
                             hash: string;
                             /** @description Up to 20 matching items, sorted by ID. */
                             items: components["schemas"]["BlobHolder"][];
-                            /** @description `true` if another item you can list follows the 20 returned. */
+                            /** @description `true` if more than 20 matching items are visible to you. */
                             more: boolean;
                         }[];
                     };

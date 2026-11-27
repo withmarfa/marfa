@@ -22560,7 +22560,7 @@
                           },
                           "more": {
                             "type": "boolean",
-                            "description": "`true` if another item you can list follows the 20 returned."
+                            "description": "`true` if more than 20 matching items are visible to you."
                           }
                         },
                         "required": [
