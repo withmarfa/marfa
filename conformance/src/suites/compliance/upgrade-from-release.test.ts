@@ -416,12 +416,13 @@ describe("starting on a database an earlier release wrote", () => {
         // The one difference in what the type holds is the origin "user", named
         // "registered" since v0.0.91. A shipped parent may have gained fields,
         // so the fields are read as a superset. The read also carries two
-        // members v0.0.90 did not have: `ancestor_guidance` and
+        // members v0.0.90 did not have: `ancestor_guidance`, `revision` and
         // `provenance.plugin`, which is null for a type the owner registered.
         expect(type.data).toEqual({
           ...TYPE,
           fields: expect.objectContaining(TYPE.fields),
           ancestor_guidance: expect.any(Array),
+          revision: expect.stringMatching(/^[0-9a-f]{64}$/),
           provenance: {
             ...TYPE.provenance,
             origin: "registered",

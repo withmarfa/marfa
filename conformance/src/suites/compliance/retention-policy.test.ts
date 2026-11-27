@@ -106,6 +106,7 @@ describe("a type's retention policy", () => {
 
     const refused = await client.replaceType(child.id, {
       ...read.data,
+      revision: replaced.data.revision,
       retention_policy: { feed_days: 0 },
     });
     expect(refused.status).toBe(400);

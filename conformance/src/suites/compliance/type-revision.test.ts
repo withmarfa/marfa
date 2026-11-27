@@ -219,4 +219,66 @@ describe("a type's revision", () => {
     expect(deleted.status, JSON.stringify(deleted.error)).toBe(200);
     expect((await client.getType(id)).status).toBe(404);
   });
+
+  it("goes stale when a write removes only what the resolved type folds away, so a stale write cannot revert it", async () => {
+    const parent = await register();
+    const parentRead = await client.replaceType(parent, {
+      id: parent,
+      roles: ["container"],
+      fields: { s: { type: "string" } },
+    });
+    expect(parentRead.status, JSON.stringify(parentRead.error)).toBe(200);
+    const child = `user.revision-${ctx.runId}-folded`;
+    const made = await client.registerType({
+      id: child,
+      parent,
+      roles: ["container"],
+      fields: { s: { type: "string" } },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackType(ctx, child, client, parent);
+    const r0 = await revisionOf(child);
+
+    const dropped = await client.replaceType(child, {
+      id: child,
+      parent,
+      fields: {},
+      revision: r0,
+    });
+    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+    const listed = await client.listTypes();
+    expect(listed.data.data.find((held) => held.id === child)?.own_roles).toEqual(
+      [],
+    );
+    expect(dropped.data.revision).not.toBe(r0);
+    expect(await revisionOf(child)).toBe(dropped.data.revision);
+
+    const stale = await client.replaceType(child, {
+      id: child,
+      parent,
+      roles: ["container"],
+      fields: { s: { type: "string" } },
+      revision: r0,
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.error?.error.code).toBe("version_conflict");
+    const listedAfter = await client.listTypes();
+    expect(
+      listedAfter.data.data.find((held) => held.id === child)?.own_roles,
+    ).toEqual([]);
+  });
+
+  it("is the same after a type is deleted and registered again with the same content by the same credential", async () => {
+    const id = await register();
+    const before = await revisionOf(id);
+    const deleted = await client.deleteType(id, false, before);
+    expect(deleted.status, JSON.stringify(deleted.error)).toBe(200);
+    const again = await client.registerType({
+      id,
+      fields: { heading: { type: "string" } },
+    });
+    expect(again.status, JSON.stringify(again.error)).toBe(201);
+    expect(again.data.revision).toBe(before);
+    expect(await revisionOf(id)).toBe(before);
+  });
 });
