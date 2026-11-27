@@ -210,7 +210,10 @@ pub enum FoldersCommand {
     /// the program wrote; `--discard` puts such a file back too, in place of
     /// deleting it. One whose record Marfa could not read is deleted only
     /// while it holds the bytes Marfa set aside, and is listed still where it
-    /// holds anything else. With `--discard`, a watch holding the
+    /// holds anything else. A file kept outside this folder, which a take-in
+    /// from another folder left there, is listed with the path it came from
+    /// and never changed: `--discard` leaves it, and it stays listed until
+    /// `folders remove`. With `--discard`, a watch holding the
     /// directory lets it go while this runs, and this is refused if the process
     /// holding the directory does not let it go within 10 seconds.
     Kept {
@@ -990,8 +993,13 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
     }
     let folder = working(dir, None)?;
     let files = folder.kept_files()?;
-    let going: Vec<String> = files.iter().map(|file| file.path.clone()).collect();
-    let agreed = going.is_empty() || yes || asks_to_discard(dir, &going)?;
+    let going: Vec<String> = files
+        .iter()
+        .filter(|file| file.in_folder())
+        .map(|file| file.path.clone())
+        .collect();
+    let agreed =
+        going.is_empty() || yes || asks_to_discard(dir, &going, files.len() - going.len())?;
     let done = if agreed {
         folder.discard_kept()?
     } else {
@@ -1023,8 +1031,9 @@ fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError
             if agreed {
                 lines.extend(done.kept.iter().map(|file| {
                     format!(
-                        "{} is still kept: Marfa could not reach it",
-                        printable(&file.path)
+                        "{} is still kept: {}",
+                        printable(&file.path),
+                        printable(&file.reason)
                     )
                 }));
             }
@@ -1423,7 +1432,7 @@ fn describe_kept(files: &[marfa_core::KeptFile]) -> String {
         return "no kept files".into();
     }
     let mut lines = vec![format!(
-        "{} kept file(s), which `folders kept --discard` deletes",
+        "{} kept file(s); `folders kept --discard` deletes each one in this folder that is unchanged since Marfa set it aside",
         files.len()
     )];
     lines.extend(
@@ -1435,17 +1444,23 @@ fn describe_kept(files: &[marfa_core::KeptFile]) -> String {
 }
 
 /// Asks at a terminal; the caller has already made sure there is one.
-fn asks_to_discard(dir: &Path, going: &[String]) -> Result<bool, CliError> {
+fn asks_to_discard(dir: &Path, going: &[String], outside: usize) -> Result<bool, CliError> {
     use std::io::{BufRead, Write};
     let mut question = crate::output::stderr();
     writeln!(
         question,
-        "{} kept file(s) in {} would be deleted. A file a program wrote to goes back to its path instead, or is kept where Marfa could not read its record:",
+        "{} kept file(s) in {} would be deleted. A file a program wrote to goes back to its path instead, and one whose record Marfa could not read is deleted only while it holds the bytes Marfa set aside:",
         going.len(),
         dir.display()
     )?;
     for path in going {
         writeln!(question, "  {}", printable(path))?;
+    }
+    if outside > 0 {
+        writeln!(
+            question,
+            "{outside} kept file(s) outside this folder are left as they are."
+        )?;
     }
     write!(question, "Delete them? [y/N] ")?;
     question.flush()?;

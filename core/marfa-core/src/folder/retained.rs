@@ -32,6 +32,14 @@ pub struct KeptFile {
     pub reason: String,
 }
 
+impl KeptFile {
+    /// Whether the file is in the folder. A file a record keeps outside it
+    /// is listed, and Marfa never changes it.
+    pub fn in_folder(&self) -> bool {
+        state::in_folder(&self.path)
+    }
+}
+
 /// What discarding the kept files did.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct KeptDiscarded {
