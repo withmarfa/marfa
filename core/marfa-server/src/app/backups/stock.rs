@@ -146,7 +146,8 @@ enum Found {
 }
 
 /// Reads the part `sha256` in the destination whole and hashes it, answering what it found and
-/// how many bytes it read. A read that fails is the part's where the backup folder still answers.
+/// how many bytes it read. A read that fails is the part's where the backup folder still answers
+/// or the object store's error names that one object.
 async fn hashed(
     app: &App,
     destination: &Destination,
@@ -339,8 +340,8 @@ impl Stock {
     /// Whether the destination holds the part `sha256` whole at `size` bytes. A part listed with
     /// the tag recorded for it is taken as whole unless this run owes it a hash, and one listed
     /// with the tag it was found damaged with as damaged; any other is hashed. A part there at
-    /// another size, that a hash shows altered, or that a backup folder cannot give is recorded
-    /// as damaged; one not there is not.
+    /// another size, that a hash shows altered, or that a backup folder or an object store, by an
+    /// error naming that one object, cannot give is recorded as damaged; one not there is not.
     async fn check(
         &mut self,
         app: &App,

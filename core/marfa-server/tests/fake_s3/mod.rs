@@ -599,7 +599,6 @@ impl FakeS3 {
         self.held.lock().unwrap().replaced = Some((key.to_string(), object));
     }
 
-    /// Puts bytes at `key` with no metadata, as a write the server did not make.
     /// Answers every `GET` of `key` with `status` and the error `code`, as a store does for an
     /// object it cannot give.
     pub fn fail_gets(&self, key: &str, status: StatusCode, code: &str) {
@@ -610,6 +609,7 @@ impl FakeS3 {
             .push((key.to_string(), status, code.to_string()));
     }
 
+    /// Puts bytes at `key` with no metadata, as a write the server did not make.
     pub fn put_object(&self, key: &str, bytes: &[u8]) {
         let held = &mut *self.held.lock().unwrap();
         let object = held.written(bytes.to_vec(), Vec::new());
