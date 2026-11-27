@@ -83,8 +83,10 @@ pub enum FoldersCommand {
     /// remain. Refused while writes wait, except for a first sync still
     /// waiting to be confirmed, which this cancels, and except where another
     /// Marfa instance answers at the folder's server, which none of them can
-    /// reach: the command then names each file holding a change the folder
-    /// could not send, and how to send the changes there. Follows no symbolic
+    /// reach, or the directory's store holds a record that names a file
+    /// outside it, which no push may run past: the command then names each
+    /// file holding a change the folder could not send, and how to send the
+    /// changes. Follows no symbolic
     /// link, and takes a path through one only where it is the path
     /// `folders list` shows. Where that path is gone, passes through a link,
     /// or holds state the registry does not show to be the directory's own, the
@@ -2088,7 +2090,11 @@ fn removed_said(dir: &Path, folder: &str, unsent: &marfa_core::folder::UnsentCha
     if unsent.writes == 0 && unsent.files.is_empty() {
         return removed;
     }
-    let cause = "another Marfa instance answers at the folder's server";
+    let cause = if unsent.outside_records {
+        "its store holds records that name files outside it, so no push could run"
+    } else {
+        "another Marfa instance answers at the folder's server"
+    };
     let mut said = vec![removed];
     said.push(match (unsent.writes, unsent.files.is_empty()) {
         (0, _) => format!("{cause}, and these files hold changes this folder could not send to it:"),
@@ -2122,6 +2128,25 @@ fn removed_said(dir: &Path, folder: &str, unsent: &marfa_core::folder::UnsentCha
         said.push(line);
     }
     let word = crate::hint::shell_word(&shown.to_string());
+    if unsent.outside_records {
+        said.extend([
+            format!(
+                "The changes to changed, new and moved files stay in the files in {shown}, but a \
+                 deletion or a move is in no file. To send them:"
+            ),
+            format!(
+                "  1. Run `marfa folders add {word} --folder {folder}`; its first sync reads the \
+                 files as they are."
+            ),
+            "  2. Delete each deleted file again and move each moved file again from where it was."
+                .to_string(),
+            format!(
+                "  3. Run `marfa folders push {word}`, and again until `marfa folders status {word}` \
+                 shows nothing waiting."
+            ),
+        ]);
+        return said.join("\n");
+    }
     said.extend([
         format!(
             "The changes to changed, new and moved files stay in the files in {shown}, but a \
@@ -2602,6 +2627,36 @@ impl Conflicts {
 #[cfg(test)]
 mod tests {
     use super::ForgetOutcome;
+
+    #[test]
+    fn a_removal_past_an_outside_record_names_its_cause_and_no_other_instance() {
+        use marfa_core::folder::{UnsentChange, UnsentChanges, UnsentFile};
+        let mut unsent = UnsentChanges {
+            writes: 1,
+            files: vec![UnsentFile {
+                change: UnsentChange::Changed,
+                path: Some("Notes/Plan.md".into()),
+                from: None,
+                item: None,
+            }],
+            outside_records: true,
+        };
+        let said = super::removed_said(std::path::Path::new("/notes"), "folder", &unsent);
+        assert!(
+            said.contains("records that name files outside it"),
+            "{said}"
+        );
+        assert!(said.contains("  changed  Notes/Plan.md"), "{said}");
+        assert!(
+            said.contains("marfa folders add /notes --folder folder"),
+            "{said}"
+        );
+        assert!(!said.contains("instance"), "{said}");
+        // The witness: the same changes past another instance name it.
+        unsent.outside_records = false;
+        let said = super::removed_said(std::path::Path::new("/notes"), "folder", &unsent);
+        assert!(said.contains("another Marfa instance answers"), "{said}");
+    }
 
     fn shown_listed(listed: bool) -> marfa_core::Remembered {
         marfa_core::Remembered {

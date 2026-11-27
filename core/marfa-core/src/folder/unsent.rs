@@ -22,6 +22,10 @@ pub enum UnsentChange {
 pub struct UnsentChanges {
     pub writes: usize,
     pub files: Vec<UnsentFile>,
+    /// Whether they went unsent because the store held a record that names
+    /// a place outside the folder, past which no push may run.
+    #[serde(skip)]
+    pub outside_records: bool,
 }
 
 /// A file whose change the folder's server never received.

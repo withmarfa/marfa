@@ -353,7 +353,8 @@ pub struct FolderRemoval {
     /// `Folders.add` takes to follow that folder again.
     pub folder: Option<String>,
     /// Writes that waited unsent, because another Marfa instance answers at
-    /// the folder's server.
+    /// the folder's server or its store holds a record that names a file
+    /// outside it.
     pub unsent: u64,
     /// The files that hold changes the folder could not send.
     pub files: Vec<UnsentFile>,
@@ -909,8 +910,9 @@ guarded! {
         /// its files stay. Refused while writes wait, except for a first sync
         /// still waiting to be confirmed, which this cancels, and except where
         /// another Marfa instance answers at the folder's server, which none of
-        /// them can reach; the answer then names each file holding a change the
-        /// folder could not send. Follows no symbolic
+        /// them can reach, or its store holds a record that names a file
+        /// outside it, which no push may run past; the answer then names each
+        /// file holding a change the folder could not send. Follows no symbolic
         /// link, and takes a path through one only where it is the path the
         /// registry lists. Where that path is
         /// gone, passes through a link, or holds state the registry does not

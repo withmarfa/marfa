@@ -68,8 +68,9 @@ fn added_of(added: &marfa_core::Folder) -> AddedFolder {
     }
 }
 /// What `remove` did: the folder's state went, or only its registry entry,
-/// for `reason`. Where another instance answers at the folder's server,
-/// `unsent` writes waited, and `files` hold changes the folder could not send.
+/// for `reason`. Where another instance answers at the folder's server, or
+/// its store holds a record that names a file outside it, `unsent` writes
+/// waited, and `files` hold changes the folder could not send.
 #[napi(object)]
 pub struct FolderRemoval {
     pub dir: String,

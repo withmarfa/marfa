@@ -782,7 +782,8 @@ impl Folder {
     }
 
     /// Leaves the folder's files; refused while writes wait, unless the first
-    /// sync still waits to be confirmed, or another instance answered at its
+    /// sync still waits to be confirmed, its store holds a record outside it,
+    /// which no push may run past, or another instance answered at its
     /// server, which no write from it can reach, and its server does not now
     /// answer as the copy's own instance. Answers the writes that waited
     /// unsent there, and the files that hold changes the server never received.
@@ -797,10 +798,12 @@ impl Folder {
                 .filter(state::unsent)
                 .collect()
         };
-        let unsent = if self.another_instance_answers()? {
+        let outside_records = !state::outside_records(&*self.core.conn()?)?.is_empty();
+        let unsent = if outside_records || self.another_instance_answers()? {
             UnsentChanges {
                 writes: waiting.len(),
                 files: self.unsent_files(&waiting)?,
+                outside_records,
             }
         } else if waiting.is_empty() {
             UnsentChanges::default()
