@@ -141,18 +141,26 @@ fn digest(stored: &Value) -> String {
     hex::encode(Sha256::digest(text.as_bytes()))
 }
 
-/// The `revision` of type `id` in `registry`: the digest of what is stored, never of a presented form.
-/// That is the chain from root to leaf as stored, each row with its owner icon, and the type's provenance.
-/// `None` when the type is absent or its chain does not resolve.
+/// Digest of each stored row root to leaf, its owner icon apart, and the type's provenance; `None` where the chain does not resolve.
 pub(crate) fn revision_of(
     registry: &Registry,
     id: &str,
     held: Option<&Provenance>,
 ) -> Option<String> {
-    let stored = chain(registry, id).ok()?;
-    if stored.is_empty() {
+    let rows = chain(registry, id).ok()?;
+    if rows.is_empty() {
         return None;
     }
+    let stored: Vec<Value> = rows
+        .iter()
+        .filter_map(|row| row.get("id").and_then(Value::as_str))
+        .map(|at| {
+            json!({
+                "definition": registry.get(at),
+                "owner_icon": registry.icon_of(at),
+            })
+        })
+        .collect();
     Some(digest(&json!({
         "chain": stored,
         "provenance": provenance_json(held),
@@ -196,6 +204,36 @@ mod tests {
         assert_eq!(first, again);
         assert_ne!(first, iconed);
         assert_eq!(revision_of(&registry(None), "acme.absent", None), None);
+    }
+
+    #[test]
+    fn an_author_icon_moves_the_revision_under_an_owner_icon_and_an_equal_owner_icon_does_too() {
+        let held = Provenance {
+            origin: crate::app::catalog::Origin::Registered,
+            created_by: None,
+        };
+        let with_author = |author: Option<&str>, owner: Option<&str>| {
+            let mut row = json!({ "id": "acme.thing", "fields": {} });
+            if let Some(author) = author {
+                row["display_hints"] = json!({ "icon": author });
+            }
+            let registry = Registry::new(vec![row.as_object().cloned().unwrap_or_default()]);
+            let registry = match owner {
+                Some(owner) => registry.with_icon("acme.thing", Some(owner)),
+                None => registry,
+            };
+            revision_of(&registry, "acme.thing", Some(&held))
+        };
+        let old = with_author(Some("lucide:a"), Some("lucide:star"));
+        let new = with_author(Some("lucide:b"), Some("lucide:star"));
+        let gone = with_author(None, Some("lucide:star"));
+        assert!(old.is_some());
+        assert_ne!(old, new);
+        assert_ne!(old, gone);
+        assert_ne!(
+            with_author(Some("lucide:a"), None),
+            with_author(Some("lucide:a"), Some("lucide:a"))
+        );
     }
 
     #[test]
