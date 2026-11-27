@@ -641,9 +641,7 @@ describe("a file a program holds open for writing", () => {
           from: "Notes/Note.md",
         }),
       ]);
-      expect(kept[0]?.reason).toContain(
-        "the directory its record names is not where it was",
-      );
+      expect(kept[0]?.reason).toContain("could not verify the directory");
     };
     for (let pass = 0; pass < 2; pass += 1) {
       const kept = await harness.folder.kept();

@@ -82,10 +82,9 @@ fn unread_file(row: &state::Unread) -> KeptFile {
     }
 }
 
-const AWAY: &str = "Marfa stopped as it discarded this file, and the directory its record names is not where it was, so it stays under this name until Marfa can put it back; delete it when it is not needed";
+const AWAY: &str = "Marfa could not verify the directory for this stopped discard. The listed path is the last recorded location.";
 
-/// Each readable kept-file record's directory for its reserved name, and
-/// that directory's identity, by the record's id.
+/// The recorded directory and its identity, keyed by kept-file record ID.
 type Asides = std::collections::HashMap<String, (String, (u64, u64))>;
 
 fn asides(rows: &[std::result::Result<state::Retained, state::Unread>]) -> Asides {
@@ -95,7 +94,6 @@ fn asides(rows: &[std::result::Result<state::Retained, state::Unread>]) -> Aside
         .collect()
 }
 
-/// Where a stopped discard's private name is looked for.
 enum MarkPlace {
     /// The directory its readable record names, with the identity it holds.
     Verified(Directory),
@@ -378,8 +376,7 @@ impl Folder {
             writers: "unknown",
             until: None,
         };
-        // The first mark that may hold a record's file stands in for that
-        // record's entry; any further one is an entry of its own.
+        // Only one mark can share the record's listing entry.
         let mut moved = std::collections::HashMap::new();
         let mut files = Vec::new();
         for (path, mark) in state::discarding(&conn)? {
@@ -542,9 +539,7 @@ impl Folder {
         Ok(looked)
     }
 
-    /// Restore the kept name so the retained record can settle the file. A
-    /// mark whose readable record names another directory, or one not where
-    /// it was, stays.
+    /// Restore the kept name so the retained record can settle the file.
     fn settle_discarding(&self, conn: &rusqlite::Connection) -> Result<()> {
         let marks = state::discarding(conn)?;
         if marks.is_empty() {
@@ -563,7 +558,7 @@ impl Folder {
             let Some(mark) = mark else { continue };
             let aside = match self.mark_place(&mark, &asides) {
                 Ok(MarkPlace::Verified(aside) | MarkPlace::Unchecked(aside)) => aside,
-                // Another directory at its record's place proves nothing gone.
+                // Absence in a replacement directory says nothing about the original.
                 Ok(MarkPlace::Away) | Err(_) => continue,
             };
             let private = Path::new(&mark.private);
@@ -599,8 +594,6 @@ impl Folder {
         Ok(())
     }
 
-    /// The directory to look for `mark`'s private name in. Where `mark`'s
-    /// record reads, only the directory that record verifies counts.
     fn mark_place(&self, mark: &state::Discarding, asides: &Asides) -> std::io::Result<MarkPlace> {
         match asides.get(&mark.id) {
             Some((aside, _)) if *aside != mark.aside => Ok(MarkPlace::Away),
@@ -1235,8 +1228,6 @@ mod tests {
             .unwrap_or_else(|| panic!("{path} in {listed:?}"))
     }
 
-    /// `kept_aside`, then a discard left the file under a private name in
-    /// `Notes`, as one whose delete is refused does. Answers that path too.
     #[cfg(debug_assertions)]
     fn discard_left(
         unread: bool,
@@ -1260,8 +1251,6 @@ mod tests {
         (dir, folder, root, kept, private)
     }
 
-    /// Moves `Notes` away within the folder, and where `replaced`, puts an
-    /// empty directory at its name.
     #[cfg(debug_assertions)]
     fn move_notes(root: &Path, replaced: bool) {
         std::fs::rename(root.join("Notes"), root.join("Notes.away")).unwrap();
@@ -1279,10 +1268,9 @@ mod tests {
     }
 
     #[cfg(debug_assertions)]
-    fn says_not_where_it_was(file: &super::KeptFile) {
+    fn says_directory_is_unverified(file: &super::KeptFile) {
         assert!(
-            file.reason
-                .contains("the directory its record names is not where it was"),
+            file.reason.contains("could not verify the directory"),
             "{file:?}"
         );
     }
@@ -1311,7 +1299,7 @@ mod tests {
             "replaced {replaced}: the mark was cleared"
         );
         let files = folder.kept_files().unwrap();
-        says_not_where_it_was(listed_at(&files, &private));
+        says_directory_is_unverified(listed_at(&files, &private));
         assert_eq!(files.len(), 1, "{files:?}");
         assert_eq!(Folder::kept_of(&root).unwrap(), files);
         assert!(root.join("Notes.away").join(&private[6..]).is_file());
@@ -1344,7 +1332,7 @@ mod tests {
             1,
             "the mark was cleared in another directory"
         );
-        says_not_where_it_was(listed_at(&done.kept, &private));
+        says_directory_is_unverified(listed_at(&done.kept, &private));
         assert!(root.join("Notes.away").join(&private[6..]).is_file());
         assert_eq!(records(&folder), 1);
     }
