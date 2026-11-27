@@ -1635,7 +1635,7 @@ export interface paths {
         head?: never;
         /**
          * Update a webhook
-         * @description Updates your webhook and returns it. Fields you leave out keep their values. Marfa cancels a pending delivery the change excludes. Name `version` to change it only if it is unchanged since you read it. To change the secret, create a new webhook.
+         * @description Updates your webhook and returns it. Fields you leave out keep their values. Marfa cancels a pending delivery if you change `url`, set `active` to `false`, or change `events` or `type_filter` to exclude it. To change the secret, create a new webhook.
          */
         patch: operations["updateWebhook"];
         trace?: never;
