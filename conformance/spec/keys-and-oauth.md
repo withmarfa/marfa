@@ -3584,17 +3584,25 @@ If a password sign-in limit or the queue `keys-and-oauth/sign-in-decoy-queue` na
 
 ### `keys-and-oauth/sign-in-form-limit-cookie`
 
-If a password sign-in limit or the queue `keys-and-oauth/sign-in-decoy-queue` names refuses the sign-in form's attempt, then the server MUST set no session cookie.
+If a password sign-in limit refuses the sign-in form's attempt, then the server MUST set no session cookie.
 
 **Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one username, and leaves the owner signing in from another`.
 
 ### `keys-and-oauth/sign-in-form-limit-wait`
 
-If a password sign-in limit or the queue `keys-and-oauth/sign-in-decoy-queue` names refuses the sign-in form's attempt, then the server MUST redirect with `retry_after_seconds` holding the whole seconds, from 1 to 86400, until another attempt will be allowed, which is the latest end among the sign-in limits that are spent.
+If a password sign-in limit refuses the sign-in form's attempt, then the server MUST redirect with `retry_after_seconds` holding the whole seconds, from 1 to 86400, until another attempt will be allowed, which is the latest end among the sign-in limits that are spent.
 
 **Reason:** The sign-in page tells the owner how long to wait. The address limit and the limit every address shares end at different times, and an address that has spent both is refused again at the end of the shorter wait.
 
 **Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one username, and leaves the owner signing in from another`, `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts in an hour, counting none an address made past its own limit`.
+
+### `keys-and-oauth/sign-in-form-queue-wait`
+
+If the queue `keys-and-oauth/sign-in-decoy-queue` names refuses the sign-in form's attempt, then the server MUST redirect with a `retry_after_seconds` of at least 1.
+
+**Reason:** No limit is spent, so the wait is not the end of one: a full queue clears as the checks it holds finish, and the page still tells the owner to wait before trying again.
+
+**Tests:** `compliance/sign-in-queue.test.ts › refuses a sign-in with a wait once the queue of waiting checks is full, at any username, and answers one alone as wrong credentials`.
 
 ### `keys-and-oauth/sign-in-lockout-page`
 
