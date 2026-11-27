@@ -581,12 +581,7 @@ pub fn stale_waits(conn: &Connection) -> Result<HashMap<String, StaleWait>, Core
 
 const DISPLACED: &str = "folder_displaced:";
 
-/// A file a write or a removal moved out of its path, recorded before the
-/// rename. `dir` is the target's directory and `aside` the directory its
-/// reserved names are in, each relative to the folder's root and with its
-/// device and inode, so a directory that took either's name is never
-/// settled against. A record that names a place outside the folder is
-/// reported and never acted on.
+/// Written before the rename. Recovery only reports records that name an outside directory.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Displaced {
     pub(crate) dir: String,
@@ -612,8 +607,7 @@ impl Displaced {
     }
 }
 
-/// Whether `place`, a directory a record names, is the folder's root or a
-/// plain path below it.
+/// An empty place denotes the folder's root.
 pub(crate) fn in_folder(place: &str) -> bool {
     Path::new(place)
         .components()
@@ -627,8 +621,7 @@ pub(crate) fn clear_displaced(conn: &Connection, id: &str) -> Result<(), CoreErr
 /// A displaced row that does not read: its id and its value.
 pub(crate) type UnreadDisplaced = (String, String);
 
-/// Every displacement not yet settled. A row that does not read is
-/// answered as its id and its value, so it is reported, not lost.
+/// Keep unreadable values so recovery can check their recorded directories.
 pub(crate) fn displaced(
     conn: &Connection,
 ) -> Result<Vec<Result<Displaced, UnreadDisplaced>>, CoreError> {
@@ -638,8 +631,7 @@ pub(crate) fn displaced(
         .collect())
 }
 
-/// Where a displaced row that does not read keeps its file, and the path
-/// it came from, where what of it reads names a place outside the folder.
+/// Recover the kept path and source path for reporting an unreadable outside row.
 pub(crate) fn unread_outside(id: &str, value: &str) -> Option<(String, String)> {
     let row: serde_json::Value = serde_json::from_str(value).ok()?;
     let text = |value: &serde_json::Value| value.as_str().map(str::to_string);
@@ -664,8 +656,6 @@ pub(crate) fn unread_outside(id: &str, value: &str) -> Option<(String, String)> 
     ))
 }
 
-/// `name` where it is a reserved name in a directory, or the one `id`'s
-/// record would have used.
 fn reserved_name(name: Option<String>, id: &str) -> String {
     name.filter(|name| !name.contains('/') && super::landing::is_reserved(Path::new(name)))
         .unwrap_or_else(|| super::landing::reserved(id).to_string_lossy().into_owned())
@@ -734,7 +724,7 @@ impl Unread {
             .any(|place| !in_folder(place));
         Unread {
             hash: text(&row["retained"]["read"]["hash"]),
-            // Where only `dir` reads and is outside, the file is there, not in the root.
+            // Without an aside, the source directory is only a reporting hint.
             aside: aside.or(dir.filter(|_| outside)).unwrap_or_default(),
             kept,
             from,

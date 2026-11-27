@@ -1461,11 +1461,8 @@ impl landing::Ledger for Rows<'_> {
     }
 }
 
-/// What each report of a file kept outside the folder ends with.
 pub(super) const OUTSIDE: &str = "Marfa never changes files outside this folder, so it has not looked at this file and leaves it as it is. If the file is there and holds a change you need, move it back yourself";
 
-/// Why a file a record keeps outside the folder, moved from `from`, is
-/// left there.
 fn outside_displaced(from: &str) -> String {
     let from = if from.is_empty() { "a file" } else { from };
     format!(
@@ -1527,10 +1524,7 @@ fn settle_row(
     Ok(())
 }
 
-/// Whether `found`, a directory under the folder's verified root, is the
-/// directory `recorded` names by device and inode. A volume mounted again
-/// has another device number, so where the root's is not the one recorded,
-/// the inode alone decides.
+/// Under the verified root, a remount can change the device number.
 fn same_directory(found: (u64, u64), recorded: (u64, u64), root_device: Option<u64>) -> bool {
     found.1 == recorded.1 && (found.0 == recorded.0 || root_device != Some(recorded.0))
 }
@@ -1671,8 +1665,7 @@ impl Folder {
         Ok(directory)
     }
 
-    /// Opens the recorded path without checking the directory's identity.
-    /// A place outside the folder is refused, never opened.
+    /// Opening a recorded place does not verify its identity.
     fn place_dir(&self, place: &str) -> std::io::Result<Directory> {
         if !state::in_folder(place) {
             return Err(std::io::Error::new(

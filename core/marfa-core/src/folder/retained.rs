@@ -33,8 +33,7 @@ pub struct KeptFile {
 }
 
 impl KeptFile {
-    /// Whether the file is in the folder. A file a record keeps outside it
-    /// is listed, and Marfa never changes it.
+    /// Whether the listed path is relative to the folder with only normal components.
     pub fn in_folder(&self) -> bool {
         state::in_folder(&self.path)
     }
@@ -48,9 +47,7 @@ pub struct KeptDiscarded {
     /// The paths a file a program wrote to went back to, in place of being
     /// deleted, and those Marfa kept such a file beside.
     pub put_back: Vec<String>,
-    /// The files still kept, each with why: one Marfa could not reach, one
-    /// it does not change because it is outside the folder, or one a
-    /// program wrote to that could not go back.
+    /// Files that remain after the discard, each with its reason.
     pub kept: Vec<KeptFile>,
 }
 
@@ -105,13 +102,11 @@ fn unread_file(row: &state::Unread) -> KeptFile {
     }
 }
 
-/// Why a file kept outside the folder, set aside from `from`, is left there.
 fn outside_retained(from: &str) -> String {
     let from = if from.is_empty() { "a file" } else { from };
     format!("Marfa set {from} aside here as it took the file in from another folder. {OUTSIDE}")
 }
 
-/// The same, for a file whose record does not read.
 fn outside_unread(from: &str) -> String {
     if from.is_empty() {
         format!("{UNREAD}. {OUTSIDE}")
@@ -553,9 +548,7 @@ impl Folder {
         Ok(looked)
     }
 
-    /// Restore the kept name so the retained record can settle the file.
-    /// A mark outside the folder is reported and left. Answers, by record,
-    /// the path each readable one names.
+    /// Outside marks supply the private paths used in the pass report.
     fn settle_discarding(
         &self,
         conn: &rusqlite::Connection,
