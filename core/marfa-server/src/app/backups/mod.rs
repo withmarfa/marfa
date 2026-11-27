@@ -490,6 +490,26 @@ fn folder_not_there(folder: &Folder) -> String {
     )
 }
 
+/// Why a backup folder whose files area holds only an adopt's claim cannot make it the marker.
+fn claim_waits(untaken: &std::io::Error) -> String {
+    format!(
+        "it holds the claim of the adopt that recorded its store, which waits to become its \
+         marker: {untaken}"
+    )
+}
+
+/// What a look at the backup folder found.
+#[derive(Debug, PartialEq, Eq)]
+enum Look {
+    /// The folder holds this store's marker, taken from its claim where one waited.
+    There,
+    /// The folder, or its marker, is not there.
+    Gone,
+    /// Another Marfa server holds the folder's lock while this store's claim waits; the words
+    /// say so.
+    Held(String),
+}
+
 /// A file the destination holds, as one read of it answers.
 struct Got {
     size: u64,
@@ -557,9 +577,9 @@ impl Destination {
                 ),
                 Err(None) => folder_not_there(folder),
                 Err(Some(untaken)) => format!(
-                    "The backup folder {} failed while {what}: it holds the claim of the adopt \
-                     that recorded its store, which waits to become its marker: {untaken}",
-                    folder.root().display()
+                    "The backup folder {} failed while {what}: {}",
+                    folder.root().display(),
+                    claim_waits(&untaken)
                 ),
             },
         };
@@ -1329,8 +1349,8 @@ impl App {
         Ok(reading)
     }
 
-    /// Whether the folder's disk is there, or `None` when a look at it has not answered.
-    async fn folder_there(&self, folder: &Arc<Folder>) -> Option<bool> {
+    /// What a look at the folder finds, or `None` when it has not answered.
+    async fn folder_there(&self, folder: &Arc<Folder>) -> Option<Look> {
         let looking = self.backups.looking.clone();
         if looking.swap(true, Ordering::AcqRel) {
             return None;
@@ -1338,7 +1358,17 @@ impl App {
         let (folder, faults) = (folder.clone(), self.faults.clone());
         let answered = super::health::bounded(move || {
             faults.hold_blocking(HOLD_DISK_PROBE);
-            let there = folder.reachable();
+            let there = match folder.files().reach() {
+                Ok(()) => Look::There,
+                Err(Some(untaken)) if untaken.kind() == std::io::ErrorKind::ResourceBusy => {
+                    Look::Held(format!(
+                        "The backup folder {} takes no copies: {}",
+                        folder.root().display(),
+                        claim_waits(&untaken)
+                    ))
+                }
+                Err(_) => Look::Gone,
+            };
             looking.store(false, Ordering::Release);
             there
         })
@@ -1604,6 +1634,8 @@ impl Assembly {
 pub enum StoreFault {
     /// The disk of the backup folder is not there.
     FolderGone,
+    /// Another Marfa server holds the backup folder while this store's adopt claim waits.
+    FolderHeld,
     /// A look at the backup folder did not answer in time.
     FolderSilent,
     /// The last run of `blob-replicate` copied nothing because the destination refused.
@@ -1634,12 +1666,15 @@ fn refused_by(result: &Value, destination: &str, refusal_set: bool) -> Option<St
 /// found. A failure copying to another store is not the destination's.
 fn store_trouble(
     destination: &Destination,
-    look: Option<Option<bool>>,
+    look: Option<Option<Look>>,
     refused: Option<String>,
 ) -> Option<(StoreFault, String)> {
     if let Destination::Folder(folder) = destination {
         match look {
-            Some(Some(false)) => return Some((StoreFault::FolderGone, folder_not_there(folder))),
+            Some(Some(Look::Gone)) => {
+                return Some((StoreFault::FolderGone, folder_not_there(folder)));
+            }
+            Some(Some(Look::Held(error))) => return Some((StoreFault::FolderHeld, error)),
             Some(None) => {
                 let error = format!(
                     "The backup folder {} did not answer in time.",
