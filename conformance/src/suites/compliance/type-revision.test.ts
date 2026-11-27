@@ -156,6 +156,42 @@ describe("a type's revision", () => {
     expect(cleared.data.revision).toBe(before);
   });
 
+  it("goes stale when the author's icon changes under an owner icon, so a stale write cannot restore the old one", async () => {
+    const id = await register();
+    const authored = (icon: string, revision: string) =>
+      client.replaceType(id, {
+        id,
+        fields: { heading: { type: "string" } },
+        display_hints: { icon },
+        revision,
+      });
+    const first = await authored("lucide:heart", await revisionOf(id));
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const iconed = await client.rawRequest<TypeSchema>(`/types/${id}/icon`, {
+      method: "PUT",
+      body: { icon: "lucide:star" },
+    });
+    expect(iconed.status, JSON.stringify(iconed.error)).toBe(200);
+    const r0 = await revisionOf(id);
+
+    const changed = await authored("lucide:calendar-days", r0);
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    expect(changed.data.revision).not.toBe(r0);
+    expect(changed.data.revision).toBe(await revisionOf(id));
+
+    const stale = await authored("lucide:heart", r0);
+    expect(stale.status).toBe(409);
+    expect(stale.error?.error.code).toBe("version_conflict");
+
+    const cleared = await client.rawRequest<TypeSchema>(`/types/${id}/icon`, {
+      method: "DELETE",
+    });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    expect(
+      (cleared.data.display_hints as { icon?: string } | undefined)?.icon,
+    ).toBe("lucide:calendar-days");
+  });
+
   it("goes stale when a type it inherits from changes", async () => {
     const parent = await register();
     const child = `user.revision-${ctx.runId}-child`;
@@ -172,17 +208,20 @@ describe("a type's revision", () => {
     expect(await revisionOf(child)).not.toBe(before);
   });
 
-  it("is never stored: a revision in the body is dropped whether or not it matches", async () => {
+  it("is never stored: a write answers the same revision whether or not it names one, and a revision in the body is dropped", async () => {
     const id = await register();
     const read = await revisionOf(id);
 
-    const matching = await withDescription(id, "Matching.", read);
-    expect(matching.status, JSON.stringify(matching.error)).toBe(200);
-    const stored = await client.getType(id);
-    expect(stored.data.revision).toBe(matching.data.revision);
-    expect(stored.data.revision).not.toBe(read);
+    const named = await withDescription(id, "Same.", read);
+    expect(named.status, JSON.stringify(named.error)).toBe(200);
+    const bare = await withDescription(id, "Same.");
+    expect(bare.status, JSON.stringify(bare.error)).toBe(200);
+    expect(bare.data.revision).toBe(named.data.revision);
+    expect(named.data.revision).not.toBe(read);
+    expect("revision" in (await client.getType(id)).data).toBe(true);
+    expect((await client.getType(id)).data.revision).toBe(bare.data.revision);
 
-    const blank = await withDescription(id, "Matching.", "");
+    const blank = await withDescription(id, "Same.", "");
     expect(blank.status).toBe(409);
     const numeric = await client.rawRequest<TypeSchema>(`/types/${id}`, {
       method: "PUT",

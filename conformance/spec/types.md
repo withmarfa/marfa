@@ -474,7 +474,7 @@ When the stored definition of a type, its owner's icon, its provenance, or the s
 
 **Reason:** the `revision` covers what is stored, not what a read presents. A change that a presented form folds away, such as a role or a field the type restates from its parent, would otherwise keep the `revision`, and a stale write would revert it.
 
-**Tests:** `compliance/type-revision.test.ts › goes stale when the owner's icon alone changes`, `› goes stale when a type it inherits from changes`, `› goes stale when a write removes only what the resolved type folds away, so a stale write cannot revert it`, `› answers 409 version_conflict to the second of two writers that read the same revision, and leaves the first writer's type`.
+**Tests:** `compliance/type-revision.test.ts › goes stale when the owner's icon alone changes`, `› goes stale when the author's icon changes under an owner icon, so a stale write cannot restore the old one`, `› goes stale when a type it inherits from changes`, `› goes stale when a write removes only what the resolved type folds away, so a stale write cannot revert it`, `› answers 409 version_conflict to the second of two writers that read the same revision, and leaves the first writer's type`.
 
 ### `types/revision-put-stale`
 
@@ -502,7 +502,7 @@ When `PUT /types/{id}` names the type's current `revision`, the server MUST judg
 
 **Reason:** the `revision` a type answers is computed from what is stored, so a stored copy would only go stale.
 
-**Tests:** `compliance/type-revision.test.ts › is never stored: a revision in the body is dropped whether or not it matches`.
+**Tests:** `compliance/type-revision.test.ts › is never stored: a write answers the same revision whether or not it names one, and a revision in the body is dropped`.
 
 ### `types/revision-delete-stale`
 
