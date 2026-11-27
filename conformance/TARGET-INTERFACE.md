@@ -186,6 +186,10 @@ stays because that thing is what it checks.
   copy that held a type's creator catches up against the same catalog", adds
   `provenance.created_by` to a held type. A current hydration omits the creator,
   and no device operation or fault can put it back.
+- `device/folders-outside-records.test.ts` writes `folder_displaced` rows into
+  a folder's store, one of which names a directory outside the folder.
+  Releases v0.0.86 to v0.0.108 recorded a take-in from another folder that
+  way, and no operation or fault of this release writes one.
 - `compliance/hidden-types-saved-view.test.ts` rewrites the stored query of a
   view to name an app type while the server is stopped. A view door refuses a
   query that names a hidden type, so only a view saved by an earlier release

@@ -1208,6 +1208,30 @@ If a discard leaves a kept file under a name other than the one it was listed at
 
 **Tests:** `device/folders-open-writer.test.ts › lists a kept file under the name it is left at where a discard %s, until it is deleted`.
 
+## A record that names a place outside the directory
+
+### `folder-files/outside-record-refused`
+
+While a directory's store holds a record of a set-aside or kept file that names a place outside the directory, a device MUST refuse every scan, pull, push, watch, status and discard of that directory with the code `store`.
+
+**Reason:** a store an earlier release wrote can hold such a record, left by taking a file in from another directory. The record holds that directory's device number and inode and no birth time, and another directory at that path can have both, so no pass can act there safely.
+
+**Tests:** `device/folders-outside-records.test.ts › refuses every scan, pull, push, watch, status and discard by the command line and the binding, naming the record's files, and changes nothing`, `› refuses on either volume, and changes neither volume's files`.
+
+### `folder-files/outside-record-named`
+
+When a device refuses as `folder-files/outside-record-refused` says, a device MUST name the full path of each such record's file, the path the file came from, and `marfa folders remove`.
+
+**Reason:** the owner needs both paths to move the file back, and removing the directory is the way to sync it again.
+
+**Tests:** `device/folders-outside-records.test.ts › refuses every scan, pull, push, watch, status and discard by the command line and the binding, naming the record's files, and changes nothing`.
+
+### `folder-files/outside-record-untouched`
+
+A device MUST NOT change, move or delete a file for a record of a set-aside or kept file that names a place outside the directory.
+
+**Tests:** `device/folders-outside-records.test.ts › refuses every scan, pull, push, watch, status and discard by the command line and the binding, naming the record's files, and changes nothing`, `› acts on the same record when it names a place in the folder, the witness`, `› is taken off its machine by folders remove, which leaves every file`, `› refuses on either volume, and changes neither volume's files`.
+
 ## Deletion, purges and missing directories
 
 ### `folder-files/delete-grace`
