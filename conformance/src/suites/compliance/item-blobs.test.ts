@@ -9,46 +9,80 @@ import {
   getManagementClient,
   trackItem,
   trackKey,
+  trackRegisteredTypes,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+/** The provisioning key, whose type registrations `cleanup` removes. */
+let provisioner: MarfaClient;
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl } = await createTestContext(
     "compliance",
     "item-blobs",
   ));
+  provisioner = getClientFromEnv().client;
+  trackRegisteredTypes(ctx, provisioner);
 });
 
 /** Items other keys of this file wrote, removed through the key that wrote each. */
 const elsewhere: Array<[MarfaClient, string]> = [];
 
 afterAll(async () => {
+  const left: string[] = [];
   for (const [by, id] of elsewhere) {
     await by.deleteItem(id);
-    await by.purgeItem(id);
+    const purged = await by.purgeItem(id);
+    if (!purged.ok && purged.status !== 404) left.push(id);
   }
   await cleanup(ctx);
+  expect(left, "items other keys wrote were purged").toEqual([]);
 });
 
 let minted = 0;
 
+/** A part of a name no earlier attempt of a test on this server used. */
+function fresh(): string {
+  return randomUUID().replaceAll("-", "").slice(0, 8);
+}
+
 async function keyed(
   typePermissions: Record<string, string>,
   by: MarfaClient = client,
-): Promise<MarfaClient> {
+  extra: Record<string, unknown> = {},
+): Promise<{ client: MarfaClient; key: string; source: string }> {
   minted += 1;
+  const source = `${ctx.source}-${String(minted)}`;
+  const writes = Object.values(typePermissions).includes("write");
   const res = await by.createKey({
     label: `item-blobs-${String(minted)}`,
-    source: `${ctx.source}-${String(minted)}`,
+    source,
     type_permissions: typePermissions,
-  });
+    ...(writes && { permissions: ["items.purge"] }),
+    ...extra,
+  } as never);
   expect(res.ok, JSON.stringify(res.error)).toBe(true);
   trackKey(ctx, res.data.id);
-  return new MarfaClient({ baseUrl: apiUrl, apiKey: res.data.key });
+  return {
+    client: new MarfaClient({ baseUrl: apiUrl, apiKey: res.data.key }),
+    key: res.data.key,
+    source,
+  };
+}
+
+async function registered(
+  id: string,
+  fields: Record<string, unknown> = {
+    blob_ref: { type: "string" },
+    title: { type: "string" },
+  },
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  const res = await provisioner.registerType({ id, fields, ...extra } as never);
+  expect(res.ok, JSON.stringify(res.error)).toBe(true);
 }
 
 async function upload(by: MarfaClient = client): Promise<string> {
@@ -150,20 +184,17 @@ describe("POST /items/blobs", () => {
     expect((await client.deleteItem(binned)).status).toBe(200);
     expect(await idsFor(binnedHash)).toEqual([]);
 
-    const vendor = `blobs${ctx.runId.replace(/[^a-z0-9]/g, "")}`;
+    const vendor = `blobs${fresh()}`;
     const hidden = `app.${vendor}.held`;
     const shown = `user.${vendor}-held`;
-    const app = await keyed(
-      { [`app.${vendor}.*`]: "write", [shown]: "write" },
-      getClientFromEnv().client,
-    );
-    for (const id of [hidden, shown]) {
-      const registered = await getClientFromEnv().client.registerType({
-        id,
-        fields: { blob_ref: { type: "string" }, title: { type: "string" } },
-      });
-      expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
-    }
+    const app = (
+      await keyed(
+        { [`app.${vendor}.*`]: "write", [shown]: "write" },
+        provisioner,
+      )
+    ).client;
+    await registered(hidden);
+    await registered(shown);
     const hiddenHash = await upload(app);
     await file(hiddenHash, "hidden", app, hidden);
     const shownId = await file(hiddenHash, "shown", app, shown);
@@ -188,18 +219,33 @@ describe("POST /items/blobs", () => {
     expect(await idsFor(hash), "the file holding it is found").toEqual([id]);
   });
 
+  it("finds an item by its blob_ref when another of its properties also names the hash", async () => {
+    const hash = await upload();
+    const made = await client.createItem({
+      type: "core.file",
+      properties: {
+        blob_ref: hash,
+        mime_type: "text/plain",
+        title: "both",
+        description: `The same bytes as ${hash}.`,
+      },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+    expect(await idsFor(hash)).toEqual([made.data.item.id]);
+  });
+
   it("reads a title from the property its type is titled by, and answers null where there is none", async () => {
-    const type = `user.blobs-${ctx.runId}`;
-    const registered = await client.registerType({
-      id: type,
-      fields: {
+    const type = `user.blobs-${fresh()}`;
+    await registered(
+      type,
+      {
         blob_ref: { type: "string" },
         heading: { type: "string" },
         title: { type: "string" },
       },
-      display_hints: { title_field: "heading" },
-    });
-    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+      { display_hints: { title_field: "heading" } },
+    );
     const hash = await upload();
     const made = await client.createItem({
       type,
@@ -220,15 +266,35 @@ describe("POST /items/blobs", () => {
     });
   });
 
+  it("answers null for a title property that holds no text", async () => {
+    const type = `user.blobs-number-${fresh()}`;
+    await registered(
+      type,
+      { blob_ref: { type: "string" }, number: { type: "integer" } },
+      { display_hints: { title_field: "number" } },
+    );
+    const hash = await upload();
+    const made = await client.createItem({
+      type,
+      properties: { blob_ref: hash, number: 17 },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+    const read = await client.getItem(made.data.item.id);
+    expect(read.data.item.properties.number, "the item holds 17").toBe(17);
+    const res = await client.findItemsByBlob([hash]);
+    expect(res.status, JSON.stringify(res.error)).toBe(200);
+    await expectMatchesSchema("POST", "/items/blobs", 200, res.data);
+    expect(res.data.data[0]?.items).toEqual([
+      { id: made.data.item.id, type, title: null },
+    ]);
+  });
+
   it("leaves out an item whose type the key may not read, and refuses a key that reads no type", async () => {
     const hash = await upload();
     const fileId = await file(hash);
-    const type = `user.blobs-scope-${ctx.runId}`;
-    const registered = await client.registerType({
-      id: type,
-      fields: { blob_ref: { type: "string" } },
-    });
-    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    const type = `user.blobs-scope-${fresh()}`;
+    await registered(type, { blob_ref: { type: "string" } });
     const made = await client.createItem({
       type,
       source: ctx.source,
@@ -238,7 +304,7 @@ describe("POST /items/blobs", () => {
     trackItem(ctx, made.data.item.id);
     expect(await idsFor(hash)).toEqual([fileId, made.data.item.id].sort());
 
-    const fileReader = await keyed({ "core.file": "read" });
+    const fileReader = (await keyed({ "core.file": "read" })).client;
     expect(await idsFor(hash, fileReader)).toEqual([fileId]);
 
     const refused = await getManagementClient().findItemsByBlob([hash]);
@@ -247,36 +313,25 @@ describe("POST /items/blobs", () => {
   });
 
   it("answers a hash no item the key may list holds the same, whatever holds the bytes", async () => {
-    const vendor = `same${ctx.runId.replace(/[^a-z0-9]/g, "")}`;
+    const vendor = `same${fresh()}`;
     const hidden = `app.${vendor}.held`;
     const unreadable = `user.${vendor}-held`;
-    const owner = getClientFromEnv().client;
-    const writer = await keyed(
-      {
-        "core.file": "write",
-        [`app.${vendor}.*`]: "write",
-        [unreadable]: "write",
-      },
-      owner,
+    const writer = (
+      await keyed(
+        {
+          "core.file": "write",
+          [`app.${vendor}.*`]: "write",
+          [unreadable]: "write",
+        },
+        provisioner,
+      )
+    ).client;
+    await registered(hidden);
+    await registered(unreadable);
+    const reader = await keyed(
+      { "core.file": "read", [`app.${vendor}.*`]: "read" },
+      provisioner,
     );
-    for (const id of [hidden, unreadable]) {
-      const registered = await owner.registerType({
-        id,
-        fields: { blob_ref: { type: "string" }, title: { type: "string" } },
-      });
-      expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
-    }
-    const readerKey = await owner.createKey({
-      label: "item-blobs-reader",
-      source: `${ctx.source}-reader`,
-      type_permissions: { "core.file": "read", [`app.${vendor}.*`]: "read" },
-    });
-    expect(readerKey.ok, JSON.stringify(readerKey.error)).toBe(true);
-    trackKey(ctx, readerKey.data.id);
-    const reader = new MarfaClient({
-      baseUrl: apiUrl,
-      apiKey: readerKey.data.key,
-    });
 
     const unreadableHash = await upload(writer);
     const unreadableId = await file(unreadableHash, "u", writer, unreadable);
@@ -288,25 +343,25 @@ describe("POST /items/blobs", () => {
     const binnedHash = await upload(writer);
     const binned = await file(binnedHash, "b", writer);
     expect(
-      await idsFor(binnedHash, reader),
+      await idsFor(binnedHash, reader.client),
       "the reader finds it active",
     ).toEqual([binned]);
     expect((await writer.deleteItem(binned)).status).toBe(200);
 
     const hiddenHash = await upload(writer);
     const hiddenId = await file(hiddenHash, "h", writer, hidden);
-    const hiddenRead = await reader.getItem(hiddenId);
+    const hiddenRead = await reader.client.getItem(hiddenId);
     expect(hiddenRead.ok, "the reader may read the hidden item itself").toBe(
       true,
     );
 
-    const control = await rawAnswer(absent(), readerKey.data.key);
+    const control = await rawAnswer(absent(), reader.key);
     expect(control[0]).toBe(200);
     for (const hash of [unreadableHash, binnedHash, hiddenHash]) {
       expect((await writer.headBlob(hash)).status, "the bytes are held").toBe(
         200,
       );
-      expect(await rawAnswer(hash, readerKey.data.key)).toEqual(control);
+      expect(await rawAnswer(hash, reader.key)).toEqual(control);
     }
   });
 
@@ -380,5 +435,88 @@ describe("POST /items/blobs", () => {
     const full = await client.findItemsByBlob([exactly]);
     expect(full.data.data[0]?.items).toHaveLength(20);
     expect(full.data.data[0]?.more).toBe(false);
+  });
+
+  it("counts only the items the key may list towards the 20, so a left-out item neither takes a place nor sets more", async () => {
+    const unreadable = `user.blobs-mix-${fresh()}`;
+    const filtered = `user.blobs-filtered-${fresh()}`;
+    await registered(unreadable);
+    await registered(filtered);
+    const writer = await keyed(
+      { "core.file": "write", [unreadable]: "write", [filtered]: "write" },
+      provisioner,
+    );
+    const other = await keyed(
+      { "core.file": "write", [filtered]: "write" },
+      provisioner,
+    );
+    const reader = await keyed(
+      { "core.file": "read", [filtered]: "read" },
+      provisioner,
+      {
+        enforcement_override: {
+          source_filter: { types: [filtered], sources: [writer.source] },
+        },
+      },
+    );
+    const bytes = new TextEncoder().encode(`item-blobs ${randomUUID()}`);
+    const sent = await writer.client.uploadBlob(bytes, "text/plain");
+    expect(sent.status, JSON.stringify(sent.error)).toBe(201);
+    const hash = sent.data.hash;
+    const proved = await other.client.uploadBlob(bytes, "text/plain");
+    expect(proved.status, JSON.stringify(proved.error)).toBe(201);
+
+    /** Items the reader may not list: another type, another source, the bin. */
+    const leftOut = async (): Promise<void> => {
+      await file(hash, "type", writer.client, unreadable);
+      const sourced = await other.client.createItem({
+        type: filtered,
+        properties: { blob_ref: hash, title: "source" },
+      });
+      expect(sourced.status, JSON.stringify(sourced.error)).toBe(201);
+      elsewhere.push([other.client, sourced.data.item.id]);
+      const binned = await file(hash, "bin", writer.client);
+      expect((await writer.client.deleteItem(binned)).status).toBe(200);
+    };
+    const shown: string[] = [];
+    for (let round = 0; round < 4; round += 1) {
+      await leftOut();
+      for (let at = 0; at < 5; at += 1) {
+        shown.push(
+          await file(
+            hash,
+            "shown",
+            writer.client,
+            at % 2 === 0 ? "core.file" : filtered,
+          ),
+        );
+      }
+    }
+    await leftOut();
+
+    const witness = await writer.client.findItemsByBlob([hash]);
+    expect(witness.status, JSON.stringify(witness.error)).toBe(200);
+    expect(witness.data.data[0]?.more, "the writer lists more than 20").toBe(
+      true,
+    );
+    const otherSees = await other.client.findItemsByBlob([hash]);
+    expect(
+      otherSees.data.data[0]?.items.some((item) => item.title === "source"),
+      "the other source's item is listed by a key without the filter",
+    ).toBe(true);
+
+    const full = await reader.client.findItemsByBlob([hash]);
+    expect(full.status, JSON.stringify(full.error)).toBe(200);
+    expect(full.data.data[0]?.items.map((item) => item.id)).toEqual(
+      [...shown].sort(),
+    );
+    expect(full.data.data[0]?.more).toBe(false);
+
+    shown.push(await file(hash, "shown", writer.client));
+    const over = await reader.client.findItemsByBlob([hash]);
+    expect(over.data.data[0]?.items.map((item) => item.id)).toEqual(
+      [...shown].sort().slice(0, 20),
+    );
+    expect(over.data.data[0]?.more).toBe(true);
   });
 });

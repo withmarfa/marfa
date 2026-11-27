@@ -888,9 +888,9 @@ When a key sends `POST /items/titles`, the server MUST read an item's title from
 
 When a key sends `POST /items/titles`, the server MUST leave out every item that the key could not list through `GET /items` in any state.
 
-**Reason:** a name looked up must not tell a key that an item exists which it may not list.
+**Reason:** a name looked up must not tell a key that an item exists which it may not list. A connector key lists its own items of a type its mapping targets (`plugins/reach-list-own`), and of a type its mapping targeted before while a rewrite is open (`plugins/reach-former-read`), so it finds those items by title too, and never the owner's.
 
-**Tests:** `compliance/item-titles.test.ts › leaves out an item whose type the key may not read, and refuses a key that reads no type`.
+**Tests:** `compliance/item-titles.test.ts › leaves out an item whose type the key may not read, and refuses a key that reads no type`, `compliance/connector-reach.test.ts › finds its own items of the mapped type by bytes and by title and none of the owner's, and on the former target type only while a rewrite is open`.
 
 ### `items/titles-no-type`
 
@@ -928,25 +928,27 @@ When a key sends `POST /items/blobs` with `hashes`, the server MUST answer `200`
 
 ### `items/blobs-blob-ref`
 
-When a key sends `POST /items/blobs`, the server MUST leave out an item that names the hash in a property other than `blob_ref`.
+When a key sends `POST /items/blobs`, the server MUST decide whether an item holds a hash by its `blob_ref` property alone, whatever its other properties name.
 
-**Reason:** only an item whose file is the bytes holds them; an item that names the hash in its text points at a file and is not one.
+**Reason:** only an item whose file is the bytes holds them; an item that names the hash in its text points at a file and is not one, and an item whose file is the bytes holds them whatever its text says.
 
-**Tests:** `compliance/item-blobs.test.ts › leaves out an item that names the hash in another property`.
+**Tests:** `compliance/item-blobs.test.ts › leaves out an item that names the hash in another property`, `› finds an item by its blob_ref when another of its properties also names the hash`.
 
 ### `items/blobs-title`
 
-When a key sends `POST /items/blobs`, the server MUST read an item's `title` as `items/titles-title` states, and answer `null` where the item holds no title.
+When a key sends `POST /items/blobs`, the server MUST read an item's `title` from the property `items/titles-title` names, and answer `null` where that property is absent or does not hold text.
 
-**Tests:** `compliance/item-blobs.test.ts › reads a title from the property its type is titled by, and answers null where there is none`.
+**Reason:** a title is text an app shows and links by; a number or a list in the title property is not a name.
+
+**Tests:** `compliance/item-blobs.test.ts › reads a title from the property its type is titled by, and answers null where there is none`, `› answers null for a title property that holds no text`.
 
 ### `items/blobs-scope`
 
 When a key sends `POST /items/blobs`, the server MUST leave out every item that the key could not list through `GET /items` in any state.
 
-**Reason:** knowing a file's bytes must not tell a key that an item holding them exists which it may not list.
+**Reason:** knowing a file's bytes must not tell a key that an item holding them exists which it may not list. A connector key lists its own items of a type its mapping targets (`plugins/reach-list-own`), and of a type its mapping targeted before while a rewrite is open (`plugins/reach-former-read`), so it finds those items by their bytes too, and never the owner's.
 
-**Tests:** `compliance/item-blobs.test.ts › leaves out an item whose type the key may not read, and refuses a key that reads no type`.
+**Tests:** `compliance/item-blobs.test.ts › leaves out an item whose type the key may not read, and refuses a key that reads no type`, `compliance/connector-reach.test.ts › finds its own items of the mapped type by bytes and by title and none of the owner's, and on the former target type only while a rewrite is open`.
 
 ### `items/blobs-unreadable-same`
 
@@ -970,9 +972,11 @@ If `POST /items/blobs` names more than 200 hashes, or a hash that is not `sha256
 
 ### `items/blobs-list`
 
-When more than 20 items hold a hash sent to `POST /items/blobs`, the server MUST answer the first 20 by `id` with `more` set to `true`.
+When more than 20 of the items that `items/blobs` would answer hold a hash sent to `POST /items/blobs`, the server MUST answer the first 20 of them by `id` with `more` set to `true`, and otherwise answer them all with `more` set to `false`.
 
-**Tests:** `compliance/item-blobs.test.ts › lists at most 20 items for a hash and says when there are more`.
+**Reason:** an item the key may not list, an item in the bin and a hidden item neither take one of the 20 places nor set `more`, so the answer says nothing of them (`items/blobs-unreadable-same`).
+
+**Tests:** `compliance/item-blobs.test.ts › lists at most 20 items for a hash and says when there are more`, `› counts only the items the key may list towards the 20, so a left-out item neither takes a place nor sets more`.
 
 ## Updating an item
 
