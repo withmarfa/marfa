@@ -452,31 +452,33 @@ The server MUST ship every type, field and status word with a `description` with
 
 ## Guarding a write with a revision
 
-A type's `revision` is an opaque string that names what the type reads as. A writer that read a type sends the `revision` back to refuse its write if the type has changed since.
+A type's `revision` is an opaque string that names what is stored for the type: its stored definition and owner icon, the stored definitions and owner icons of the ancestors it inherits from, and its provenance. It is not a digest of a presented form, so a change the presented form folds away still changes it. A writer that read a type sends the `revision` back to refuse its write if the type has changed since.
 
 ### `types/revision-read`
 
-When a credential reads a type through `GET /types/{id}` or `GET /types`, or a write of a type answers it, the server MUST answer the type with a `revision`.
+When a credential reads a type whose parent chain resolves through `GET /types/{id}` or `GET /types`, or a write of a type answers it, the server MUST answer the type with a `revision`.
 
 **Tests:** `compliance/type-revision.test.ts › is answered by every read of a type, and equals across them`.
 
 ### `types/revision-equal`
 
-While a type reads as the same content, the server MUST answer the same `revision` for it, whichever door answers and whether or not the type was deleted and registered again in between.
+While what is stored for a type is the same, the server MUST answer the same `revision` for it, whichever door answers and whether or not the type was deleted and registered again in between with the same content by the same credential.
 
-**Reason:** a writer compares a `revision` it read earlier, so equal content that carried a different one would refuse a write that loses nothing.
+**Reason:** a writer compares a `revision` it read earlier, so equal stored content that carried a different one would refuse a write that loses nothing. Equal stored content has an equal `revision` by design, so a type registered again with the same content by the same credential is the type a writer read.
 
-**Tests:** `compliance/type-revision.test.ts › is answered by every read of a type, and equals across them`, `› goes stale when the owner's icon alone changes`.
+**Tests:** `compliance/type-revision.test.ts › is answered by every read of a type, and equals across them`, `› goes stale when the owner's icon alone changes`, `› is the same after a type is deleted and registered again with the same content by the same credential`.
 
 ### `types/revision-changes`
 
-When the definition of a type, its owner's icon, its provenance or anything it inherits from an ancestor changes, the server MUST answer a different `revision` for the type.
+When the stored definition of a type, its owner's icon, its provenance, or the stored definition or owner icon of an ancestor changes, the server MUST answer a different `revision` for the type, including when the change is one that a read of the type folds into what it inherits.
 
-**Tests:** `compliance/type-revision.test.ts › goes stale when the owner's icon alone changes`, `› goes stale when a type it inherits from changes`, `› answers 409 version_conflict to the second of two writers that read the same revision, and leaves the first writer's type`.
+**Reason:** the `revision` covers what is stored, not what a read presents. A change that a presented form folds away, such as a role or a field the type restates from its parent, would otherwise keep the `revision`, and a stale write would revert it.
+
+**Tests:** `compliance/type-revision.test.ts › goes stale when the owner's icon alone changes`, `› goes stale when a type it inherits from changes`, `› goes stale when a write removes only what the resolved type folds away, so a stale write cannot revert it`, `› answers 409 version_conflict to the second of two writers that read the same revision, and leaves the first writer's type`.
 
 ### `types/revision-put-stale`
 
-If `PUT /types/{id}` names a `revision` that is not the type's current one, then the server MUST answer `409 version_conflict` with the current `revision` in `error.details.revision`, whether or not `force` is `true`.
+If `PUT /types/{id}` names a `revision` that is not the type's current one, then the server MUST answer `409 version_conflict` with the current `revision` in `error.details.revision` where the type reads, whether or not `force` is `true`.
 
 **Reason:** an app that reads a type, changes one field and sends it back would otherwise revert a change another writer made in between. The `version` of a type is its author's own number and is never compared.
 
@@ -496,15 +498,15 @@ When `PUT /types/{id}` names the type's current `revision` and the replacement i
 
 ### `types/revision-not-stored`
 
-When `PUT /types/{id}` carries a `revision` in its body, the server MUST judge and store the definition as if the body had none, whether or not the `revision` is the current one.
+When `PUT /types/{id}` names the type's current `revision`, the server MUST judge and store the definition as if the body carried no `revision`.
 
-**Reason:** the `revision` a type answers is computed from what it holds, so a stored copy would only go stale.
+**Reason:** the `revision` a type answers is computed from what is stored, so a stored copy would only go stale.
 
 **Tests:** `compliance/type-revision.test.ts › is never stored: a revision in the body is dropped whether or not it matches`.
 
 ### `types/revision-delete-stale`
 
-If `DELETE /types/{id}` names a `revision` query parameter that is not the type's current one, then the server MUST answer `409 version_conflict` with the current `revision` in `error.details.revision` and keep the type, whether or not `force` is `true`.
+If `DELETE /types/{id}` names a `revision` query parameter that is not the type's current one, then the server MUST answer `409 version_conflict` with the current `revision` in `error.details.revision` where the type reads and keep the type, whether or not `force` is `true`.
 
 **Tests:** `compliance/type-revision.test.ts › makes DELETE /types/{id} refuse a stale revision and keep the type, and delete on the current one`.
 
@@ -752,7 +754,7 @@ Where a type names `enum_values` on a field whose `type` is neither `enum` nor a
 
 ### `types/unknown-key`
 
-If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `label`, `description`, `required`, `enum_values`, `status_values`, `items_type`, `items_fields`, `format`, `searchable`, `max_length`, `max_items`, `minimum` and `maximum`), in a member of `items_fields` (which takes only `type`, `label`, `description`, `required`, `enum_values`, `format`, `max_length`, `minimum` and `maximum`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
+If `POST /types`, or `PUT /types/{id}` other than in a top-level `revision`, names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `label`, `description`, `required`, `enum_values`, `status_values`, `items_type`, `items_fields`, `format`, `searchable`, `max_length`, `max_items`, `minimum` and `maximum`), in a member of `items_fields` (which takes only `type`, `label`, `description`, `required`, `enum_values`, `format`, `max_length`, `minimum` and `maximum`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
 
 **Reason:** a key the server ignored would let a misspelled rule, or an `exclusiveMinimum` on an `integer` field, register as though it held, and the type would then accept what its author meant it to refuse.
 
