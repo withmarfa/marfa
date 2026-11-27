@@ -6,6 +6,7 @@ use url::Url;
 
 use crate::app::refusal::{Refusal, Result};
 use crate::app::types::missing_field;
+use crate::app::whole::{whole_of, whole_range};
 
 pub const EVENTS: [&str; 12] = [
     "item.created",
@@ -165,13 +166,14 @@ impl Update {
             Some(Value::Bool(active)) => Some(*active),
             Some(_) => return Err(invalid("active", "active is true or false.")),
         };
-        let version =
-            match body.get("version") {
-                None => None,
-                Some(value) => Some(value.as_i64().filter(|version| *version >= 1).ok_or_else(
-                    || invalid("version", "version is a whole number of 1 or more."),
-                )?),
-            };
+        let version = match body.get("version") {
+            None => None,
+            Some(value) => Some(
+                whole_of(value)
+                    .filter(|version| *version >= 1)
+                    .ok_or_else(|| invalid("version", whole_range("version", 1)))?,
+            ),
+        };
         Ok(Update {
             url: body.get("url").map(url_of).transpose()?,
             events: body.get("events").map(events_of).transpose()?,
@@ -200,6 +202,38 @@ mod tests {
 
     fn path_of(refusal: &Refusal) -> Value {
         detail(refusal, "errors")[0]["path"].clone()
+    }
+
+    fn update(body: Value) -> Result<Update> {
+        Update::from_body(body.as_object().expect("an object"))
+    }
+
+    #[test]
+    fn reads_a_version_written_with_or_without_a_fraction() {
+        assert_eq!(update(json!({ "version": 2 })).unwrap().version, Some(2));
+        assert_eq!(update(json!({ "version": 1.0 })).unwrap().version, Some(1));
+        assert_eq!(update(json!({})).unwrap().version, None);
+    }
+
+    #[test]
+    fn refuses_a_version_that_is_not_whole_or_beyond_the_range_naming_the_range() {
+        for version in [
+            json!(0),
+            json!(-1),
+            json!(1.5),
+            json!("2"),
+            json!(null),
+            json!(9_007_199_254_740_992_i64),
+            json!(1e300),
+        ] {
+            let refused = update(json!({ "version": version })).unwrap_err();
+            assert_eq!(detail(&refused, "field"), "version", "{version}");
+            assert_eq!(path_of(&refused), "version", "{version}");
+            assert!(
+                refused.message.contains("from 1 to 9007199254740991"),
+                "{version}"
+            );
+        }
     }
 
     #[test]
