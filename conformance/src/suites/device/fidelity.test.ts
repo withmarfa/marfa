@@ -2396,8 +2396,8 @@ describe("the scripted answers match the server's", () => {
         // parent chain meets it on the first type it reads.
         shape: ["row.parent", "row.label", "row.fields"],
         // Guidance is the deployment's text for agents, as a description is,
-        // and the device core never reads it.
-        absent: ["row.guidance"],
+        // and the device core never reads it; nor a revision, which guards a type write.
+        absent: ["row.guidance", "row.revision"],
       },
     );
     // A folder writes a file's body and name to the properties these name
@@ -2432,6 +2432,7 @@ describe("the scripted answers match the server's", () => {
             "row.guidance",
             "row.version",
             "row.required",
+            "row.revision",
           ],
         },
       );
@@ -2479,6 +2480,7 @@ describe("the scripted answers match the server's", () => {
           "row.merge_policy",
           "row.description",
           "row.version",
+          "row.revision",
         ],
       },
     );
@@ -2522,6 +2524,7 @@ describe("the scripted answers match the server's", () => {
           "row.provenance.created_by.id",
           "row.provenance.created_by.name",
         ],
+        absent: ["row.revision"],
       },
     );
   });
