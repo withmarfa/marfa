@@ -195,11 +195,17 @@ describe("a record that names a directory outside the folder", () => {
     expect(records(harness, "displaced")).toBe(1);
   });
 
-  it.each(["in the folder", "outside the folder"] as const)(
-    "lists a file kept %s, and leaves it through folders kept --discard and a binding only where it is outside the folder",
+  it.each([
+    "in the folder",
+    "outside the folder",
+    "in the folder under a record whose source is outside it",
+  ] as const)(
+    "lists a file kept %s, and leaves it through folders kept --discard and a binding only where its record names a directory outside the folder",
     async (where) => {
+      const outside = where !== "in the folder";
+      const short = { "in the folder": "in", "outside the folder": "out" };
       const harness = await noteFolder(
-        `outside-records-kept-${where === "in the folder" ? "in" : "out"}`,
+        `outside-records-kept-${short[where as keyof typeof short] ?? "mixed"}`,
       );
       // A program holds the note open as a pull replaces it, and Marfa cannot
       // tell whether it writes to it, so the old file is kept, unchanged.
@@ -218,20 +224,26 @@ describe("a record that names a directory outside the folder", () => {
       );
       expect(name).toBeDefined();
       let kept = name!;
+      let full = join(harness.dir, name!);
       let from = "Note.md";
-      if (where === "outside the folder") {
-        // As a take-in from another folder recorded it, a week and a day ago.
+      if (outside) {
+        // As a take-in from another folder recorded it, a week and a day ago,
+        // with the file set aside there or, in a mixed record, in the root.
         const source = join(tempFolder("marfa-outside-"), "Source");
         mkdirSync(source);
-        renameSync(join(harness.dir, name!), join(source, name!));
-        kept = join(source, name!);
+        let aside = "";
+        if (where === "outside the folder") {
+          renameSync(full, join(source, name!));
+          kept = full = join(source, name!);
+          aside = source;
+        }
         from = join(source, "Note.md");
         const since = Math.floor(Date.now() / 1000) - 8 * 24 * 60 * 60;
         const db = new DatabaseSync(harness.folder.store);
         try {
           db.prepare(
             "UPDATE meta SET value = json_set(value, '$.dir', ?, '$.aside', ?, '$.retained.since', CAST(? AS INTEGER)) WHERE key LIKE 'folder_retained:%'",
-          ).run(source, source, since);
+          ).run(source, aside, since);
         } finally {
           db.close();
         }
@@ -245,7 +257,7 @@ describe("a record that names a directory outside the folder", () => {
         expect.objectContaining({ path: kept, from }),
       ]);
       const [file] = listed.value.kept;
-      if (where === "outside the folder") {
+      if (outside) {
         expect(file?.writers).toBe("none");
         expect(file?.until, "a date was given to delete it").toBeUndefined();
         expect(file?.reason).toContain(OUTSIDE);
@@ -253,14 +265,12 @@ describe("a record that names a directory outside the folder", () => {
       } else {
         expect(file?.until).toMatch(/^\d{4}-\d{2}-\d{2}$/);
       }
-      const bytes = readFileSync(
-        where === "outside the folder" ? kept : join(harness.dir, kept),
-      );
+      const bytes = readFileSync(full);
 
       const discarded = await harness.folder.discardKept();
       expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
       if (!discarded.ok) return;
-      if (where === "in the folder") {
+      if (!outside) {
         // The witness: the same file in the folder is deleted.
         expect(discarded.value.discarded).toEqual([kept]);
         expect(discarded.value.kept).toEqual([]);
@@ -288,8 +298,80 @@ describe("a record that names a directory outside the folder", () => {
       } finally {
         await bound.device.close();
       }
-      expect(readFileSync(kept)).toEqual(bytes);
+      expect(readFileSync(full)).toEqual(bytes);
       expect(existsSync(from)).toBe(false);
+      expect(records(harness, "retained")).toBe(1);
+    },
+  );
+
+  it.each(["in the folder", "outside the folder"] as const)(
+    "lists a file kept %s under a record it cannot read, and deletes it through folders kept --discard only where the record names no directory outside the folder",
+    async (where) => {
+      const harness = await noteFolder(
+        `outside-records-unread-${where === "in the folder" ? "in" : "out"}`,
+      );
+      const program = openSync(join(harness.dir, "Note.md"), "a");
+      try {
+        writeSync(program, "first half\n");
+        const pushed = await withFault("writers-unknown", () =>
+          harness.folder.push(),
+        );
+        expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      } finally {
+        closeSync(program);
+      }
+      const [name] = readdirSync(harness.dir).filter((file) =>
+        file.startsWith(".marfa-kept-"),
+      );
+      expect(name).toBeDefined();
+      let kept = name!;
+      let full = join(harness.dir, name!);
+      let from = "Note.md";
+      let place = "";
+      if (where === "outside the folder") {
+        const source = join(tempFolder("marfa-outside-"), "Source");
+        mkdirSync(source);
+        renameSync(full, join(source, name!));
+        kept = full = join(source, name!);
+        from = join(source, "Note.md");
+        place = source;
+      }
+      // A `since` that is not a number, so the record does not read.
+      const db = new DatabaseSync(harness.folder.store);
+      try {
+        db.prepare(
+          "UPDATE meta SET value = json_set(value, '$.dir', ?, '$.aside', ?, '$.retained.since', 'soon') WHERE key LIKE 'folder_retained:%'",
+        ).run(place, place);
+      } finally {
+        db.close();
+      }
+
+      const listed = await harness.folder.kept();
+      expect(listed.ok, JSON.stringify(listed)).toBe(true);
+      if (!listed.ok) return;
+      expect(listed.value.kept).toEqual([
+        expect.objectContaining({ path: kept, from }),
+      ]);
+      const [file] = listed.value.kept;
+      if (where === "in the folder") {
+        expect(file?.reason).toBe("Marfa could not read its record");
+      } else {
+        expect(file?.reason).toMatch(/^Marfa could not read its record/);
+        expect(file?.reason).toContain(from);
+        expect(file?.reason).toContain(OUTSIDE);
+      }
+      const discarded = await harness.folder.discardKept();
+      expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+      if (!discarded.ok) return;
+      if (where === "in the folder") {
+        // The witness: the same file in the folder is deleted.
+        expect(discarded.value.discarded).toEqual([kept]);
+        expect(existsSync(full)).toBe(false);
+        return;
+      }
+      expect(discarded.value.discarded).toEqual([]);
+      expect(discarded.value.kept).toEqual([file]);
+      expect(existsSync(full)).toBe(true);
       expect(records(harness, "retained")).toBe(1);
     },
   );
