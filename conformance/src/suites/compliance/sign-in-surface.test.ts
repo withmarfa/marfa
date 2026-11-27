@@ -299,27 +299,36 @@ describe("the sign-in surface", () => {
     expect(passkeys.status).toBe(200);
   });
 
-  it("refuses a password sign-in sent as JSON, and signs in with the form", async () => {
+  it("refuses a password sign-in sent as anything but the form, and signs in with the form", async () => {
     // The witness: the form with the same credentials signs the owner in.
     const witness = await signIn(OWNER.password, "192.0.2.4");
     expect(witness.status).toBe(302);
     expect(sessionCookieOf(witness)).toBeDefined();
-    for (const body of [
-      JSON.stringify(OWNER),
-      JSON.stringify({ ...OWNER, rememberMe: false }),
-    ]) {
+    const asForm = new URLSearchParams(OWNER).toString();
+    const multipart = new FormData();
+    multipart.set("username", OWNER.username);
+    multipart.set("password", OWNER.password);
+    const bodies: [string, Record<string, string>, BodyInit][] = [
+      ["JSON", { "content-type": "application/json" }, JSON.stringify(OWNER)],
+      [
+        "JSON with another field",
+        { "content-type": "application/json" },
+        JSON.stringify({ ...OWNER, rememberMe: false }),
+      ],
+      ["plain text", { "content-type": "text/plain" }, asForm],
+      ["no content type", {}, new TextEncoder().encode(asForm)],
+      ["multipart", {}, multipart],
+    ];
+    for (const [kind, type, body] of bodies) {
       const refused = await fetch(`${server!.apiUrl}/auth/sign-in`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          origin,
-          [CLIENT_HEADER]: "192.0.2.4",
-        },
+        redirect: "manual",
+        headers: { ...type, origin, [CLIENT_HEADER]: "192.0.2.4" },
         body,
       });
-      expect(refused.status).toBe(400);
-      expect(await errorCode(refused)).toBe("validation_error");
-      expect(refused.headers.get("set-cookie")).toBeNull();
+      expect(refused.status, kind).toBe(400);
+      expect(await errorCode(refused), kind).toBe("validation_error");
+      expect(refused.headers.get("set-cookie"), kind).toBeNull();
     }
   });
 
@@ -329,9 +338,9 @@ describe("the sign-in surface", () => {
     expect(signInAnswerOf(wrong).error).toBe("invalid_credentials");
     expect(wrong.headers.get("set-cookie")).toBeNull();
     // The witness: the right password from the same address signs in.
-    expect(
-      signInAnswerOf(await signIn(OWNER.password, "192.0.2.8")).error,
-    ).toBe(undefined);
+    expect(signInOutcome(await signIn(OWNER.password, "192.0.2.8"))).toBe(
+      "signed_in",
+    );
   });
 
   it("holds one address to ten attempts at one username, and leaves the owner signing in from another", async () => {

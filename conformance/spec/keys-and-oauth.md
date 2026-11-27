@@ -3896,19 +3896,19 @@ When `POST /auth/sign-in` sends, as the sign-in page's form, the owner's `userna
 
 **Tests:** `compliance/sign-in-surface.test.ts › answers a password sign-in sent as the form with a redirect, and its session cookie`.
 
-### `keys-and-oauth/password-sign-in-fields`
+### `keys-and-oauth/password-sign-in-form-only`
 
 If `POST /auth/sign-in` sends a body that is not the sign-in page's form, then the server MUST answer `400 validation_error`.
 
 **Reason:** The owner's password is taken only from the page's form, so a JSON body is refused as any body a form door does not take is.
 
-**Tests:** `compliance/sign-in-surface.test.ts › refuses a password sign-in sent as JSON, and signs in with the form`.
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a password sign-in sent as anything but the form, and signs in with the form`.
 
 ### `keys-and-oauth/password-sign-in-form-only-cookie`
 
 If `POST /auth/sign-in` sends a body that is not the sign-in page's form, then the server MUST set no cookie.
 
-**Tests:** `compliance/sign-in-surface.test.ts › refuses a password sign-in sent as JSON, and signs in with the form`.
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a password sign-in sent as anything but the form, and signs in with the form`.
 
 ### `keys-and-oauth/password-sign-in-refused`
 
