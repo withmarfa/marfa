@@ -1069,6 +1069,21 @@ export class MarfaClient {
     });
   }
 
+  async findItemsByBlob(hashes: string[]): Promise<
+    ApiResponse<{
+      data: Array<{
+        hash: string;
+        items: Array<{ id: string; type: string; title: string | null }>;
+        more: boolean;
+      }>;
+    }>
+  > {
+    return this.request("/items/blobs", {
+      method: "POST",
+      body: { hashes },
+    });
+  }
+
   /** POST /items/tombstones — moves the named tombstones' `settled_at`
    *  later, never earlier. */
   async settleTombstones(

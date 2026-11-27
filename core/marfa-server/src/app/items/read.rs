@@ -16,17 +16,19 @@ use super::{
 use crate::app::App;
 use crate::app::access::reach::Demand;
 use crate::app::access::{Caller, Level, Permission};
+use crate::app::blobs::Hash;
 use crate::app::catalog::{self, Catalog, Snapshot};
 use crate::app::clock::Stamp;
 use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::edges::{self, Reach};
 use crate::app::faults::{Faults, HOLD_READ_HYDRATION, HOLD_READ_SNAPSHOT};
 use crate::app::housekeeping::DAY_MS;
-use crate::app::query::{Secret, States, bad_cursor, judge_type};
+use crate::app::query::{self, Secret, States, bad_cursor, judge_type};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
 const TITLES_PER_NAME: i64 = 20;
+const HOLDERS_PER_HASH: i64 = 20;
 const FIRST_PAGE: i64 = 50;
 const MAX_TAKES: usize = 100;
 const MAX_NEIGHBORS: usize = 100;
@@ -519,49 +521,89 @@ pub(crate) fn listed(read: &Reader<'_, '_>, seqs: &[i64], include: &Many) -> Res
         .collect())
 }
 
+/// The types and sources the caller could list through `GET /items`, hidden types left out.
+fn listable(read: &Reader<'_, '_>) -> Result<query::Reach> {
+    Ok(query::Reach::of_own(read)?.narrowed(|type_id| !super::is_hidden(type_id)))
+}
+
+/// The title an answer names an item by: the text in its type's title field, if any.
+fn title_text<'a>(
+    rules: &marfa_rules::catalog::Catalog,
+    type_id: &str,
+    properties: &'a serde_json::Map<String, Value>,
+) -> Option<&'a str> {
+    properties
+        .get(rules.title_property(type_id))
+        .and_then(Value::as_str)
+}
+
 pub async fn titles(app: &App, caller: &Caller, names: Vec<String>) -> Result<String> {
     reading(app, caller, move |read| {
-        read.caller.require_reach()?;
+        let reach = listable(read)?;
         let rules = &read.catalog.rules;
+        let mut lookup = (!reach.is_empty())
+            .then(|| rows::Titles::new(read.tx, &reach, TITLES_PER_NAME + 1))
+            .transpose()?;
         let mut results = Vec::with_capacity(names.len());
         for name in names {
             let mut found = Vec::new();
             let mut more = false;
-            if let Some(key) = names::title_key(&name) {
-                let mut after = String::new();
-                'walking: loop {
-                    let batch = rows::titled(read.tx, &key, &after, TITLES_PER_NAME + 1)?;
-                    let Some(last) = batch.last().map(|row| row.id.clone()) else {
-                        break;
-                    };
-                    for row in batch {
-                        if super::is_hidden(&row.type_id)
-                            || !read.caller.may_read_type(&row.type_id)
-                            || !read
-                                .caller
-                                .levers()?
-                                .lists(rules, &row.type_id, &row.source)
-                        {
-                            continue;
-                        }
-                        if found.len() as i64 == TITLES_PER_NAME {
-                            more = true;
-                            break 'walking;
-                        }
-                        let properties = super::parsed(&row.properties)?;
-                        found.push(serde_json::json!({
-                            "id": row.id,
-                            "type": row.type_id,
-                            "title": properties.get(rules.title_property(&row.type_id)),
-                            "has_blob": row.has_blob,
-                        }));
-                    }
-                    after = last;
+            if let (Some(key), Some(lookup)) = (names::title_key(&name), lookup.as_mut()) {
+                let mut rows = lookup.of(&key)?;
+                more = rows.len() as i64 > TITLES_PER_NAME;
+                rows.truncate(TITLES_PER_NAME as usize);
+                for row in rows {
+                    let properties = super::parsed(&row.properties)?;
+                    found.push(json!({
+                        "id": row.id,
+                        "type": row.type_id,
+                        "title": title_text(rules, &row.type_id, &properties),
+                        "has_blob": row.has_blob,
+                    }));
                 }
             }
-            results.push(serde_json::json!({ "name": name, "items": found, "more": more }));
+            results.push(json!({ "name": name, "items": found, "more": more }));
         }
-        Ok(serde_json::json!({ "data": results }).to_string())
+        Ok(json!({ "data": results }).to_string())
+    })
+    .await
+}
+
+pub async fn holders(app: &App, caller: &Caller, hashes: Vec<Hash>) -> Result<String> {
+    reading(app, caller, move |read| {
+        let reach = listable(read)?;
+        let rules = &read.catalog.rules;
+        let mut lookup = (!reach.is_empty())
+            .then(|| rows::Holders::new(read.tx, &reach, HOLDERS_PER_HASH + 1))
+            .transpose()?;
+        let mut answered: HashMap<&str, Value> = HashMap::new();
+        let mut results = Vec::with_capacity(hashes.len());
+        for hash in &hashes {
+            if let Some(held) = answered.get(hash.as_str()) {
+                results.push(held.clone());
+                continue;
+            }
+            let Some(lookup) = lookup.as_mut() else {
+                results.push(json!({ "hash": hash.as_str(), "items": [], "more": false }));
+                continue;
+            };
+            let mut rows = lookup.of(hash.as_str())?;
+            let more = rows.len() as i64 > HOLDERS_PER_HASH;
+            rows.truncate(HOLDERS_PER_HASH as usize);
+            let mut found = Vec::with_capacity(rows.len());
+            for row in rows {
+                let properties = super::parsed(&lookup.properties(row.seq)?)?;
+                found.push(json!({
+                    "id": row.id,
+                    "type": row.type_id,
+                    "title": title_text(rules, &row.type_id, &properties),
+                }));
+            }
+            let held = json!({ "hash": hash.as_str(), "items": found, "more": more });
+            answered.insert(hash.as_str(), held.clone());
+            results.push(held);
+        }
+        Ok(json!({ "data": results }).to_string())
     })
     .await
 }

@@ -1121,6 +1121,18 @@ marfa items titles [OPTIONS] <NAMES>...
 | --- | --- |
 | `<NAMES>...` | The titles to look for, at most 200. |
 
+### marfa items blobs
+
+Find the items the credential can read that hold each file hash, in one request.
+
+```text
+marfa items blobs [OPTIONS] <HASHES>...
+```
+
+| Argument | Description |
+| --- | --- |
+| `<HASHES>...` | The hashes to look for, each `sha256:` and 64 lowercase hexadecimal digits, at most 200. |
+
 ### marfa items lookup
 
 Items by link, natural key or id, in every state, with the tombstones purges left for the keys named.

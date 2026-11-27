@@ -198,6 +198,14 @@ pub enum ItemsCommand {
         #[arg(required = true)]
         names: Vec<String>,
     },
+    /// Find the items the credential can read that hold each file hash, in
+    /// one request.
+    Blobs {
+        /// The hashes to look for, each `sha256:` and 64 lowercase
+        /// hexadecimal digits, at most 200.
+        #[arg(required = true)]
+        hashes: Vec<String>,
+    },
     /// Items by link, natural key or id, in every state, with the
     /// tombstones purges left for the keys named.
     Lookup {
@@ -964,6 +972,12 @@ pub fn titles_request(names: &[String]) -> Request {
         .reading()
 }
 
+pub fn blobs_request(hashes: &[String]) -> Request {
+    Request::post(&["items", "blobs"])
+        .json(json!({ "hashes": hashes }))
+        .reading()
+}
+
 fn key_selector(
     type_: &str,
     links: &[String],
@@ -1301,6 +1315,7 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
             table,
         } => counts_request(ids, backref.as_deref(), edge.as_deref(), table.as_deref()),
         ItemsCommand::Titles { names } => titles_request(names),
+        ItemsCommand::Blobs { hashes } => blobs_request(hashes),
         ItemsCommand::Lookup {
             type_,
             links,

@@ -860,6 +860,64 @@ describe("what the connector reads of its own items on the target type", () => {
     expect(settled.error?.error.code).toBe("type_not_permitted");
   });
 
+  it("finds its own items of the mapped type by bytes and by title and none of the owner's, and on the former target type only while a rewrite is open", async () => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const bytes = new TextEncoder().encode(`reach ${fresh()}`);
+    const title = `held ${fresh()}`;
+    const hashes = [];
+    for (const by of [own, owner]) {
+      const sent = await by.uploadBlob(bytes, "text/plain");
+      expect(sent.status, JSON.stringify(sent.error)).toBe(201);
+      hashes.push(sent.data.hash);
+    }
+    const hash = hashes[0]!;
+    expect(hashes[1]).toBe(hash);
+    const fields = { properties: { title, reporter: "x", blob_ref: hash } };
+    const mine = await ticket(own, plugin, {
+      source_id: `b-${fresh()}`,
+      ...fields,
+    });
+    const theirs = await ticket(owner, plugin, fields);
+
+    const found = async (by: MarfaClient) => {
+      const byBlob = await by.findItemsByBlob([hash]);
+      expect(byBlob.status, JSON.stringify(byBlob.error)).toBe(200);
+      const byTitle = await by.findItemsByTitle([title]);
+      expect(byTitle.status, JSON.stringify(byTitle.error)).toBe(200);
+      return [
+        byBlob.data.data[0]!.items.map((item) => item.id).sort(),
+        byTitle.data.data[0]!.items.map((item) => item.id).sort(),
+      ];
+    };
+    // The witness: the owner finds both tickets by bytes and by title.
+    const both = [mine.id, theirs.id].sort();
+    expect(await found(owner)).toEqual([both, both]);
+    const listed = await own.listItems({ type: plugin.ticket, limit: 100 });
+    expect(listed.data.data.map((item) => item.id)).toEqual([mine.id]);
+    expect(await found(own)).toEqual([[mine.id], [mine.id]]);
+
+    const moved = await owner.saveConnectorMapping(plugin.name, {
+      version: 1,
+      kinds: { issue: { target_type: plugin.issue } },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(await found(own), "the kind has left tickets").toEqual([[], []]);
+    const asked = await owner.rewriteConnectorItems(plugin.name, {
+      kinds: ["issue"],
+    });
+    expect(asked.status, JSON.stringify(asked.error)).toBe(200);
+    expect(await found(own), "while the rewrite is open").toEqual([
+      [mine.id],
+      [mine.id],
+    ]);
+    const done = await own.finishConnectorRewrite(plugin.name, {
+      number: asked.data.number,
+    });
+    expect(done.status, JSON.stringify(done.error)).toBe(200);
+    expect(await found(own), "once the rewrite is cleared").toEqual([[], []]);
+  });
+
   it("streams the events of its own items of the mapped type and never the owner's, settled by a later event", async ({
     signal,
   }) => {
