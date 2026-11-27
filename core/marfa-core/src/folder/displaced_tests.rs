@@ -1029,9 +1029,13 @@ fn age_the_journal(folder: &Folder) {
         .unwrap();
 }
 
+/// Changes the root, the directory beside it or the reserved file after the
+/// write is blocked.
+type Then = fn(&Path, &Path, &Path);
+
 #[test]
 fn the_cases_from_the_code_reviews_change_nothing_while_refused() {
-    let cases: [(&str, fn(&Path, &Path, &Path)); 7] = [
+    let cases: [(&str, Then); 7] = [
         ("aside holds the file", |_, _, _| {}),
         ("aside holds a save", |_, _, kept| {
             std::fs::write(kept, SAVE).unwrap();
