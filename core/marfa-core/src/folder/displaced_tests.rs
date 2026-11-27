@@ -113,53 +113,6 @@ fn a_displacement_a_stopped_run_left_is_settled_by_the_next_scan() {
 }
 
 #[test]
-fn a_displacement_in_another_folders_directory_puts_the_persons_save_back() {
-    let (dir, folder) = scanned_folder();
-    let root = dir.path().canonicalize().unwrap();
-    let other = tempfile::tempdir_in(root.join("..")).unwrap();
-    let other = other.path().canonicalize().unwrap();
-    let target = other.join("Recovery.md");
-    std::fs::write(&target, "as the server has it\n").unwrap();
-    let read = object_of(&target);
-    let id = uuid::Uuid::now_v7().simple().to_string();
-    let kept = other.join(landing::reserved(&id));
-    std::fs::rename(&target, &kept).unwrap();
-    std::fs::write(&kept, "as the server has it\nthe person's edit\n").unwrap();
-    let place = other.to_string_lossy().into_owned();
-    state::set_displaced(
-        &folder.core.conn().unwrap(),
-        &state::Displaced {
-            dir: place.clone(),
-            dir_at: at(&other),
-            aside: place,
-            aside_at: at(&other),
-            displacement: Displacement {
-                id,
-                kind: Kind::Withdraw,
-                target: "Recovery.md".into(),
-                kept: kept.file_name().unwrap().to_string_lossy().into_owned(),
-                ours: None,
-                read,
-            },
-        },
-    )
-    .unwrap();
-
-    let report = folder.scan().unwrap();
-    assert_eq!(
-        std::fs::read(&target).unwrap(),
-        b"as the server has it\nthe person's edit\n"
-    );
-    assert!(!kept.exists());
-    assert!(kept_flags(&report).is_empty(), "{:?}", report.flagged);
-    assert!(
-        state::displaced(&folder.core.conn().unwrap())
-            .unwrap()
-            .is_empty()
-    );
-}
-
-#[test]
 fn a_save_kept_beside_its_path_after_a_stopped_run_is_reported_once() {
     let (dir, folder) = scanned_folder();
     let root = dir.path().canonicalize().unwrap();
@@ -666,4 +619,328 @@ fn a_second_save_of_the_settings_file_is_kept_in_the_root_and_reported() {
     let report = folder.scan().unwrap();
     assert_eq!(kept_flags(&report), [kept[0].as_str()]);
     assert_eq!(report.created, 0);
+}
+
+/// The file a take-in read, and a person's save of it.
+const TAKEN: &[u8] = b"as the server has it\n";
+const SAVE: &[u8] = b"as the server has it\nthe person's edit\n";
+
+/// A directory beside the folder's, as another folder's is.
+fn beside(root: &Path) -> (tempfile::TempDir, PathBuf) {
+    let other = tempfile::tempdir_in(root.join("..")).unwrap();
+    let path = other.path().canonicalize().unwrap();
+    (other, path)
+}
+
+fn displaced_at(folder: &Folder, place: &str, dir_at: (u64, u64), kept: &str, read: Object) {
+    state::set_displaced(
+        &folder.core.conn().unwrap(),
+        &state::Displaced {
+            dir: place.into(),
+            dir_at,
+            aside: place.into(),
+            aside_at: dir_at,
+            displacement: Displacement {
+                id: kept[".marfa-kept-".len()..kept.len() - ".tmp".len()].into(),
+                kind: Kind::Withdraw,
+                target: "Recovery.md".into(),
+                kept: kept.into(),
+                ours: None,
+                read,
+            },
+        },
+    )
+    .unwrap();
+}
+
+/// What a take-in that stopped in `dir` recorded, naming `dir` as `place`:
+/// `Recovery.md` moved under its reserved name, which holds a person's save
+/// where `save` and the file read otherwise. Answers the reserved file.
+fn stopped_take_in(folder: &Folder, dir: &Path, place: &str, save: bool) -> PathBuf {
+    let target = dir.join("Recovery.md");
+    std::fs::write(&target, TAKEN).unwrap();
+    let read = object_of(&target);
+    let name = landing::reserved(&uuid::Uuid::now_v7().simple().to_string());
+    let kept = dir.join(&name);
+    std::fs::rename(&target, &kept).unwrap();
+    if save {
+        std::fs::write(&kept, SAVE).unwrap();
+    }
+    displaced_at(folder, place, at(dir), &name.to_string_lossy(), read);
+    kept
+}
+
+/// The reasons `flagged` reports `path` kept for.
+fn reported<'a>(flagged: &'a [Flagged], path: &Path) -> Vec<&'a str> {
+    flagged
+        .iter()
+        .filter(|flagged| flagged.flag == "kept" && Path::new(&flagged.path) == path)
+        .map(|flagged| flagged.reason.as_str())
+        .collect()
+}
+
+/// Asserts `flagged` reports `path` once, as a file outside the folder that
+/// came from `from`.
+fn reported_outside(flagged: &[Flagged], path: &Path, from: &Path) {
+    let reasons = reported(flagged, path);
+    assert_eq!(reasons.len(), 1, "{} in {flagged:?}", path.display());
+    assert!(
+        reasons[0].contains(&*from.to_string_lossy()) && reasons[0].contains("outside this folder"),
+        "{reasons:?}"
+    );
+}
+
+fn records(folder: &Folder) -> usize {
+    state::displaced(&folder.core.conn().unwrap())
+        .unwrap()
+        .len()
+}
+
+#[test]
+fn a_record_outside_the_folder_is_never_acted_on_and_is_reported_every_pass() {
+    for save in [true, false] {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        let (_other, other) = beside(&root);
+        let kept = stopped_take_in(&folder, &other, &other.to_string_lossy(), save);
+        // The witness: the same record in a directory in the folder settles.
+        std::fs::create_dir(root.join("Projects")).unwrap();
+        let inside = stopped_take_in(&folder, &root.join("Projects"), "Projects", save);
+        let from = other.join("Recovery.md");
+
+        for _ in 0..3 {
+            let report = folder.scan().unwrap();
+            reported_outside(&report.flagged, &kept, &from);
+        }
+        assert!(!inside.exists(), "save {save}: the witness did not settle");
+        assert_eq!(root.join("Projects/Recovery.md").exists(), save);
+        let pulled = folder.pull().unwrap();
+        reported_outside(&pulled.flagged, &kept, &from);
+        folder.scan_keeping_files().unwrap();
+
+        assert_eq!(
+            std::fs::read(&kept).unwrap(),
+            if save { SAVE } else { TAKEN },
+            "save {save}"
+        );
+        assert!(!from.exists(), "save {save}");
+        assert_eq!(records(&folder), 1, "save {save}");
+    }
+}
+
+#[test]
+fn a_replacement_directory_at_an_outside_records_path_is_never_opened() {
+    for holds in [true, false] {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        let (_other, other) = beside(&root);
+        let name = landing::reserved(&uuid::Uuid::now_v7().simple().to_string());
+        let kept = other.join(&name);
+        // A directory at the path with the recorded inode, on another device
+        // than the one recorded, as another volume mounted there is.
+        let (device, inode) = at(&other);
+        let mut read = Object {
+            device: device ^ 1,
+            inode: 0,
+            length: None,
+            modified: None,
+            hash: Some(state::hash(TAKEN)),
+        };
+        if holds {
+            std::fs::write(&kept, TAKEN).unwrap();
+            read.inode = std::fs::metadata(&kept).unwrap().ino();
+        }
+        displaced_at(
+            &folder,
+            &other.to_string_lossy(),
+            (device ^ 1, inode),
+            &name.to_string_lossy(),
+            read,
+        );
+        let from = other.join("Recovery.md");
+
+        for _ in 0..2 {
+            let report = folder.scan().unwrap();
+            reported_outside(&report.flagged, &kept, &from);
+        }
+        assert_eq!(kept.exists(), holds, "holds {holds}");
+        assert!(!from.exists(), "holds {holds}");
+        assert_eq!(records(&folder), 1, "holds {holds}");
+    }
+}
+
+/// Runs a quick pass, a scoped pass and a complete scan, and asserts each
+/// reports `kept` as from `from` and the record stays.
+fn kept_through_every_pass(folder: &Folder, kept: &Path, from: &Path) {
+    let quick = folder.scan_holding_missing().unwrap();
+    reported_outside(&quick.flagged, kept, from);
+    let settle = std::time::Duration::from_millis(0);
+    let scope = scoped::Scope::default();
+    let scoped = folder
+        .scan_watching_within(false, settle, scoped::Reading::Named(&scope))
+        .unwrap();
+    reported_outside(&scoped.flagged, kept, from);
+    for _ in 0..2 {
+        let report = folder.scan().unwrap();
+        reported_outside(&report.flagged, kept, from);
+    }
+    assert_eq!(records(folder), 1);
+}
+
+#[test]
+fn an_outside_record_is_kept_whatever_its_directory_answers() {
+    for answer in ["locked", "a file", "absent"] {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        let (_other, other) = beside(&root);
+        let kept = stopped_take_in(&folder, &other, &other.to_string_lossy(), true);
+        let _locked = match answer {
+            "locked" => Some(crate::test_folders::locked(&other, 0o000)),
+            "a file" => {
+                std::fs::remove_dir_all(&other).unwrap();
+                std::fs::write(&other, "a file at the directory's path").unwrap();
+                None
+            }
+            _ => {
+                std::fs::remove_dir_all(&other).unwrap();
+                None
+            }
+        };
+
+        kept_through_every_pass(&folder, &kept, &other.join("Recovery.md"));
+        drop(_locked);
+        if answer == "locked" {
+            assert_eq!(std::fs::read(&kept).unwrap(), SAVE);
+        }
+        if answer == "a file" {
+            std::fs::remove_file(&other).unwrap();
+        }
+    }
+}
+
+#[test]
+fn a_record_with_a_parent_component_is_treated_as_outside() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    let (_other, other) = beside(&root);
+    let place = format!("../{}", other.file_name().unwrap().to_string_lossy());
+    let kept = stopped_take_in(&folder, &other, &place, true);
+    let name = kept.file_name().unwrap().to_string_lossy();
+
+    kept_through_every_pass(
+        &folder,
+        Path::new(&format!("{place}/{name}")),
+        Path::new(&format!("{place}/Recovery.md")),
+    );
+    assert_eq!(std::fs::read(&kept).unwrap(), SAVE);
+    assert!(!other.join("Recovery.md").exists());
+}
+
+#[test]
+fn an_unreadable_displaced_record_outside_the_folder_is_kept() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    let (_other, other) = beside(&root);
+    std::fs::create_dir(root.join("Projects")).unwrap();
+    let mut kept = Vec::new();
+    for (id, place, there) in [
+        ("1", other.to_string_lossy().into_owned(), other.clone()),
+        ("2", "Projects".to_string(), root.join("Projects")),
+    ] {
+        let name = landing::reserved(id).to_string_lossy().into_owned();
+        std::fs::write(there.join(&name), SAVE).unwrap();
+        kept.push(there.join(&name));
+        // No `kind`, so the record does not read.
+        let value = serde_json::json!({
+            "dir": place,
+            "dir_at": at(&there),
+            "aside": place,
+            "aside_at": at(&there),
+            "displacement": { "id": id, "target": "Recovery.md", "kept": name },
+        });
+        crate::store::meta_set(
+            &folder.core.conn().unwrap(),
+            &format!("folder_displaced:{id}"),
+            &value.to_string(),
+        )
+        .unwrap();
+    }
+
+    for _ in 0..3 {
+        let report = folder.scan().unwrap();
+        reported_outside(&report.flagged, &kept[0], &other.join("Recovery.md"));
+        // The witness: the record in the folder ends at the first pass.
+        let keys: Vec<String> = folder
+            .core
+            .conn()
+            .unwrap()
+            .prepare("SELECT key FROM meta WHERE key LIKE 'folder_displaced:%'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(keys, ["folder_displaced:1"]);
+    }
+    assert_eq!(std::fs::read(&kept[0]).unwrap(), SAVE);
+    assert_eq!(std::fs::read(&kept[1]).unwrap(), SAVE);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn no_pass_writes_a_record_outside_the_folder() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    let (_other, other) = beside(&root);
+    let kept = stopped_take_in(&folder, &other, &other.to_string_lossy(), false);
+    std::fs::create_dir(root.join("Projects")).unwrap();
+    stopped_take_in(&folder, &root.join("Projects"), "Projects", false);
+    let retained_in = |folder: &Folder| -> Vec<String> {
+        state::retained(&folder.core.conn().unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|row| row.map_or_else(|row| row.aside, |row| row.dir))
+            .collect()
+    };
+
+    {
+        let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+        folder.scan().unwrap();
+        // The witness: in the folder, the fault keeps the file for a pass.
+        assert_eq!(retained_in(&folder), ["Projects"]);
+        folder.pull().unwrap();
+        folder.discard_kept().unwrap();
+    }
+    assert!(retained_in(&folder).is_empty());
+    assert_eq!(records(&folder), 1);
+    assert_eq!(std::fs::read(&kept).unwrap(), TAKEN);
+}
+
+#[test]
+fn place_dir_and_displaced_dir_refuse_places_outside_the_folder() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    let (_other, other) = beside(&root);
+    let parent = format!("../{}", other.file_name().unwrap().to_string_lossy());
+    std::fs::create_dir(root.join("Projects")).unwrap();
+    // The witness: a place in the folder opens.
+    assert!(folder.place_dir("Projects").is_ok());
+    assert!(
+        folder
+            .displaced_dir("Projects", at(&root.join("Projects")))
+            .is_ok()
+    );
+    for place in [other.to_string_lossy().into_owned(), parent] {
+        let refused = |answer: std::io::Result<Directory>| answer.err().map(|error| error.kind());
+        assert_eq!(
+            refused(folder.place_dir(&place)),
+            Some(std::io::ErrorKind::InvalidInput),
+            "{place}"
+        );
+        assert_eq!(
+            refused(folder.displaced_dir(&place, at(&other))),
+            Some(std::io::ErrorKind::InvalidInput),
+            "{place}"
+        );
+    }
 }
