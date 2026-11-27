@@ -11,7 +11,7 @@ use crate::app::access::Caller;
 use crate::app::edges::write::{Create, Delete, Op};
 use crate::app::edges::{ItemListing, Reach};
 use crate::app::items::write::{self, Change, Settle};
-use crate::app::items::{self, Detail, Door};
+use crate::app::items::{self, Detail, Door, state_moved};
 use crate::app::refusal::{Code, Refusal};
 use crate::http::items::{tags_of, update_from};
 use crate::http::mcp::results::{Outcome, Stop};
@@ -36,7 +36,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Change an item",
-        description: "Use to change an item's fields, tags or edges, archive it, or restore it from the trash. Send the version you read with marfa_get; if the item changed since, nothing is written and you get it as it is now and which of your fields changed. To archive or restore, send state with from, the state you read the item in; if it is in another state now, nothing is written. Give the person the item's web_url.",
+        description: "Use to change an item's fields, tags or edges, archive it, or restore it from the trash. Send the version you read with marfa_get; if the item changed since, nothing is written and you get it as it is now and which of your fields changed. To archive or restore, send state with from, the state you read the item in; if it is in another state now, the state does not change and the error names any step already written. Give the person the item's web_url.",
         input: json!({
             "type": "object",
             "properties": {
@@ -58,7 +58,7 @@ pub fn definition() -> Definition {
                 "state": { "type": "string", "enum": ["active", "archived"],
                     "description": "`archived` archives the item; `active` brings it back from the archive or the trash. Send `from` with it. An item in the trash takes no other change until restored." },
                 "from": { "type": "string", "enum": ["active", "archived", "trashed"],
-                    "description": "The state you read the item in. Required with `state`, and sent only with it. If the item is in another state now, nothing is written." },
+                    "description": "The state you read the item in. Required with `state`, and sent only with it. If the item is in another state now, the state does not change and the error names any step already written." },
             },
             "required": ["id", "version"],
             "additionalProperties": false,
@@ -369,16 +369,6 @@ fn read_state(arguments: &Map<String, Value>) -> Result<Option<(String, String)>
     }
 }
 
-/// Refuses a state change from a state other than the one the item is in.
-fn state_moved(from: &str, actual: &str) -> Refusal {
-    Refusal::new(
-        Code::StateConflict,
-        format!("The item is {actual}, not {from}. Read it again."),
-    )
-    .with_detail("expected", from)
-    .with_detail("actual", actual)
-}
-
 pub async fn run(
     app: &Arc<App>,
     caller: &Caller,
@@ -404,10 +394,15 @@ pub async fn run(
         Ok(text) => parsed(&text)?.get("item").cloned().unwrap_or(Value::Null),
         // A read with no state refuses an item in the trash; the restore checks its version.
         Err(refusal) if refusal.code == Code::ItemNotFound && restore_only(&arguments) => {
+            let Some((_, from)) = state_change else {
+                return Err(Stop::invalid(
+                    "from is required with state: send the state you read the item in.",
+                ));
+            };
             let change = Change::Transition {
                 id: id.clone(),
                 state: "active".to_string(),
-                from: state_change.as_ref().map(|(_, from)| from.clone()),
+                from: Some(from),
                 version: Some(version),
             };
             let done = write::run(app, caller, None, change)
@@ -522,7 +517,9 @@ pub async fn run(
         applied.push(format!("remove_edge {} {}", edge.edge_type, edge.to_id));
     }
 
-    if let Some((wanted, from)) = state_change.filter(|(wanted, _)| *wanted != state) {
+    if let Some((wanted, from)) =
+        state_change.filter(|(wanted, from)| *wanted != state || *from != state)
+    {
         let step = format!("state {wanted}");
         let change = Change::Transition {
             id: id.clone(),

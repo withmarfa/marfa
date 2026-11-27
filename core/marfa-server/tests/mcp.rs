@@ -717,6 +717,124 @@ async fn state_of(instance: &Instance, token: &str, id: &str) -> String {
         .to_string()
 }
 
+/// The state an item is in, trashed or not.
+async fn any_state_of(instance: &Instance, token: &str, id: &str) -> String {
+    let listed = instance
+        .call(
+            token,
+            Method::GET,
+            &format!("/items?state=any&filter=id%20eq%20%22{id}%22"),
+            None,
+        )
+        .await;
+    listed.body["data"][0]["state"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+async fn transition(instance: &Instance, token: &str, id: &str, state: &str) {
+    let moved = instance
+        .call(
+            token,
+            Method::POST,
+            &format!("/items/{id}/transition"),
+            Some(json!({ "state": state })),
+        )
+        .await;
+    assert_eq!(moved.status, StatusCode::OK, "{}", moved.body);
+}
+
+#[tokio::test]
+async fn a_restore_names_the_state_the_agent_read_and_a_trashed_item_stays_trashed_otherwise() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.writer().await;
+    let id = instance.note(&token, "binned").await.payload()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    transition(&instance, &token, &id, "archived").await;
+    transition(&instance, &token, &id, "trashed").await;
+
+    let stale = instance
+        .tool(
+            &token,
+            "marfa_update",
+            json!({ "id": id, "version": 1, "state": "active", "from": "archived" }),
+        )
+        .await;
+    assert!(stale.failed, "{}", stale.value);
+    assert_eq!(stale.code(), "state_conflict");
+    assert_eq!(stale.value["error"]["details"]["expected"], "archived");
+    assert_eq!(stale.value["error"]["details"]["actual"], "trashed");
+    assert_eq!(any_state_of(&instance, &token, &id).await, "trashed");
+
+    // The witness: from the state the agent read, the same call restores.
+    let restored = instance
+        .tool(
+            &token,
+            "marfa_update",
+            json!({ "id": id, "version": 1, "state": "active", "from": "trashed" }),
+        )
+        .await;
+    assert_eq!(restored.payload()["state"], "active");
+    assert_eq!(any_state_of(&instance, &token, &id).await, "active");
+}
+
+#[tokio::test]
+async fn an_item_trashed_while_the_state_step_waits_is_refused_and_stays_trashed() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.writer().await;
+    let id = instance.note(&token, "binned mid-call").await.payload()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    transition(&instance, &token, &id, "archived").await;
+    let held = |from: &'static str| {
+        instance
+            .app
+            .faults
+            .set("hold:write", Some("item.transition@1"))
+            .unwrap();
+        instance.tool(
+            &token,
+            "marfa_update",
+            json!({ "id": id, "version": 1, "state": "active", "from": from }),
+        )
+    };
+    let waits = || async {
+        for _ in 0..500 {
+            if instance.app.faults.list().iter().any(|f| f.waiting > 0) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+    };
+
+    let calling = held("archived");
+    let trashing = async {
+        waits().await;
+        transition(&instance, &token, &id, "trashed").await;
+        instance.app.faults.clear(Some("hold:write"));
+    };
+    let (refused, ()) = tokio::join!(calling, trashing);
+    assert!(refused.failed, "{}", refused.value);
+    assert_eq!(refused.code(), "state_conflict", "{}", refused.value);
+    assert_eq!(refused.value["error"]["details"]["actual"], "trashed");
+    assert_eq!(refused.value["error"]["failed_step"], "state active");
+    assert_eq!(any_state_of(&instance, &token, &id).await, "trashed");
+
+    // The witness: a call that read the item as trashed restores it, held or not.
+    let calling = held("trashed");
+    let releasing = async {
+        waits().await;
+        instance.app.faults.clear(Some("hold:write"));
+    };
+    let (restored, ()) = tokio::join!(calling, releasing);
+    assert_eq!(restored.payload()["state"], "active");
+    assert_eq!(any_state_of(&instance, &token, &id).await, "active");
+}
+
 #[tokio::test]
 async fn a_confirmation_works_once_and_a_second_use_says_so_without_trashing_again() {
     let instance = Instance::start(&[]).await;

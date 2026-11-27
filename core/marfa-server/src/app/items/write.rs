@@ -18,7 +18,9 @@ mod enrichment;
 use super::bulk::{Counts, Entered, Entry, Note, Page, rollback};
 use super::file_fields;
 use super::index;
-use super::plan::{self, Act, Asked, Gate, Moving, Purging, invalid_transition, require_version};
+use super::plan::{
+    self, Act, Asked, Gate, Moving, Purging, invalid_transition, require_version, state_moved,
+};
 use super::rows::{self, Landed, Moved, NewRow};
 use super::{
     Item, Keys, Selected, Snapshot, Writer, check_keys, link_in, metadata_for, metadata_text,
@@ -2409,12 +2411,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         if let Some(from) = from {
             let row = self.lifecycle_row(id, version)?;
             if row.state != from {
-                return Err(Refusal::new(
-                    Code::StateConflict,
-                    format!("The item is {}, not {from}. Read it again.", row.state),
-                )
-                .with_detail("expected", from)
-                .with_detail("actual", row.state));
+                return Err(state_moved(from, &row.state));
             }
         }
         let (item, _) = self.transitioned(id, state, version)?;
