@@ -960,36 +960,55 @@ fn a_fill_stopped_failed_or_panicking_lets_the_waiting_follow_take_the_stream() 
 
 #[test]
 fn a_listener_that_holds_a_table_while_a_catch_up_runs_deadlocks_nothing() {
-    for _ in 0..10 {
-        let copy = copy();
-        copy.go.store(true, Ordering::SeqCst);
-        copy.server.on(
-            "/events",
-            vec![
-                events("11", &[("e1", "11")], held()),
-                events("11", &[], Then::End),
-                events("11", &[], held()),
-            ],
-        );
-        let heard = Arc::new(Heard::default());
-        let (answer, holds) = mpsc::channel();
-        *heard.holds.lock().unwrap() = Some((Arc::clone(&copy.core), answer));
-        let _listening = watch(&copy.core, &heard);
-        wait_until("the listener never held", || {
-            heard.holding.load(Ordering::SeqCst)
-        });
-        let (_stop, caught_up) = catch_up(&copy.core);
-        holds
-            .recv_timeout(LONG)
-            .expect("the listener's hold never ended")
-            .unwrap();
-        caught_up
-            .recv_timeout(LONG)
-            .expect("the catch-up never ended")
-            .unwrap();
-    }
-    // The witness: a fill that never ends holds a catch-up past the bound.
     let copy = copy();
+    let another_contract = Answer::Json {
+        status: 200,
+        body: "{}".into(),
+        headers: vec![(
+            crate::http::CONTRACT_HEADER.into(),
+            (crate::contract::CONTRACT_VERSION + 1).to_string(),
+        )],
+    };
+    // The source takes `e1` and then fails, letting the stream go; the
+    // catch-up reads to the head; the source restarted after it holds on.
+    copy.server.on(
+        "/events",
+        vec![
+            until(&copy.go, events("11", &[("e1", "11")], Then::End)),
+            another_contract,
+            events("11", &[], Then::End),
+            events("11", &[], held()),
+        ],
+    );
+    let heard = Arc::new(Heard::default());
+    let (answer, holds) = mpsc::channel();
+    *heard.holds.lock().unwrap() = Some((Arc::clone(&copy.core), answer));
+    let _listening = watch(&copy.core, &heard);
+    copy.server.wait_for("/events", 1, LONG);
+    // The dispatcher tells `e1` only once the source has ended, so the
+    // listener's hold finds the stream free.
+    copy.core.watch.held_up.store(true, Ordering::SeqCst);
+    copy.go.store(true, Ordering::SeqCst);
+    wait_until("the watch's follow never ended", || {
+        copy.core.claim_follow().is_ok()
+    });
+    fault::arm(CLAIMED);
+    copy.core.watch.held_up.store(false, Ordering::SeqCst);
+    held_at(CLAIMED);
+    assert!(heard.holding.load(Ordering::SeqCst));
+    let before = fault::reached(WAITING);
+    let (_stop, caught_up) = catch_up(&copy.core);
+    waits_for_fill(&caught_up, before);
+    fault::release(CLAIMED);
+    let fill = filled(&holds);
+    assert_eq!((fill.whole, fill.failed), (1, 0));
+    caught_up
+        .recv_timeout(LONG)
+        .expect("the catch-up never ended")
+        .unwrap();
+    copy.server.wait_for("/events", 4, LONG);
+    // The witness: a fill that never ends holds a catch-up past the bound.
+    let copy = self::copy();
     copy.server
         .on("/events", vec![events("11", &[("e1", "11")], Then::End)]);
     let held = held_hold(&copy.core);
