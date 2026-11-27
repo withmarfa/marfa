@@ -3580,7 +3580,7 @@ If one address has made thirty counted password sign-in attempts in fifteen minu
 
 If a password sign-in limit or the queue `keys-and-oauth/sign-in-decoy-queue` names refuses the sign-in form's attempt, then the server MUST redirect `302` to `/auth/sign-in` with `error=too_many_attempts`.
 
-**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one username, and leaves the owner signing in from another`.
+**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one username, and leaves the owner signing in from another`, `compliance/sign-in-queue.test.ts › refuses a sign-in with a wait once the queue of waiting checks is full, at any username, and answers one alone as wrong credentials`.
 
 ### `keys-and-oauth/sign-in-form-limit-cookie`
 
