@@ -1114,7 +1114,7 @@ When a bound file’s directory becomes another folder, a device MUST NOT journa
 
 ### `folder-setup/remove-waiting-refused`
 
-If a confirmed folder has unanswered or blocked queued writes, and no server at its address has answered as another Marfa instance since its copy's last hydration began, or the server there now answers as the copy's own instance, then a device MUST refuse to remove its state.
+If a confirmed folder has unanswered or blocked queued writes, its store holds no record that `folder-files/outside-record-refused` names, and no server at its address has answered as another Marfa instance since its copy's last hydration began, or the server there now answers as the copy's own instance, then a device MUST refuse to remove its state.
 
 **Reason:** a server that cannot be reached may still take the writes later, and only an answer from another instance shows that none of them can reach the folder; the copy's own instance answering again takes them once the copy is rebuilt.
 

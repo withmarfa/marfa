@@ -1230,7 +1230,23 @@ When a device refuses as `folder-files/outside-record-refused` says, a device MU
 
 A device MUST NOT change, move or delete a file for a record of a set-aside or kept file that names a place outside the directory.
 
-**Tests:** `device/folders-outside-records.test.ts › refuses every scan, pull, push, watch, status and discard by the command line and the binding, naming the record's files, and changes nothing`, `› acts on the same record when it names a place in the folder, the witness`, `› is taken off its machine by folders remove, which leaves every file`, `› refuses on either volume, and changes neither volume's files`.
+**Tests:** `device/folders-outside-records.test.ts › refuses every scan, pull, push, watch, status and discard by the command line and the binding, naming the record's files, and changes nothing`, `› acts on the same record when it names a place in the folder, the witness`, `› is taken off its machine by folders remove, which leaves every file`, `› is taken off its machine by folders remove while a write waits unsent, naming the changed file and leaving it`, `› refuses on either volume, and changes neither volume's files`.
+
+### `folder-files/outside-record-remove-proceeds`
+
+If a confirmed directory whose store holds a record that `folder-files/outside-record-refused` names has unanswered or blocked queued writes, then a device MUST remove its state when asked to and leave its files as they are.
+
+**Reason:** a push runs a scan, which acts on the record, so no push can send the writes first; removing the directory is the way out, and each change stays in its file.
+
+**Tests:** `device/folders-outside-records.test.ts › is taken off its machine by folders remove while a write waits unsent, naming the changed file and leaving it`.
+
+### `folder-files/outside-record-remove-unsent`
+
+When a device removes a directory under `folder-files/outside-record-remove-proceeds`, a device MUST answer how many writes were not sent, and each file holding a change the server never received, by its path and whether it is changed, new, moved from another path, which it names, or deleted.
+
+**Reason:** a deletion or a move is in no file, and the removal deletes the queue that held them, so this answer is the only record of what to do again once the directory is added again.
+
+**Tests:** `device/folders-outside-records.test.ts › is taken off its machine by folders remove while a write waits unsent, naming the changed file and leaving it`.
 
 ## Deletion, purges and missing directories
 
