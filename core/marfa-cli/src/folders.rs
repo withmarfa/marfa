@@ -1430,7 +1430,7 @@ fn describe_kept(files: &[marfa_core::KeptFile]) -> String {
         return "no kept files".into();
     }
     let mut lines = vec![format!(
-        "{} kept file(s); `folders kept --discard` deletes each one in this folder that is unchanged since Marfa set it aside",
+        "{} kept file(s); `folders kept --discard` deletes each one that is unchanged since Marfa set it aside, unless its record names a place outside this folder",
         files.len()
     )];
     lines.extend(
