@@ -21,6 +21,7 @@ A person reading the API reference, and an agent or a code generator reading the
 ### Summary
 
 - An imperative verb and its object, in sentence case, with no final period: "Create an item", "Get a blob URL". About four words: the summary is a label, and anything more goes in the description. **(checked: at most 32 characters)**
+- Give each operation its own summary: two operations that share one can't be told apart in a list. **(checked)**
 - Use one verb for one meaning:
 
   | Verb     | Use it for                                                         |
