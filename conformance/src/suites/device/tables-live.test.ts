@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { BindingDevice } from "../../device/binding-adapter.js";
+import { BindingDevice, type Call } from "../../device/binding-adapter.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { HeldTables, Outcome } from "../../device/protocol.js";
 import {
@@ -214,6 +214,25 @@ async function hydratedBinding(
   bindings.push(device);
   value(await device.hydrate(types, "library"));
   return device;
+}
+
+const FILL_CLAIMED = "table-fill-claimed";
+const WAITING_FOR_FILL = "stream-waiting-for-fill";
+
+/** Holds `steps` of `type`, its fill held once it has taken the stream. */
+async function fillHeld(
+  device: BindingDevice,
+  type: string,
+): Promise<{ held: Call<{ fill: unknown }> }> {
+  await device.hooks.hold(FILL_CLAIMED);
+  const held = device.call<{ fill: unknown }>("holdTable", type, "steps");
+  await until(
+    async () => held.settled || (await device.hooks.waiting(FILL_CLAIMED)) > 0,
+    "the hold's fill taking the stream",
+  );
+  expect(held.settled, "the hold did not wait at its fill").toBe(false);
+  // A `Call` is a thenable, which an async function would await.
+  return { held };
 }
 
 async function until(
@@ -589,6 +608,81 @@ describe("how a device fills a table", () => {
       expect(await follow.stop()).toBeNull();
     }
   });
+
+  it("waits for a hold's fill, then follows, when a follow starts while the fill runs", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    await filled(item, 3);
+    const device = await hydratedBinding([type], "fill-then-follow");
+    const { held } = await fillHeld(device, type);
+    const before = await device.hooks.reached(WAITING_FOR_FILL);
+    const follow = await device.follow();
+    try {
+      await until(
+        async () =>
+          follow.isOver ||
+          (await device.hooks.reached(WAITING_FOR_FILL)) > before,
+        "the follow waiting for the fill",
+      );
+      expect(
+        follow.isOver ? await follow.ended : "waiting",
+        "the follow ended rather than wait for the fill",
+      ).toBe("waiting");
+      await device.hooks.release(FILL_CLAIMED);
+      expect(value(await held).fill, "the hold left its table").not.toBeNull();
+      const seen = await itemOf(type);
+      await until(
+        () =>
+          follow.changes.some(
+            (change) => change.kind === "applied" && change.itemId === seen,
+          ),
+        "the follow applying an event once the fill ended",
+      );
+      expect(follow.isOver).toBe(false);
+      expect(await follow.stop()).toBeNull();
+    } finally {
+      await device.hooks.release(FILL_CLAIMED);
+      await follow.stop();
+    }
+  });
+
+  it.each(["catches up", "hydrates"] as const)(
+    "waits for a hold's fill, then %s, when one starts while the fill runs",
+    async (call) => {
+      const type = await tableType();
+      const item = await itemOf(type);
+      await filled(item, 3);
+      const device = await hydratedBinding(
+        [type],
+        call === "catches up" ? "fill-then-catch-up" : "fill-then-hydrate",
+      );
+      const { held } = await fillHeld(device, type);
+      const before = await device.hooks.reached(WAITING_FOR_FILL);
+      const moving =
+        call === "catches up"
+          ? device.catchUp()
+          : device.hydrate([type], "library");
+      try {
+        await until(
+          async () =>
+            moving.settled ||
+            (await device.hooks.reached(WAITING_FOR_FILL)) > before,
+          "the call waiting for the fill",
+        );
+        expect(
+          moving.settled ? await moving : "waiting",
+          "the call was answered rather than wait for the fill",
+        ).toBe("waiting");
+      } finally {
+        await device.hooks.release(FILL_CLAIMED);
+      }
+      expect(value(await held).fill, "the hold left its table").not.toBeNull();
+      const answered: Outcome<unknown> = await moving;
+      value(answered);
+      const status = value(await device.status());
+      expect(status.hydration).toBe("complete");
+    },
+  );
 
   it("fills every other table, and ends no catch-up or follow, while one table's page read keeps failing", async () => {
     const type = await tableType({ broken: STEPS, steps: STEPS });

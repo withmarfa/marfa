@@ -6662,6 +6662,28 @@ When a catch-up has applied the events it read, when a follow has no frame waiti
 
 **Tests:** `device/tables-live.test.ts › fills a table whole across pages, and answers it from the copy with the server out of reach`, `› applies each rows.changed a follow reads, rows put, patched and deleted`, `› fills a table again each time a follow sees it come back within the cap`, `› fills a table held while a follow holds the stream, with no event to wake the follow, and tells the follow's caller it filled it`.
 
+### `device/table-fill-waited-for`
+
+If a hydration, a catch-up or a follow starts on a working copy while a fill that an app started, by holding a table or by asking for its tables to be filled, is under way, then a device MUST wait for that fill to end, rather than refuse the call or end it because of the fill.
+
+**Reason:** the fill moves no cursor and is the app's own call, so no caller has started two calls that move the cursor. A follow refused here leaves a watch failed until the next hydration or catch-up (`device/watch-failed-holds`).
+
+**Tests:** `device/tables-live.test.ts › waits for a hold's fill, then follows, when a follow starts while the fill runs`, `› waits for a hold's fill, then %s, when one starts while the fill runs`, `device/binding-watch-calls.test.ts › keeps a watch following when a table hold fills as the watch takes its stream back after a catch-up`.
+
+### `device/table-fill-waited-then`
+
+When a fill that a call waited for under `device/table-fill-waited-for` ends, a device MUST answer the call as it would if the call had started at that moment.
+
+**Reason:** another hydration, catch-up or follow may have taken the stream first, and two calls that move the cursor are still one too many.
+
+**Tests:** `device/tables-live.test.ts › waits for a hold's fill, then follows, when a follow starts while the fill runs`, `› waits for a hold's fill, then %s, when one starts while the fill runs`.
+
+### `device/table-fill-wait-stopped`
+
+If a caller stops a hydration, a catch-up or a follow while it waits under `device/table-fill-waited-for`, then a device MUST end it as its stop ends it, having sent nothing and left the copy as it was.
+
+**Tests:** `device/binding-follow.test.ts › ends a %s stopped while it waits for a hold's fill as its stop ends it, having asked the server nothing`.
+
 ### `device/table-fill-failed`
 
 If the server answers a read a device makes to fill one table with an error about that read, such as a `5xx` answer or a refusal, then a device MUST go on to fill its other tables before it reads that table again.

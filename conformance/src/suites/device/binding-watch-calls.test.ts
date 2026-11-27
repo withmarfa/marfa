@@ -3,6 +3,8 @@ import type { Subscription } from "../../device/binding-adapter.js";
 import {
   copyHeadRead,
   copyReplay,
+  typeCatalog,
+  wireType,
   refusal,
 } from "../../device/marfa-answers.js";
 import {
@@ -199,6 +201,75 @@ describe("a hydration or a catch-up called on a copy that is watched", () => {
       ).toEqual([false, 0]);
     },
   );
+
+  it("keeps a watch following when a table hold fills as the watch takes its stream back after a catch-up", async () => {
+    const feed = new StreamFeed();
+    const started = await bindingHarness("binding-watch-fill-takeback", {
+      streams: [heldBy(feed)],
+      catalog: typeCatalog([
+        wireType("acme.ledger", {
+          tables: { lines: { columns: { amount: { type: "number" } } } },
+        }),
+      ]),
+    });
+    harness = started;
+    const { device, events } = started;
+    const listener = await device.watch();
+    await untilOpen(feed);
+    feed.push(noteMade("n1", "11"));
+    await vi.waitFor(() => {
+      expect(ids(listener)).toEqual(["n1"]);
+    });
+    const waits = (point: string, count: number) =>
+      vi.waitFor(
+        async () => {
+          expect(await device.hooks.waiting(point)).toBe(count);
+        },
+        { timeout: 10_000, interval: 20 },
+      );
+
+    events.set(copyReplay("12", [noteMade("n2", "12")]), heldAt("12", feed));
+    await device.hooks.hold("follow-claiming");
+    const done = await device.catchUp();
+    expect(done.ok && done.value.cursor, JSON.stringify(done)).toBe("12");
+    await waits("follow-claiming", 1);
+    await device.hooks.hold("table-fill-claimed");
+    const held = device.call<{ fill: unknown }>(
+      "holdTable",
+      "acme.ledger",
+      "lines",
+    );
+    await waits("table-fill-claimed", 1);
+    const waited = await device.hooks.reached("stream-waiting-for-fill");
+    await device.hooks.release("follow-claiming");
+    await vi.waitFor(
+      async () => {
+        expect(
+          listener.kinds.includes("watchFailed") ||
+            (await device.hooks.reached("stream-waiting-for-fill")) > waited,
+          "the watch neither waited for the fill nor failed",
+        ).toBe(true);
+      },
+      { timeout: 10_000, interval: 20 },
+    );
+    expect(
+      listener.kinds,
+      "the watch failed rather than wait for the fill",
+    ).not.toContain("watchFailed");
+
+    await device.hooks.release("table-fill-claimed");
+    expect(await held).toMatchObject({
+      ok: true,
+      value: { fill: expect.anything() },
+    });
+    await untilOpened(feed, 2);
+    feed.push(noteMade("n3", "13"));
+    await vi.waitFor(() => {
+      expect(ids(listener)).toEqual(["n1", "n3"]);
+    });
+    expect(listener.kinds).not.toContain("watchFailed");
+    expect([listener.isOver, listener.endings]).toEqual([false, 0]);
+  });
 
   it.each(["a refusal", "a stop"] as const)(
     "holds the stream of the watch again from the cursor the call left where a catch-up ends on %s",
