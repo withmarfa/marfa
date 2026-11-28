@@ -6826,15 +6826,23 @@ When a device answers a read of a table sorted by `values.<column>` from the cop
 
 ### `device/table-write-refs`
 
-When a device lays a queued row write over a row it holds, a device MUST name in the row's `refs` each column of type `item` the write sets to text and no column it sets to another value or leaves alone.
+When a device lays a queued row write that changes a row's values over a row it holds, a device MUST answer the row with the `refs` the server gives it on taking the write: each column of type `item` the write sets to text named, no other column the write sets named, and each column a `patch` leaves alone named as it was.
 
 **Reason:** the server marks a value so as it takes the write (`tables/rows-refs`), and the copy answers the row as it will be.
 
 **Tests:** `device/tables-live.test.ts › sorts a value its own queued write set in an item column as no value before the server has taken it`.
 
+### `device/table-write-unchanged-refs`
+
+When a device lays a queued row write that leaves a row's values as they are over a row it holds, a device MUST answer the row with its `refs` and its `updated_at` as they were, while the write waits and once the server takes it.
+
+**Reason:** the server leaves such a row as it is (`tables/rows-patch-same`, `tables/rows-put-unchanged`), so a mark the row keeps from a column's earlier type stays.
+
+**Tests:** `device/tables-live.test.ts › keeps the refs and the time of a row its own queued write leaves as it is, as the server does`.
+
 ### `device/table-named-purged`
 
-When an item is purged that a value of a row a device holds names, a device MUST read the row from the server again and hold it as the server answers it.
+When an item is purged that a row a device holds names in its `refs`, a device MUST read the row from the server again and hold it as the server answers it.
 
 **Reason:** once no item holds the id, the server withholds it from every key that may not read every type (`tables/rows-item-gone`), whether or not the copy held the item.
 

@@ -1960,4 +1960,53 @@ describe("sorting a value written as an item ID", () => {
       mine,
     ]);
   });
+
+  it("keeps the refs and the time of a row its own queued write leaves as it is, as the server does", async () => {
+    const type = await tableType({
+      steps: {
+        columns: { count: { type: "integer" }, link: { type: "item" } },
+      },
+    });
+    const item = await itemOf(type);
+    const target = await note("kept");
+    const [patched, put] = await write(item, [
+      { op: "put", values: { count: 1, link: target } },
+      { op: "put", values: { count: 2, link: target } },
+    ]);
+    const forced = await working.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: {
+          steps: {
+            columns: { count: { type: "integer" }, link: { type: "string" } },
+          },
+        },
+      },
+      true,
+    );
+    expect(forced.status, JSON.stringify(forced.error)).toBe(200);
+    const device = await hydrated([type], "refs-unchanged");
+    value(await device.holdTable(type, "steps"));
+    const held = await walked("device", device, item, "steps", "count", "asc");
+    expect(held.map((row) => row.refs)).toEqual([["link"], ["link"]]);
+    const queued = value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: patched!.id, values: { link: target } },
+        { op: "put", id: put!.id, values: { count: 2, link: target } },
+      ]),
+    );
+    expect(
+      await walked("device", device, item, "steps", "count", "asc"),
+    ).toEqual(held);
+    const report = value(await device.drain());
+    expect(report.verdicts.find((one) => one.id === queued.id)?.verdict).toBe(
+      "accepted",
+    );
+    expect(
+      await walked("device", device, item, "steps", "count", "asc"),
+    ).toEqual(held);
+    await agreed(device, item, "steps", "link");
+  });
 });
