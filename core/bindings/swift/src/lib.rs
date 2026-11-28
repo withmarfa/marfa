@@ -384,8 +384,8 @@ pub struct CatchUpReport {
     pub cursor: String,
     /// The catch-up changed the catalog the copy holds.
     pub catalog_changed: bool,
-    /// The fill of the tables the copy holds that were not whole. A failed
-    /// fill is named here and never fails a catch-up whose events committed.
+    /// The fill of the tables the copy holds that were not whole. A fill that
+    /// fails after the events committed is named in its `failure`.
     pub tables: TableFill,
     /// Tables whose state or rows changed during catch-up, including fills.
     pub changed_tables: Vec<ChangedTable>,
