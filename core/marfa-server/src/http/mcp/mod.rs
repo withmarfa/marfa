@@ -87,11 +87,11 @@ fn foreign_origin() -> Response {
     ))
 }
 
-fn server_info() -> Value {
+fn server_info(app: &App) -> Value {
     json!({
         "name": SERVER_NAME,
         "title": SERVER_TITLE,
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": app.release(),
     })
 }
 
@@ -111,7 +111,7 @@ fn complete(era: Era, mut result: Map<String, Value>) -> Value {
     Value::Object(result)
 }
 
-fn initialize(caller: &Caller, group: Group, call: &Call) -> Value {
+fn initialize(app: &App, caller: &Caller, group: Group, call: &Call) -> Value {
     let asked = call.params.get("protocolVersion").and_then(Value::as_str);
     let version = asked
         .filter(|version| rpc::LEGACY.contains(version))
@@ -119,19 +119,19 @@ fn initialize(caller: &Caller, group: Group, call: &Call) -> Value {
     json!({
         "protocolVersion": version,
         "capabilities": capabilities(caller, group),
-        "serverInfo": server_info(),
+        "serverInfo": server_info(app),
         "instructions": group.instructions(),
     })
 }
 
-fn discover(caller: &Caller, group: Group) -> Value {
+fn discover(app: &App, caller: &Caller, group: Group) -> Value {
     let mut result = Map::new();
     result.insert("supportedVersions".into(), json!([rpc::MODERN]));
     result.insert("capabilities".into(), capabilities(caller, group));
     result.insert("instructions".into(), group.instructions().into());
     result.insert("ttlMs".into(), 0.into());
     result.insert("cacheScope".into(), "private".into());
-    result.insert("_meta".into(), json!({ SERVER_INFO_KEY: server_info() }));
+    result.insert("_meta".into(), json!({ SERVER_INFO_KEY: server_info(app) }));
     complete(Era::Modern, result)
 }
 
@@ -264,9 +264,9 @@ async fn answer(
     let reply = match (call.era, call.method.as_str()) {
         (_, "ping") => Reply::result(call.id, complete(call.era, Map::new())),
         (Era::Legacy, "initialize") => {
-            Reply::result(call.id.clone(), initialize(caller, group, &call))
+            Reply::result(call.id.clone(), initialize(app, caller, group, &call))
         }
-        (Era::Modern, "server/discover") => Reply::result(call.id, discover(caller, group)),
+        (Era::Modern, "server/discover") => Reply::result(call.id, discover(app, caller, group)),
         (era, "tools/list") => Reply::result(call.id, listing(era, caller, group)),
         (_, "tools/call") => return tool_call(app, caller, group, call, visit).await,
         _ => Reply::in_band(

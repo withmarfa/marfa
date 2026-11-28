@@ -15,7 +15,6 @@ use crate::db::volume;
 use super::App;
 use super::clock::Stamp;
 use super::faults::{Faults, HOLD_METRICS, Volume};
-use super::instance::VERSION;
 use super::keys;
 use super::refusal::{Refusal, Result};
 
@@ -225,10 +224,10 @@ fn storage(counts: &Counts, database: Option<&Path>, blob_path: &Path, faults: &
     })
 }
 
-fn process(resident: Option<u64>) -> Value {
+fn process(app: &App, resident: Option<u64>) -> Value {
     let cpu = process::cpu();
     json!({
-        "version": VERSION,
+        "version": app.release(),
         "memory_rss_bytes": resident,
         "memory_rss_peak_bytes": process::peak_resident_bytes(),
         "cpu_user_seconds": cpu.map(|cpu| cpu.user.as_secs_f64()),
@@ -276,7 +275,7 @@ pub async fn read(app: &App) -> Result<Value> {
         "keys": { "total": counts.keys },
         "webhooks": { "total": counts.webhooks },
         "uptime_seconds": app.started.elapsed().as_secs(),
-        "process": process(resident),
+        "process": process(app, resident),
         "storage": storage,
     }))
 }

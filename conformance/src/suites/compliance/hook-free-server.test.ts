@@ -200,6 +200,25 @@ describe("a server built without test hooks", () => {
     await stop(off);
   });
 
+  it("refuses a release and names the setting, where a hooked server takes it", async () => {
+    const refused = start(folder("marfa-hf-data-"), {
+      MARFA_TEST_RELEASE: "1.4.0",
+    });
+    const code = await within(
+      EXIT_BUDGET_MS,
+      "the server exited",
+      refused.exit,
+    );
+    expect(code).not.toBe(0);
+    expect(refused.output()).toContain("MARFA_TEST_RELEASE");
+    expect(refused.output()).not.toContain("Marfa server listening");
+
+    // The witness: the same program, without the setting, starts.
+    const plain = start(folder("marfa-hf-data-"));
+    await listening(plain);
+    await stop(plain);
+  });
+
   it("refuses a tuning and names the setting, where a hooked server takes it", async () => {
     const refused = start(folder("marfa-hf-data-"), {
       MARFA_TEST_TUNING: "interval.audit-cleanup=5",

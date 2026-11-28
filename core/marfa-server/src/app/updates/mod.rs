@@ -210,12 +210,20 @@ pub fn settle_when_up(app: &Arc<App>) {
     });
 }
 
-fn latest_newer(latest: Option<Latest>) -> Option<Latest> {
-    latest.filter(|latest| {
-        latest
-            .version()
-            .is_some_and(|found| found > Version::running())
-    })
+fn latest_newer(latest: Option<Latest>, running: Version) -> Option<Latest> {
+    latest.filter(|latest| latest.version().is_some_and(|found| found > running))
+}
+
+/// The release the server names as the one it runs: the build's, or the one a test-hooks server
+/// was started as.
+fn named(app: &App) -> Result<Version> {
+    Version::parse(app.release())
+        .ok_or_else(|| Refusal::internal("the release the server runs does not read"))
+}
+
+/// What a release must beat to be newer: the later of the named release and the build's.
+fn judged(app: &App) -> Result<Version> {
+    Ok(named(app)?.max(Version::running()))
 }
 
 pub async fn status(app: &App) -> Result<Value> {
@@ -225,7 +233,7 @@ pub async fn status(app: &App) -> Result<Value> {
     } else {
         check::Kept::default()
     };
-    let newer = latest_newer(kept.latest());
+    let newer = latest_newer(kept.latest(), judged(app)?);
     let (method, step) = match &newer {
         Some(newer) => {
             let capable = matches!(app.updates.install, Install::Service { .. })
@@ -279,7 +287,7 @@ pub async fn status(app: &App) -> Result<Value> {
         _ => progress,
     };
     Ok(json!({
-        "release": Version::running().to_string(),
+        "release": named(app)?.to_string(),
         "check_enabled": enabled,
         "checked_at": kept.checked_at,
         "check_error": kept.error.as_ref().map(|message| json!({
@@ -342,7 +350,7 @@ where
             } else {
                 check::Kept::default()
             };
-            let latest = newest(kept)?;
+            let latest = newest(&deciding, kept)?;
             if let Some(stopped) = gate(tx, &latest.version)? {
                 return Ok(Err(stopped));
             }
@@ -422,8 +430,8 @@ where
         .map_err(|_| Refusal::internal("the update's start stopped without an answer"))?
 }
 
-fn newest(kept: check::Kept) -> Result<Latest> {
-    latest_newer(kept.latest()).ok_or_else(|| {
+fn newest(app: &App, kept: check::Kept) -> Result<Latest> {
+    latest_newer(kept.latest(), judged(app)?).ok_or_else(|| {
         Refusal::new(
             Code::UpdateNotReady,
             "No release newer than the running one has been found.",
@@ -432,8 +440,8 @@ fn newest(kept: check::Kept) -> Result<Latest> {
 }
 
 /// The release the server runs.
-pub fn running() -> String {
-    Version::running().to_string()
+pub fn running(app: &App) -> Result<String> {
+    Ok(named(app)?.to_string())
 }
 
 /// The release an update would move to now, refused as `POST /update` refuses it.
@@ -443,7 +451,7 @@ pub async fn offer(app: &App) -> Result<String> {
     } else {
         check::Kept::default()
     };
-    Ok(decide(app, newest(kept)?)?.version)
+    Ok(decide(app, newest(app, kept)?)?.version)
 }
 
 fn decide(app: &App, latest: Latest) -> Result<apply::Job> {

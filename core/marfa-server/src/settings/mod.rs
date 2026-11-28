@@ -504,6 +504,22 @@ mod tests {
     }
 
     #[test]
+    fn a_test_release_needs_the_hooks_and_must_read_as_a_release() {
+        assert_eq!(
+            refused(&[("MARFA_TEST_RELEASE", "1.4.0")]),
+            [r#"MARFA_TEST_RELEASE needs MARFA_TEST_HOOKS to be true (got "1.4.0")"#]
+        );
+        for text in ["1.4", "v1.4.0", "1.4.0-beta", "01.4.0", "soon"] {
+            let lines = refused(&[HOOKS, ("MARFA_TEST_RELEASE", text)]);
+            assert_eq!(lines.len(), 1, "{text}: {lines:?}");
+            assert!(lines[0].starts_with("MARFA_TEST_RELEASE "), "{lines:?}");
+        }
+        let held = opened(&[HOOKS, ("MARFA_TEST_RELEASE", "1.4.0")]);
+        assert_eq!(held.start.release.as_deref(), Some("1.4.0"));
+        assert_eq!(opened(&[HOOKS]).start.release, None);
+    }
+
+    #[test]
     fn under_hooks_the_tuning_shortens_a_fixed_timing_and_refuses_one_the_server_lacks() {
         let tuned = opened(&[HOOKS, ("MARFA_TEST_TUNING", "upload_idle_ms=200")]);
         assert_eq!(

@@ -372,4 +372,20 @@ impl App {
     pub fn contract(&self) -> u32 {
         BUILT_CONTRACT
     }
+
+    /// The release the server names and judges a plugin's `marfa` by.
+    #[cfg(feature = "test-hooks")]
+    pub fn release(&self) -> &str {
+        self.settings
+            .start
+            .release
+            .as_deref()
+            .unwrap_or(instance::VERSION)
+    }
+
+    #[cfg(not(feature = "test-hooks"))]
+    #[allow(clippy::unused_self, reason = "the same call as a test-hooks build's")]
+    pub fn release(&self) -> &str {
+        instance::VERSION
+    }
 }

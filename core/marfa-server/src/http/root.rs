@@ -82,7 +82,7 @@ async fn answer(app: &Arc<App>, parts: &Parts) -> Answer {
         StatusCode::OK,
         &json!({
             "name": name,
-            "version": instance::VERSION,
+            "version": app.release(),
             "instance_id": app.instance_id,
             "contract": app.contract(),
             "features": FEATURES.iter().map(|(name, _)| name).collect::<Vec<_>>(),

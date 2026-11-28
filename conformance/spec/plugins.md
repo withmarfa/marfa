@@ -54,7 +54,7 @@ If `POST /plugins` sends a bundle with a type whose identifier starts `core`, `s
 
 While the server runs a release other than `0.0.0`, if `POST /plugins` sends a bundle whose `marfa` is a later release than the server's, then the server MUST answer `409 plugin_needs_newer_server` with `details.marfa` and `details.server`.
 
-**Tests:** waiting on #3421.
+**Tests:** `compliance/plugins.test.ts › installs a bundle whose marfa is the release the server runs, and refuses 409 one whose marfa is later, naming both and installing nothing`.
 
 ### `plugins/install-development-any`
 

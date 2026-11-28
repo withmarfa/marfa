@@ -1370,3 +1370,59 @@ describe("an edge type an earlier version brought", () => {
     });
   });
 });
+
+describe("installing a plugin that needs a newer Marfa", () => {
+  const RELEASE = "1.4.0";
+
+  async function onRelease(): Promise<{
+    server: FreshServer;
+    client: MarfaClient;
+  }> {
+    const server = await bootFreshServer("plugins-release", {
+      MARFA_TEST_HOOKS: "true",
+      MARFA_TEST_RELEASE: RELEASE,
+    });
+    return { server, client: await ownerKey(server, ["schema.write"]) };
+  }
+
+  it(
+    "installs a bundle whose marfa is the release the server runs, and refuses 409 one whose marfa is later, naming both and installing nothing",
+    async () => {
+      const { server, client } = await onRelease();
+      try {
+        // The witness: the server runs the release the hook names.
+        const root = await fetch(`${server.apiUrl}/`, {
+          headers: { Accept: "application/json" },
+        });
+        expect(((await root.json()) as { version: string }).version).toBe(
+          RELEASE,
+        );
+
+        const same = await client.installPlugin(
+          single("at-release", "at.release", { marfa: RELEASE }),
+        );
+        expect(same.status, JSON.stringify(same.error)).toBe(201);
+
+        const later = await client.installPlugin(
+          single("past-release", "past.release", { marfa: "1.4.1" }),
+        );
+        expect(later.status).toBe(409);
+        expect(later.error?.error.code).toBe("plugin_needs_newer_server");
+        expect(later.error?.error.details).toMatchObject({
+          marfa: "1.4.1",
+          server: RELEASE,
+        });
+
+        const listed = await client.listPlugins();
+        expect(listed.data.data.map((held) => held.name)).toEqual([
+          "at-release",
+        ]);
+        const type = await client.getType("past.release");
+        expect(type.status).toBe(404);
+      } finally {
+        await server.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+});

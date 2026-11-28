@@ -2898,6 +2898,32 @@ Where `MARFA_TEST_CONTRACT_VERSION` is set, the server MUST name that version as
 
 **Tests:** `compliance/test-hooks.test.ts › names MARFA_TEST_CONTRACT_VERSION as the contract in the root, the header and the document`.
 
+### `instance/test-release-needs-hooks`
+
+If `MARFA_TEST_RELEASE` is set and `MARFA_TEST_HOOKS` is not true when the server starts, then the server MUST refuse to start and name `MARFA_TEST_RELEASE`.
+
+**Tests:** `compliance/test-hooks.test.ts › refuses a release without MARFA_TEST_HOOKS, naming the setting`, `compliance/hook-free-server.test.ts › refuses a release and names the setting, where a hooked server takes it`.
+
+### `instance/test-release-form`
+
+If `MARFA_TEST_RELEASE` is not three whole numbers joined by dots, then the server MUST refuse to start and name `MARFA_TEST_RELEASE`.
+
+**Tests:** `compliance/test-hooks.test.ts › refuses a release that does not read as one, naming the setting`.
+
+### `instance/test-release`
+
+Where test hooks are on and `MARFA_TEST_RELEASE` names a release, the server MUST name that release as the root's `version`, the overview's `instance.version`, the metrics' `process.version`, the `release` of `GET /update` and the version in the MCP `serverInfo`.
+
+**Reason:** every server a harness boots is a development build, which takes any plugin, so a fixture can reach a rule bound to a release, such as a plugin that needs a newer Marfa, only on a server that runs a release.
+
+**Tests:** `compliance/test-hooks.test.ts › names MARFA_TEST_RELEASE as the version everywhere the server names its release, and judges updates against it`.
+
+### `instance/test-release-update`
+
+Where test hooks are on and `MARFA_TEST_RELEASE` names a release, the server MUST read a published release as newer only if it is newer than that release and than the build's.
+
+**Tests:** `compliance/test-hooks.test.ts › names MARFA_TEST_RELEASE as the version everywhere the server names its release, and judges updates against it`.
+
 ### `instance/test-faults-cleared-at-start`
 
 When the server starts, the server MUST hold no fault.
@@ -4099,6 +4125,7 @@ The environment variables below are read once, when the server starts. Each is n
 | `MARFA_TEST_HOOKS`                  | `false`                                              | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Serve the clock and fault routes a conformance harness drives on the private control socket. Never on the public listener. A server built without test hooks refuses to start when it is true. Leave off on every instance that holds real data.                                                                                                                                                                                                                                                                                    |
 | `MARFA_TEST_CLOCK_OFFSET_MS`        | `0` ms                                               | Whole number of milliseconds, 0 to 3153600000000                   | How far ahead of the system clock the server's clock starts. Needs `MARFA_TEST_HOOKS`, so a harness that moved the clock can restart the server without the time going back.                                                                                                                                                                                                                                                                                                                                                        |
 | `MARFA_TEST_CONTRACT_VERSION`       | The build's contract version                         | Whole number, 0 to 1000000                                         | The contract version the server speaks instead of the build's, in the root's `contract`, the `X-Marfa-Contract` header and the document's `info.version`. Needs `MARFA_TEST_HOOKS`, so a harness can show what a change of contract does to what the server kept.                                                                                                                                                                                                                                                                   |
+| `MARFA_TEST_RELEASE`                | The build's release                                  | Three whole numbers joined by dots, such as `1.4.0`                | The release the server names as the root's `version`, the overview's `instance.version`, the metrics' `process.version`, the `release` of `GET /update` and the MCP `serverInfo` version, and judges a plugin's `marfa` and a newer update against, instead of the build's. Needs `MARFA_TEST_HOOKS`, so a harness can reach what only a release does.                                                                                                                                                                              |
 | `MARFA_TEST_TUNING`                 | None                                                 | Comma-separated `name=value` pairs                                 | Shortens a timing or a batch size the server fixes: `interval.<job>` or `interval.*` in milliseconds (neither reaches `backup`, whose interval is the stored `backup_interval_seconds`, and `interval.backup` is refused), `housekeeping_poll_ms`, `write_wait_ms`, `upload_idle_ms`, `blob_read_idle_ms`, `inbound_idle_ms` or `connector_hold_ms` in milliseconds, or `enrichment_batch`, `blob_replicate_batch`, `blob_replicate_batch_bytes`, `blob_integrity_batch` or `blob_integrity_batch_bytes`. Needs `MARFA_TEST_HOOKS`. |
 | `MARFA_MAX_CONNECTIONS`             | `1024`                                               | Whole number, 1 to 1000000                                         | The most connections the public listener, with the tunnel listener while a link to Marfa Cloud is linking or linked, holds open at once. The server lowers it at start where the open-file limit leaves too little room ("Open connections").                                                                                                                                                                                                                                                                                       |
 | `MARFA_MAX_CONNECTIONS_PER_ADDRESS` | `256`                                                | Whole number, 1 to 1000000                                         | The most connections the public listener holds open for one caller address, where the listener does not believe a forwarded address. An IPv6 address counts with the rest of its /64. A value above `MARFA_MAX_CONNECTIONS` has no effect.                                                                                                                                                                                                                                                                                          |
