@@ -1,5 +1,3 @@
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { listEntries } from "../../utils/archive.js";
 import {
@@ -7,11 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import {
-  blobFolder,
-  clientsFor,
-  DISK_ONLY,
-} from "../../utils/own-blob-server.js";
+import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -50,9 +44,8 @@ afterAll(async () => {
   await server.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
-function spooled(): string[] {
-  const folder = join(blobFolder(server), "tmp");
-  return existsSync(folder) ? readdirSync(folder) : [];
+function spooled(): Promise<string[]> {
+  return server.scratch();
 }
 
 function exportArchive(): Promise<Response> {
@@ -86,7 +79,7 @@ describe("an archive export held to the reserve", () => {
       available_bytes: available,
     });
     await waitFor("the spool to empty", () =>
-      Promise.resolve(spooled().length === 0 ? true : undefined),
+      spooled().then((files) => (files.length === 0 ? true : undefined)),
     );
   });
 });

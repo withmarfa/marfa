@@ -1,5 +1,3 @@
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import type { MarfaClient } from "../../client/api.js";
@@ -9,11 +7,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import {
-  blobFolder,
-  clientsFor,
-  DISK_ONLY,
-} from "../../utils/own-blob-server.js";
+import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 import { inParts, pause, slowPost } from "../../utils/slow-body.js";
 import { waitFor } from "../../utils/wait.js";
 
@@ -76,9 +70,8 @@ afterAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 /** What the upload spools into while a body arrives. */
-function spooled(): string[] {
-  const folder = join(blobFolder(server), "tmp");
-  return existsSync(folder) ? readdirSync(folder) : [];
+function spooled(): Promise<string[]> {
+  return server.scratch();
 }
 
 function noteArchive(id: string, body: string): Uint8Array {
@@ -160,14 +153,14 @@ describe("a body that stops arriving", () => {
     for (const part of parts.slice(0, 3)) await upload.write(part);
     // The witness for the absence below: the part that arrived is on disk.
     await waitFor("the part of the archive to be spooled", () =>
-      Promise.resolve(spooled().length > 0 ? true : undefined),
+      spooled().then((files) => (files.length > 0 ? true : undefined)),
     );
     const answered = await upload.answered;
     expect(answered.status, answered.body).toBe(408);
     expect(JSON.parse(answered.body).error.code).toBe("request_timeout");
     expect((await working.getItem(id)).status).toBe(404);
     await waitFor("the spool to empty", () =>
-      Promise.resolve(spooled().length === 0 ? true : undefined),
+      spooled().then((files) => (files.length === 0 ? true : undefined)),
     );
 
     // The same archive, whole, restores: it was the stall that stopped it.
@@ -191,7 +184,7 @@ describe("a body that stops arriving", () => {
     );
     for (const part of parts.slice(0, 3)) await upload.write(part);
     await waitFor("the part of the blob to be spooled", () =>
-      Promise.resolve(spooled().length > 0 ? true : undefined),
+      spooled().then((files) => (files.length > 0 ? true : undefined)),
     );
     const answered = await upload.answered;
     expect(answered.status, answered.body).toBe(408);
@@ -199,7 +192,7 @@ describe("a body that stops arriving", () => {
     expect((await management.downloadBlob(blobHash(bytes))).status).toBe(404);
     expect((await management.downloadBlob(blobHash(arrived))).status).toBe(404);
     await waitFor("the spool to empty", () =>
-      Promise.resolve(spooled().length === 0 ? true : undefined),
+      spooled().then((files) => (files.length === 0 ? true : undefined)),
     );
 
     // The same bytes, whole, are stored: the stall alone kept them out.

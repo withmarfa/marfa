@@ -213,8 +213,8 @@ describe("a receipt whose storing fails on a database fault", () => {
     };
     const forbidden = ["Failed query", "params", "disk I/O error"];
 
-    const log = await until("the fault's log line", () =>
-      serverOutput(server.stateDir)
+    const log = await until("the fault's log line", async () =>
+      (await serverOutput(server.stateDir))
         .split("\n")
         .filter((text) => text.startsWith("{"))
         .map((text) => JSON.parse(text) as Record<string, unknown>)
@@ -225,7 +225,7 @@ describe("a receipt whose storing fails on a database fault", () => {
         ),
     );
     expectFixedFailure(JSON.stringify(log), "SQLITE_IOERR", forbidden);
-    holdsNone(serverOutput(server.stateDir));
+    holdsNone(await serverOutput(server.stateDir));
 
     const attention = await controlRequest(server.controlSocket, "/attention");
     expect(attention.status).toBe(200);

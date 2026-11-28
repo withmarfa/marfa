@@ -21,6 +21,7 @@ import {
   bootFreshServer,
   bootRefused,
   FRESH_SERVER_TIMEOUT_MS,
+  serverOutput,
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { clientsFor, everythingClient } from "../../utils/own-blob-server.js";
@@ -211,12 +212,8 @@ describe("a secret setting", () => {
             ? true
             : undefined;
         });
-        const logs = ["server.log", "server.stderr"]
-          .map((name) => join(server.stateDir, name))
-          .filter((path) => existsSync(path))
-          .map((path) => readFileSync(path, "utf8"));
-        expect(logs.length).toBeGreaterThan(0);
-        const logged = logs.join("\n");
+        const logged = await serverOutput(server.stateDir);
+        expect(logged.length).toBeGreaterThan(0);
         expect(logged).toContain(bucket);
         for (const secret of secrets) expect(logged).not.toContain(secret);
       } finally {

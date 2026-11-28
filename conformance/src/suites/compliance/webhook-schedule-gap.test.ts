@@ -5,6 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   stopFreshServers,
   type FreshServer,
+  serverOutput,
 } from "../../utils/fresh-server.js";
 import { streamHead } from "../../utils/stream-tap.js";
 import { waitFor } from "../../utils/wait.js";
@@ -96,7 +97,7 @@ it(
           { timeout: 10000 },
         )
         .toBe(1);
-      expect(readFileSync(join(state, "server.log"), "utf8")).not.toContain(
+      expect(await serverOutput(state)).not.toContain(
         "The webhook sender's place in the event log is missing",
       );
     } finally {

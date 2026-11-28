@@ -837,10 +837,8 @@ describe("a backup folder that lacks a file or its disk", () => {
         expect(refused.error?.error.details).toEqual({
           missing_blobs: [gone.hash],
         });
-        const hex = other.hash.replace(/^sha256:/, "");
-        const blobs = join(fresh.stateDir, "blobs");
-        expect(existsSync(join(blobs, hex.slice(0, 4), hex))).toBe(false);
-        expect(readdirSync(join(blobs, "tmp"))).toEqual([]);
+        expect(await diskHolds(fresh.controlSocket, other.hash)).toBe(false);
+        expect(await fresh.scratch()).toEqual([]);
       } finally {
         await fresh.stop();
       }

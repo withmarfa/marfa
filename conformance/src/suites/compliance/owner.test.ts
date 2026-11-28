@@ -197,7 +197,7 @@ describe("claiming the one owner", () => {
       { origin: server.url, "x-conformance-client": "192.0.2.200" },
     );
     expect(fresh.status).toBe(200);
-    const log = serverOutput(state);
+    const log = await serverOutput(state);
     expect(log).toContain("/setup/exchange");
     for (const secret of [
       code,

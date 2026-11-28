@@ -224,9 +224,12 @@ describe("a device code", () => {
   });
 
   it("is held by the server as something other than the code it issued, and still polls", async () => {
+    const requested = '"path":"/oauth/device-authorization"';
+    const count = (log: string) => log.split(requested).length - 1;
+    const earlier = count(await server!.output());
     const flow = await startDeviceFlow(server!, ["core.note:read"]);
     // The server has written the flow's client and code by now, so the
-    // search covers the database file and the log beside it, wherever the
+    // search covers the database file and the server's log, wherever the
     // bytes are. The witness: the same search finds the client's ID, which
     // the server does store as it is.
     const held = ["", "-wal"].map((suffix) => {
@@ -245,6 +248,11 @@ describe("a device code", () => {
       true,
     );
     expect(found(flow.deviceCode)).toBe(false);
+    // The witness: the log holds the request this test made, so a log
+    // without the code is one that was read.
+    const log = await server!.output();
+    expect(count(log)).toBe(earlier + 1);
+    expect(log).not.toContain(flow.deviceCode);
     expect((await flow.poll()).body.error).toBe("authorization_pending");
   });
 

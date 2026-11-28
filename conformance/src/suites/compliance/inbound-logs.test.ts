@@ -152,7 +152,7 @@ describe("the server's log", () => {
     const log = await waitFor(
       "the log to hold the marker request",
       async () => {
-        const text = readLog();
+        const text = await readLog();
         return text.includes(marker) ? text : undefined;
       },
       10_000,

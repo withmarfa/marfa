@@ -278,7 +278,7 @@ describe("the setup code", () => {
     "is twenty-five letters and digits in five groups of five, is claimed with however a person types it, and is printed with a link that works once",
     async () => {
       const server = await bootUnclaimed("setup-code-shape");
-      const log = serverOutput(server.state);
+      const log = await serverOutput(server.state);
       const [code] = codesIn(log, "setup");
       expect(code).toMatch(CODE_SHAPE);
       const line = log.split("\n").find((one) => one.includes("setup code:"))!;
@@ -312,7 +312,7 @@ describe("the setup code", () => {
         const server = await bootUnclaimed(label, {
           MARFA_SIGN_IN_ADDRESS: address,
         });
-        const line = serverOutput(server.state)
+        const line = (await serverOutput(server.state))
           .split("\n")
           .find((one) => one.includes("setup code:"))!;
         // The line holds a live code, so a failure names the check, not the line.
@@ -332,7 +332,7 @@ describe("the setup code", () => {
         const state = tempFolder(`marfa-${label}-`);
         states.push(state);
         await bootControlServer({ ...boot, state });
-        const line = serverOutput(state)
+        const line = (await serverOutput(state))
           .split("\n")
           .find((one) => one.includes("setup code:"))!;
         // The line holds a live code, so a failure names the check, not the line.
@@ -374,7 +374,7 @@ describe("the setup code", () => {
     "refuses a claim form whose two passwords differ or are not repeated, with both password fields empty and nothing claimed",
     async () => {
       const server = await bootUnclaimed("claim-confirm");
-      const [code] = codesIn(serverOutput(server.state), "setup");
+      const [code] = codesIn(await serverOutput(server.state), "setup");
       const claimed = async () =>
         (await controlRequest(server.controlSocket, "/_control/setup/status"))
           .body.claimed;
@@ -486,7 +486,7 @@ describe("the setup code", () => {
     "refuses a claim form that sends an empty email, naming email, and the same setup code still claims afterwards",
     async () => {
       const server = await bootUnclaimed("claim-form-email");
-      const [code] = codesIn(serverOutput(server.state), "setup");
+      const [code] = codesIn(await serverOutput(server.state), "setup");
       const claimed = async () =>
         (await controlRequest(server.controlSocket, "/_control/setup/status"))
           .body.claimed;
@@ -542,7 +542,7 @@ describe("the claim address", () => {
       expect(await storedConfig(plain.controlSocket)).not.toHaveProperty(
         "sign_in_address",
       );
-      expect(serverOutput(plain.state)).toMatch(
+      expect(await serverOutput(plain.state)).toMatch(
         /Claim this Marfa at \/setup with setup code: [A-Z2-7-]+/,
       );
 
@@ -552,7 +552,7 @@ describe("the claim address", () => {
       expect((await storedConfig(set.controlSocket)).sign_in_address).toBe(
         CLAIM_ADDRESS,
       );
-      expect(serverOutput(set.state)).toMatch(
+      expect(await serverOutput(set.state)).toMatch(
         new RegExp(
           `Claim this Marfa at ${CLAIM_ADDRESS}/setup with setup code: [A-Z2-7-]+`,
         ),
@@ -565,7 +565,7 @@ describe("the claim address", () => {
     "claims from a caller off this machine once MARFA_CLAIM_ADDRESS has stored the sign-in address, and refuses it 403 without",
     async () => {
       const plain = await bootUnclaimed("claim-address-refused-claim");
-      const [plainCode] = codesIn(serverOutput(plain.state), "setup");
+      const [plainCode] = codesIn(await serverOutput(plain.state), "setup");
       const refused = await post(
         plain.url,
         "/setup/claim",
@@ -589,7 +589,7 @@ describe("the claim address", () => {
       const set = await bootUnclaimed("claim-address-claim", {
         MARFA_CLAIM_ADDRESS: CLAIM_ADDRESS,
       });
-      const [code] = codesIn(serverOutput(set.state), "setup");
+      const [code] = codesIn(await serverOutput(set.state), "setup");
       const claimed = await post(
         set.url,
         "/setup/claim",
@@ -632,8 +632,9 @@ describe("the claim address", () => {
   it(
     "leaves an owned instance's sign-in address as the owner set it, and logs at each start that MARFA_CLAIM_ADDRESS is ignored",
     async () => {
-      const ignored = (state: string) =>
-        serverOutput(state).split("MARFA_CLAIM_ADDRESS is ignored").length - 1;
+      const ignored = async (state: string) =>
+        (await serverOutput(state)).split("MARFA_CLAIM_ADDRESS is ignored")
+          .length - 1;
       const first = await bootUnclaimed("claim-address-owned", {
         MARFA_CLAIM_ADDRESS: "https://first.example",
       });
@@ -641,7 +642,7 @@ describe("the claim address", () => {
       expect((await storedConfig(controlSocket)).sign_in_address).toBe(
         "https://first.example",
       );
-      expect(ignored(state)).toBe(0);
+      expect(await ignored(state)).toBe(0);
       expect(
         (
           await controlRequest(controlSocket, "/_control/setup/claim", {
@@ -667,7 +668,7 @@ describe("the claim address", () => {
       expect((await storedConfig(again.controlSocket)).sign_in_address).toBe(
         "https://owner.example",
       );
-      expect(ignored(state)).toBe(1);
+      expect(await ignored(state)).toBe(1);
 
       await stopServer({ state });
       const third = await bootAgain(state, {
@@ -676,7 +677,7 @@ describe("the claim address", () => {
       expect((await storedConfig(third.controlSocket)).sign_in_address).toBe(
         "https://owner.example",
       );
-      expect(ignored(state)).toBe(2);
+      expect(await ignored(state)).toBe(2);
     },
     3 * FRESH_SERVER_TIMEOUT_MS,
   );
@@ -685,7 +686,7 @@ describe("the claim address", () => {
     "never takes the sign-in address from a request's Host, X-Forwarded-Host or client address header",
     async () => {
       const server = await bootUnclaimed("claim-address-forged");
-      const [code] = codesIn(serverOutput(server.state), "setup");
+      const [code] = codesIn(await serverOutput(server.state), "setup");
       expect(await forged(server.url, "GET", "/setup")).toBe(200);
       expect(
         await forged(
@@ -779,7 +780,7 @@ describe("owner recovery", () => {
       const server = await bootUnclaimed("recovery-unclaimed", {
         MARFA_OWNER_RECOVERY: "true",
       });
-      const log = serverOutput(server.state);
+      const log = await serverOutput(server.state);
       // The witness: the same start printed its setup code.
       expect(codesIn(log, "setup")).toHaveLength(1);
       expect(codesIn(log, "recovery")).toHaveLength(0);

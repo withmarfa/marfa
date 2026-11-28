@@ -894,7 +894,7 @@ describe("what a sign-in shows and keeps", () => {
     ).toBe(true);
     expect(await tokenForConnector(name)).toBe(body.refresh_token);
 
-    const log = serverOutput(server.stateDir);
+    const log = await serverOutput(server.stateDir);
     const hidden = {
       code,
       failedCode,

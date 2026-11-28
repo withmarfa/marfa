@@ -1,6 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -8,7 +6,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { blobFolder, clientsFor } from "../../utils/own-blob-server.js";
+import { clientsFor } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -44,9 +42,8 @@ afterAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 /** What the export holds in the spool under the disk store. */
-function spooled(): string[] {
-  const folder = join(blobFolder(server!), "tmp");
-  return existsSync(folder) ? readdirSync(folder) : [];
+function spooled(): Promise<string[]> {
+  return server!.scratch();
 }
 
 /** An export whose headers have arrived and whose body nobody is reading. */
@@ -61,18 +58,20 @@ async function heldOpen(): Promise<{
   });
   expect(response.status).toBe(200);
   expect(
-    spooled().length,
+    (await spooled()).length,
     "the export holds nothing on disk while its response is open",
   ).toBeGreaterThan(0);
   return { response, controller };
 }
 
 const emptied = (what: string) =>
-  waitFor(what, async () => (spooled().length === 0 ? true : undefined));
+  waitFor(what, async () =>
+    (await spooled()).length === 0 ? true : undefined,
+  );
 
 describe("what an archive export leaves on disk", () => {
   it("leaves nothing in the spool once the whole archive has been read", async () => {
-    expect(spooled()).toEqual([]);
+    expect(await spooled()).toEqual([]);
     const { response } = await heldOpen();
     const body = new Uint8Array(await response.arrayBuffer());
     expect(body.length).toBeGreaterThan(24 * 1024 * 1024);
@@ -92,8 +91,8 @@ describe("what an archive export leaves on disk", () => {
     let heldWhileStopped = 0;
     await server!.restart({
       signal: "SIGKILL",
-      whileStopped: () => {
-        heldWhileStopped = spooled().length;
+      whileStopped: async () => {
+        heldWhileStopped = (await spooled()).length;
       },
     });
     await stranded;
@@ -101,6 +100,6 @@ describe("what an archive export leaves on disk", () => {
       heldWhileStopped,
       "a process that was killed mid-export left its spool behind",
     ).toBeGreaterThan(0);
-    expect(spooled()).toEqual([]);
+    expect(await spooled()).toEqual([]);
   });
 });

@@ -1,4 +1,4 @@
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -253,5 +253,32 @@ describe("the server log", () => {
     expect(log.unreadable.map((line) => line.text)).toContain(
       "probe stdout line",
     );
+  });
+});
+
+describe("the working files", () => {
+  const folder = () => join(server.stateDir, "blobs", "tmp");
+
+  it("names the files the server holds in its working folder, and none when it holds none", async () => {
+    expect(await server.scratch()).toEqual([]);
+    // The witness: a file in the folder is named.
+    mkdirSync(folder(), { recursive: true });
+    writeFileSync(join(folder(), "b"), "");
+    writeFileSync(join(folder(), "a"), "");
+    try {
+      expect(await server.scratch()).toEqual(["a", "b"]);
+      // A folder in it is not a file, and the target is asked while stopped.
+      mkdirSync(join(folder(), "c"));
+      let stopped: string[] = [];
+      await server.restart({
+        whileStopped: async () => {
+          stopped = await server.scratch();
+        },
+      });
+      expect(stopped).toEqual(["a", "b"]);
+    } finally {
+      rmSync(folder(), { recursive: true, force: true });
+    }
+    expect(await server.scratch()).toEqual([]);
   });
 });

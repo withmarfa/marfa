@@ -161,7 +161,7 @@ describe("the inbound rate window", () => {
     const log = await waitFor(
       "the log to hold the refused request",
       async () => {
-        const text = serverOutput(server.stateDir);
+        const text = await serverOutput(server.stateDir);
         return text
           .split("\n")
           .some(

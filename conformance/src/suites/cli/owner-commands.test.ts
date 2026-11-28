@@ -1,5 +1,5 @@
 import { postSignInForm, signInOutcome } from "../../client/owner-session.js";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
@@ -204,7 +204,7 @@ async function signsIn(password: string): Promise<boolean> {
 
 /** How many requests to `path` the server has logged so far. */
 async function logged(path: string): Promise<number> {
-  const log = await readFile(join(server.stateDir, "server.log"), "utf8");
+  const log = await server.output();
   return log
     .split("\n")
     .filter((line) => line.startsWith("{"))
