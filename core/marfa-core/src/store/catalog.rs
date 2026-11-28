@@ -120,8 +120,7 @@ fn local_catalog(conn: &Connection) -> Result<(Vec<WireType>, Vec<Value>), CoreE
     let shipped = marfa_rules::builtin::catalog()?;
     let mut types = shipped.types;
     for (id, json) in declared_type_rows(conn)? {
-        // A declaration a hydration refuses is no type the copy holds, so a
-        // write of it is refused like one never declared.
+        // A hydration registers none of these, so the copy holds none.
         if marfa_rules::catalog::stored_declaration(&id, &json).is_err() {
             continue;
         }

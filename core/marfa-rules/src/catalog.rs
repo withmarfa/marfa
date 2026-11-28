@@ -280,10 +280,8 @@ pub fn refuse_declared_provenance(id: &str, row: &Map<String, Value>) -> Result<
     }
 }
 
-/// What a copy's store may still hold that a declaration is refused today: a
-/// type outside `app.`, or a key only the server writes. A copy registers and
-/// holds none of them. A row that cannot be read is left to its reader, which
-/// says so.
+/// Refuses a stored declaration outside `app.` or one that names `provenance`.
+/// A row that cannot be read passes, for its reader to refuse.
 pub fn stored_declaration(id: &str, json: &str) -> Result<(), RuleError> {
     app_declaration(id)?;
     match serde_json::from_str::<Value>(json) {
