@@ -67,6 +67,7 @@ pub fn read_definition() -> Definition {
                         "values": { "type": "object" },
                         "updated_at": { "type": "string" },
                         "withheld": { "type": "array", "items": { "type": "string" } },
+                        "refs": { "type": "array", "items": { "type": "string" } },
                     },
                     "required": ["id", "values", "updated_at"],
                 } },

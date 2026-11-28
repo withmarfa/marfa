@@ -12329,6 +12329,13 @@
               "type": "string"
             },
             "description": "Present when a column of type `item` names an item you can't read: those columns, left out of `values`."
+          },
+          "refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when a value in a column was written as the ID of an item you can read: those columns. Marfa sorts those values as no value."
           }
         },
         "required": [
@@ -12634,6 +12641,13 @@
                     "type": "string"
                   },
                   "description": "Present when a column of type `item` names an item you can't read: those columns, left out of `values`."
+                },
+                "refs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Present when a value in a column was written as the ID of an item you can read: those columns. Marfa sorts those values as no value."
                 }
               },
               "required": [

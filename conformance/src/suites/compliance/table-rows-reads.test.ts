@@ -1222,6 +1222,130 @@ describe("sorting by a table's order", () => {
     expect(shown.values.about).toBe(target.data.item.id);
   });
 
+  it("names the columns a row holds an item id in, in a page and a read of the row, and no column a forced change left an item id in as text", async () => {
+    counter += 1;
+    const pointed = `user.rows-refs-pointed-${counter}-${ctx.runId}`;
+    expect(
+      (
+        await client.registerType({
+          id: pointed,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
+    const target = await client.createItem({
+      type: pointed,
+      properties: { title: "Pointed at" },
+    } as never);
+    expect(target.status, JSON.stringify(target.error)).toBe(201);
+    trackItem(ctx, target.data.item.id);
+    const to = target.data.item.id;
+    const columns = {
+      name: { type: "string" },
+      about: { type: "item" },
+      also: { type: "item" },
+    };
+    const { type, item, table } = await ordered(columns, "name");
+    const ids = await write(item, [
+      { op: "put", values: { name: "pointing", about: to, also: to } },
+      { op: "put", values: { name: "text" } },
+      { op: "put", values: { name: "plain" } },
+    ]);
+    const forced = await client.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: {
+          lines: {
+            ...table,
+            columns: { ...columns, about: { type: "string" } },
+          },
+        },
+      },
+      true,
+    );
+    expect(forced.status, JSON.stringify(forced.error)).toBe(200);
+    const patched = await write(item, [
+      { op: "patch", id: ids[0]!, values: { name: "pointing again" } },
+      { op: "patch", id: ids[1]!, values: { about: to } },
+    ]);
+    expect(patched).toEqual([ids[0], ids[1]]);
+    const written = await write(item, [
+      { op: "put", values: { name: "after", about: to } },
+    ]);
+    const page = await client.listRows(item, "lines", { limit: 10 });
+    expect(page.status, JSON.stringify(page.error)).toBe(200);
+    await expectMatchesSchema(
+      "GET",
+      "/items/{id}/tables/{table}/rows",
+      200,
+      page.data,
+    );
+    const refsOf = (rows: { id: string; refs?: string[] }[]) =>
+      Object.fromEntries(rows.map((row) => [row.id, row.refs ?? null]));
+    expect(refsOf(page.data.data)).toEqual({
+      [ids[0]!]: ["about", "also"],
+      [ids[1]!]: null,
+      [ids[2]!]: null,
+      [written[0]!]: null,
+    });
+    const read = await client.getRow(item, "lines", ids[0]!);
+    expect(read.data.refs).toEqual(["about", "also"]);
+    expect(read.data.values.about).toBe(to);
+    expect((await client.getRow(item, "lines", ids[1]!)).data.refs).toBe(
+      undefined,
+    );
+  });
+
+  it("names no column a key may not read the item of, as the key reads the row without its value", async () => {
+    counter += 1;
+    const pointed = `user.rows-refs-hidden-${counter}-${ctx.runId}`;
+    expect(
+      (
+        await client.registerType({
+          id: pointed,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
+    const target = await client.createItem({
+      type: pointed,
+      properties: { title: "Hidden" },
+    } as never);
+    expect(target.status, JSON.stringify(target.error)).toBe(201);
+    trackItem(ctx, target.data.item.id);
+    const columns = {
+      name: { type: "string" },
+      about: { type: "item" },
+      also: { type: "item" },
+    };
+    const { type, item } = await ordered(columns, "name");
+    const [row] = await write(item, [
+      {
+        op: "put",
+        values: { name: "r", about: target.data.item.id, also: item },
+      },
+    ]);
+    counter += 1;
+    const key = await client.createKey({
+      label: `rows-refs-hidden-${counter}`,
+      source: `${ctx.source}-refs-hidden-${counter}`,
+      type_permissions: { [type]: "read" },
+    });
+    expect(key.ok, JSON.stringify(key.error)).toBe(true);
+    trackKey(ctx, key.data.id);
+    const reader = new MarfaClient({ baseUrl: apiUrl, apiKey: key.data.key });
+    const read = await reader.getRow(item, "lines", row!);
+    expect(read.status, JSON.stringify(read.error)).toBe(200);
+    expect(read.data.withheld).toEqual(["about"]);
+    expect(read.data.refs).toEqual(["also"]);
+    expect(JSON.stringify(read.data)).not.toContain(target.data.item.id);
+    const full = await client.getRow(item, "lines", row!);
+    expect(full.data.refs).toEqual(["about", "also"]);
+    expect(full.data.withheld).toBeUndefined();
+  });
+
   it("sorts by a new order at once, while table-row-cleanup rewrites the kept order of a large table", async () => {
     const columns = { rank: { type: "integer" }, label: { type: "string" } };
     const { type, item, table } = await ordered(columns, "rank");

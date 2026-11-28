@@ -1033,6 +1033,8 @@ export interface TableRow {
   updated_at: string;
   /** The item columns whose id the reading key may not see. */
   withheld?: string[];
+  /** The columns whose value was written as the id of an item the reading key may see. */
+  refs?: string[];
 }
 
 export type RowOperation =

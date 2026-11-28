@@ -8589,6 +8589,8 @@ export interface components {
             updated_at: string;
             /** @description Present when a column of type `item` names an item you can't read: those columns, left out of `values`. */
             withheld?: string[];
+            /** @description Present when a value in a column was written as the ID of an item you can read: those columns. Marfa sorts those values as no value. */
+            refs?: string[];
         };
         /** @description A page of a table's rows. */
         TableRowPage: {
@@ -8735,6 +8737,8 @@ export interface components {
                 deleted?: true;
                 /** @description Present when a column of type `item` names an item you can't read: those columns, left out of `values`. */
                 withheld?: string[];
+                /** @description Present when a value in a column was written as the ID of an item you can read: those columns. Marfa sorts those values as no value. */
+                refs?: string[];
             }[];
         };
         /** @description The body of a webhook delivery of a rows event. */

@@ -97,6 +97,7 @@ interface RowsFrame {
     values?: Record<string, unknown>;
     deleted?: boolean;
     withheld?: string[];
+    refs?: string[];
   }[];
 }
 
@@ -445,6 +446,97 @@ describe("announcing rows", () => {
         withheld: ["about"],
       });
       expect(JSON.stringify(shown)).not.toContain(hidden);
+    } finally {
+      await narrow.close();
+      await full.close();
+    }
+  });
+
+  it("names the columns a row holds an item id in, after the column is retyped, and names none it withholds", async () => {
+    counter += 1;
+    const hiddenType = `user.rows-events-refs-hidden-${counter}-${ctx.runId}`;
+    expect(
+      (
+        await client.registerType({
+          id: hiddenType,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
+    const hidden = await itemOf(hiddenType);
+    const type = await tableType({
+      about: { type: "item" },
+      also: { type: "item" },
+    });
+    const item = await itemOf(type);
+    const written = await client.writeRows(item, "steps", {
+      operations: [
+        { op: "put", values: { count: 1, about: hidden, also: item } },
+        { op: "put", values: { count: 2 } },
+      ],
+    });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    const retyped = await client.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: {
+          steps: {
+            columns: {
+              count: { type: "integer" },
+              note: { type: "string" },
+              about: { type: "string" },
+              also: { type: "string" },
+            },
+          },
+        },
+      },
+      true,
+    );
+    expect(retyped.status, JSON.stringify(retyped.error)).toBe(200);
+    const narrow = await tapStream(apiUrl, await keyFor({ [type]: "read" }));
+    const full = await tapStream(apiUrl, apiKey);
+    try {
+      for (const tap of [narrow, full]) {
+        await tap.until(
+          (seen) => seen.some((e) => e.event === "stream_live"),
+          "the stream going live",
+        );
+      }
+      const patched = await client.writeRows(item, "steps", {
+        operations: [
+          {
+            op: "patch",
+            id: written.data.results[0]!.id,
+            values: { note: "x" },
+          },
+          {
+            op: "patch",
+            id: written.data.results[1]!.id,
+            values: { about: hidden, note: "x" },
+          },
+        ],
+      });
+      expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+      const rowsOf = async (tap: typeof full) => {
+        const frame = (
+          await tap.until((seen) => seen.some(rowsFor(item)), "the frame")
+        ).find(rowsFor(item))!.data as RowsFrame;
+        return new Map(frame.rows.map((row) => [row.values?.count, row]));
+      };
+      const whole = await rowsOf(full);
+      expect(whole.get(1)).toMatchObject({ refs: ["about", "also"] });
+      expect(whole.get(1)).not.toHaveProperty("withheld");
+      expect(whole.get(2)).not.toHaveProperty("refs");
+      const shown = await rowsOf(narrow);
+      expect(shown.get(1)).toMatchObject({
+        values: { count: 1, also: item },
+        withheld: ["about"],
+        refs: ["also"],
+      });
+      expect(shown.get(2)).not.toHaveProperty("refs");
+      expect(JSON.stringify(shown.get(1))).not.toContain(hidden);
     } finally {
       await narrow.close();
       await full.close();

@@ -117,13 +117,16 @@ pub fn judged(caller: &Caller, mut body: Map<String, Value>) -> Option<Map<Strin
             Some(_) => return None,
         };
         let mut withheld = Vec::new();
+        let mut refs = Vec::new();
         if let Some(Value::Object(values)) = row.get_mut("values") {
             for (column, type_id) in named {
                 let sees = match type_id.as_str() {
                     Some(type_id) => caller.may_read_type(type_id),
                     None => caller.may_read_every_type(),
                 };
-                if !sees {
+                if sees {
+                    refs.push(Value::String(column));
+                } else {
                     values.remove(&column);
                     withheld.push(Value::String(column));
                 }
@@ -131,6 +134,10 @@ pub fn judged(caller: &Caller, mut body: Map<String, Value>) -> Option<Map<Strin
         }
         if !withheld.is_empty() {
             row.insert("withheld".into(), Value::Array(withheld));
+        }
+        if !refs.is_empty() {
+            refs.sort_by(|one, other| one.as_str().cmp(&other.as_str()));
+            row.insert("refs".into(), Value::Array(refs));
         }
     }
     Some(body)

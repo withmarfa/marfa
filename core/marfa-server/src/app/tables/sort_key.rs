@@ -27,10 +27,6 @@ impl Sorted {
         })
     }
 
-    fn path(&self) -> String {
-        format!("'$.{}'", self.column)
-    }
-
     /// The key of the value in `body`, NULL for none or a value of another kind.
     pub(crate) fn value_key_sql(&self, body: &str) -> String {
         marfa_rules::schema::column_key_sql(&self.kind, &self.column, body)
@@ -38,11 +34,7 @@ impl Sorted {
 
     /// As [`Sorted::value_key_sql`], and NULL for a value `refs` holds as an item's id.
     pub(crate) fn key_sql(&self, body: &str, refs: &str) -> String {
-        format!(
-            "CASE WHEN json_extract({refs}, {}) IS NULL THEN {} END",
-            self.path(),
-            self.value_key_sql(body)
-        )
+        marfa_rules::schema::item_origin_key_sql(&self.value_key_sql(body), &self.column, refs)
     }
 
     /// As [`Sorted::key_sql`], with [`NO_KEY`] for NULL, so the index holds every row of the table.

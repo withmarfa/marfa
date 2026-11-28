@@ -73,6 +73,15 @@ impl<'a> Shown<'a> {
         if !withheld.is_empty() {
             row["withheld"] = json!(withheld);
         }
+        let mut visible: Vec<&String> = held
+            .refs
+            .keys()
+            .filter(|column| !withheld.contains(column))
+            .collect();
+        visible.sort();
+        if !visible.is_empty() {
+            row["refs"] = json!(visible);
+        }
         Ok(row)
     }
 }
@@ -929,19 +938,16 @@ mod parity {
 
     const CORPUS: &str = include_str!("../../../../marfa-rules/src/filter/parity.json");
 
-    /// The corpus's rows as the server holds them, with each item column's value in `refs`.
+    /// The corpus's rows as the server holds them, with the values each row's `refs` names.
     fn held(corpus: &Value) -> Connection {
         let db = Connection::open_in_memory().unwrap();
         crate::db::migrate::make_all(&db).unwrap();
-        let columns = corpus["table"]["columns"].as_object().unwrap();
         for row in corpus["table"]["rows"].as_array().unwrap() {
-            let refs: Map<String, Value> = row["body"]
-                .as_object()
-                .unwrap()
-                .iter()
-                .filter(|(column, _)| columns[*column]["type"] == "item")
-                .map(|(column, value)| (column.clone(), value.clone()))
-                .collect();
+            let refs: Map<String, Value> = row
+                .get("refs")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
             db.execute(
                 "INSERT INTO table_rows (table_seq, id, updated_at, batch, refs, body) \
                  VALUES (1, ?1, '2026-01-01T00:00:00Z', 0, jsonb(?2), jsonb(?3))",

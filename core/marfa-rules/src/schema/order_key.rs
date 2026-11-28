@@ -49,6 +49,16 @@ pub fn column_key_sql(kind: &str, column: &str, body: &str) -> String {
     crate::query::column_sort_expression(body, &format!("'$.{column}'"))
 }
 
+/// `key` with NULL for a value `refs`, a JSON object of column to item id, holds as written as an item's id.
+///
+/// A value written to an `item` column keeps this mark after the column's type changes, so it sorts as no value for every reader.
+pub fn item_origin_key_sql(key: &str, column: &str, refs: &str) -> String {
+    if !order_column_inlinable(column) {
+        return key.to_string();
+    }
+    format!("CASE WHEN json_extract({refs}, '$.{column}') IS NULL THEN {key} END")
+}
+
 /// `v` as UTC milliseconds; the offset is applied here so every offset the time rule takes counts.
 fn instant_ms() -> String {
     let at = |local: &str| LOCAL_MS.replace("local", local);

@@ -818,6 +818,14 @@ While a row holds a value that was written to a column of type `item`, the serve
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › withholds an item id a row holds after its column is removed or retyped, or its item is retyped`, `compliance/table-rows-events.test.ts › withholds an item id a row holds from a stream after its column is removed`.
 
+### `tables/rows-refs`
+
+While a row holds a value in a column that was written to a column of type `item` and the server answers the value in `values`, the server MUST name the column in the row's `refs`, in a page of rows, in a read of the row and in a `rows.changed` row, whatever the column's type declares since.
+
+**Reason:** the server sorts a value written as an item's ID as no value (`tables/rows-sort-item-id`), and a reader that holds the row, such as a device, cannot tell that value from the same text written to a column of another type.
+
+**Tests:** `compliance/table-rows-reads.test.ts › names the columns a row holds an item id in, in a page and a read of the row, and no column a forced change left an item id in as text`, `› names no column a key may not read the item of, as the key reads the row without its value`, `compliance/table-rows-events.test.ts › names the columns a row holds an item id in, after the column is retyped, and names none it withholds`.
+
 ### `tables/rows-item-gone`
 
 While a row holds a value that was written to a column of type `item` as the id of an item no longer held, the server MUST withhold it under `tables/rows-item-withheld` and `tables/rows-event-withheld` only from a key that may not read every type, a key that may read every type being one whose `type_permissions` grant read on `*` and narrow no type below it.
