@@ -211,8 +211,8 @@ impl Core {
     }
 
     /// Holds matching tables and fills them. Where another call holds the
-    /// stream, or the copy is not hydrated, it leaves them owed for the next
-    /// follow or catch-up, or `fill_tables`, and never waits.
+    /// stream, or the copy is not hydrated, it leaves them owed, as
+    /// `fill_tables` does, and never waits.
     pub fn hold_table(&self, type_id: &str, table: &str) -> Result<TableHold> {
         self.hold_table_until(type_id, table, &NEVER_STOPPED)
     }
@@ -264,14 +264,19 @@ impl Core {
         tables::held(&*self.conn()?)
     }
 
-    /// Fills each table the copy holds that is not whole.
-    pub fn fill_tables(&self, stop: &AtomicBool) -> Result<FillReport> {
+    /// Fills each table the copy holds that is not whole. Where another call
+    /// holds the stream it never waits: it answers `None` and leaves the
+    /// tables owed.
+    pub fn fill_tables(&self, stop: &AtomicBool) -> Result<Option<FillReport>> {
         self.lock.refuse_unless_writer()?;
-        let _streaming = self.claim_stream(Mover::Fill)?;
+        let Ok(_streaming) = self.try_claim_stream(Mover::Fill) else {
+            self.tables_owed.store(true, Ordering::SeqCst);
+            return Ok(None);
+        };
         #[cfg(debug_assertions)]
         crate::fault::hold(|| "table-fill-claimed");
         let context = reach::Context::capture(&*self.conn()?)?;
-        tables::fill(self, &context, stop)
+        tables::fill(self, &context, stop).map(Some)
     }
 
     /// Reads rows from the copy when held whole, marking the answer with `held`.

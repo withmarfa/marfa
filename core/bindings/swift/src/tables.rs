@@ -58,8 +58,9 @@ pub struct TableHold {
     pub table: String,
     pub was_held: bool,
     /// `None` where another call held the stream or the copy was not
-    /// hydrated: the table is left owed for the next follow, catch-up or
-    /// table fill.
+    /// hydrated: the table is left owed, as `fill_tables` leaves it, for a
+    /// follow or catch-up to fill. With none, and no later fill, it stays
+    /// owed in the store.
     pub fill: Option<TableFill>,
 }
 
@@ -181,8 +182,8 @@ guarded! {
     impl Core {
         /// Holds the table named `table` of every item of `type_id`, a pattern as
         /// a hydration reads it, and fills it. Where another call holds the
-        /// stream, or the copy is not hydrated, it leaves the table owed for
-        /// the next follow, catch-up or table fill, and never waits.
+        /// stream, or the copy is not hydrated, it leaves the table owed, as
+        /// `fill_tables` does, and never waits.
         pub fn hold_table(
             &self,
             type_id: String,
@@ -210,9 +211,11 @@ guarded! {
             held(self.inner.held_tables()?)
         }
 
-        /// Fills each table the copy holds that is not whole.
-        pub fn fill_tables(&self, stop: Option<Arc<Stop>>) -> Result<TableFill, MarfaError> {
-            Ok(self.inner.fill_tables(&flag_of(stop))?.into())
+        /// Fills each table the copy holds that is not whole. Where another
+        /// call holds the stream it never waits: it answers `nil` and leaves
+        /// the tables owed.
+        pub fn fill_tables(&self, stop: Option<Arc<Stop>>) -> Result<Option<TableFill>, MarfaError> {
+            Ok(self.inner.fill_tables(&flag_of(stop))?.map(Into::into))
         }
 
         /// A page of rows, from the copy where it holds the table whole and from
@@ -501,7 +504,13 @@ mod tests {
         assert_eq!(tables.tables[0].item_id, ITEM);
         assert_eq!(tables.tables[0].state, TableState::Whole);
         assert_eq!(tables.tables[0].rows, 1);
-        assert_eq!(core.fill_tables(None).unwrap().whole, 0);
+        assert_eq!(
+            core.fill_tables(None)
+                .unwrap()
+                .expect("a free stream filled")
+                .whole,
+            0
+        );
 
         let changes = core.changes_since(Some(since), 100).unwrap();
         assert_eq!(
