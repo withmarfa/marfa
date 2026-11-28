@@ -544,7 +544,8 @@ fn laid_over(
 
 /// `row` with `ops` laid over it. As the server marks them, a value written to
 /// one of `item_columns` that is text is an item's id, and any other write to
-/// a column clears the mark.
+/// a column clears the mark; an operation that leaves the values as they were
+/// leaves the row, its marks and its time alone.
 fn apply(
     row: Option<Held>,
     ops: &[Op],
@@ -562,32 +563,42 @@ fn apply(
     for op in ops.iter().filter(|op| op.id() == id) {
         row = match (op, row) {
             (Op::Put { values, .. }, before) => {
-                let mut refs = Map::new();
-                for (column, value) in values {
-                    mark(&mut refs, column, value);
+                let put: Map<String, Value> = values
+                    .iter()
+                    .filter(|(_, value)| !value.is_null())
+                    .map(|(column, value)| (column.clone(), value.clone()))
+                    .collect();
+                if before.as_ref().is_some_and(|before| before.values == put) {
+                    before
+                } else {
+                    let mut refs = Map::new();
+                    for (column, value) in values {
+                        mark(&mut refs, column, value);
+                    }
+                    Some(Held {
+                        values: put,
+                        withheld: before.map(|before| before.withheld).unwrap_or_default(),
+                        refs,
+                        updated_at: at.to_string(),
+                    })
                 }
-                Some(Held {
-                    values: values
-                        .iter()
-                        .filter(|(_, value)| !value.is_null())
-                        .map(|(column, value)| (column.clone(), value.clone()))
-                        .collect(),
-                    withheld: before.map(|before| before.withheld).unwrap_or_default(),
-                    refs,
-                    updated_at: at.to_string(),
-                })
             }
-            (Op::Patch { values, .. }, Some(mut before)) => {
+            (Op::Patch { values, .. }, Some(before)) => {
+                let mut after = before.clone();
                 for (column, value) in values {
-                    mark(&mut before.refs, column, value);
+                    mark(&mut after.refs, column, value);
                     if value.is_null() {
-                        before.values.remove(column);
+                        after.values.remove(column);
                     } else {
-                        before.values.insert(column.clone(), value.clone());
+                        after.values.insert(column.clone(), value.clone());
                     }
                 }
-                before.updated_at = at.to_string();
-                Some(before)
+                if after.values == before.values {
+                    Some(before)
+                } else {
+                    after.updated_at = at.to_string();
+                    Some(after)
+                }
             }
             (Op::Patch { .. }, None) => None,
             (Op::Delete { .. }, _) => None,
@@ -1974,6 +1985,78 @@ mod tests {
                 }]],
                 "kept {kept}"
             );
+        }
+    }
+
+    #[test]
+    fn a_write_the_server_leaves_unchanged_keeps_the_rows_marks_and_time() {
+        const R: &str = "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70";
+        const X: &str = "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f71";
+        // The column is no longer of type `item`, as after a forced type change.
+        for (seq, ops) in [
+            (1, json!([{ "op": "patch", "id": R, "values": { "link": X } }])),
+            (
+                2,
+                json!([{ "op": "put", "id": R, "values": { "link": X, "count": 1 } }]),
+            ),
+        ] {
+            let conn = store::testing::conn();
+            conn.execute(
+                "INSERT INTO item_tables (item_id, name, state) VALUES ('item', 'steps', 'whole')",
+                [],
+            )
+            .unwrap();
+            let held = Held {
+                values: values(json!({ "link": X, "count": 1 })),
+                withheld: Vec::new(),
+                refs: values(json!({ "link": X })),
+                updated_at: "2026-11-19T10:00:00.000Z".into(),
+            };
+            hold(&conn, "item", "steps", R, Some(&held)).unwrap();
+            conn.execute(
+                "INSERT INTO queue (seq, id, kind, item_id, row_table, idempotency_key, payload, sent, queued_at)
+                 VALUES (?1, 'w', 'write_rows', 'item', 'steps', 'w', ?2, 1, '2026-11-20T10:00:00.000Z')",
+                params![seq, json!({ "operations": ops }).to_string()],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO rows_laid (write_id, seq, item_id, name, id, ops, at)
+                 VALUES ('w', ?1, 'item', 'steps', ?2, ?3, '2026-11-20T10:00:00.000Z')",
+                params![seq, R, ops.to_string()],
+            )
+            .unwrap();
+            lay(&conn, "item", "steps", R).unwrap();
+            assert_eq!(
+                held_row(&conn, "item", "steps", R).unwrap().as_ref(),
+                Some(&held),
+                "{ops} while it waits"
+            );
+            let write = store::queued_write(&conn, "w").unwrap().unwrap();
+            let results = [json!({ "id": R, "outcome": "unchanged" })];
+            taken(
+                &conn,
+                "item",
+                "steps",
+                None,
+                &[Taken {
+                    write: &write,
+                    results: &results,
+                }],
+            )
+            .unwrap();
+            assert_eq!(
+                held_row(&conn, "item", "steps", R).unwrap().as_ref(),
+                Some(&held),
+                "{ops} once taken"
+            );
+            let named: Vec<String> = conn
+                .prepare("SELECT target FROM row_refs WHERE row_id = ?1")
+                .unwrap()
+                .query_map([R], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            assert_eq!(named, vec![X.to_string()], "{ops}");
         }
     }
 
