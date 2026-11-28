@@ -1088,6 +1088,38 @@ async fn a_write_behind_a_job_that_stopped_beating_meets_its_budget() {
     write.await.unwrap().unwrap();
 }
 
+#[tokio::test]
+async fn a_write_behind_a_held_job_waits_without_a_beat_until_the_hold_is_dropped() {
+    let folder = folder();
+    let db = Arc::new(open(&folder.file));
+    let (holding, held) = tokio::sync::oneshot::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let pulse = db.pulse();
+    let writing = db.clone();
+    let write = tokio::spawn(async move {
+        writing
+            .write(WRITE, move |_| {
+                let _holding = pulse.hold();
+                let _ = holding.send(());
+                let _ = released.recv();
+                Ok(())
+            })
+            .await
+    });
+    held.await.unwrap();
+
+    let behind = tokio::spawn({
+        let db = db.clone();
+        async move { db.write(WRITE, |_| Ok(())).await }
+    });
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    assert!(!behind.is_finished());
+
+    release.send(()).unwrap();
+    write.await.unwrap().unwrap();
+    behind.await.unwrap().unwrap();
+}
+
 #[test]
 fn a_database_locked_elsewhere_is_refused_within_its_budget() {
     let place = folder();
