@@ -3268,7 +3268,10 @@ mod backoff_tests {
         assert!(!ended_early, "the watch ended before it was stopped");
         // The report counts each pass the watch ran, full or quick.
         let used = super::super::usage::Used::now();
-        assert_eq!((used.full_passes + used.quick_passes) as usize, passes());
+        assert_eq!(
+            (used.full_passes + used.quick_passes) as usize,
+            probe.passes()
+        );
         // The witness: the passes ran and failed.
         assert!(before >= 2, "{before} passes");
         assert!(
