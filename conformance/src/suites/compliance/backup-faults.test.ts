@@ -189,6 +189,8 @@ describe("a backup cut short", () => {
     void owner.runBackup();
     await server.waitForHold("hold:backup:put");
     expect(await bucket.unfinishedUploads()).toHaveLength(1);
+    // The witness: the working folder holds the backup's spool while it is put.
+    expect(await server.scratch()).not.toEqual([]);
     await server.restart({ signal: "SIGKILL" });
 
     expect(await bucket.backupKeys()).toEqual(before);

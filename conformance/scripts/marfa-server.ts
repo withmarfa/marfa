@@ -35,10 +35,12 @@ import { createServer } from "node:net";
  *
  * `log` prints what the server wrote to its log, then to stderr.
  *
- * `scratch` prints `{"files":[..]}`, the sorted names of the files the server
- * holds in its working folder now: what it spools while an upload, an export
- * or a backup is in flight, which it removes once the work ends. A server that
- * holds none, or has no such folder, prints an empty list.
+ * `scratch` prints `{"files":[..]}`, the sorted names of the files in the
+ * server's own working folder (the tmp folder of the disk store) now: what an
+ * upload, an export or a backup to object storage spools there while it is in
+ * flight, which the server removes once the work ends. A backup to a files
+ * folder stages elsewhere and is not named. A server with no such folder, or
+ * none in it, prints an empty list.
  *
  * `restart` stops the server with the signal (`TERM` by default), prints how
  * it ended as `[marfa-server] previous exit {"code":..,"signal":..,"ms":..}`,
@@ -1124,10 +1126,15 @@ function printLog(state: string): void {
   }
 }
 
-/** The files in the disk store's working folder, which the server spools into. */
+/** The files, not the folders, in the disk store's working folder. */
 function printScratch(state: string): void {
   const folder = resolve(paths(state).blobs, "tmp");
-  const files = existsSync(folder) ? readdirSync(folder).sort() : [];
+  const files = existsSync(folder)
+    ? readdirSync(folder, { withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => entry.name)
+        .sort()
+    : [];
   console.log(JSON.stringify({ files }));
 }
 

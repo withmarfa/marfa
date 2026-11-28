@@ -29,7 +29,7 @@ data, log and env file. The default is `.marfa-state` in the working directory.
 | `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}],"queued_writes":[..]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted, a `resolve` fault has answered or a `release` fault has released its hold. A `release` fault that has acted adds `held_when_answered`. `queued_writes` names the audit action of each write the writer has admitted and not yet started, in the order it will run, with `null` for a write that has none. |
 | `image [--state <dir>] --to <dir>`                               | Copies the instance's data as it stands at one instant to `<dir>`, pausing the target while it copies and then letting it go on, as a snapshot a second target can boot from with `up --state <dir>`. The copy leaves out the target's process, log and exit records, its control directory and the harness's session file.                                                                                                                                                                                                                       |
 | `log`                                                            | Prints everything the target has written: its log, then what it printed to stderr.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `scratch`                                                        | Prints `{"files":[..]}`, the sorted names of the files the target holds in its working folder now: what it spools while an upload, an export or a backup is in flight, which it removes once the work ends. A target that holds none prints an empty list. Works while the target is stopped, to show what a stop left behind.                                                                                                                                                                                                                    |
+| `scratch`                                                        | Prints `{"files":[..]}`, the sorted names of the files in the target's own working folder (the tmp folder of the disk store, files only) now: what an upload, an export or a backup to object storage spools there while it is in flight, which the target removes once the work ends. A backup to a files folder stages elsewhere and is not named. A target with no such folder, or none in it, prints an empty list. Works while the target is stopped, to show what a stop left behind.                                                       |
 
 ## Configuration
 
@@ -107,8 +107,9 @@ stays because that thing is what it checks.
 - `compliance/connector-reach.test.ts`, "keeps the key a plugin connector key
   when its stored connector does not read" and "when its stored mapping does
   not read", rewrites a plugin's stored bundle or its stored mapping so that it
-  does not read. Installing, saving a mapping and a restore each refuse one, and
-  no fault stores one.
+  does not read, as does every test that calls its `failsClosed` or
+  `readsNothing`. Installing, saving a mapping and a restore each refuse one,
+  and no fault stores one.
 - `compliance/database-file.test.ts` reads, copies or damages the database
   file and the files beside it: a stop that moves the log into the file, a copy
   taken file by file under a read transaction, credential rows removed, a file
@@ -147,11 +148,24 @@ stays because that thing is what it checks.
 - `compliance/cloud-link.test.ts`, "reports a link whose secrets no longer
   open as failed and unreadable", removes `marfa.settings.key` while the server
   is stopped, because only a lost or broken disk loses the key the link's
-  secrets are sealed with.
+  secrets are sealed with. Its `bootBare` starts the program itself, with
+  `MARFA_DATABASE_PATH` and `MARFA_BLOB_PATH` in a folder it made and the cloud
+  set to a fake in the fixture's own process, because the claim is where the
+  server keeps the key and the link in its own data, and no adapter command
+  names those paths. "ends a link Marfa Cloud ended though the sign-in address
+  cannot be put back" writes an `addresses` setting that does not read, and
+  "says how to move a sign-in address an end by Marfa Cloud did not put back"
+  writes a `previous_sign_in_address` that is not an address, each before the
+  link ends. `PUT /config` refuses the first, and no door or fault stores the
+  second.
 - `compliance/cloud-connector.test.ts` reads the file the tunnel token is in,
   because the contract is about what the connector's output, arguments,
   environment and files hold, reads the log through the adapter, and copies the server's program
   into a folder of its own to show where the server looks for the connector.
+  It starts the program itself, with `MARFA_DATABASE_PATH` and
+  `MARFA_BLOB_PATH` in a folder it made, because the connector's output, the
+  folder it runs in and the files it holds are checked beside the server's own
+  data and no adapter command starts a server that way.
   "reports the connector as failed with reason origin_unknown for a link stored
   without the tunnel listener's port" clears the stored link's port while the
   server is stopped, because every start of a link stores one.
@@ -240,7 +254,10 @@ stays because that thing is what it checks.
   store keys to check which destination holds each manifest. The server's own
   listing cannot independently prove where it wrote a backup.
 - `compliance/durability.test.ts` runs `PRAGMA integrity_check` on a copy of
-  the database files a kill left. The files' integrity is the subject.
+  the database files a kill left. The files' integrity is the subject. "answers
+  500 for what reads them, reports the database down" overwrites the first byte
+  of the page that holds the `items` table's rows while the server is stopped,
+  because no door or fault damages a database file.
 - `compliance/bucket-sharing.test.ts` replaces the database files with an
   image taken earlier, so a database that never recorded a backup sits on a
   bucket that holds it. No door makes a database forget a backup it took.
@@ -265,7 +282,12 @@ stays because that thing is what it checks.
 - `compliance/one-server.test.ts` makes a second hard link to the database and
   opens the lock files beside the database and in the disk store's folder to
   the server's group before a restart. No door or fault links the database or
-  changes a file's mode, and the files' links and modes are the subject.
+  changes a file's mode, and the files' links and modes are the subject. It
+  also starts a second program on the first server's database or blob folder
+  with `MARFA_DATABASE_PATH` or `MARFA_BLOB_PATH` written several ways (a
+  relative path, a path through a link, a `file:` address), because the claim
+  is that one server holds a folder however it is named, and no door names
+  where the server keeps its data.
   Its fixtures of "a blob folder that returns to a server started without it"
   write a `backup_path` row that does not read before a start, move the blob
   folder away while the server is stopped and move it back while it runs,
@@ -291,6 +313,14 @@ stays because that thing is what it checks.
   same, then holds the lock on the files folder from a process of its own, as a
   second server on the folder does. No door or fault takes the lock of a
   server that is not running.
+  "refuses a backup folder inside its data directory or its blob folder"
+  builds the refused paths from the directory the database is in and from a blob
+  folder it names at the start, because the claim is about where the server
+  keeps its data and no door names that directory or the blob folder.
+- `cli/folder.test.ts` reads the `folder_files` row of the folder's own device
+  store (`.marfa/core.sqlite`), read-only, before and after a pull, to show
+  the pull left the file's recorded hashes alone. It is the device's store, not
+  the server's, and the command line does not print those columns.
 - `device/working-copy.test.ts` and `device/folders-refused-store-live.test.ts`
   set the release a store records in its meta, or remove it, and set its schema
   version, to leave the store as another build would have: no door makes a store

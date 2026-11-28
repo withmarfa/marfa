@@ -150,10 +150,10 @@ export interface FreshServer {
   /** Everything the server has written so far: its log, then what it printed to stderr. */
   output(): Promise<string>;
   /**
-   * The files the server holds in its working folder now, through
-   * `scratch`: what it spools while an upload, an export or a backup is in
-   * flight and removes once the work ends. Names are relative to the
-   * folder, sorted.
+   * The files in the server's own working folder now, through `scratch`:
+   * what an upload, an export or a backup to object storage spools there
+   * while it is in flight, removed once the work ends. A backup to a files
+   * folder stages elsewhere and is not named. Names are sorted.
    */
   scratch(): Promise<string[]>;
   /** Stops the server and removes its state. Safe to call twice. */
@@ -341,21 +341,19 @@ const SERVER_SCRIPT = resolve(conformanceRoot, "scripts/marfa-server.ts");
  * Everything a server booted into `state` wrote: its log, the JSON lines on
  * its stdout, then what it printed to stderr, as the adapter's `log` command
  * prints it. A fixture that holds the server to what it must not log reads
- * both, because the server warns on stderr. Synchronous, for a fixture that
- * reads it where it cannot wait.
+ * both, because the server warns on stderr. Not blocking, so a fake server in
+ * the same process keeps answering while it runs.
  */
-export function serverOutput(state: string): string {
-  const logged = spawnSync(
+export async function serverOutput(state: string): Promise<string> {
+  const logged = await runScript(
     tsxBinary(),
     [SERVER_SCRIPT, "log", "--state", state],
-    { cwd: conformanceRoot, env: serverEnv(), encoding: "utf8" },
+    serverEnv(),
   );
   if (logged.status !== 0) {
-    throw new Error(
-      `the target did not give its log:\n${logged.stdout}${logged.stderr}`,
-    );
+    throw new Error(`the target did not give its log:\n${logged.output}`);
   }
-  return logged.stdout;
+  return logged.output;
 }
 
 /** Before `down`, which clears the log with the rest of the state. The run's
@@ -754,7 +752,7 @@ export async function bootRefused(
     const ended = readExit(state, undefined, false);
     return {
       ...ended,
-      output: redactSetupProof(serverOutput(state)),
+      output: redactSetupProof(await serverOutput(state)),
       stateDir: state,
       sqlitePath,
       before,

@@ -267,6 +267,15 @@ describe("the working files", () => {
     writeFileSync(join(folder(), "a"), "");
     try {
       expect(await server.scratch()).toEqual(["a", "b"]);
+      // A folder in it is not a file, and the target is asked while stopped.
+      mkdirSync(join(folder(), "c"));
+      let stopped: string[] = [];
+      await server.restart({
+        whileStopped: async () => {
+          stopped = await server.scratch();
+        },
+      });
+      expect(stopped).toEqual(["a", "b"]);
     } finally {
       rmSync(folder(), { recursive: true, force: true });
     }

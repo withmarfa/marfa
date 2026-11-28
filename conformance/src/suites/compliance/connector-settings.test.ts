@@ -842,7 +842,7 @@ describe("a connector's secret", () => {
     expect(pages).toContain(visible);
     for (const held of secrets) expect(pages).not.toContain(held);
 
-    const logs = serverOutput(origin.stateDir);
+    const logs = await serverOutput(origin.stateDir);
     expect(logs.length).toBeGreaterThan(0);
     for (const held of secrets) expect(logs).not.toContain(held);
   });
@@ -1104,7 +1104,7 @@ describe("a plugin connector that does not read", () => {
     const after = listed.map((concern) => concern.reference);
     expect(after).toContain("no_backup_destination");
     expect(after).toContain(`${reads}/token`);
-    const warned = serverOutput(unread.stateDir)
+    const warned = (await serverOutput(unread.stateDir))
       .split("\n")
       .filter((line) => line.includes("settings were not read"))
       .join("\n");

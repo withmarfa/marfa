@@ -97,7 +97,7 @@ it(
           { timeout: 10000 },
         )
         .toBe(1);
-      expect(serverOutput(state)).not.toContain(
+      expect(await serverOutput(state)).not.toContain(
         "The webhook sender's place in the event log is missing",
       );
     } finally {

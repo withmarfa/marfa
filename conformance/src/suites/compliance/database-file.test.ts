@@ -491,11 +491,11 @@ describe("a completed claim after credential rows disappear", () => {
           "/_control/setup/status",
         );
         expect(before.body.claimed).toBe(true);
-        const announcements = () =>
-          serverOutput(server.stateDir).split(
+        const announcements = async () =>
+          (await serverOutput(server.stateDir)).split(
             "Claim this Marfa at /setup with setup code:",
           ).length - 1;
-        expect(announcements()).toBe(1);
+        expect(await announcements()).toBe(1);
         await stopServer({ state: server.stateDir });
         withInstanceDatabase(server.sqlitePath, (db) => {
           db.exec("PRAGMA foreign_keys = OFF");
@@ -509,7 +509,7 @@ describe("a completed claim after credential rows disappear", () => {
           "/_control/setup/status",
         );
         expect(status.body).toEqual(before.body);
-        expect(announcements()).toBe(1);
+        expect(await announcements()).toBe(1);
         expect(
           (
             await controlRequest(

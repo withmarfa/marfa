@@ -38,7 +38,7 @@ afterAll(async () => {
   await server.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-const readLog = () => serverOutput(server.stateDir);
+const readLog = async () => await serverOutput(server.stateDir);
 
 /** A value no other text in the log could be: unlike a fixed word, it cannot
  *  be there for another reason. */
@@ -152,7 +152,7 @@ describe("the server's log", () => {
     const log = await waitFor(
       "the log to hold the marker request",
       async () => {
-        const text = readLog();
+        const text = await readLog();
         return text.includes(marker) ? text : undefined;
       },
       10_000,

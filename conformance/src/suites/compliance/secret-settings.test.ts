@@ -212,7 +212,7 @@ describe("a secret setting", () => {
             ? true
             : undefined;
         });
-        const logged = serverOutput(server.stateDir);
+        const logged = await serverOutput(server.stateDir);
         expect(logged.length).toBeGreaterThan(0);
         expect(logged).toContain(bucket);
         for (const secret of secrets) expect(logged).not.toContain(secret);
