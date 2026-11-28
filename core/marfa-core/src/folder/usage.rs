@@ -51,7 +51,8 @@ impl Used {
 }
 
 /// When the watch reports. Time is the wall clock's, so a laptop's sleep
-/// counts and a clock set back counts as no time passed.
+/// counts, a clock set back counts as no time passed, and any one step counts
+/// as at most a day, so a clock that jumps forward adds no more than that.
 pub(super) struct Schedule {
     seen: SystemTime,
     running: Duration,
@@ -82,7 +83,10 @@ impl Schedule {
         all_watched: bool,
         followed: (u64, Option<u64>),
     ) -> Option<WatchReport> {
-        let passed = now.duration_since(self.seen).unwrap_or(Duration::ZERO);
+        let passed = now
+            .duration_since(self.seen)
+            .unwrap_or(Duration::ZERO)
+            .min(EVERY);
         self.seen = now;
         self.running = self.running.saturating_add(passed);
         if let Some(since) = &mut self.since_report {
@@ -192,22 +196,37 @@ mod tests {
     }
 
     #[test]
+    fn a_step_of_years_counts_as_a_day_and_sends_one_report() {
+        let day = EVERY.as_secs();
+        // A clock that reads 1970 when the watch starts and the time now once
+        // the network sets it.
+        let mut schedule = Schedule::new(SystemTime::UNIX_EPOCH);
+        let years = Duration::from_secs(50 * 365 * day);
+        let first = schedule
+            .take(SystemTime::UNIX_EPOCH + years, true, (1, Some(1)))
+            .unwrap();
+        assert_eq!(first.uptime_seconds, day);
+        let after = SystemTime::UNIX_EPOCH + years + Duration::from_secs(60);
+        assert!(schedule.take(after, true, (1, Some(1))).is_none());
+        let next = schedule
+            .take(after + Duration::from_secs(day), true, (1, Some(1)))
+            .unwrap();
+        assert_eq!(next.uptime_seconds, 2 * day + 60);
+    }
+
+    #[test]
     fn a_report_counts_the_passes_since_the_last() {
         let mut schedule = Schedule::new(at(0));
         passed(true);
         let first = schedule.take(at(0), true, (1, Some(3))).unwrap();
-        assert!(first.full_passes >= 1, "{first:?}");
-        // Other tests in a process that is not nextest's count passes too.
+        assert_eq!(first.full_passes, 1, "{first:?}");
         passed(true);
         passed(false);
         passed(false);
         let second = schedule
             .take(at(EVERY.as_secs()), true, (1, Some(3)))
             .unwrap();
-        assert!(
-            second.full_passes >= 1 && second.quick_passes >= 2,
-            "{second:?}"
-        );
+        assert_eq!((second.full_passes, second.quick_passes), (1, 2));
         assert!(second.cpu_millis.is_some());
     }
 }

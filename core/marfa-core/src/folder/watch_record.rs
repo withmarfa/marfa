@@ -27,6 +27,7 @@ use super::watch::{Raise, WatchEnd, WatchError, WatchEvent};
 use crate::directory::Directory;
 use crate::priority::{inheriting, lowered};
 use crate::store;
+use crate::telemetry::WatchReport;
 
 /// The record's file name, beside the registry's `folders.json`.
 pub const FILE_NAME: &str = "folder-watch.json";
@@ -311,7 +312,7 @@ impl WatchRecord {
     }
 
     /// The folder is watched.
-    pub(crate) fn watching(&self, dir: &Path) {
+    pub(super) fn watching(&self, dir: &Path) {
         self.change(dir, |held| {
             held.watching = true;
             held.reason = None;
@@ -343,11 +344,20 @@ impl WatchRecord {
         }
     }
 
+    /// What a look at the folder's saved health found. A folder the registry
+    /// no longer lists, which a look that was under way when it left finds,
+    /// is not added back.
     fn observed(&self, dir: &Path, health: Snapshot, files: Option<u64>) {
-        self.change(dir, |held| {
-            held.health = Some(health);
-            held.files = files.or(held.files);
-        });
+        let mut inner = self.inner();
+        if inner.finished {
+            return;
+        }
+        let Some(held) = inner.folders.get_mut(dir) else {
+            return;
+        };
+        held.health = Some(health);
+        held.files = files.or(held.files);
+        inner.generation += 1;
     }
 
     /// Runs `run`, the watch of the folder at `dir`, while the folder's saved
@@ -489,21 +499,20 @@ impl WatchRecord {
     /// Reports the process's own cost when the day, or the start, says to. The
     /// check is a clock reading, so it adds no wake to the loop that calls it.
     fn report_if_due(&self) {
-        let report = {
-            let mut inner = self.inner();
-            if inner.finished {
-                return;
-            }
-            let all_watched =
-                !inner.folders.is_empty() && inner.folders.values().all(|held| held.watching);
-            let followed = inner.followed();
-            inner
-                .schedule
-                .take(crate::clock::system_time(), all_watched, followed)
-        };
-        if let Some(report) = report {
+        if let Some(report) = self.report_due_at(crate::clock::system_time()) {
             crate::telemetry::watch_report(&report);
         }
+    }
+
+    fn report_due_at(&self, now: SystemTime) -> Option<WatchReport> {
+        let mut inner = self.inner();
+        if inner.finished {
+            return None;
+        }
+        let all_watched =
+            !inner.folders.is_empty() && inner.folders.values().all(|held| held.watching);
+        let followed = inner.followed();
+        inner.schedule.take(now, all_watched, followed)
     }
 
     /// The watches are over: every folder is marked not watched, and nothing
@@ -732,6 +741,46 @@ mod tests {
         assert_eq!(failing.reason.as_deref(), Some("unauthorized"));
         assert!(raw.contains("\"conflict\""), "{raw}");
         assert!(process.ended_at.is_none());
+    }
+
+    #[test]
+    fn a_late_look_at_a_folder_no_longer_listed_adds_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let record = record(temp.path(), 11);
+        let notes = Path::new("/notes");
+        record.listed(notes, "folder-1");
+        record.watching(notes);
+        record.left(notes);
+        record.observed(notes, Snapshot::default(), Some(12));
+        record.write_now().unwrap();
+        let process = only(&read(&temp.path().join(FILE_NAME)), 11);
+        assert!(process.folders.is_empty(), "{process:?}");
+        assert_eq!(process.usage.unwrap().files, None);
+    }
+
+    #[test]
+    fn the_first_report_waits_until_every_folder_listed_is_watched_or_the_wait_ends() {
+        let temp = tempfile::tempdir().unwrap();
+        let wait = |seconds: u64| crate::clock::system_time() + Duration::from_secs(seconds);
+
+        // The first folder watched does not start the report; the last does.
+        let both = record(temp.path(), 11);
+        both.listed(Path::new("/a"), "folder-a");
+        both.listed(Path::new("/b"), "folder-b");
+        both.watching(Path::new("/a"));
+        assert!(both.report_due_at(wait(1)).is_none());
+        both.watching(Path::new("/b"));
+        let report = both.report_due_at(wait(1)).unwrap();
+        assert_eq!(report.folders, 2);
+
+        // A folder that is never watched holds the report only for the wait.
+        let one = record(temp.path(), 12);
+        one.listed(Path::new("/a"), "folder-a");
+        one.listed(Path::new("/b"), "folder-b");
+        one.watching(Path::new("/a"));
+        assert!(one.report_due_at(wait(4)).is_none());
+        let report = one.report_due_at(wait(6)).unwrap();
+        assert_eq!((report.folders, report.files), (1, None));
     }
 
     #[test]
