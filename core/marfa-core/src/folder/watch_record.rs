@@ -1039,22 +1039,10 @@ mod tests {
         });
     }
 
-    /// Puts the system clock back however the test ends.
-    #[cfg(debug_assertions)]
-    struct SystemClock;
-
-    #[cfg(debug_assertions)]
-    impl Drop for SystemClock {
-        fn drop(&mut self) {
-            crate::clock::set_manual(false);
-        }
-    }
-
     #[cfg(debug_assertions)]
     #[test]
     fn a_lock_held_past_three_intervals_is_said_once_and_again_only_after_a_write() {
-        let _system = SystemClock;
-        crate::clock::set_manual(true);
+        let _manual = crate::clock::ManualClock::set(crate::clock::alone());
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join(FILE_NAME);
         let record = WatchRecord::at(path.clone(), 11, Duration::from_secs(1));
