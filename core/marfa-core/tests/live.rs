@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use marfa_core::{
-    ChangeEvent, Core, CoreError, FileBudget, Hydration, ItemState, ListFilters, SearchFilters,
-    Server, SliceTier, Sort,
+    ChangeEvent, CopyChanges, Core, CoreError, FileBudget, Hydration, ItemState, ListFilters,
+    SearchFilters, Server, SliceTier, Sort,
 };
 
 fn server() -> Server {
@@ -31,6 +31,31 @@ fn seed(args: &[&str]) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+const CHANGES_NAMED: u32 = 1000;
+
+/// Names what a catch-up took into the copy, read back from the store so it
+/// lists only what that catch-up applied.
+fn describe_changes(core: &Core, changes: &CopyChanges) -> String {
+    if changes.everything {
+        return "everything".into();
+    }
+    let items: Vec<String> = changes
+        .items
+        .iter()
+        .map(|id| match core.get(id).unwrap() {
+            Some(item) => format!(
+                "{id} {} {:?} version {} updated {}",
+                item.r#type, item.state, item.version, item.updated_at
+            ),
+            None => format!("{id} not held"),
+        })
+        .collect();
+    format!(
+        "items {items:?}, removed items {:?}, edges {:?}, removed edges {:?}, tables {:?}",
+        changes.removed_items, changes.edges, changes.removed_edges, changes.tables
+    )
 }
 
 fn nonce() -> String {
@@ -226,9 +251,18 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
         "the purge left the row in the store, where the server has deleted it"
     );
 
+    let sentinel = seed(&["note", "Sentinel", "the last write of the test"]);
+    let mark = core.changes_since(None, CHANGES_NAMED).unwrap().cursor;
     let quiet = core.catch_up().unwrap();
-    assert_eq!(quiet.applied, 0, "{quiet:?}");
-    assert_eq!(quiet.skipped, 0, "{quiet:?}");
+    let changes = core.changes_since(Some(&mark), CHANGES_NAMED).unwrap();
+    let taken = describe_changes(&core, &changes);
+    assert!(
+        !changes.everything && changes.items == [sentinel.as_str()],
+        "the catch-up after the purge took more than the sentinel: {quiet:?} {taken}"
+    );
+    assert!(changes.removed_items.is_empty(), "{quiet:?} {taken}");
+    assert_eq!(quiet.applied, 1, "{quiet:?} {taken}");
+    assert_eq!(quiet.skipped, 0, "{quiet:?} {taken}");
 
     let status = core.status().unwrap();
     assert_eq!(status.slice_tier, Some(SliceTier::Library));
