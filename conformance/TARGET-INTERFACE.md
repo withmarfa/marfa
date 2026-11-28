@@ -812,7 +812,9 @@ device is judged by the binding fixtures when it supplies what follows.
     the registry supervisor's turn.
 - **Failures.** `testHooks.fail(point, on)` makes the engine fail where it
   reaches `point`, and `testHooks.fail(point, false)` stops. The engine counts
-  each reach as `testHooks.reached` does. Three points fail: `data-version`,
+  each reach as `testHooks.reached` does. Four points fail: `table-fill-read`, which fails a device's read of a
+  table to fill it as an unreachable server fails it, before the request is
+  sent; `data-version`,
   the read a reading handle's watch makes to learn that another process saved;
   `replace-refused-make`, which fails the replacement of a refused store after
   its empty store has been made, so the old store is put back; and

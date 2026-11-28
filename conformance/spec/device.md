@@ -6698,6 +6698,22 @@ When a device has left a table unfilled under `device/table-fill-failed`, a devi
 
 **Tests:** `device/tables-live.test.ts › fills every other table, and ends no catch-up or follow, while one table's page read keeps failing`.
 
+### `device/table-fill-failed-after-events`
+
+If the fill of the tables a device holds that follows the events a catch-up applied fails, for a reason other than a stop or an expired copy, then a device MUST answer the catch-up as having succeeded, with the cursor of the events it applied.
+
+**Reason:** the events are committed, so an error would tell a caller that took them to skip the refresh for them, and the tables the fill left owed are filled by the next catch-up or follow.
+
+**Tests:** `device/tables-live.test.ts › answers a catch-up that took its events as succeeded, naming the failure in tables, when its fill fails`.
+
+### `device/table-fill-failed-named`
+
+If the fill of the tables a device holds that follows the events a catch-up applied fails, for a reason other than a stop or an expired copy, then a device MUST name the failure in `tables.failure` of the catch-up's answer.
+
+**Reason:** `tables` is where a caller reads whether the tables are whole, and a catch-up that answered success without it would claim they are.
+
+**Tests:** `device/tables-live.test.ts › answers a catch-up that took its events as succeeded, naming the failure in tables, when its fill fails`.
+
 ### `device/table-fill-failed-again`
 
 While a device holds a stream open, when it has left a table unfilled under `device/table-fill-failed`, a device MUST read the table again on that stream once a wait has passed that starts at 30 seconds and doubles after each failure in a row, up to 10 minutes.

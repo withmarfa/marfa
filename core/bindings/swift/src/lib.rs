@@ -30,7 +30,7 @@ use guard::guarded;
 pub use instance::{InstanceDescription, instance_description};
 pub use json::{JsonMember, JsonObject, JsonValue};
 pub use renewal::{CredentialRenewer, RenewalError, RenewalFailure};
-use tables::ChangedTable;
+use tables::{ChangedTable, TableFill};
 pub use trash::{TrashPreview, TrashPreviewItem, TrashTaken};
 
 /// The tier an item is in: `library` for lasting material, `feed` for an
@@ -384,6 +384,9 @@ pub struct CatchUpReport {
     pub cursor: String,
     /// The catch-up changed the catalog the copy holds.
     pub catalog_changed: bool,
+    /// The fill of the tables the copy holds that were not whole. A failed
+    /// fill is named here and never fails a catch-up whose events committed.
+    pub tables: TableFill,
     /// Tables whose state or rows changed during catch-up, including fills.
     pub changed_tables: Vec<ChangedTable>,
 }
@@ -2805,6 +2808,7 @@ guarded! {
                 read_only_held: report.read_only_held,
                 cursor: report.cursor,
                 catalog_changed: report.catalog_changed,
+                tables: report.tables.into(),
                 changed_tables: report.changed_tables.into_iter().map(Into::into).collect(),
             })
         }

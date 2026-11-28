@@ -166,6 +166,7 @@ Limits: a server that withholds a purge's event from the key reads as one that l
 - A hold's and a fill's counts cross as numbers. In Swift, a held table's `state` is the enum `TableState` (`owed`, `filling`, `whole` and `online` in Node), its item is `itemId` (`item` in Node), and a read's options are the record `RowsAsked`, whose `direction` is `SortDirection` and whose `limit` is a `UInt32`.
 - When a follow finishes filling a table or finds it over the cap, it emits one `tableFilled` change with the item ID and table name. Read the table again when you receive this change (`device/follow-table-filled`).
 - A hydration, catch-up or follow that starts while `holdTable` or `fillTables` fills tables waits for that fill to end instead of failing, and is then answered as if it had started at that moment, so another such call that took the stream first still refuses it. A stop raised during the wait ends the call as a stop does (`device/table-fill-waited-for`).
+- A catch-up reports its fill of the held tables in `tables` (`tables` in Node and Swift alike). Once the catch-up has committed its events, a fill that fails, because the server cannot be reached or for any other reason but a stop or an expired copy, does not fail the catch-up: it answers success with the cursor of those events, `tables.failure` names the failure and `tables.unfilled` counts the tables left owed, which the next catch-up or follow fills again (`device/table-fill-failed-after-events`). A failure before the events commit still fails the call.
 
 ## Folders in an app
 
