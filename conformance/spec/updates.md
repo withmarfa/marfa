@@ -164,13 +164,13 @@ When the server is to replace its programs with a release's, the server MUST fir
 
 **Reason:** a release that cannot start on the instance's settings or open its database would leave the instance down, and a new `marfa` that cannot run the install would leave the service unable to start once it takes the old one's place.
 
-**Tests:** `compliance/updates-swap.test.ts › swaps in a release that passes every check, keeping the old server and staging the new marfa, and ends to start it`, `› leaves the programs as they were when the download does not match the release's checksum`, `› leaves the programs as they were when a new program reports another release`, `› leaves the programs as they were when the new server refuses the database`, `› leaves the programs as they were when the new marfa will not run the install`.
+**Tests:** `compliance/updates-swap.test.ts › swaps in a release that passes every check, keeping the old server and staging the new marfa, and ends to start it`, `› leaves the programs as they were when the download does not match the release's checksum`, `› leaves the programs as they were when a new program reports another release`, `› leaves the programs as they were when a new program will not run`, `› leaves the programs as they were when the new server refuses the database`, `› leaves the programs as they were when the new marfa will not run the install`.
 
 ### `updates/swap-refused-unchanged`
 
 If a download fails, its checksum does not match, a new program will not run or reports another release, the new `marfa` will not run the install, the new server will not accept the settings or open the database, or the disk has too little room, then the server MUST leave the running programs as they were and report why in the last update.
 
-**Tests:** `compliance/updates-swap.test.ts › leaves the programs as they were when the download does not match the release's checksum`, `› leaves the programs as they were when a new program reports another release`, `› leaves the programs as they were when the new server refuses the database`, `› leaves the programs as they were when the new marfa will not run the install`, `› leaves the programs as they were when the download fails or the disk has too little room`.
+**Tests:** `compliance/updates-swap.test.ts › leaves the programs as they were when the download does not match the release's checksum`, `› leaves the programs as they were when a new program reports another release`, `› leaves the programs as they were when a new program will not run`, `› leaves the programs as they were when the new server refuses the database`, `› leaves the programs as they were when the new marfa will not run the install`, `› leaves the programs as they were when the download fails or the disk has too little room`.
 
 ### `updates/swap-hosts`
 

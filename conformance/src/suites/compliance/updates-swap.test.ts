@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -12,16 +12,24 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import { controlRequest } from "../../utils/control-request.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import {
+  callTool,
+  connectMcp,
+  toolError,
+  toolResult,
+  type McpConnection,
+} from "../../utils/mcp.js";
 import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
@@ -51,6 +59,8 @@ interface Behavior {
   marfaChecks: boolean;
   /** What `marfa-server --can-open` does. */
   canOpen: "accepts" | "refuses";
+  /** The program whose `--version` exits 1, as one that will not run here does. */
+  versionFails?: Program;
 }
 
 const GOOD: Behavior = {
@@ -83,7 +93,9 @@ function script(name: Program, behavior: Behavior, log: string): string {
     "#!/bin/sh",
     `echo "${name} $*" >> '${log}'`,
     'case "$1" in',
-    `--version) echo '${name} ${reports}'; exit 0;;`,
+    behavior.versionFails === name
+      ? `--version) echo '${name} will not run here' >&2; exit 1;;`
+      : `--version) echo '${name} ${reports}'; exit 0;;`,
   ];
   if (name === "marfa-server") {
     lines.push(
@@ -105,7 +117,7 @@ function script(name: Program, behavior: Behavior, log: string): string {
 interface Made {
   archive: Buffer;
   checksums: string;
-  /** What the new programs hold, by name. */
+  /** What the new stand-in programs hold, by name. */
   programs: Record<Program, Buffer>;
 }
 
@@ -146,6 +158,8 @@ interface Plan {
   archiveRedirect?: string;
   /** Holds the archive's answer until this settles. */
   hold?: Promise<void>;
+  /** The release the answer names as the newest, when it is not the one the archive holds. */
+  announce?: string;
 }
 
 let feed: Server;
@@ -161,36 +175,35 @@ function origin(): string {
 
 const DOWNLOADS = `/withmarfa/marfa/releases/download/v${RELEASE}`;
 
-function archiveName(platform = platformName()): string {
-  return `marfa-${RELEASE}-${platform}.tar.gz`;
+function archiveName(platform = platformName(), version = RELEASE): string {
+  return `marfa-${version}-${platform}.tar.gz`;
 }
 
 function latest(): string {
+  const version = plan.announce ?? RELEASE;
+  const downloads = `/withmarfa/marfa/releases/download/v${version}`;
   const platforms = ["linux-x86_64", "darwin-arm64", "linux-aarch64"];
   return JSON.stringify({
-    tag_name: `v${RELEASE}`,
+    tag_name: `v${version}`,
     draft: false,
     prerelease: false,
     published_at: "2026-11-16T09:30:00Z",
     assets: [
       ...platforms.map((platform) => ({
-        name: archiveName(platform),
-        browser_download_url: `${origin()}${DOWNLOADS}/${archiveName(platform)}`,
+        name: archiveName(platform, version),
+        browser_download_url: `${origin()}${downloads}/${archiveName(platform, version)}`,
         size: plan.declared,
       })),
       {
-        name: `marfa-${RELEASE}-checksums.txt`,
-        browser_download_url: `${origin()}${DOWNLOADS}/marfa-${RELEASE}-checksums.txt`,
+        name: `marfa-${version}-checksums.txt`,
+        browser_download_url: `${origin()}${downloads}/marfa-${version}-checksums.txt`,
         size: plan.checksums.length,
       },
     ],
   });
 }
 
-async function answer(
-  path: string,
-  response: import("node:http").ServerResponse,
-): Promise<void> {
+async function answer(path: string, response: ServerResponse): Promise<void> {
   const send = (status: number, body: string | Buffer, type: string) => {
     response.writeHead(status, { "content-type": type });
     response.end(body);
@@ -247,8 +260,8 @@ interface Installed {
   /** The folder holding the programs. */
   programs: string;
   installDir: string;
-  /** What the programs held before any update. */
-  before: Record<Program, Buffer>;
+  /** The sha256 of what the programs held before any update. */
+  before: Record<Program, string>;
   /** Where each stand-in program records how it was run. */
   log: string;
   /** How each stand-in program was run, one line per run. */
@@ -260,6 +273,10 @@ const stopped: FreshServer[] = [];
 afterAll(async () => {
   await Promise.all(stopped.map((server) => server.stop()));
 }, FRESH_SERVER_TIMEOUT_MS);
+
+function digest(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
 
 /** A server run from a copy of this run's own, as a service `marfa server run` supervises. */
 async function installed(label: string): Promise<Installed> {
@@ -299,8 +316,8 @@ async function installed(label: string): Promise<Installed> {
     programs,
     installDir,
     before: {
-      "marfa-server": readFileSync(copy),
-      marfa: Buffer.from(marfa),
+      "marfa-server": digest(copy),
+      marfa: digest(join(programs, "marfa")),
     },
     log,
     runs: () =>
@@ -327,21 +344,16 @@ async function offer(
   const run = await install.operator.runHousekeeping("release-check");
   expect(run.status, JSON.stringify(run.error)).toBe(200);
   const read = await install.operator.getUpdate();
-  expect(read.data.latest?.release, JSON.stringify(read.data)).toBe(RELEASE);
+  expect(read.data.latest?.release, JSON.stringify(read.data)).toBe(
+    plan.announce ?? RELEASE,
+  );
   expect(read.data.available).toBe(true);
   expect(read.data.method).toBe("server");
 }
 
 /** The checksum file naming a hash that is not the archive's. */
-function spoiled(made: Made): string {
-  return `${"0".repeat(64)}  ${archiveName()}\n${made.checksums.slice(64)}`.replace(
-    `${"0".repeat(64)}  ${archiveName()}\n  ${archiveName()}\n`,
-    `${"0".repeat(64)}  ${archiveName()}\n`,
-  );
-}
-
-function read(path: string): Buffer {
-  return readFileSync(path);
+function spoiled(): string {
+  return `${"0".repeat(64)}  ${archiveName()}\n`;
 }
 
 /** The programs folder holds the two programs as they were and nothing the update left. */
@@ -351,24 +363,17 @@ function expectUnchanged(install: Installed, what: string): void {
     .sort();
   expect(names, what).toEqual(["marfa", "marfa-server"]);
   for (const name of PROGRAMS) {
-    expect(
-      read(join(install.programs, name)).equals(install.before[name]),
-      `${name}: ${what}`,
-    ).toBe(true);
+    expect(digest(join(install.programs, name)), `${name}: ${what}`).toBe(
+      install.before[name],
+    );
   }
 }
 
-/** Starts the update and waits for it to end, which only a failed one does while the server runs. */
-async function endsFailed(install: Installed): Promise<{
-  outcome: string;
-  release: string;
-  reason: string | null;
-  finished_at: string;
-}> {
-  const previous =
-    (await install.operator.getUpdate()).data.last?.finished_at ?? null;
-  const started = await install.operator.startUpdate();
-  expect(started.status, JSON.stringify(started.error)).toBe(202);
+/** The last update, once one that ended after `previous` has settled. */
+async function endedAfter(
+  install: Installed,
+  previous: string | null,
+): Promise<NonNullable<UpdateLast>> {
   await expect
     .poll(
       async () => {
@@ -382,9 +387,29 @@ async function endsFailed(install: Installed): Promise<{
     .not.toBeNull();
   const { last } = (await install.operator.getUpdate()).data;
   expect(last, "the update ended").not.toBeNull();
-  expect(last!.outcome, JSON.stringify(last)).toBe("failed");
-  expect(last!.release).toBe(RELEASE);
   return last!;
+}
+
+type UpdateLast = Awaited<ReturnType<MarfaClient["getUpdate"]>>["data"]["last"];
+
+async function finishedAt(install: Installed): Promise<string | null> {
+  return (await install.operator.getUpdate()).data.last?.finished_at ?? null;
+}
+
+/** Starts the update and waits for it to end, which only a failed one does while the server runs. */
+async function endsFailed(install: Installed): Promise<{
+  outcome: string;
+  release: string;
+  reason: string | null;
+  finished_at: string;
+}> {
+  const previous = await finishedAt(install);
+  const started = await install.operator.startUpdate();
+  expect(started.status, JSON.stringify(started.error)).toBe(202);
+  const last = await endedAfter(install, previous);
+  expect(last.outcome, JSON.stringify(last)).toBe("failed");
+  expect(last.release).toBe(RELEASE);
+  return last;
 }
 
 /** Holds the archive's answer until `release` is called, and says when it was asked for. */
@@ -414,10 +439,27 @@ async function started(operator: MarfaClient): Promise<number> {
 }
 
 let shared: Promise<Installed> | undefined;
-/** The server the cases that leave the programs as they were share. */
-function failing(): Promise<Installed> {
-  shared ??= installed("updates-swap-failing");
+/**
+ * The server the cases that leave the programs as they were share. A case that
+ * swapped by mistake, or a failed one a retry follows, leaves it ended, so a
+ * server that no longer answers is replaced.
+ */
+async function failing(): Promise<Installed> {
+  if (shared !== undefined) {
+    const install = await shared;
+    const up = await fetch(`${install.server.apiUrl}/health`).then(
+      (answer) => answer.ok,
+      () => false,
+    );
+    if (up) return install;
+  }
+  shared = installed("updates-swap-failing");
   return shared;
+}
+
+/** How the programs were run since `mark`, a count `install.runs()` once had. */
+function runsSince(install: Installed, mark: number): string[] {
+  return install.runs().slice(mark);
 }
 
 it(
@@ -452,13 +494,17 @@ it(
     expect(exit.code).toBe(75);
 
     const made = plan.made;
-    const holds = (name: string, bytes: Buffer): boolean =>
-      read(join(install.programs, name)).equals(bytes);
-    expect(holds("marfa-server", made.programs["marfa-server"])).toBe(true);
+    const sha = (bytes: Buffer): string =>
+      createHash("sha256").update(bytes).digest("hex");
+    const holds = (name: string, hash: string): boolean =>
+      digest(join(install.programs, name)) === hash;
+    expect(holds("marfa-server", sha(made.programs["marfa-server"]))).toBe(
+      true,
+    );
     expect(
       holds(".marfa-server.previous", install.before["marfa-server"]),
     ).toBe(true);
-    expect(holds(".marfa.next", made.programs.marfa)).toBe(true);
+    expect(holds(".marfa.next", sha(made.programs.marfa))).toBe(true);
     expect(holds("marfa", install.before.marfa)).toBe(true);
     expect(
       readdirSync(install.programs).filter((name) =>
@@ -490,12 +536,13 @@ it(
   "leaves the programs as they were when the download does not match the release's checksum",
   async () => {
     const install = await failing();
+    const mark = install.runs().length;
     await offer(install);
-    plan.checksums = spoiled(plan.made);
+    plan.checksums = spoiled();
     const last = await endsFailed(install);
     expect(last.reason).toMatch(/does not match the release's checksum/);
     expectUnchanged(install, "a wrong checksum");
-    expect(install.runs(), "nothing downloaded was run").toEqual([]);
+    expect(runsSince(install, mark), "nothing downloaded was run").toEqual([]);
   },
   FRESH_SERVER_TIMEOUT_MS,
 );
@@ -522,15 +569,32 @@ it(
 );
 
 it(
+  "leaves the programs as they were when a new program will not run",
+  async () => {
+    const install = await failing();
+    for (const name of PROGRAMS) {
+      await offer(install, { ...GOOD, versionFails: name });
+      const last = await endsFailed(install);
+      expect(last.reason, name).toMatch(
+        new RegExp(`The downloaded ${name} does not run on this machine`),
+      );
+      expectUnchanged(install, `${name} that will not run`);
+    }
+  },
+  FRESH_SERVER_TIMEOUT_MS,
+);
+
+it(
   "leaves the programs as they were when the new server refuses the database",
   async () => {
     const install = await failing();
+    const mark = install.runs().length;
     await offer(install, { ...GOOD, canOpen: "refuses" });
     const last = await endsFailed(install);
     expect(last.reason).toMatch(/will not run on this server's settings/);
     expect(last.reason).toMatch(/will not open the database/);
     expectUnchanged(install, "a refused database");
-    expect(install.runs()).toContain(
+    expect(runsSince(install, mark)).toContain(
       `marfa-server --can-open ${install.server.sqlitePath}`,
     );
   },
@@ -541,11 +605,12 @@ it(
   "leaves the programs as they were when the new marfa will not run the install",
   async () => {
     const install = await failing();
+    const mark = install.runs().length;
     await offer(install, { ...GOOD, marfaChecks: false });
     const last = await endsFailed(install);
     expect(last.reason).toMatch(/will not run this install/);
     expectUnchanged(install, "a marfa that refuses the install");
-    expect(install.runs()).toContain(
+    expect(runsSince(install, mark)).toContain(
       `marfa server run --dir ${install.installDir} --check`,
     );
   },
@@ -593,7 +658,7 @@ it(
     // archive it leads to is read, as the checksum it fails shows.
     paths = [];
     await offer(install);
-    plan.checksums = spoiled(plan.made);
+    plan.checksums = spoiled();
     plan.archiveRedirect = `${origin()}/moved/archive`;
     const followed = await endsFailed(install);
     expect(paths).toContain("/moved/archive");
@@ -608,33 +673,42 @@ it(
   async () => {
     const install = await failing();
     const left = join(install.programs, ".marfa-update-0.0.1");
-    mkdirSync(left);
-    writeFileSync(join(left, "marfa-server"), "half unpacked");
+    const link = join(install.programs, ".marfa-update-link");
+    const file = join(install.programs, ".marfa-update-file");
     const elsewhere = tempFolder("marfa-linked-");
-    writeFileSync(join(elsewhere, "kept"), "kept");
-    symlinkSync(elsewhere, join(install.programs, ".marfa-update-link"));
-    writeFileSync(join(install.programs, ".marfa-update-file"), "kept");
-    expect(existsSync(left)).toBe(true);
+    try {
+      rmSync(left, { recursive: true, force: true });
+      rmSync(link, { force: true });
+      rmSync(file, { force: true });
+      mkdirSync(left);
+      writeFileSync(join(left, "marfa-server"), "half unpacked");
+      writeFileSync(join(elsewhere, "kept"), "kept");
+      symlinkSync(elsewhere, link);
+      writeFileSync(file, "kept");
+      expect(existsSync(left)).toBe(true);
 
-    await offer(install);
-    plan.checksums = spoiled(plan.made);
-    await endsFailed(install);
+      await offer(install);
+      plan.checksums = spoiled();
+      await endsFailed(install);
 
-    expect(existsSync(left)).toBe(false);
-    expect(
-      readdirSync(install.programs)
-        .filter((name) => name !== LOCK)
-        .sort(),
-    ).toEqual([
-      ".marfa-update-file",
-      ".marfa-update-link",
-      "marfa",
-      "marfa-server",
-    ]);
-    expect(read(join(elsewhere, "kept")).toString()).toBe("kept");
-    expect(read(join(install.programs, ".marfa-update-file")).toString()).toBe(
-      "kept",
-    );
+      expect(existsSync(left)).toBe(false);
+      expect(
+        readdirSync(install.programs)
+          .filter((name) => name !== LOCK)
+          .sort(),
+      ).toEqual([
+        ".marfa-update-file",
+        ".marfa-update-link",
+        "marfa",
+        "marfa-server",
+      ]);
+      expect(readFileSync(join(elsewhere, "kept"), "utf8")).toBe("kept");
+      expect(readFileSync(file, "utf8")).toBe("kept");
+    } finally {
+      // The cases that share this server expect only its programs beside it.
+      rmSync(link, { force: true });
+      rmSync(file, { force: true });
+    }
   },
   FRESH_SERVER_TIMEOUT_MS,
 );
@@ -644,7 +718,7 @@ it(
   async () => {
     const install = await failing();
     await offer(install);
-    plan.checksums = spoiled(plan.made);
+    plan.checksums = spoiled();
     const first = await endsFailed(install);
     expect(first.reason).toMatch(/does not match the release's checksum/);
 
@@ -666,34 +740,27 @@ it(
     const install = await failing();
     paths = [];
     await offer(install);
-    plan.checksums = spoiled(plan.made);
+    plan.checksums = spoiled();
     const held = holdArchive();
     const before = await started(install.operator);
-    const previous =
-      (await install.operator.getUpdate()).data.last?.finished_at ?? null;
-
-    const first = await install.operator.startUpdate();
-    expect(first.status, JSON.stringify(first.error)).toBe(202);
-    await held.asked;
-    for (let again = 0; again < 2; again += 1) {
-      const second = await install.operator.startUpdate();
-      expect(second.status, JSON.stringify(second.error)).toBe(202);
-      expect(second.data.progress).toEqual({
-        state: "fetching",
-        release: RELEASE,
-      });
+    const previous = await finishedAt(install);
+    try {
+      const first = await install.operator.startUpdate();
+      expect(first.status, JSON.stringify(first.error)).toBe(202);
+      await held.asked;
+      for (let again = 0; again < 2; again += 1) {
+        const second = await install.operator.startUpdate();
+        expect(second.status, JSON.stringify(second.error)).toBe(202);
+        expect(second.data.progress).toEqual({
+          state: "fetching",
+          release: RELEASE,
+        });
+      }
+      expect(await started(install.operator)).toBe(before + 1);
+    } finally {
+      held.release();
     }
-    expect(await started(install.operator)).toBe(before + 1);
-    held.release();
-    await expect
-      .poll(
-        async () => {
-          const { progress, last } = (await install.operator.getUpdate()).data;
-          return progress.state === "idle" && last?.finished_at !== previous;
-        },
-        { timeout: 60_000, interval: 100 },
-      )
-      .toBe(true);
+    await endedAfter(install, previous);
     expect(archiveRequests(), "one download for three starts").toBe(1);
     expect(await started(install.operator)).toBe(before + 1);
 
@@ -716,12 +783,10 @@ it(
     writeFileSync(next, "the earlier update's marfa");
     const refused = await endsFailed(install);
     expect(refused.reason).toMatch(/has not settled/);
-    expect(read(next).toString()).toBe("the earlier update's marfa");
+    expect(readFileSync(next, "utf8")).toBe("the earlier update's marfa");
     expect(paths.filter((path) => path !== "/latest")).toEqual([]);
     for (const name of PROGRAMS) {
-      expect(
-        read(join(install.programs, name)).equals(install.before[name]),
-      ).toBe(true);
+      expect(digest(join(install.programs, name))).toBe(install.before[name]);
     }
     expect(existsSync(join(install.programs, ".marfa-server.previous"))).toBe(
       false,
@@ -732,11 +797,124 @@ it(
     const begun = await install.operator.startUpdate();
     expect(begun.status, JSON.stringify(begun.error)).toBe(202);
     expect((await install.server.exit()).code).toBe(75);
+    expect(digest(join(install.programs, "marfa-server"))).not.toBe(
+      install.before["marfa-server"],
+    );
     expect(
-      read(join(install.programs, "marfa-server")).equals(
+      readFileSync(join(install.programs, "marfa-server")).equals(
         plan.made.programs["marfa-server"],
       ),
     ).toBe(true);
+  },
+  FRESH_SERVER_TIMEOUT_MS,
+);
+
+async function maintainer(install: Installed): Promise<McpConnection> {
+  const minted = await controlRequest(install.server.controlSocket, "/keys", {
+    method: "POST",
+    body: {
+      label: "updates swap",
+      source: `updates-swap-${randomUUID()}`,
+      permissions: ["instance.maintain"],
+    },
+  });
+  expect(minted.status, JSON.stringify(minted.body)).toBe(201);
+  return connectMcp(
+    install.server.apiUrl,
+    minted.body.key as string,
+    "2026-07-28",
+    "/mcp/admin",
+  );
+}
+
+it(
+  "previews the release an update would move to with a confirmation, starts nothing, and starts the update on the confirmation",
+  async () => {
+    const install = await failing();
+    paths = [];
+    await offer(install);
+    plan.checksums = spoiled();
+    const connection = await maintainer(install);
+    try {
+      const running = (await install.operator.getUpdate()).data.release;
+      const before = await started(install.operator);
+      const previous = await finishedAt(install);
+
+      const preview = toolResult(
+        await callTool(connection, "marfa_update_server", {}),
+      );
+      expect(preview.release).toBe(running);
+      expect(preview.to).toBe(RELEASE);
+      expect(typeof preview.confirm).toBe("string");
+      expect(preview).not.toHaveProperty("started");
+      expect((await install.operator.getUpdate()).data.progress).toEqual({
+        state: "idle",
+        release: null,
+      });
+      expect(await started(install.operator)).toBe(before);
+      expect(archiveRequests(), "nothing was fetched").toBe(0);
+
+      // The witness: the confirmation the preview gave starts the update.
+      const confirmed = toolResult(
+        await callTool(connection, "marfa_update_server", {
+          confirm: preview.confirm as string,
+        }),
+      );
+      expect(confirmed.started).toBe(true);
+      await endedAfter(install, previous);
+      expect(await started(install.operator)).toBe(before + 1);
+      expect(archiveRequests()).toBe(1);
+    } finally {
+      await connection.close();
+    }
+  },
+  FRESH_SERVER_TIMEOUT_MS,
+);
+
+it(
+  "refuses a confirmation whose preview named a release that a newer one has since replaced, answers a new preview, and starts nothing",
+  async () => {
+    const install = await failing();
+    paths = [];
+    await offer(install);
+    const connection = await maintainer(install);
+    try {
+      const before = await started(install.operator);
+      const previous = await finishedAt(install);
+      const first = toolResult(
+        await callTool(connection, "marfa_update_server", {}),
+      );
+      expect(first.to).toBe(RELEASE);
+
+      await offer(install, GOOD, { announce: "9.9.10" });
+      const refused = toolError(
+        await callTool(connection, "marfa_update_server", {
+          confirm: first.confirm as string,
+        }),
+      );
+      expect(refused.code).toBe("confirmation_stale");
+      expect(refused.to).toBe("9.9.10");
+      expect(refused.confirm).not.toBe(first.confirm);
+      expect((await install.operator.getUpdate()).data.progress).toEqual({
+        state: "idle",
+        release: null,
+      });
+      expect(await started(install.operator)).toBe(before);
+      expect(paths.filter((path) => path.includes("/download/"))).toEqual([]);
+
+      // The witness: the new preview's confirmation starts the update to the newer release.
+      const confirmed = toolResult(
+        await callTool(connection, "marfa_update_server", {
+          confirm: refused.confirm as string,
+        }),
+      );
+      expect(confirmed.started).toBe(true);
+      const last = await endedAfter(install, previous);
+      expect(last.release).toBe("9.9.10");
+      expect(await started(install.operator)).toBe(before + 1);
+    } finally {
+      await connection.close();
+    }
   },
   FRESH_SERVER_TIMEOUT_MS,
 );
