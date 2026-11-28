@@ -137,9 +137,8 @@ impl OtherBuild {
     }
 }
 
-/// What the current watch that holds `dir` has used since it started, where
-/// the record beside the folder registry lists one that records it. The
-/// figures are the whole watch's, across the `folders` it was asked to hold.
+/// What a watch has used since it started: the whole process's figures, across
+/// the `folders` it holds.
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct WatchUsage {
     #[serde(flatten)]
@@ -153,6 +152,8 @@ impl WatchUsage {
     }
 }
 
+/// What the current watch that holds `dir` has used, where the record beside
+/// the folder registry lists one that records it.
 pub fn usage_watching(dir: &Path) -> Option<WatchUsage> {
     let record = WatchRecord::located()?;
     let file = RecordFile::read(record.path())?;

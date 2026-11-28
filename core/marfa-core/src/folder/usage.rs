@@ -50,9 +50,8 @@ impl Used {
     }
 }
 
-/// When the watch reports, and what it had used at its last report. Time is
-/// the wall clock's, so the days a laptop sleeps count; a reading earlier than
-/// the one before it, which a clock set back makes, counts as no time passed.
+/// When the watch reports. Time is the wall clock's, so a laptop's sleep
+/// counts and a clock set back counts as no time passed.
 pub(super) struct Schedule {
     seen: SystemTime,
     running: Duration,
@@ -74,10 +73,9 @@ impl Schedule {
         }
     }
 
-    /// Takes the report that is due at `now`, if one is. The first is due once
-    /// every folder the registry lists is watched, or after `START_WAIT`; the
-    /// rest, a day apart. `followed` is the folders held and the files they
-    /// follow, `None` while no folder has been counted.
+    /// Takes the report due at `now`, if any: the first once every folder is
+    /// watched or after `START_WAIT`, the rest a day apart. `followed` is the
+    /// folders held and their files, `None` while none is counted.
     pub(super) fn take(
         &mut self,
         now: SystemTime,
