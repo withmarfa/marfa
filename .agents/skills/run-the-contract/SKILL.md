@@ -7,7 +7,7 @@ description: Run Marfa's conformance fixtures locally against a server you built
 
 Run every command from `conformance/`, in a checkout where `pnpm install` has run at the root. The adapter's commands and settings are in `conformance/TARGET-INTERFACE.md`; the rules for a fixture are in `conformance/AGENTS.md`.
 
-**What it costs.** One fixture file is a light run. A whole project (`pnpm test:compliance`, `pnpm test:conformance`) runs many files at once, and many of them boot servers of their own; on a machine other work shares, run it the way that machine runs its heavy jobs. A Cargo build is heavy too.
+**What it costs.** One fixture file is a light run. A whole project (`pnpm test:compliance`, `pnpm test:conformance`) runs many files, and many of them boot servers of their own; on a machine other work shares, run it the way that machine runs its heavy jobs. A Cargo build is heavy too.
 
 ## 1. Build the server with test hooks
 
@@ -17,6 +17,10 @@ export MARFA_SERVER_BIN="$PWD/../core/target/release/marfa-server"
 ```
 
 If `CARGO_TARGET_DIR` is set, the binary is under that directory instead. `marfa:up` has no default binary on purpose: a default release build has no test hooks, and the fixtures turn the hooks on, which such a build refuses at start. Without `MARFA_SERVER_BIN`, `marfa:up` stops and says how to build one.
+
+A fixture that has the server decode an image's bytes needs a server built with the `native` readers (`core/marfa-enrichment/native/release.sh`): `enrichment-malformed-image` is one. Without them the server never decodes an image, and such a test fails locally and passes in CI. Candidates are the fixtures that turn enrichment on: `grep -rl 'MARFA_ENRICHMENT_ENABLED: "true"' src/suites`; run them and read what fails.
+
+The control socket path must stay within 103 bytes, or `marfa:up` and `bootFreshServer` cannot boot ("MARFA_CONTROL_SOCKET must be a normalized absolute path of at most 103 bytes"). It sits under the temporary folder, so run from a short one: `export TMPDIR=$HOME/tmp`, made first. A wrapper that sets its own long `TMPDIR` needs its own setting changed instead.
 
 Only `src/suites/compliance/hook-free-server.test.ts` also needs the build a release ships, which it starts itself:
 
@@ -65,6 +69,8 @@ One file, in the project its folder names (`correctness`, `compliance`, `sync`, 
 ```bash
 pnpm exec vitest run --project compliance src/suites/compliance/<file>.test.ts
 ```
+
+Files run one at a time, whatever `VITEST_MAX_WORKERS` says: a restore in one file holds every write on the shared server, so files running together refuse each other's writes with `503 write_contention`.
 
 A whole project: `pnpm test:compliance` (and `test:correctness`, `test:sync`, `test:device`, `test:cli`). `pnpm test:conformance` runs `correctness`, `compliance`, `sync` and `device` together. Fixtures that need no server: `pnpm test:generators`. The harness held to the target interface: `pnpm test:harness`, which boots its own servers from `MARFA_SERVER_BIN`.
 
