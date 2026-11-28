@@ -208,6 +208,15 @@ describe("approving an app again with more access", () => {
     expect(wider.scopes).toEqual(
       expect.arrayContaining(["core.note:read", "instance.read"]),
     );
+
+    // An approval that names only new access holds what the grant held.
+    expect(wider.scopes).not.toContain("audit.read");
+    await approveOnDevicePage(app, "audit.read");
+    const widest = await grantOf(app);
+    expect(widest.id).toBe(before.id);
+    expect(widest.scopes).toEqual(
+      expect.arrayContaining(["core.note:read", "instance.read", "audit.read"]),
+    );
   });
 
   it("keeps each refresh chain of the grant that has not ended", async () => {

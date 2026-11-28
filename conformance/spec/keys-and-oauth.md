@@ -2658,11 +2658,11 @@ When an app revokes an access token at `POST /oauth/revoke`, the server MUST ref
 
 ### `keys-and-oauth/revoke-refresh-token`
 
-When an app revokes at `POST /oauth/revoke` its newest refresh token, one no refresh has rotated, while that token's chain has not ended and the token has not expired, the server MUST end the app's grant: its tokens, its entry in `GET /grants`, the person's consent and the webhook subscriptions its grant registered (`events/webhook-grant-revoked`).
+When an app revokes at `POST /oauth/revoke` its newest refresh token, one no refresh has rotated, while that token's chain has not ended and the token has not expired, the server MUST end the app's grant: its tokens, its entry in `GET /grants` and the person's consent.
 
 **Reason:** RFC 7009 is the one way an app says "disconnect me", and an app that used it was still connected while the grant's records stood.
 
-**Tests:** `compliance/oauth-tokens.test.ts › of a refresh token ends the app's grant: its tokens, its listing and the person's consent`, `› of the newest refresh token after a rotation ends the app's grant`, `compliance/app-widening.test.ts › ends an app's subscriptions when it revokes its refresh token, as a widening does not`.
+**Tests:** `compliance/oauth-tokens.test.ts › of a refresh token ends the app's grant: its tokens, its listing and the person's consent`, `› of the newest refresh token after a rotation ends the app's grant`.
 
 ### `keys-and-oauth/revoke-rotated-refresh-token`
 
@@ -2694,7 +2694,7 @@ When an app revokes at `POST /oauth/revoke` a refresh token the server issued to
 
 ### `keys-and-oauth/revoke-unknown-client`
 
-If `POST /oauth/revoke` names a `client_id` the server does not hold, then the server MUST answer `401 invalid_client`.
+If `POST /oauth/revoke` names a token and a `client_id` the server does not hold, then the server MUST answer `401 invalid_client`.
 
 **Reason:** A public client learns that a server it signed in to no longer knows it, as after a reset, restore or replacement, before it sends a person to an authorization page that cannot return to it. A client the server holds, naming a value that is no token, is answered `200` (`keys-and-oauth/revoke-unknown-token`), so the two answers tell the cases apart without ending anything.
 
@@ -2702,7 +2702,7 @@ If `POST /oauth/revoke` names a `client_id` the server does not hold, then the s
 
 ### `keys-and-oauth/revoke-unknown-client-keeps`
 
-If `POST /oauth/revoke` names a `client_id` the server does not hold, then the server MUST leave every token, grant and consent as they stand, whatever token the request names.
+If `POST /oauth/revoke` names a token and a `client_id` the server does not hold, then the server MUST leave every token, grant and consent as they stand.
 
 **Tests:** `compliance/app-widening.test.ts › is answered 401 invalid_client at a revocation, which ends and changes nothing`.
 
