@@ -324,9 +324,17 @@ When `folders status` runs and no current entry in the record of folder watches 
 
 ### `folder-sync/status-watch-usage`
 
-When `folders status` runs while a current entry in the record of folder watches lists the folder as watched and carries `usage`, the CLI MUST report `watch_usage` with the keys of that `usage` and `folders`, the number of folders the entry lists, and say in one line in the text that the figures are the watch’s across that many folders.
+When `folders status` runs while a current entry in the record of folder watches lists the folder as watched and carries `usage`, the CLI MUST report `watch_usage` with the keys of that `usage` and `folders`, the number of folders the entry lists.
 
 **Reason:** The figures belong to the whole watch process, not to the folder asked about, so the count says across how many folders they were used.
+
+**Tests:** `device/folders-new-build.test.ts › says in the folder's status what the watch that holds it has used, across the folders it holds`.
+
+### `folder-sync/status-watch-usage-text`
+
+When `folders status` reports `watch_usage` in the text, the CLI MUST say in one line that the figures are the watch’s across that many folders.
+
+**Reason:** A person reading the text takes the figures for the folder's own unless the line says otherwise.
 
 **Tests:** `device/folders-new-build.test.ts › says in the folder's status what the watch that holds it has used, across the folders it holds`.
 

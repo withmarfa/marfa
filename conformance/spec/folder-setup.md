@@ -1348,7 +1348,7 @@ While a watch process runs, a device MUST set `build_version` in the process’s
 
 ### `folder-setup/watch-record-usage`
 
-While a watch process runs, a device MUST set `usage` in the process’s entry in the record to what the process has used since it started: `cpu_millis`, `resident_bytes` and `peak_resident_bytes`, each `null` where the system does not give it, `full_passes` and `quick_passes`, and `files`, the files its folders follow, `null` before any folder has been counted.
+While a watch process runs, a device MUST set `usage` in the process’s entry in the record to what the process has used since it started: `cpu_millis`, `resident_bytes`, `peak_resident_bytes`, `full_passes`, `quick_passes` and `files`, the files its folders follow.
 
 **Reason:** A person or a program tells a watch that has grown heavy from one that is idle, without a profiler. The figures are totals since the start, so two reads give a rate. An entry an earlier build wrote has no `usage`, and a reader takes it as unknown.
 
@@ -1954,7 +1954,15 @@ When `folders autostart status` runs while the agent’s watch runs, the CLI MUS
 
 ### `folder-setup/autostart-status-usage`
 
-When `folders autostart status` finds a current entry for the agent’s watch, the CLI MUST report in `record` the `usage` of that entry, and say it in one line in the text.
+When `folders autostart status` finds a current entry for the agent’s watch, the CLI MUST report in `record` the `usage` of that entry.
+
+**Reason:** The status tells a program what the watch has used without opening the record.
+
+**Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
+
+### `folder-setup/autostart-status-usage-text`
+
+When `folders autostart status` reports the `usage` of the agent’s watch in `record`, the CLI MUST say it in one line in the text.
 
 **Reason:** The status tells a person what the watch has used without opening the record.
 
