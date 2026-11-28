@@ -1420,7 +1420,15 @@ When the grant of an app that registered a subscription is revoked, the server M
 
 **Reason:** an app's subscriptions belong to its grant, and `events/cancel-deleted` then sends none of the subscription's pending deliveries.
 
-**Tests:** `compliance/webhook-owner-standing.test.ts › deletes an app's subscriptions when its grant is revoked`.
+**Tests:** `compliance/webhook-owner-standing.test.ts › deletes an app's subscriptions when its grant is revoked`, `compliance/app-widening.test.ts › ends an app's subscriptions when it revokes its refresh token, as a widening does not`.
+
+### `events/webhook-grant-widened`
+
+When a person approves more access for the client whose grant registered a subscription, the server MUST keep the subscription, its `maker` and its pending deliveries.
+
+**Reason:** An app's subscriptions belong to its grant, and a subscription's `maker` names the grant's client. A widening keeps the grant (`keys-and-oauth/consent-wider-keeps-grant`), so `events/webhook-grant-revoked`, which ends the subscription with the grant, does not apply.
+
+**Tests:** `compliance/app-widening.test.ts › keeps an app's subscription, its maker and its pending delivery`.
 
 ## What a delivery is
 
