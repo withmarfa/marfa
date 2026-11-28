@@ -265,6 +265,21 @@ pub fn app_declaration(id: &str) -> Result<(), RuleError> {
     )))
 }
 
+/// Refuses a declaration that names `provenance`, which only the server assigns when it registers a type.
+pub fn refuse_declared_provenance(id: &str, row: &Map<String, Value>) -> Result<(), RuleError> {
+    match crate::schema::unread_keys(row)
+        .into_iter()
+        .find(|issue| issue.field == "provenance")
+    {
+        Some(issue) => Err(RuleError::invalid(format!(
+            "{id} declares a key a type does not take: {}: {}",
+            issue.field,
+            issue.message()
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// An object naming an identifier outside Marfa's, whose fields each have a type and whose parent this copy knows. Answers its id and the JSON it is kept as, with what a registration requires filled in.
 pub fn declaration(
     definition: &Value,
@@ -298,17 +313,7 @@ pub fn declaration(
             issue.message()
         )));
     }
-    // Only the server assigns provenance when it registers a type.
-    if let Some(issue) = crate::schema::unread_keys(row)
-        .into_iter()
-        .find(|issue| issue.field == "provenance")
-    {
-        return Err(invalid(format!(
-            "{id} declares a key a type does not take: {}: {}",
-            issue.field,
-            issue.message()
-        )));
-    }
+    refuse_declared_provenance(id, row)?;
     let mut row = row.clone();
     match row.get("fields") {
         None => {

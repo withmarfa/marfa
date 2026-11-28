@@ -327,7 +327,11 @@ stays because that thing is what it checks.
   app.* that an earlier build stored as declared, says it refused it, and keeps
   what the copy queued", writes a declaration under `user.*` into a device's
   store. Declaring one is refused now, so no door makes the state an earlier
-  build left behind.
+  build left behind. "registers and replaces no declaration naming provenance
+  that an earlier build stored, says it refused it each time, and still
+  registers one without the key" writes a declaration that names `provenance`
+  into the store the same way, for the same reason: declaring one is refused
+  now.
 - `device/folders-one-mac.test.ts`, "holds a file an earlier release took into
   another folder that then takes it away when its item is archived, until the
   person keeps its item", records in a folder's store that the folder wrote the
