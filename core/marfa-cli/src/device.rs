@@ -1983,8 +1983,8 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 output::report(&fill, json, || {
                     fill.as_ref().map_or_else(
                         || {
-                            "another call holds this copy's stream; it, or the next follow or \
-                             catch-up, fills the tables"
+                            "another call holds this copy's stream, so no table was filled; each \
+                             stays owed"
                                 .to_string()
                         },
                         fill_line,

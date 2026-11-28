@@ -264,14 +264,9 @@ impl Core {
         tables::held(&*self.conn()?)
     }
 
-    /// Fills each table the copy holds that is not whole, and answers the
-    /// pass's report. Where another call holds the stream it never waits and
-    /// is not refused: it answers `None` and leaves the tables owed. A follow
-    /// or a catch-up fills them, and a hydration does not. With none of them,
-    /// and no later `fill_tables`, they stay owed in the store. A caller that
-    /// needs the result reads `held_tables`, or asks again once the holder
-    /// ends. A table whose read failed inside a running follow is read again
-    /// on the follow's schedule.
+    /// Fills each table the copy holds that is not whole. Where another call
+    /// holds the stream it never waits: it answers `None` and leaves the
+    /// tables owed.
     pub fn fill_tables(&self, stop: &AtomicBool) -> Result<Option<FillReport>> {
         self.lock.refuse_unless_writer()?;
         let Ok(_streaming) = self.try_claim_stream(Mover::Fill) else {

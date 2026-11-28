@@ -186,12 +186,9 @@ impl MarfaCore {
             .map_err(|error| failure(env, error))
     }
 
-    /// Fills each table the copy holds that is not whole, and answers the
-    /// pass's report. Where another call holds the stream it never waits and
-    /// is not refused: it answers `null` and leaves the tables owed. A follow
-    /// or a catch-up fills them, and a hydration does not. With none of them,
-    /// and no later fill, they stay owed in the store, so a caller that needs
-    /// the result reads `heldTables`, or asks again once the holder ends.
+    /// Fills each table the copy holds that is not whole. Where another call
+    /// holds the stream it never waits: it answers `null` and leaves the
+    /// tables owed.
     #[napi(ts_return_type = "Promise<TableFill | null>")]
     pub fn fill_tables(&self, stop: Option<&Stop>) -> AsyncTask<TableCall> {
         let stop = flag_of(stop);

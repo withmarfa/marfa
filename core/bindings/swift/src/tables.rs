@@ -182,8 +182,8 @@ guarded! {
     impl Core {
         /// Holds the table named `table` of every item of `type_id`, a pattern as
         /// a hydration reads it, and fills it. Where another call holds the
-        /// stream, or the copy is not hydrated, it leaves the table owed for
-        /// the next follow, catch-up or table fill, and never waits.
+        /// stream, or the copy is not hydrated, it leaves the table owed, as
+        /// `fill_tables` does, and never waits.
         pub fn hold_table(
             &self,
             type_id: String,
@@ -211,13 +211,9 @@ guarded! {
             held(self.inner.held_tables()?)
         }
 
-        /// Fills each table the copy holds that is not whole, and answers the
-        /// pass's report. Where another call holds the stream it never waits
-        /// and is not refused: it answers `nil` and leaves the tables owed. A
-        /// follow or a catch-up fills them, and a hydration does not. With
-        /// none of them, and no later fill, they stay owed in the store, so a
-        /// caller that needs the result reads `heldTables`, or asks again
-        /// once the holder ends.
+        /// Fills each table the copy holds that is not whole. Where another
+        /// call holds the stream it never waits: it answers `nil` and leaves
+        /// the tables owed.
         pub fn fill_tables(&self, stop: Option<Arc<Stop>>) -> Result<Option<TableFill>, MarfaError> {
             Ok(self.inner.fill_tables(&flag_of(stop))?.map(Into::into))
         }

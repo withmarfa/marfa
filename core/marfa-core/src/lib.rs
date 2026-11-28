@@ -333,9 +333,9 @@ pub struct Core {
     renewals: Arc<Mutex<Vec<(String, String)>>>,
     /// Before when a `VACUUM` that was refused or failed is not tried again.
     reclaim_held_until: Mutex<Option<std::time::Instant>>,
-    /// Raised by a hold that left its table owed, as another call held the
-    /// stream or the copy was not hydrated; a follow looks at it each time
-    /// it waits for a frame.
+    /// Raised by a hold or a fill that left its tables owed, as another call
+    /// held the stream or the copy was not hydrated; a follow looks at it
+    /// each time it waits for a frame.
     tables_owed: AtomicBool,
     /// `damage::seen` as the core opened, so its close keeps the
     /// write-ahead log of a store found damaged since.
