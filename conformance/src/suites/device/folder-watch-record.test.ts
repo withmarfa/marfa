@@ -47,6 +47,14 @@ interface Process {
   heartbeat_at: string;
   heartbeat_interval_seconds: number;
   ended_at: string | null;
+  usage?: {
+    cpu_millis: number | null;
+    resident_bytes: number | null;
+    peak_resident_bytes: number | null;
+    full_passes: number;
+    quick_passes: number;
+    files: number | null;
+  };
   folders: Entry[];
 }
 
@@ -232,6 +240,25 @@ describe("the record of folder watches", () => {
     }, WAIT);
     // The witness: a pass was reported, so this was not two empty lists.
     expect(reports(a).length).toBeGreaterThan(0);
+
+    // What the process has used since it started, and the files its folders
+    // follow, once a pass has run and a folder has been counted.
+    await vi.waitFor(() => {
+      const usage = processOf(a, pid)?.usage;
+      expect(usage, `${watch.stdout}${watch.stderr}`).toBeDefined();
+      expect(Object.keys(usage ?? {}).sort()).toEqual([
+        "cpu_millis",
+        "files",
+        "full_passes",
+        "peak_resident_bytes",
+        "quick_passes",
+        "resident_bytes",
+      ]);
+      expect(
+        (usage?.full_passes ?? 0) + (usage?.quick_passes ?? 0),
+      ).toBeGreaterThan(0);
+      expect(usage?.files ?? 0).toBeGreaterThan(0);
+    }, WAIT);
 
     const text = readFileSync(recordPath(a), "utf8");
     for (const inside of ["Secret Name", "Secret Title", "secret body", KEY]) {

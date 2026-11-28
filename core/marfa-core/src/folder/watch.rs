@@ -589,6 +589,7 @@ impl Folder {
                 &mut touched,
             );
             let scope = touched.scope();
+            super::usage::passed(full);
             let passed = self.pass(
                 full,
                 Touched::reading(&scope),
@@ -3265,6 +3266,9 @@ mod backoff_tests {
             stop.store(true, Ordering::SeqCst);
         });
         assert!(!ended_early, "the watch ended before it was stopped");
+        // The report counts each pass the watch ran, full or quick.
+        let used = super::super::usage::Used::now();
+        assert_eq!((used.full_passes + used.quick_passes) as usize, passes());
         // The witness: the passes ran and failed.
         assert!(before >= 2, "{before} passes");
         assert!(

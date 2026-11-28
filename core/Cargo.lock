@@ -2926,6 +2926,7 @@ dependencies = [
 name = "marfa-telemetry"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "serde_json",
  "url",
 ]

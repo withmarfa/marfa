@@ -1,6 +1,6 @@
 [package]
 name = "marfa-telemetry"
-description = "What the command line and the server share about telemetry: how the standard settings read, where a PostHog host may be posted to, and the shape of an exception event. It sends nothing."
+description = "What the command line and the server share about telemetry: how the standard settings read, where a PostHog host may be posted to, the shape of an exception event, and the process's own CPU and memory. It sends nothing."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,3 +12,6 @@ workspace = true
 [dependencies]
 serde_json.workspace = true
 url = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

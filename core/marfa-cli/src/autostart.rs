@@ -1280,6 +1280,8 @@ struct RecordView {
     current: bool,
     /// The folders of that entry, or none.
     folders: Vec<Watched>,
+    /// What the running watch has used since it started, once it records it.
+    usage: Option<RecordUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1306,6 +1308,73 @@ pub(crate) struct RecordProcess {
     heartbeat_interval_seconds: u64,
     ended_at: Option<String>,
     pub(crate) folders: Vec<Watched>,
+    /// Absent in an entry a build wrote before the watch recorded its use.
+    #[serde(default)]
+    pub(crate) usage: Option<RecordUsage>,
+}
+
+/// What a watch process has used since it started, as its record entry holds
+/// it. A figure the system did not give is `None`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RecordUsage {
+    #[serde(default)]
+    pub(crate) cpu_millis: Option<u64>,
+    #[serde(default)]
+    pub(crate) resident_bytes: Option<u64>,
+    #[serde(default)]
+    pub(crate) peak_resident_bytes: Option<u64>,
+    #[serde(default)]
+    pub(crate) full_passes: u64,
+    #[serde(default)]
+    pub(crate) quick_passes: u64,
+    #[serde(default)]
+    pub(crate) files: Option<u64>,
+}
+
+impl RecordUsage {
+    /// One line for a person: what the watch has used since it started.
+    pub(crate) fn describe(&self) -> String {
+        format!("since it started, the watch has used {}", self.figures())
+    }
+
+    /// One line for a person asking about one folder, whose figures are the
+    /// watch's across the `folders` it was asked to hold.
+    pub(crate) fn describe_for_folder(&self, folders: usize) -> String {
+        format!(
+            "since it started, the watch that holds this folder has used {}, across {folders} folder{}",
+            self.figures(),
+            if folders == 1 { "" } else { "s" }
+        )
+    }
+
+    fn figures(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(millis) = self.cpu_millis {
+            parts.push(format!("{:.1} s of CPU", millis as f64 / 1000.0));
+        }
+        match (self.resident_bytes, self.peak_resident_bytes) {
+            (Some(now), Some(peak)) => parts.push(format!(
+                "{} of memory, at most {}",
+                megabytes(now),
+                megabytes(peak)
+            )),
+            (Some(now), None) => parts.push(format!("{} of memory", megabytes(now))),
+            (None, Some(peak)) => parts.push(format!("at most {} of memory", megabytes(peak))),
+            (None, None) => {}
+        }
+        parts.push(format!(
+            "{} full and {} quick pass(es)",
+            self.full_passes, self.quick_passes
+        ));
+        if let Some(files) = self.files {
+            parts.push(format!("{files} file(s) followed"));
+        }
+        parts.join(", ")
+    }
+}
+
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / 1_048_576.0)
 }
 
 impl RecordFile {
@@ -1313,6 +1382,25 @@ impl RecordFile {
         std::fs::read(path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    }
+
+    /// The current entry that lists `dir` as watched.
+    pub(crate) fn watching(&self, dir: &Path, now: SystemTime) -> Option<&RecordProcess> {
+        let same = |listed: &str| {
+            let listed = Path::new(listed);
+            listed == dir
+                || matches!(
+                    (std::fs::canonicalize(listed), std::fs::canonicalize(dir)),
+                    (Ok(a), Ok(b)) if a == b
+                )
+        };
+        self.processes.iter().find(|process| {
+            process.current(now)
+                && process
+                    .folders
+                    .iter()
+                    .any(|folder| folder.watching && same(&folder.dir))
+        })
     }
 }
 
@@ -1371,10 +1459,15 @@ fn status(place: &Place, json: bool) -> Result<(), CliError> {
         let current = entry
             .as_ref()
             .is_some_and(|entry| entry.current(SystemTime::now()));
+        let usage = entry
+            .as_ref()
+            .filter(|_| current)
+            .and_then(|entry| entry.usage.clone());
         RecordView {
             path,
             current,
             folders: entry.map(|entry| entry.folders).unwrap_or_default(),
+            usage,
         }
     });
     let credential = record
@@ -1521,6 +1614,7 @@ fn describe_status(place: &Place, report: &Status) -> String {
                 "the record of folder watches is current: {} folder(s), {watched} watched",
                 record.folders.len()
             ));
+            lines.extend(record.usage.as_ref().map(RecordUsage::describe));
             let missing = record
                 .folders
                 .iter()
@@ -2067,6 +2161,7 @@ mod tests {
             heartbeat_interval_seconds: 5,
             ended_at: ended.map(str::to_string),
             folders: Vec::new(),
+            usage: None,
         };
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_760_000_000);
         let at = |seconds: u64| marfa_rules::time::written(seconds as i64 * 1000);
@@ -2075,5 +2170,34 @@ mod tests {
         assert!(!entry(&at(1_760_000_000 + 1), None).current(now));
         assert!(!entry(&at(1_760_000_000 - 1), Some("2025-10-09T00:00:00Z")).current(now));
         assert!(!entry("not a time", None).current(now));
+    }
+
+    #[test]
+    fn an_entry_reads_with_or_without_what_the_watch_has_used() {
+        let entry = |usage: &str| {
+            let text = format!(
+                r#"{{"pid":1,"heartbeat_at":"2026-01-01T00:00:00Z","heartbeat_interval_seconds":5,"ended_at":null,"folders":[]{usage}}}"#
+            );
+            serde_json::from_str::<RecordProcess>(&text).expect("an entry")
+        };
+        // An entry an earlier build wrote has none.
+        assert_eq!(entry("").usage, None);
+        let used = entry(
+            r#","usage":{"cpu_millis":12500,"resident_bytes":52428800,"peak_resident_bytes":78643200,"full_passes":3,"quick_passes":120,"files":1234}"#,
+        )
+        .usage
+        .expect("usage");
+        assert_eq!(
+            used.describe(),
+            "since it started, the watch has used 12.5 s of CPU, 50.0 MB of memory, at most 75.0 MB, 3 full and 120 quick pass(es), 1234 file(s) followed"
+        );
+        // A figure the system did not give is left out, not shown as zero.
+        let partial = entry(r#","usage":{"full_passes":1,"quick_passes":0,"files":null}"#)
+            .usage
+            .expect("usage");
+        assert_eq!(
+            partial.describe(),
+            "since it started, the watch has used 1 full and 0 quick pass(es)"
+        );
     }
 }

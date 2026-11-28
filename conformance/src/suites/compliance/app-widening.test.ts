@@ -25,6 +25,7 @@ import {
   signIn,
   token,
   type App,
+  type TokenAnswer,
 } from "../../utils/signed-in.js";
 import { waitFor } from "../../utils/wait.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
@@ -389,6 +390,108 @@ describe("approving an app again with more access", () => {
       ),
       "an event written after the app revoked its refresh token was delivered to its subscription",
     ).toBe(false);
+  });
+});
+
+/**
+ * What a grant holds that an access token's revocation leaves, as the names of
+ * the checks that fail, so a case can assert none fail and a witness that all do.
+ */
+async function failedChecks(
+  app: App,
+  grantId: string,
+  subscriptionId: string,
+  signIns: { revoked: TokenAnswer; other: TokenAnswer },
+): Promise<string[]> {
+  const failed: string[] = [];
+  if ((await itemsStatus(server, signIns.other.access_token!)) !== 200) {
+    failed.push("the other access token works");
+  }
+  if ((await refresh(app, signIns.other.refresh_token!)).status !== 200) {
+    failed.push("the other refresh token refreshes");
+  }
+  if ((await refresh(app, signIns.revoked.refresh_token!)).status !== 200) {
+    failed.push("the revoked token's own refresh token refreshes");
+  }
+  const listed = (await grants()).filter((g) => g.client_id === app.clientId);
+  if (listed.length !== 1 || listed[0]!.id !== grantId) {
+    failed.push("GET /grants lists the grant with the same id");
+  }
+  const hooks = await controlRequest(server.controlSocket, "/webhooks");
+  expect(hooks.status).toBe(200);
+  const ids = ((hooks.body.data ?? []) as { id: string }[]).map(
+    (hook) => hook.id,
+  );
+  if (!ids.includes(subscriptionId)) {
+    failed.push("the subscription is listed");
+  }
+  return failed;
+}
+
+/** An app with two sign-ins on one client and a subscription made by the first. */
+async function twoSignIns() {
+  const app = await registerApp(server, HOOKS);
+  const revoked = await connect(server, origin, cookie, app, HOOKS);
+  const other = await connect(server, origin, cookie, app, HOOKS);
+  const subscribed = await over(revoked.access_token!).createWebhook({
+    url: receiver.hookUrl("access-revoked"),
+    events: ["item.created"],
+  });
+  expect(subscribed.status, JSON.stringify(subscribed.error)).toBe(201);
+  const grantId = (await grantOf(app)).id;
+  const signIns = { revoked, other };
+  const everything = [
+    "the other access token works",
+    "the other refresh token refreshes",
+    "the revoked token's own refresh token refreshes",
+    "GET /grants lists the grant with the same id",
+    "the subscription is listed",
+  ];
+  return {
+    app,
+    signIns,
+    grantId,
+    subscriptionId: subscribed.data.id,
+    everything,
+  };
+}
+
+describe("revoking an access token", () => {
+  it("keeps the grant, its other access tokens, its refresh chains and its subscriptions", async () => {
+    const { app, signIns, grantId, subscriptionId } = await twoSignIns();
+
+    const revoked = await revoke({
+      token: signIns.revoked.access_token!,
+      token_type_hint: "access_token",
+      client_id: app.clientId,
+    });
+    expect(revoked.status).toBe(200);
+
+    expect(await itemsStatus(server, signIns.revoked.access_token!)).toBe(401);
+    expect(await failedChecks(app, grantId, subscriptionId, signIns)).toEqual(
+      [],
+    );
+    const after = await note(fresh("access-revoked-after"));
+    await receiver.waitFor(
+      (r) => r.path === "/hook/access-revoked" && r.body.includes(after),
+    );
+  });
+
+  it("is told apart from revoking the refresh token, which fails the same checks and ends the subscription", async () => {
+    const { app, signIns, grantId, subscriptionId, everything } =
+      await twoSignIns();
+
+    const revoked = await revoke({
+      token: signIns.revoked.refresh_token!,
+      token_type_hint: "refresh_token",
+      client_id: app.clientId,
+    });
+    expect(revoked.status).toBe(200);
+
+    expect(await local(`/webhooks/${subscriptionId}`)).toBe(404);
+    expect(await failedChecks(app, grantId, subscriptionId, signIns)).toEqual(
+      everything,
+    );
   });
 });
 

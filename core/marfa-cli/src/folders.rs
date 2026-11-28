@@ -541,11 +541,13 @@ pub fn run(
                 .as_deref()
                 .map(marfa_core::folder::instance_changed_said);
             let other = new_build::other_build_watching(&dir);
+            let usage = new_build::usage_watching(&dir);
             output::report(
                 &FolderStatus {
                     report: &report,
                     watch_other_build: other.as_ref(),
                     watch_stopped: stopped.as_deref(),
+                    watch_usage: usage.as_ref(),
                 },
                 json,
                 || {
@@ -555,6 +557,7 @@ pub fn run(
                         .map(new_build::OtherBuild::describe)
                         .into_iter()
                         .chain(stopped.clone())
+                        .chain(usage.as_ref().map(new_build::WatchUsage::describe))
                     {
                         text.push('\n');
                         text.push_str(&line);
@@ -2091,6 +2094,9 @@ struct FolderStatus<'a> {
     /// Why the watch stopped the folder, where another instance answers at
     /// its server.
     watch_stopped: Option<&'a str>,
+    /// What the watch that holds the folder has used since it started, across
+    /// the `folders` it holds.
+    watch_usage: Option<&'a new_build::WatchUsage>,
 }
 
 /// What `folders remove` says of a folder whose state went, and where

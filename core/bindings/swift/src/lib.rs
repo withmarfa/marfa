@@ -5437,6 +5437,44 @@ mod tests {
     }
 
     #[test]
+    fn fill_tables_answers_nil_while_a_follow_holds_the_stream_and_a_report_once_it_ends() {
+        let server = quiet();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path, Some(server.url.clone()), Some("k".into()), None).unwrap();
+        core.hydrate(vec!["core.note".into()], SliceTier::Library, None)
+            .unwrap();
+        // The witness: with the stream free the call answers its report.
+        assert!(core.fill_tables(None).unwrap().is_some());
+
+        let (changes, _heard) = std::sync::mpsc::channel();
+        let (told, ended) = std::sync::mpsc::channel();
+        let subscription = Arc::clone(&core).follow(
+            false,
+            Arc::new(Heard {
+                changes,
+                ended: told,
+            }),
+        );
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while server.streams.load(Ordering::SeqCst) == 0 {
+            assert!(
+                std::time::Instant::now() < until,
+                "the follow never held a stream"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(core.fill_tables(None).unwrap(), None);
+
+        drop(subscription);
+        assert_eq!(
+            ended.recv_timeout(std::time::Duration::from_secs(2)),
+            Ok(None)
+        );
+        assert!(core.fill_tables(None).unwrap().is_some());
+    }
+
+    #[test]
     fn a_watch_keeps_its_listener_through_a_hydration_that_takes_its_stream() {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();

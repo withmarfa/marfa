@@ -1059,6 +1059,81 @@ fn posthog_settings_in_the_environment_send_nothing() {
     assert_eq!(receiver.root()["name"], "marfa items get");
 }
 
+/// A folder watch of an empty registry that stops after `seconds`, the registry in a
+/// folder whose name carries the planted secret.
+fn watch(env: &[(&str, &str)], seconds: &str) -> Ran {
+    let registry = scratch(&format!("watch-{SECRET}"), "folders.json");
+    let mut with = vec![("MARFA_FOLDER_REGISTRY", registry.to_str().unwrap())];
+    with.extend_from_slice(env);
+    run(&with, &["folders", "watch", "--for-seconds", seconds])
+}
+
+#[test]
+fn a_running_watch_opens_no_connection_where_no_traces_endpoint_is_set() {
+    let receiver = Collector::open(Reply::Answer(200));
+    let ran = watch(
+        &[
+            ("MARFA_POSTHOG_HOST", receiver.url.as_str()),
+            ("MARFA_POSTHOG_PROJECT_TOKEN", "phc_unused"),
+            ("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", receiver.url.as_str()),
+        ],
+        "8",
+    );
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    // The watch ran past its first report, and nothing left it.
+    assert!(ran.took >= Duration::from_secs(7), "{:?}", ran.took);
+    assert_eq!(receiver.connections.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_running_watch_reports_its_use_as_numbers_and_the_release_to_a_traces_endpoint() {
+    let collector = Collector::open(Reply::Answer(200));
+    let ran = watch(&report_to(&collector, &[]), "8");
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let reports: Vec<Value> = collector
+        .spans()
+        .into_iter()
+        .filter(|span| span["name"] == "watch_report")
+        .collect();
+    // At the start, and not again before the day is out.
+    assert_eq!(reports.len(), 1, "{:?}", collector.spans());
+    let report = &reports[0];
+    // It is a span of the run's own trace, beneath the command's root.
+    assert_eq!(report["parentSpanId"], collector.root()["spanId"]);
+    let mut keys: Vec<&str> = report["attributes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|attribute| attribute["key"].as_str().unwrap())
+        .collect();
+    keys.sort_unstable();
+    // The closed list: a figure the system did not give is left out, never a stand-in.
+    let allowed = [
+        "cpu_millis",
+        "files",
+        "folders",
+        "full_passes",
+        "peak_resident_bytes",
+        "quick_passes",
+        "release",
+        "resident_bytes",
+        "uptime_seconds",
+    ];
+    assert!(keys.iter().all(|key| allowed.contains(key)), "{keys:?}");
+    for key in ["folders", "full_passes", "quick_passes", "uptime_seconds"] {
+        assert!(keys.contains(&key), "{key} missing from {keys:?}");
+    }
+    // No folder was counted, so there are no files to report, not none followed.
+    assert!(!keys.contains(&"files"), "{keys:?}");
+    assert_eq!(number(report, "folders"), 0);
+    assert_eq!(word(report, "release"), env!("CARGO_PKG_VERSION"));
+    // No path, name or secret anywhere in what was sent.
+    for post in collector.received() {
+        assert!(!post.body.contains(SECRET), "{}", post.body);
+        assert!(!post.body.contains("folders.json"), "{}", post.body);
+    }
+}
+
 /// The names a shell could carry that are not the one the binary reads for where traces go:
 /// the stored settings of an older release, the vendor's, and the standard ones for the other
 /// two signals and for everything about an export but its destination.

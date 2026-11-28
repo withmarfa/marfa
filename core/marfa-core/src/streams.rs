@@ -69,8 +69,8 @@ pub(crate) const CAUGHT_UP_WAIT: Duration = Duration::from_secs(5);
 
 pub(crate) fn one_at_a_time() -> CoreError {
     CoreError::Invalid(
-        "this working copy is already hydrating, catching up, following or filling its tables; one \
-         at a time moves its cursor"
+        "this working copy is already hydrating, catching up or following; one at a time moves \
+         its cursor"
             .into(),
     )
 }

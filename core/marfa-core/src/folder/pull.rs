@@ -881,7 +881,7 @@ impl Folder {
         }
         report.flagged.extend({
             let conn = self.core.conn()?;
-            state::every_bound(&conn)?
+            state::bound_held_or_refused(&conn)?
                 .into_iter()
                 // A file held and refused both says both.
                 .flat_map(|bound| {
@@ -1721,10 +1721,10 @@ impl Folder {
         let missing: HashSet<&str> = missing.iter().map(String::as_str).collect();
         let (catalog, bound) = {
             let conn = self.core.conn()?;
-            let bound: HashSet<String> = state::every_bound(&conn)?
+            let bound: HashSet<String> = state::bound_paths(&conn)?
                 .into_iter()
-                .filter(|bound| !missing.contains(bound.path.as_str()))
-                .map(|bound| bound.item_id)
+                .filter(|(path, _)| !missing.contains(path.as_str()))
+                .map(|(_, item_id)| item_id)
                 .collect();
             (crate::catalog::load(&conn)?, bound)
         };

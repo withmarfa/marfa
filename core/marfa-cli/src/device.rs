@@ -1984,7 +1984,16 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 let core = store.open_with_server(named)?;
                 let stop = crate::interrupt::stop();
                 let fill = core.fill_tables(stop)?;
-                output::report(&fill, json, || fill_line(&fill))
+                output::report(&fill, json, || {
+                    fill.as_ref().map_or_else(
+                        || {
+                            "another call holds this copy's stream, so no table was filled; each \
+                             stays owed"
+                                .to_string()
+                        },
+                        fill_line,
+                    )
+                })
             }
         },
         DeviceCommand::Rows {

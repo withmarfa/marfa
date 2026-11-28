@@ -23,19 +23,27 @@ use super::otlp::{self, Attribute, Finished};
 pub const NUMBERS: &[&str] = &[
     "answered",
     "applied",
+    "cpu_millis",
     "dropped_spans",
     "exit_code",
+    "files",
+    "folders",
+    "full_passes",
     "held",
     "hits",
+    "peak_resident_bytes",
+    "quick_passes",
+    "resident_bytes",
     "skipped",
     "status",
     "unmade",
     "undelivered",
     "unsent",
+    "uptime_seconds",
 ];
 
-/// Names the code fixes: an outcome, a write's kind, an error code.
-pub const WORDS: &[&str] = &["code", "kind", "outcome"];
+/// Names the code fixes: an outcome, a write's kind, an error code, the release.
+pub const WORDS: &[&str] = &["code", "kind", "outcome", "release"];
 
 /// The span the command opens, and the field that names it.
 pub const ROOT: &str = "command";
@@ -457,6 +465,55 @@ mod tests {
         );
         assert_eq!(write.events.len(), 2);
         assert!(write.events[1].attributes.is_empty());
+    }
+
+    #[test]
+    fn a_watch_report_exports_its_numbers_and_the_release_and_nothing_beside_them() {
+        let spans = recorded(|| {
+            let root = root();
+            root.in_scope(|| {
+                let _report = tracing::info_span!(
+                    "watch_report",
+                    cpu_millis = 1_500u64,
+                    resident_bytes = 14_000_000u64,
+                    peak_resident_bytes = 20_000_000u64,
+                    uptime_seconds = 86_400u64,
+                    folders = 2u64,
+                    files = 1_000u64,
+                    full_passes = 3u64,
+                    quick_passes = 40u64,
+                    release = "0.0.97",
+                    dir = "/home/person/notes",
+                )
+                .entered();
+            });
+        });
+        let report = spans
+            .iter()
+            .find(|span| span.name == "watch_report")
+            .unwrap();
+        let mut names: Vec<_> = report.attributes.iter().map(|(name, _)| *name).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            [
+                "cpu_millis",
+                "files",
+                "folders",
+                "full_passes",
+                "peak_resident_bytes",
+                "quick_passes",
+                "release",
+                "resident_bytes",
+                "uptime_seconds"
+            ]
+        );
+        assert!(
+            report
+                .attributes
+                .contains(&("release", Attribute::Word("0.0.97".into())))
+        );
+        assert!(!format!("{report:?}").contains("/home"));
     }
 
     #[test]
