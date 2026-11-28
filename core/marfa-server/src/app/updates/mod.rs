@@ -344,7 +344,7 @@ where
             } else {
                 check::Kept::default()
             };
-            let latest = newest(app, kept)?;
+            let latest = newest(&deciding, kept)?;
             if let Some(stopped) = gate(tx, &latest.version)? {
                 return Ok(Err(stopped));
             }
