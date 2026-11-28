@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { BindingDevice, type Call } from "../../device/binding-adapter.js";
+import {
+  type BindingCatchUpReport,
+  BindingDevice,
+  type Call,
+} from "../../device/binding-adapter.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { HeldTables, Outcome } from "../../device/protocol.js";
 import {
@@ -740,6 +744,40 @@ describe("how a device fills a table", () => {
       unfilled: 0,
       failed: 0,
     });
+  });
+
+  it("answers a catch-up whose events committed as succeeded, naming the failure in tables, when its fill cannot reach the server", async () => {
+    const type = await tableType();
+    const device = await hydratedBinding([type], "fill-after-events");
+    value(await device.call("holdTable", type, "steps"));
+    const item = await itemOf(type);
+    await write(item, [{ op: "put", values: { count: 1 } }]);
+    await device.hooks.fail("table-fill-read");
+    let caught: BindingCatchUpReport;
+    try {
+      caught = value(await device.catchUp());
+    } finally {
+      await device.hooks.fail("table-fill-read", false);
+    }
+    expect(caught.applied).toBeGreaterThan(0);
+    expect(caught.tables).toMatchObject({ whole: 0, unfilled: 1, failed: 1 });
+    expect(caught.tables.failure).toContain("steps");
+    expect(
+      value(await device.call<{ eventCursor: string }>("status")),
+      "the copy kept the cursor of the events the catch-up took",
+    ).toMatchObject({ eventCursor: caught.cursor });
+    expect(
+      stateOf(value(await device.call<HeldTables>("heldTables")), item, "steps")
+        ?.state,
+    ).toBe("owed");
+    const again = value(await device.catchUp());
+    expect(again.tables).toMatchObject({
+      whole: 1,
+      unfilled: 0,
+      failed: 0,
+      rows: 1,
+    });
+    expect(again.tables.failure ?? null).toBeNull();
   });
 
   it("fills a table again on the same stream once a read that failed for it is answered, after 30 seconds and then twice as long", async () => {

@@ -53,6 +53,16 @@ export interface BindingCatchUpReport {
   readOnlyHeld: number;
   cursor: string;
   catalogChanged: boolean;
+  /** The fill of the held tables not yet whole (`device/table-fill-report`). */
+  tables: {
+    whole: number;
+    online: number;
+    unfilled: number;
+    pages: number;
+    rows: number;
+    failed: number;
+    failure?: string | null;
+  };
 }
 
 export interface BindingDrainVerdict {

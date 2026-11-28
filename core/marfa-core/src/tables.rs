@@ -50,7 +50,7 @@ pub struct FillReport {
     pub unfilled: u64,
     pub pages: u64,
     pub rows: u64,
-    /// Tables whose read failed, each left to the next pass.
+    /// Tables whose fill failed, each left to the next pass.
     pub failed: u64,
     /// The last of them, and why.
     pub failure: Option<String>,
@@ -683,6 +683,9 @@ struct Retry {
 pub(crate) struct Pass {
     failed: HashMap<(String, String), Retry>,
     report: FillReport,
+    /// The table a step was filling when it ended in an error that is not
+    /// one table's.
+    reading: Option<(String, String)>,
 }
 
 impl Pass {
@@ -750,7 +753,10 @@ impl Pass {
                 crate::fault::hold(|| "table-fill-failed");
                 Ok(Step::Failed(failure))
             }
-            Err(error) => Err(error),
+            Err(error) => {
+                self.reading = Some(key);
+                Err(error)
+            }
         }
     }
 }
@@ -770,6 +776,12 @@ fn advance(
         cursor,
     } = owed;
     let (item, table) = (item.as_str(), table.as_str());
+    #[cfg(debug_assertions)]
+    if crate::fault::fails(|| "table-fill-read") {
+        return Err(CoreError::Network(
+            "the read of a table was made to fail".into(),
+        ));
+    }
     let http = context.http(core.http()?);
     let still = |conn: &Connection| -> Result<bool> {
         Ok(state_of(conn, item, table)? == Some((state.clone(), cursor.clone())))
@@ -899,36 +911,74 @@ fn advance(
 
 // The caller holds the stream, excluding events between a page's read and write.
 pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<FillReport> {
-    let filled = || -> Result<FillReport> {
-        crate::busy::transaction(core, context, stop, |tx| {
-            reconcile_all(tx)?;
-            crate::restored_rows::let_go_unheld(tx)
-        })?;
-        let mut pass = Pass::default();
-        loop {
-            crate::catch_up::refuse_if_stopped(stop)?;
-            if matches!(
-                pass.step(core, context, crate::clock::now(), stop)?,
-                Step::Done
-            ) {
-                break;
-            }
-        }
-        pass.report.unfilled = core
-            .conn()?
-            .query_row(
-                "SELECT COUNT(*) FROM item_tables WHERE state IN ('owed', 'filling')",
-                [],
-                |row| row.get::<_, i64>(0),
-            )?
-            .max(0) as u64;
-        #[cfg(debug_assertions)]
-        if crate::streaming_of(&core.streaming).holder == Some(crate::Mover::Fill) {
-            crate::fault::hold(|| "table-fill-ended");
-        }
-        Ok(pass.report)
+    let mut pass = Pass::default();
+    pass_over(core, context, stop, &mut pass)
+        .map(|()| pass.report)
+        .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+}
+
+/// `fill` for the catch-up that has committed its events: a failure that says
+/// only that the server is out of reach is the fill's own, named in the report
+/// with the tables it left owed, and the catch-up still succeeded. Any other
+/// failure, such as a refused credential, a changed contract, a server that is
+/// not this copy's or a store that fails, is the catch-up's own.
+pub(crate) fn fill_after_events(
+    core: &Core,
+    context: &Context,
+    stop: &AtomicBool,
+) -> Result<FillReport> {
+    let mut pass = Pass::default();
+    let Err(error) = pass_over(core, context, stop, &mut pass) else {
+        return Ok(pass.report);
     };
-    filled().map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+    let error = context.failed(core, error).unwrap_or_else(|error| error);
+    if !error.is_unreachable() && !fails_one_table(&error) {
+        return Err(error);
+    }
+    crate::telemetry::degraded!(&error);
+    let mut report = pass.report;
+    report.failed += 1;
+    // The tables that failed are owed, so they are the least the count can be
+    // when it cannot be read.
+    report.unfilled = unfilled(core).unwrap_or(report.failed);
+    report.failure = Some(match pass.reading.take() {
+        Some((item, table)) => format!("the table {table} of {item}: {error}"),
+        None => error.to_string(),
+    });
+    Ok(report)
+}
+
+fn pass_over(core: &Core, context: &Context, stop: &AtomicBool, pass: &mut Pass) -> Result<()> {
+    crate::busy::transaction(core, context, stop, |tx| {
+        reconcile_all(tx)?;
+        crate::restored_rows::let_go_unheld(tx)
+    })?;
+    loop {
+        crate::catch_up::refuse_if_stopped(stop)?;
+        if matches!(
+            pass.step(core, context, crate::clock::now(), stop)?,
+            Step::Done
+        ) {
+            break;
+        }
+    }
+    pass.report.unfilled = unfilled(core)?;
+    #[cfg(debug_assertions)]
+    if crate::streaming_of(&core.streaming).holder == Some(crate::Mover::Fill) {
+        crate::fault::hold(|| "table-fill-ended");
+    }
+    Ok(())
+}
+
+fn unfilled(core: &Core) -> Result<u64> {
+    Ok(core
+        .conn()?
+        .query_row(
+            "SELECT COUNT(*) FROM item_tables WHERE state IN ('owed', 'filling')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?
+        .max(0) as u64)
 }
 
 /// What the server holds of rows the device asked for by id.
