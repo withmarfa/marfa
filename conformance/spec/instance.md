@@ -2902,7 +2902,7 @@ Where `MARFA_TEST_CONTRACT_VERSION` is set, the server MUST name that version as
 
 If `MARFA_TEST_RELEASE` is set and `MARFA_TEST_HOOKS` is not true when the server starts, then the server MUST refuse to start and name `MARFA_TEST_RELEASE`.
 
-**Tests:** `compliance/test-hooks.test.ts › refuses a release without MARFA_TEST_HOOKS, naming the setting`.
+**Tests:** `compliance/test-hooks.test.ts › refuses a release without MARFA_TEST_HOOKS, naming the setting`, `compliance/hook-free-server.test.ts › refuses a release and names the setting, where a hooked server takes it`.
 
 ### `instance/test-release-form`
 
@@ -2912,11 +2912,11 @@ If `MARFA_TEST_RELEASE` is not three whole numbers joined by dots, then the serv
 
 ### `instance/test-release`
 
-Where `MARFA_TEST_RELEASE` is set, the server MUST name that release as the root's `version` and judge a plugin's `marfa` against it.
+Where test hooks are on and `MARFA_TEST_RELEASE` names a release, the server MUST answer that release wherever it answers the release it runs.
 
-**Reason:** every server a harness boots is a development build, which takes any plugin, so a plugin that needs a newer Marfa is refused only by a server that runs a release.
+**Reason:** every server a harness boots is a development build, which takes any plugin, so a fixture that holds a rule bound to a release, such as a plugin that needs a newer Marfa, can reach it only on a server that runs a release. The release answered is the root's `version`, the overview's `instance.version`, the metrics' `process.version`, the `release` of `GET /update` and of the update preview, the release an update is judged newer than, and the version in the MCP `serverInfo`. What names the program on disk or the program that wrote something stays the build's: the update's settling and applying, the served-release record, the database's upgrade log, an archive's `written_by`, user agents and telemetry.
 
-**Tests:** `compliance/test-hooks.test.ts › names MARFA_TEST_RELEASE as the version in the root`, `compliance/plugins.test.ts › installs a bundle whose marfa is the release the server runs, and refuses 409 one whose marfa is later, naming both and installing nothing`.
+**Tests:** `compliance/test-hooks.test.ts › names MARFA_TEST_RELEASE as the version in the root`, `compliance/test-hooks.test.ts › names MARFA_TEST_RELEASE as the release in the update status`.
 
 ### `instance/test-faults-cleared-at-start`
 

@@ -490,11 +490,13 @@ the answer stored for a repeated request.
 The target reports the release it runs as the root's `version`. `up` and
 `restart` take `--env MARFA_TEST_RELEASE=<major.minor.patch>` to boot the
 target as that release for that boot alone, with the hooks on. The setting
-changes what the target reports and judges a plugin's `marfa` against; the
-build, its update record and what it sends are the target's own. It is refused
-unless the hooks are on. A fixture uses it to reach a refusal only a release
-gives, such as a plugin that needs a newer Marfa, since a development build
-takes any.
+changes the release the target answers wherever it answers the release it runs:
+the root's `version`, the update status and what a plugin's `marfa` is judged
+against. The build, its update record, its upgrade log, what it writes into an
+archive and what it sends are the target's own. It is refused unless the hooks
+are on. A fixture uses it to reach what only a release gives, such as the
+refusal of a plugin that needs a newer Marfa, since a development build takes
+any.
 
 ## Faults
 

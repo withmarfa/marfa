@@ -373,8 +373,7 @@ impl App {
         BUILT_CONTRACT
     }
 
-    /// The release this server reports and judges a plugin's `marfa` by: the build's, unless a
-    /// test-hooks server was started as another.
+    /// The release the server names and judges a plugin's `marfa` by.
     #[cfg(feature = "test-hooks")]
     pub fn release(&self) -> &str {
         self.settings

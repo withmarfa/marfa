@@ -317,6 +317,41 @@ describe("the test hooks", () => {
   );
 
   it(
+    "names MARFA_TEST_RELEASE as the release in the update status",
+    async () => {
+      const named = await bootFreshServer("test-hooks-release-update", {
+        MARFA_TEST_RELEASE: "1.4.0",
+      });
+      const own = await bootFreshServer("test-hooks-release-update-own");
+      try {
+        const read = async (server: FreshServer) => {
+          const headers = {
+            Accept: "application/json",
+            Authorization: `Bearer ${server.managementKey}`,
+          };
+          const root = await fetch(`${server.apiUrl}/`, { headers });
+          const update = await fetch(`${server.apiUrl}/update`, { headers });
+          expect(update.status).toBe(200);
+          return {
+            version: ((await root.json()) as { version: string }).version,
+            release: ((await update.json()) as { release: string }).release,
+          };
+        };
+        // The witness: a server with no setting names one release in both.
+        const plain = await read(own);
+        expect(plain).toEqual({ version: "0.0.0", release: "0.0.0" });
+        expect(await read(named)).toEqual({
+          version: "1.4.0",
+          release: "1.4.0",
+        });
+      } finally {
+        await Promise.all([named.stop(), own.stop()]);
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "names MARFA_TEST_CONTRACT_VERSION as the contract in the root, the header and the document",
     async () => {
       const second = await bootFreshServer("test-hooks-contract-second", {

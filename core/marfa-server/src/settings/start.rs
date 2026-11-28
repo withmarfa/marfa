@@ -154,7 +154,7 @@ pub struct Fixed {
     pub clock_offset_ms: u64,
     #[cfg(feature = "test-hooks")]
     pub contract_version: Option<u32>,
-    /// The release a test-hooks server reports and judges plugins by, in place of the build's.
+    /// The release a test-hooks server runs as, in place of the build's.
     #[cfg(feature = "test-hooks")]
     pub release: Option<String>,
     pub tuning: Tuning,

@@ -69,7 +69,7 @@ async fn preview(app: &App, caller: &Caller) -> Result<Map<String, Value>, Refus
     let to = updates::offer(app).await?;
     let token = instance::update_token(app, caller, &to)?;
     let mut body = Map::new();
-    body.insert("release".into(), updates::running().into());
+    body.insert("release".into(), updates::running(app).into());
     body.insert("to".into(), to.into());
     body.insert("what_happens".into(), WHAT_HAPPENS.into());
     body.insert("backup".into(), NO_BACKUP.into());
