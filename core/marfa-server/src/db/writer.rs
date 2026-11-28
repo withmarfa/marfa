@@ -73,8 +73,8 @@ pub struct Holding(Pulse);
 #[cfg(feature = "test-hooks")]
 impl Drop for Holding {
     fn drop(&mut self) {
-        self.0.held.fetch_sub(1, Ordering::SeqCst);
         self.0.tick();
+        self.0.held.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -102,6 +102,10 @@ impl Pulse {
     }
 
     fn last(&self) -> Instant {
+        #[cfg(feature = "test-hooks")]
+        if self.held.load(Ordering::SeqCst) > 0 {
+            return Instant::now();
+        }
         self.origin + Duration::from_millis(self.beat.load(Ordering::Relaxed))
     }
 }
@@ -367,16 +371,7 @@ impl Writer {
         if cap.is_some() {
             return None;
         }
-        #[cfg(feature = "test-hooks")]
-        let held = self.pulse.held.load(Ordering::SeqCst) > 0;
-        #[cfg(not(feature = "test-hooks"))]
-        let held = false;
-        let last = if held {
-            Instant::now()
-        } else {
-            self.pulse.last()
-        };
-        let until = last + budget.max(QUEUE_FLOOR);
+        let until = self.pulse.last() + budget.max(QUEUE_FLOOR);
         (until > Instant::now()).then_some(until)
     }
 

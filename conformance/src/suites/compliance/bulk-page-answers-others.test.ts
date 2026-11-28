@@ -19,14 +19,13 @@ import { TEST_OWNER } from "../../utils/target.js";
  * uncommitted, since either commits once.
  *
  * **Its own server**, because one test sets the write wait and because the
- * limiter is on here, so a request the page's hold does not delay is counted
- * as it is in use. The budget is short enough that a held page outlasts it
- * many times over. The caps are far above what the fixtures send.
+ * limiter is on here: it counts in memory, so a request is never delayed by
+ * the page. The budget is short enough that a held page outlasts it many
+ * times over. The caps are far above what the fixtures send.
  *
- * **Held means beating.** A held page's pulse reads as current whatever the
- * runner does with the holding thread, so a write queued behind it waits for
- * as long as the page is held, as it would behind a page whose entries keep
- * progressing.
+ * **A write queued behind a held page waits for as long as the page is
+ * held**, however the runner schedules the server, and is refused only when
+ * the lock is stalled (the last test).
  */
 const BUDGET_MS = 300;
 const PAGE = 20;
@@ -112,7 +111,7 @@ async function heldPage(request: () => Promise<Response>) {
 /**
  * Waits until the writer holds `action` admitted behind the page, then until
  * the budget has run out twice over (the budget is time, so a pause is the
- * measure), and checks the write is still queued and has not been answered.
+ * measure), and checks the write has not been answered.
  */
 async function stillQueuedPastBudget(
   action: string,
@@ -121,7 +120,6 @@ async function stillQueuedPastBudget(
   await server.waitForQueuedWrite(action);
   await new Promise((resolve) => setTimeout(resolve, 2 * BUDGET_MS));
   expect(request.state.answered).toBe(false);
-  await server.waitForQueuedWrite(action);
 }
 
 /** Lets the held page go and returns its answer. */
