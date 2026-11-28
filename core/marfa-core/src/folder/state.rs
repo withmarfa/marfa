@@ -866,8 +866,8 @@ pub fn every_bound(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
     bound_where(conn, "", [])
 }
 
-/// Every bound file whose binding waits on a write's bytes to land, and any
-/// whose record cannot be read, which reading it says.
+/// Every bound file that waits on a write's bytes to land, and any whose
+/// record this build cannot read, so that reading it refuses.
 pub fn bound_landing(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
     bound_where(
         conn,
@@ -878,7 +878,7 @@ pub fn bound_landing(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
 }
 
 /// Every bound file that is held or has a refused change in its record, and
-/// any whose record cannot be read, which reading it says.
+/// any whose record this build cannot read, so that reading it refuses.
 pub fn bound_held_or_refused(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
     bound_where(
         conn,
@@ -1748,6 +1748,8 @@ mod tests {
         // A row that cannot be read is read, so that the refusal is not lost.
         let error = super::bound_landing(&conn).map(paths).unwrap_err();
         assert!(error.to_string().contains("f.md"), "{error}");
+        let error = super::bound_held_or_refused(&conn).map(paths).unwrap_err();
+        assert!(error.to_string().contains("f.md"), "{error}");
         conn.execute("DELETE FROM folder_files WHERE path = 'f.md'", [])
             .unwrap();
         assert_eq!(paths(super::bound_landing(&conn).unwrap()), ["b.md"]);
@@ -1755,6 +1757,58 @@ mod tests {
             paths(super::bound_held_or_refused(&conn).unwrap()),
             ["c.md", "d.md"]
         );
+    }
+
+    #[test]
+    fn a_settle_leaves_a_sibling_that_waits_to_land_for_its_own_settle() {
+        let core = crate::Core::open_in_memory(None).unwrap();
+        let conn = core.conn().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let root =
+            crate::directory::Directory::open(&folder.path().canonicalize().unwrap()).unwrap();
+        std::fs::write(folder.path().join("a.md"), "landed").unwrap();
+        let insert = |path: &str, hash: &str, writes: &str| {
+            conn.execute(
+                "INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, writes, seen_at)
+                 VALUES (?1, 'x', ?2, '[]', '[]', ?3, 'then')",
+                rusqlite::params![path, hash, writes],
+            )
+            .unwrap();
+        };
+        // `b.md` was bound as `earlier` before a write to it began, and its
+        // bytes are not on the disk.
+        insert("b.md", "earlier", "{}");
+        let earlier = super::bound_at(&conn, "b.md").unwrap().unwrap();
+        let landing = |before: Option<super::Bound>| {
+            serde_json::to_string(&super::Writes {
+                landing: Some(super::Landing {
+                    before: before.map(Box::new),
+                }),
+                ..super::Writes::default()
+            })
+            .unwrap()
+        };
+        insert("a.md", &super::hash(b"landed"), &landing(None));
+        conn.execute(
+            "UPDATE folder_files SET writes = ?1 WHERE path = 'b.md'",
+            [landing(Some(earlier))],
+        )
+        .unwrap();
+        super::journal_missing(&conn, "b.md", "x").unwrap();
+
+        super::settle_landings(&conn, &root, &HashSet::new()).unwrap();
+
+        // `a.md` landed. `b.md` is settled to what it was before, and the
+        // landed file's settle did not take it for a file gone.
+        assert!(super::bound_landing(&conn).unwrap().is_empty());
+        assert_eq!(
+            super::bound_at(&conn, "b.md")
+                .unwrap()
+                .unwrap()
+                .content_hash,
+            "earlier"
+        );
+        assert_eq!(super::journaled(&conn).unwrap().len(), 1);
     }
 
     #[test]

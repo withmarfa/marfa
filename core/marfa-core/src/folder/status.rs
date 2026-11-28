@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::rc::Rc;
 
 use serde::Serialize;
 
@@ -13,7 +12,7 @@ use super::{
     text_of,
 };
 use crate::Result;
-use crate::model::{Item, ItemState, QueuedWrite, Verdict, WriteKind};
+use crate::model::{ItemState, QueuedWrite, Verdict, WriteKind};
 use marfa_rules::catalog::Catalog;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -324,7 +323,7 @@ impl Folder {
                     &pull,
                     &unmatched,
                     &waiting,
-                    &rows.items,
+                    (&rows.items, &catalog),
                 )?,
                 None if added.contains(key) => FileStatus::new(key, None, "held").because(
                     "addition",
@@ -482,7 +481,7 @@ impl Folder {
         pull: &HashSet<String>,
         unmatched: &HashSet<String>,
         waiting: &[QueuedWrite],
-        items: &Items,
+        (items, catalog): (&Items, &Catalog),
     ) -> Result<FileStatus> {
         let mut entry = FileStatus::new(&bound.path, Some(&bound.item_id), "held");
         let changed = hash.as_deref() != Some(bound.content_hash.as_str());
@@ -499,7 +498,7 @@ impl Folder {
             ));
         }
         // A refused create forgets its row, and the file keeps the reason.
-        if items.of(self, &bound.item_id)?.is_none() {
+        if items.of(self, &bound.item_id, catalog)?.is_none() {
             if changed {
                 return Ok(waits(entry, vec!["scan"]));
             }
@@ -646,10 +645,8 @@ impl Folder {
         };
         if !rows
             .items
-            .of(self, &bound.item_id)?
-            .as_ref()
-            .as_ref()
-            .is_some_and(|item| bytes_of(item, catalog).is_some())
+            .of(self, &bound.item_id, catalog)?
+            .is_some_and(|seen| seen.file)
         {
             return Ok(false);
         }
@@ -665,10 +662,8 @@ impl Folder {
         };
         Ok(!rows
             .items
-            .of(self, &id)?
-            .as_ref()
-            .as_ref()
-            .is_some_and(|item| named_by_its_file(item, catalog)))
+            .of(self, &id, catalog)?
+            .is_some_and(|seen| seen.named))
     }
 
     /// Why the scan holds a document it has not bound, where it does: its
@@ -737,19 +732,34 @@ impl StatusReport {
     }
 }
 
-/// The items a status read, so one item is read once however many questions
-/// about its file it answers.
+/// What a status asks of an item's file, the one catalog it loaded being
+/// fixed.
+#[derive(Clone, Copy)]
+struct Seen {
+    /// The item is a file item: its bytes are its file.
+    file: bool,
+    /// A document naming the item's id is its file.
+    named: bool,
+}
+
+/// The answers a status took from each item it read, so one item is read
+/// once however many questions about its file it answers, and no item's
+/// properties stay in memory.
 #[derive(Default)]
-struct Items(RefCell<HashMap<String, Rc<Option<Item>>>>);
+struct Items(RefCell<HashMap<String, Option<Seen>>>);
 
 impl Items {
-    fn of(&self, folder: &Folder, id: &str) -> Result<Rc<Option<Item>>> {
-        if let Some(read) = self.0.borrow().get(id) {
-            return Ok(Rc::clone(read));
+    /// `None` where the item is missing.
+    fn of(&self, folder: &Folder, id: &str, catalog: &Catalog) -> Result<Option<Seen>> {
+        if let Some(seen) = self.0.borrow().get(id) {
+            return Ok(*seen);
         }
-        let read = Rc::new(folder.core.get(id)?);
-        self.0.borrow_mut().insert(id.to_string(), Rc::clone(&read));
-        Ok(read)
+        let seen = folder.core.get(id)?.map(|item| Seen {
+            file: bytes_of(&item, catalog).is_some(),
+            named: named_by_its_file(&item, catalog),
+        });
+        self.0.borrow_mut().insert(id.to_string(), seen);
+        Ok(seen)
     }
 }
 
