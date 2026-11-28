@@ -223,6 +223,68 @@ macro_rules! unemptied {
 
 pub(crate) use {degraded, ended, operation, record, unemptied, unrelinked, unsynced};
 
+/// What a folder watch reports about itself: numbers only, and the release.
+/// This list is the whole of what the report carries.
+#[derive(Debug)]
+#[cfg_attr(
+    not(feature = "telemetry"),
+    allow(dead_code, reason = "nothing reads the figures without the feature")
+)]
+pub(crate) struct WatchReport {
+    /// CPU time since the last report, in milliseconds.
+    pub(crate) cpu_millis: Option<u64>,
+    pub(crate) resident_bytes: Option<u64>,
+    pub(crate) peak_resident_bytes: Option<u64>,
+    pub(crate) uptime_seconds: u64,
+    /// The folders the watch holds, and the files they follow: `None` until a
+    /// folder has been counted.
+    pub(crate) folders: u64,
+    pub(crate) files: Option<u64>,
+    /// Passes since the last report.
+    pub(crate) full_passes: u64,
+    pub(crate) quick_passes: u64,
+    pub(crate) release: &'static str,
+}
+
+#[cfg(feature = "telemetry")]
+pub(crate) fn watch_report(report: &WatchReport) {
+    let span = operation!(
+        "watch_report",
+        cpu_millis,
+        resident_bytes,
+        peak_resident_bytes,
+        uptime_seconds,
+        folders,
+        files,
+        full_passes,
+        quick_passes,
+        release
+    );
+    record!(
+        span,
+        uptime_seconds = report.uptime_seconds,
+        folders = report.folders,
+        full_passes = report.full_passes,
+        quick_passes = report.quick_passes,
+        release = report.release,
+    );
+    if let Some(files) = report.files {
+        record!(span, files = files);
+    }
+    if let Some(cpu) = report.cpu_millis {
+        record!(span, cpu_millis = cpu);
+    }
+    if let Some(resident) = report.resident_bytes {
+        record!(span, resident_bytes = resident);
+    }
+    if let Some(peak) = report.peak_resident_bytes {
+        record!(span, peak_resident_bytes = peak);
+    }
+}
+
+#[cfg(not(feature = "telemetry"))]
+pub(crate) fn watch_report(_: &WatchReport) {}
+
 /// The subscriber of the thread that made it, for work it hands to a thread
 /// of its own: a host that installed one for that thread alone would
 /// otherwise hear nothing of the work.

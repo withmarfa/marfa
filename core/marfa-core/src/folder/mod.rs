@@ -33,6 +33,7 @@ mod scoped;
 mod selective;
 mod unmatched;
 mod unsent;
+mod usage;
 pub use beneath::BeneathReport;
 pub(crate) use first::waiting;
 pub use first::{FirstSync, Synced};

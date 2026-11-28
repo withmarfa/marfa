@@ -16,7 +16,7 @@ use marfa_core::folder::WatchRecord;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::autostart::RecordFile;
+use crate::autostart::{RecordFile, RecordUsage};
 use crate::interrupt;
 use crate::output;
 
@@ -137,6 +137,37 @@ impl OtherBuild {
     }
 }
 
+/// What a watch has used since it started: the whole process's figures, across
+/// the `folders` it holds.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct WatchUsage {
+    #[serde(flatten)]
+    pub(crate) usage: RecordUsage,
+    pub(crate) folders: usize,
+}
+
+impl WatchUsage {
+    pub(crate) fn describe(&self) -> String {
+        self.usage.describe_for_folder(self.folders)
+    }
+}
+
+/// What the current watch that holds `dir` has used, where the record beside
+/// the folder registry lists one that records it.
+pub fn usage_watching(dir: &Path) -> Option<WatchUsage> {
+    let record = WatchRecord::located()?;
+    let file = RecordFile::read(record.path())?;
+    watch_usage_in(&file, dir, SystemTime::now())
+}
+
+fn watch_usage_in(file: &RecordFile, dir: &Path, now: SystemTime) -> Option<WatchUsage> {
+    let process = file.watching(dir, now)?;
+    Some(WatchUsage {
+        usage: process.usage.clone()?,
+        folders: process.folders.len(),
+    })
+}
+
 /// The watch of `dir` that the record beside the folder registry lists as
 /// current, if it runs another build.
 pub fn other_build_watching(dir: &Path) -> Option<OtherBuild> {
@@ -151,21 +182,7 @@ fn other_build_in(
     now: SystemTime,
     this_version: &'static str,
 ) -> Option<OtherBuild> {
-    let same = |listed: &str| {
-        let listed = Path::new(listed);
-        listed == dir
-            || matches!(
-                (std::fs::canonicalize(listed), std::fs::canonicalize(dir)),
-                (Ok(a), Ok(b)) if a == b
-            )
-    };
-    let process = file.processes.iter().find(|process| {
-        process.current(now)
-            && process
-                .folders
-                .iter()
-                .any(|folder| folder.watching && same(&folder.dir))
-    })?;
+    let process = file.watching(dir, now)?;
     (process.build_version.as_deref() != Some(this_version)).then(|| OtherBuild {
         pid: process.pid,
         build_version: process.build_version.clone(),
@@ -654,6 +671,62 @@ mod tests {
             started.elapsed() < Duration::from_secs(2),
             "the read waited on the process left behind"
         );
+    }
+
+    #[test]
+    fn status_shows_what_the_current_watch_of_the_folder_has_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = SystemTime::now();
+        let beat = marfa_rules::time::written(
+            now.duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64,
+        );
+        let entry = |usage: serde_json::Value| {
+            let mut entry = json!({
+                "pid": 7,
+                "heartbeat_at": beat,
+                "heartbeat_interval_seconds": 5,
+                "ended_at": null,
+                "folders": [{ "dir": dir.path(), "watching": true, "reason": null }],
+            });
+            if !usage.is_null() {
+                entry["usage"] = usage;
+            }
+            let file: RecordFile =
+                serde_json::from_value(json!({ "version": 1, "processes": [entry] })).unwrap();
+            file
+        };
+        let used = json!({ "cpu_millis": 900, "full_passes": 2, "quick_passes": 5 });
+        let with = entry(used);
+        let shown = watch_usage_in(&with, dir.path(), now).unwrap();
+        assert_eq!(
+            shown,
+            WatchUsage {
+                usage: RecordUsage {
+                    cpu_millis: Some(900),
+                    full_passes: 2,
+                    quick_passes: 5,
+                    ..RecordUsage::default()
+                },
+                folders: 1,
+            }
+        );
+        // The figures are the watch's, and the line says across how many
+        // folders.
+        assert_eq!(
+            shown.describe(),
+            "since it started, the watch that holds this folder has used 0.9 s of CPU, 2 full and 5 quick pass(es), across 1 folder"
+        );
+        assert!(
+            shown
+                .usage
+                .describe_for_folder(3)
+                .ends_with(", across 3 folders")
+        );
+        // The witness: an entry from a build before the figures shows none.
+        let without = entry(serde_json::Value::Null);
+        assert_eq!(watch_usage_in(&without, dir.path(), now), None);
     }
 
     #[test]

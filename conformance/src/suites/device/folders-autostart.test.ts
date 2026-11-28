@@ -353,6 +353,7 @@ interface Status {
     path: string;
     current: boolean;
     folders: Array<{ dir: string; watching: boolean; reason: string | null }>;
+    usage: Record<string, number | null> | null;
   } | null;
   credential: string[];
 }
@@ -994,6 +995,15 @@ describe("folder syncing from login", () => {
       exists: true,
       this_binary: true,
     });
+    // What the running watch has used since it started, as its record says.
+    expect(Object.keys(status!.record!.usage ?? {}).sort()).toEqual([
+      "cpu_millis",
+      "files",
+      "full_passes",
+      "peak_resident_bytes",
+      "quick_passes",
+      "resident_bytes",
+    ]);
 
     const text = autostart(root, "status", {
       registry,
@@ -1002,6 +1012,7 @@ describe("folder syncing from login", () => {
     });
     expect(text.status, text.stderr).toBe(0);
     expect(text.stdout).toContain(`the watch is running, as process ${pid}`);
+    expect(text.stdout).toContain("since it started, the watch has used ");
     expect(text.stdout).toContain(
       `it logs to ${join(dirname(registry), "folder-watch.log")}`,
     );

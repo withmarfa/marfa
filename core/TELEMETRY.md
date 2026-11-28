@@ -18,13 +18,14 @@ Cargo builds a package with a feature when any package in the same build asks fo
 
 ### Spans
 
-| Span         | Covers                                                          | Fields                                                           |
-| ------------ | --------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `drain`      | One drain pass, called or started by a follow                   | `outcome`, `answered`, `held`, `undelivered`, `unsent`, `unmade` |
-| `catch_up`   | One `Core::catch_up`                                            | `outcome`, `applied`, `skipped`                                  |
-| `write`      | One queued write sent to the server, inside a `drain`           | `outcome`, `kind`, `status`                                      |
-| `write_page` | One page of queued creates sent to the server, inside a `drain` | `outcome`, `kind`, `entries`, `status`                           |
-| `search`     | One `Core::search` or `Core::search_shown`                      | `outcome`, `hits`                                                |
+| Span           | Covers                                                            | Fields                                                           |
+| -------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `drain`        | One drain pass, called or started by a follow                     | `outcome`, `answered`, `held`, `undelivered`, `unsent`, `unmade` |
+| `catch_up`     | One `Core::catch_up`                                              | `outcome`, `applied`, `skipped`                                  |
+| `write`        | One queued write sent to the server, inside a `drain`             | `outcome`, `kind`, `status`                                      |
+| `write_page`   | One page of queued creates sent to the server, inside a `drain`   | `outcome`, `kind`, `entries`, `status`                           |
+| `search`       | One `Core::search` or `Core::search_shown`                        | `outcome`, `hits`                                                |
+| `watch_report` | One report of a running folder watch, at its start and once a day | The figures under "A running folder watch" below                 |
 
 `outcome` says how the operation ended:
 
@@ -44,9 +45,31 @@ Two events carry `code`, the word `CoreError::code` gives everywhere else:
 
 A failure is recorded once: a write error that ends the drain is only the drain's `ERROR`. A write the server answers, even with a `5xx` or a `429`, records no event; its `write` span ends `unavailable` with the `status`. A stop the caller raises ends the span `canceled` and records no event.
 
+### A running folder watch
+
+A running `folders watch` records one `watch_report` span when it starts, and another each day. The first is sent once every folder the registry lists is watched, or after 5 seconds if some are not. It carries numbers and the release, and nothing else:
+
+| Field                 | Value                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------ |
+| `cpu_millis`          | CPU time the watch process used since the last report, in milliseconds               |
+| `resident_bytes`      | Resident memory of the process when it reported                                      |
+| `peak_resident_bytes` | The most resident memory the process has held since it started                       |
+| `uptime_seconds`      | Wall-clock seconds since the watch started, counting time awake and asleep, with any one gap counted as at most a day |
+| `folders`             | Folders the watch was watching when it reported                                      |
+| `files`               | Files followed by the folders counted so far, left out until a folder has been counted |
+| `full_passes`         | Full passes the watch's folders started since the last report                        |
+| `quick_passes`        | Quick passes the watch's folders started since the last report                       |
+| `release`             | The version of the build                                                             |
+
+A figure the system does not give, such as memory on a platform with no reading for it, is left out, never replaced by a stand-in. The same goes for `files` while no folder has been counted, such as a folder still waiting for its first sync. A folder not yet counted adds nothing to `files`, so a report made while some folders are uncounted shows the files of the others.
+
+The timer reads the wall clock, not a clock that stops while a laptop sleeps. A report is due when a day has passed on it, so a computer that was asleep reports once when it wakes, not once for each day it slept. A clock set back counts as no time passed: neither the timer nor `uptime_seconds` goes backwards. Any one gap between two readings counts as at most a day, so a computer asleep for longer, or a clock that jumps forward, adds one day to `uptime_seconds` and still sends the report on waking. The timer is checked inside the watch's existing 100 ms poll, so it adds no wake.
+
+The same figures, totalled since the watch started, are in the `usage` object of the watch's entry in `folder-watch.json`. `marfa folders status DIR` shows them as the figures of the whole watch that holds the folder, with the number of folders it holds, and `marfa folders autostart status` shows them for the watch it runs.
+
 ### What is never recorded
 
-The core records only an operation's name, a count, an `outcome`, a write's kind, an HTTP status and an error `code`. It never records an item's content, title, tag, id, key or natural key, a credential, an address, a header, a path, a query or an error message.
+The core records only an operation's name, a count, an `outcome`, a write's kind, an HTTP status, an error `code`, and a running watch's figures above. It never records an item's content, title, tag, id, key or natural key, a credential, an address, a header, a path, a query or an error message.
 
 ## In the `marfa` binary
 
@@ -54,16 +77,16 @@ The binary enables the feature and installs a subscriber that exports a trace ov
 
 ### Variables
 
-| Variable                                                          | How the binary reads it                                                                                                                                                                                                                 |
-| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`                                     | The collector's base address, `http` or `https`. The trace goes to `v1/traces` under it, and a query stays a query: `http://host:4318/?token=abc` posts to `/v1/traces?token=abc`. Setting it turns traces on.                          |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`                              | The address the trace goes to, as written. It also turns traces on and takes precedence.                                                                                                                                                |
-| `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Headers as comma-separated `key=value` pairs, values percent-encoded. The traces variable wins for a header both name.                                                                                                                  |
-| `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | Milliseconds one send may take; 2000 by default. The binary waits no longer than this at exit.                                                                                                                                          |
-| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`                  | `always_on` (the default), `always_off`, or `traceidratio` with a ratio from 0 to 1. A `parentbased_` form acts as the sampler it wraps.                                                    |
+| Variable                                                          | How the binary reads it                                                                                                                                                                                               |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                                     | The collector's base address, `http` or `https`. The trace goes to `v1/traces` under it, and a query stays a query: `http://host:4318/?token=abc` posts to `/v1/traces?token=abc`. Setting it turns traces on.        |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`                              | The address the trace goes to, as written. It also turns traces on and takes precedence.                                                                                                                              |
+| `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Headers as comma-separated `key=value` pairs, values percent-encoded. The traces variable wins for a header both name.                                                                                                |
+| `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | Milliseconds one send may take; 2000 by default. The binary waits no longer than this at exit.                                                                                                                        |
+| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`                  | `always_on` (the default), `always_off`, or `traceidratio` with a ratio from 0 to 1. A `parentbased_` form acts as the sampler it wraps.                                                                              |
 | `OTEL_SERVICE_NAME`                                               | The service name on the trace; `marfa-cli` by default. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.                                                                                       |
 | `OTEL_RESOURCE_ATTRIBUTES`                                        | Attributes added to the trace, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces the command's own of the same name. A list with a pair that cannot be read is ignored whole. |
-| `OTEL_SDK_DISABLED`                                               | `true` turns the trace off.                                                                                                                                                                                      |
+| `OTEL_SDK_DISABLED`                                               | `true` turns the trace off.                                                                                                                                                                                           |
 
 A malformed `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` turns off the trace for that run. Without `--json`, the binary prints one line on standard error that names the variable, never its value; with `--json`, it prints nothing. A header, timeout, sampler or ratio that cannot be used is left out, and the default applies.
 
@@ -78,7 +101,7 @@ Each run is one trace. Its root span is named for the command path, such as `mar
 - A command that Ctrl-C stopped, including a `canceled` hydration, catch-up, drain or served read, or whose output was closed, is not a failure. It keeps its `exit_code` and adds no event and no error status.
 - A command line that clap refuses is not a run and exports nothing.
 
-The binary exports only the command path, `exit_code`, `dropped_spans`, the core's span names, counts, outcomes, kinds, statuses and error codes, durations, and `error` and `warning` events with `code`. `marfa-cli/src/telemetry/layer.rs` lists the field names it keeps and drops every other field, and any value that is not a short plain word. Its list leaves out `entries`, so a `write_page` span reaches the collector without it. An error message, an argument, an address, a key, a path and an item's content are never sent, even where a message would echo them.
+The binary exports only the command path, `exit_code`, `dropped_spans`, the core's span names, a running watch's report and the release, counts, outcomes, kinds, statuses and error codes, durations, and `error` and `warning` events with `code`. `marfa-cli/src/telemetry/layer.rs` lists the field names it keeps and drops every other field, and any value that is not a short plain word. Its list leaves out `entries`, so a `write_page` span reaches the collector without it. An error message, an argument, an address, a key, a path and an item's content are never sent, even where a message would echo them.
 
 ### How the trace is sent
 

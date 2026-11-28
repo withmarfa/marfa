@@ -1252,7 +1252,7 @@ When a folder is added and the registry’s existing contents cannot be parsed, 
 
 ## The record of folder watches
 
-A watch process keeps a record of its folders in `folder-watch.json`, beside the machine’s folder registry, for any program on the machine to read. The file holds `version` (`1`) and `processes`, one entry for each watch process: its `pid`, `build_version`, `started_at`, `heartbeat_at`, `heartbeat_interval_seconds`, `ended_at`, and `folders`. Each folder lists its `dir`, its `system.folder` ID in `folder`, `watching`, `reason`, `paused`, `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals`. A watch takes a lock on `folder-watch.lock`, beside the file, to write it.
+A watch process keeps a record of its folders in `folder-watch.json`, beside the machine’s folder registry, for any program on the machine to read. The file holds `version` (`1`) and `processes`, one entry for each watch process: its `pid`, `build_version`, `started_at`, `heartbeat_at`, `heartbeat_interval_seconds`, `ended_at`, `usage` and `folders`. The `usage` of an entry holds `cpu_millis`, `resident_bytes`, `peak_resident_bytes`, `full_passes`, `quick_passes` and `files`. Each folder lists its `dir`, its `system.folder` ID in `folder`, `watching`, `reason`, `paused`, `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals`. A watch takes a lock on `folder-watch.lock`, beside the file, to write it.
 
 ### `folder-setup/watch-record-location`
 
@@ -1345,6 +1345,14 @@ While a watch process runs, a device MUST set `build_version` in the process’s
 **Reason:** After an upgrade, a watch started earlier goes on running the build it was started with, and a program reading the record tells it from one on the build installed now.
 
 **Tests:** `device/folders-new-build.test.ts › ends with exit status 3 once a link it was started through moves to a new build, naming both versions, and the next watch sends what it had not`.
+
+### `folder-setup/watch-record-usage`
+
+While a watch process runs, a device MUST set `usage` in the process’s entry in the record to what the process has used since it started: `cpu_millis`, `resident_bytes`, `peak_resident_bytes`, `full_passes`, `quick_passes` and `files`, the files its folders follow.
+
+**Reason:** A person or a program tells a watch that has grown heavy from one that is idle, without a profiler. The figures are totals since the start, so two reads give a rate. An entry an earlier build wrote has no `usage`, and a reader takes it as unknown.
+
+**Tests:** `device/folder-watch-record.test.ts › lists each folder a watch holds with what a report to the server says of it, and nothing from inside the folder`.
 
 ### `folder-setup/watch-record-heartbeat`
 
@@ -1941,6 +1949,22 @@ When `folders autostart status` runs while the binary the agent runs no longer e
 ### `folder-setup/autostart-status-record`
 
 When `folders autostart status` runs while the agent’s watch runs, the CLI MUST report whether the record of folder watches holds a current entry for that watch’s process, and each folder of that entry with its `watching` and `reason`.
+
+**Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
+
+### `folder-setup/autostart-status-usage`
+
+When `folders autostart status` finds a current entry for the agent’s watch, the CLI MUST report in `record` the `usage` of that entry.
+
+**Reason:** The status tells a program what the watch has used without opening the record.
+
+**Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
+
+### `folder-setup/autostart-status-usage-text`
+
+When `folders autostart status` reports the `usage` of the agent’s watch in `record`, the CLI MUST say it in one line in the text.
+
+**Reason:** The status tells a person what the watch has used without opening the record.
 
 **Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
 
