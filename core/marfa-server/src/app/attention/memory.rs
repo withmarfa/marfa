@@ -76,8 +76,7 @@ impl Memory {
         }
     }
 
-    /// Drops every mark `keep` refuses. `read` runs once the lock that `begin` takes is held, so
-    /// a mark made after it ran waits for the lock and is not judged by what `read` saw.
+    /// Drops every mark `keep` refuses, judged by what `read` returns under `begin`'s lock.
     pub fn retain<S>(&self, read: impl FnOnce() -> S, keep: impl Fn(&S, &Key) -> bool) {
         let mut marks = self.marks();
         let read = read();
@@ -174,8 +173,7 @@ mod tests {
                 let standing = faults.references(0);
                 assert!(standing.is_empty());
                 read_tx.send(()).unwrap();
-                // A fixed check holds the lock here, so the fault cannot be marked yet; the wait
-                // only lets an unfixed check show that it can.
+                // The lock is held here, so the fault cannot be marked until the wait ends.
                 let _ = begun_rx.recv_timeout(Duration::from_millis(300));
                 standing
             },
