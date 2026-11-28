@@ -33,8 +33,8 @@ import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
  * An app asks for more access by authorizing again with the client it holds,
  * and the person approves. The grant it already holds widens in place: it keeps
  * its id and what it made. A person's approval needs the instance's one owner,
- * so this file boots a server of its own, and it moves that server's clock
- * only in the last case that needs it.
+ * so this file boots a server of its own, and the subscription case moves that
+ * server's clock.
  */
 let server: FreshServer;
 let operator: MarfaClient;
