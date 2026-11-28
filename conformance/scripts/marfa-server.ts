@@ -28,11 +28,17 @@ import { createServer } from "node:net";
  *   tsx scripts/marfa-server.ts clock [--state <dir>] advance <ms>|pause|resume
  *   tsx scripts/marfa-server.ts fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list
  *   tsx scripts/marfa-server.ts log [--state <dir>]
+ *   tsx scripts/marfa-server.ts scratch [--state <dir>]
  *
  * `refused` boots the same server on a state directory and waits for it to end
  * instead of for `/health`: for a boot that is meant to be refused.
  *
  * `log` prints what the server wrote to its log, then to stderr.
+ *
+ * `scratch` prints `{"files":[..]}`, the sorted names of the files the server
+ * holds in its working folder now: what it spools while an upload, an export
+ * or a backup is in flight, which it removes once the work ends. A server that
+ * holds none, or has no such folder, prints an empty list.
  *
  * `restart` stops the server with the signal (`TERM` by default), prints how
  * it ended as `[marfa-server] previous exit {"code":..,"signal":..,"ms":..}`,
@@ -76,6 +82,7 @@ import { randomBytes } from "node:crypto";
 import {
   cpSync,
   existsSync,
+  readdirSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -126,7 +133,8 @@ interface Args {
     | "clock"
     | "fault"
     | "image"
-    | "log";
+    | "log"
+    | "scratch";
   state: string;
   /** For `image`: the directory the copy is made into. */
   to?: string;
@@ -159,13 +167,14 @@ const COMMANDS = [
   "fault",
   "image",
   "log",
+  "scratch",
 ] as const;
 
 function parseArgs(argv: string[]): Args {
   const [command, ...rest] = argv;
   if (!COMMANDS.some((known) => known === command)) {
     throw new Error(
-      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms>|pause|resume | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list | image [--state <dir>] --to <dir> | log [--state <dir>]",
+      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms>|pause|resume | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list | image [--state <dir>] --to <dir> | log [--state <dir>] | scratch [--state <dir>]",
     );
   }
   const args: Args = {
@@ -1115,6 +1124,13 @@ function printLog(state: string): void {
   }
 }
 
+/** The files in the disk store's working folder, which the server spools into. */
+function printScratch(state: string): void {
+  const folder = resolve(paths(state).blobs, "tmp");
+  const files = existsSync(folder) ? readdirSync(folder).sort() : [];
+  console.log(JSON.stringify({ files }));
+}
+
 function status(args: Args): void {
   const p = paths(args.state);
   const pid = readPid(p.pid);
@@ -1272,6 +1288,7 @@ if (
       takeImage(args.state, args.to);
       console.log(`[marfa-server] image of ${args.state} in ${args.to}`);
     } else if (args.command === "log") printLog(args.state);
+    else if (args.command === "scratch") printScratch(args.state);
     else if (args.command === "clock" || args.command === "fault") {
       await runHooks(args);
     } else if (args.command === "down") {

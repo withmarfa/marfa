@@ -1,6 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { lostFiles } from "../../utils/archive.js";
@@ -17,11 +15,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import {
-  blobFolder,
-  clientsFor,
-  ownObjectStore,
-} from "../../utils/own-blob-server.js";
+import { clientsFor, ownObjectStore } from "../../utils/own-blob-server.js";
 
 /**
  * A backup that cannot finish: an object store the server cannot reach, a
@@ -198,7 +192,7 @@ describe("a backup cut short", () => {
     await server.restart({ signal: "SIGKILL" });
 
     expect(await bucket.backupKeys()).toEqual(before);
-    expect(readdirSync(join(blobFolder(server), "tmp"))).toEqual([]);
+    expect(await server.scratch()).toEqual([]);
     const id = await instanceIdOf(server);
     for (const key of await bucket.partKeys(id)) {
       expect(`${sha256Of(await bucket.get(key))}.ndjson.gz`).toBe(

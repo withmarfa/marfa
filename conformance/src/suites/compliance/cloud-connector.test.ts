@@ -7,7 +7,6 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -33,6 +32,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   stopFreshServers,
   type FreshServer,
+  serverOutput,
 } from "../../utils/fresh-server.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
 import type { SseEvent } from "../../utils/sse.js";
@@ -230,11 +230,7 @@ function installed(connector: string | undefined): string {
 }
 
 function logOf(server: FreshServer): string {
-  return ["server.log", "server.stderr"]
-    .map((name) => join(server.stateDir, name))
-    .filter((file) => existsSync(file))
-    .map((file) => readFileSync(file, "utf8"))
-    .join("\n");
+  return serverOutput(server.stateDir);
 }
 
 const tokenOf = (linked: Linked) => linked.cloud.latest().tunnelToken;

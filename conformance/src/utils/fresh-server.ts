@@ -149,6 +149,13 @@ export interface FreshServer {
   image(): Promise<string>;
   /** Everything the server has written so far: its log, then what it printed to stderr. */
   output(): Promise<string>;
+  /**
+   * The files the server holds in its working folder now, through
+   * `scratch`: what it spools while an upload, an export or a backup is in
+   * flight and removes once the work ends. Names are relative to the
+   * folder, sorted.
+   */
+  scratch(): Promise<string[]>;
   /** Stops the server and removes its state. Safe to call twice. */
   stop(): Promise<void>;
 }
@@ -332,14 +339,23 @@ const SERVER_SCRIPT = resolve(conformanceRoot, "scripts/marfa-server.ts");
 
 /**
  * Everything a server booted into `state` wrote: its log, the JSON lines on
- * its stdout, then what it printed to stderr. A fixture that holds the server
- * to what it must not log reads both, because the server warns on stderr.
+ * its stdout, then what it printed to stderr, as the adapter's `log` command
+ * prints it. A fixture that holds the server to what it must not log reads
+ * both, because the server warns on stderr. Synchronous, for a fixture that
+ * reads it where it cannot wait.
  */
 export function serverOutput(state: string): string {
-  return ["server.log", "server.stderr"]
-    .map((name) => join(state, name))
-    .map((path) => (existsSync(path) ? readFileSync(path, "utf8") : ""))
-    .join("");
+  const logged = spawnSync(
+    tsxBinary(),
+    [SERVER_SCRIPT, "log", "--state", state],
+    { cwd: conformanceRoot, env: serverEnv(), encoding: "utf8" },
+  );
+  if (logged.status !== 0) {
+    throw new Error(
+      `the target did not give its log:\n${logged.stdout}${logged.stderr}`,
+    );
+  }
+  return logged.stdout;
 }
 
 /** Before `down`, which clears the log with the rest of the state. The run's
@@ -612,6 +628,18 @@ export async function bootFreshServer(
         throw new Error(`the target did not give its log:\n${logged.output}`);
       }
       return logged.output;
+    },
+    async scratch() {
+      const held = await adapter("scratch");
+      const line = held.output
+        .split("\n")
+        .find((candidate) => candidate.startsWith("{"));
+      if (held.status !== 0 || line === undefined) {
+        throw new Error(
+          `the target did not name its working files:\n${held.output}`,
+        );
+      }
+      return (JSON.parse(line) as { files: string[] }).files;
     },
     async waitForHold(name, count = 1, timeoutMs = 60_000) {
       const deadline = Date.now() + timeoutMs;

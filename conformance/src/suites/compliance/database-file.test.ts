@@ -23,6 +23,7 @@ import {
   type FreshServer,
   type RefusedBoot,
   type ServerExit,
+  serverOutput,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
@@ -491,7 +492,7 @@ describe("a completed claim after credential rows disappear", () => {
         );
         expect(before.body.claimed).toBe(true);
         const announcements = () =>
-          readFileSync(join(server.stateDir, "server.log"), "utf8").split(
+          serverOutput(server.stateDir).split(
             "Claim this Marfa at /setup with setup code:",
           ).length - 1;
         expect(announcements()).toBe(1);

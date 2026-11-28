@@ -1,6 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { blobEntry, listEntries } from "../../utils/archive.js";
@@ -9,11 +7,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import {
-  blobFolder,
-  clientsFor,
-  DISK_ONLY,
-} from "../../utils/own-blob-server.js";
+import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -71,9 +65,8 @@ afterAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 /** What the export holds in the spool under the disk store. */
-function spooled(): string[] {
-  const folder = join(blobFolder(server), "tmp");
-  return existsSync(folder) ? readdirSync(folder) : [];
+function spooled(): Promise<string[]> {
+  return server.scratch();
 }
 
 function exportArchive(): Promise<Response> {
@@ -94,7 +87,7 @@ describe("an archive export that reads everything", () => {
     const names = listEntries(archive).map((entry) => entry.name);
     for (const hash of hashes) expect(names).toContain(blobEntry(hash));
     await waitFor("the spool to empty", () =>
-      Promise.resolve(spooled().length === 0 ? true : undefined),
+      spooled().then((files) => (files.length === 0 ? true : undefined)),
     );
   });
 });
@@ -108,7 +101,7 @@ describe("an archive export whose read of a page of items fails", () => {
     await response.arrayBuffer();
     expect(await fired("fail:export-read")).toBe(1);
     await waitFor("the spool to empty", () =>
-      Promise.resolve(spooled().length === 0 ? true : undefined),
+      spooled().then((files) => (files.length === 0 ? true : undefined)),
     );
   });
 });
@@ -125,7 +118,7 @@ describe("an archive export whose read of a blob fails after the body has begun"
     await expect(response.arrayBuffer()).rejects.toThrow();
     expect(await fired("fail:blob-read")).toBe(1);
     await waitFor("the spool to empty", () =>
-      Promise.resolve(spooled().length === 0 ? true : undefined),
+      spooled().then((files) => (files.length === 0 ? true : undefined)),
     );
   });
 });

@@ -842,11 +842,7 @@ describe("a connector's secret", () => {
     expect(pages).toContain(visible);
     for (const held of secrets) expect(pages).not.toContain(held);
 
-    const logs = ["server.log", "server.stderr"]
-      .map((file) => join(origin.stateDir, file))
-      .filter((path) => existsSync(path))
-      .map((path) => readFileSync(path, "utf8"))
-      .join("\n");
+    const logs = serverOutput(origin.stateDir);
     expect(logs.length).toBeGreaterThan(0);
     for (const held of secrets) expect(logs).not.toContain(held);
   });
