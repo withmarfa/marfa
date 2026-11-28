@@ -55,6 +55,17 @@ export function silenceTelemetry(env: Environment = process.env): void {
   env.OTEL_SDK_DISABLED = "true";
 }
 
+/**
+ * Takes `VITEST_MAX_WORKERS` out of the environment. Vitest applies it after
+ * the config, so a shell or wrapper that sets it gives a project several
+ * workers even where the config says `fileParallelism: false`. The conformance
+ * run depends on one file at a time: a restore in one file holds every write
+ * on the server the files share.
+ */
+export function oneFileAtATime(env: Environment = process.env): void {
+  Reflect.deleteProperty(env, "VITEST_MAX_WORKERS");
+}
+
 type Environment = Record<string, string | undefined>;
 
 // This file is in no package's tsconfig, so Node's globals are not typed here.

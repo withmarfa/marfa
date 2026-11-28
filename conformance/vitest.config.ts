@@ -1,9 +1,15 @@
 import "dotenv/config";
 import { configDefaults, defineConfig } from "vitest/config";
-import { ciReporters, ciRetry, silenceTelemetry } from "../vitest.shared.js";
+import {
+  ciReporters,
+  ciRetry,
+  oneFileAtATime,
+  silenceTelemetry,
+} from "../vitest.shared.js";
 import WeightedShards from "./src/utils/shard-sequencer.js";
 
 silenceTelemetry();
+oneFileAtATime();
 
 const exclude = (...own: string[]) => [...configDefaults.exclude, ...own];
 
@@ -14,6 +20,7 @@ const REMOVE_AFTER_FILE = "src/utils/temp-folder-teardown.ts";
 
 export default defineConfig({
   test: {
+    // Root options reach every project below.
     fileParallelism: false,
     reporters: ciReporters(),
     // `--shard` splits a project's files by the time they take, which
