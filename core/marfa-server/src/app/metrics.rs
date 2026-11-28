@@ -8,6 +8,8 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 use tokio::sync::Semaphore;
 
+use marfa_telemetry::process;
+
 use crate::db::volume;
 
 use super::App;
@@ -223,56 +225,14 @@ fn storage(counts: &Counts, database: Option<&Path>, blob_path: &Path, faults: &
     })
 }
 
-fn seconds(time: libc::timeval) -> f64 {
-    time.tv_sec as f64 + time.tv_usec as f64 / 1e6
-}
-
-fn usage() -> Option<libc::rusage> {
-    let mut found = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-    // SAFETY: the buffer is a whole `rusage`, which the call fills when it answers 0.
-    let answered = unsafe { libc::getrusage(libc::RUSAGE_SELF, found.as_mut_ptr()) };
-    // SAFETY: filled by the call above, and any bits are valid integers.
-    (answered == 0).then(|| unsafe { found.assume_init() })
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn resident_bytes() -> Option<u64> {
-    let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::zeroed();
-    let size = i32::try_from(size_of::<libc::proc_taskinfo>()).ok()?;
-    let pid = i32::try_from(std::process::id()).ok()?;
-    // SAFETY: the buffer is the size of the flavor asked for.
-    let written = unsafe {
-        libc::proc_pidinfo(
-            pid,
-            libc::PROC_PIDTASKINFO,
-            0,
-            info.as_mut_ptr().cast(),
-            size,
-        )
-    };
-    // SAFETY: the kernel filled the whole buffer, and any bits are valid integers.
-    (written == size).then(|| unsafe { info.assume_init() }.pti_resident_size)
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn resident_bytes() -> Option<u64> {
-    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
-    let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
-    // SAFETY: a plain query with no pointers.
-    let page = u64::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).ok()?;
-    Some(pages * page)
-}
-
 fn process(resident: Option<u64>) -> Value {
-    let used = usage();
-    // The peak is bytes on macOS and kilobytes elsewhere.
-    let peak_unit: i64 = if cfg!(target_os = "macos") { 1 } else { 1024 };
+    let cpu = process::cpu();
     json!({
         "version": VERSION,
         "memory_rss_bytes": resident,
-        "memory_rss_peak_bytes": used.map(|used| used.ru_maxrss * peak_unit),
-        "cpu_user_seconds": used.map(|used| seconds(used.ru_utime)),
-        "cpu_system_seconds": used.map(|used| seconds(used.ru_stime)),
+        "memory_rss_peak_bytes": process::peak_resident_bytes(),
+        "cpu_user_seconds": cpu.map(|cpu| cpu.user.as_secs_f64()),
+        "cpu_system_seconds": cpu.map(|cpu| cpu.system.as_secs_f64()),
     })
 }
 
@@ -302,7 +262,7 @@ pub async fn read(app: &App) -> Result<Value> {
             faults.hold_blocking(HOLD_METRICS);
             let counts = count(tx, now)?;
             let storage = storage(&counts, database.as_deref(), &blob_path, &faults);
-            Ok((counts, storage, resident_bytes()))
+            Ok((counts, storage, process::resident_bytes()))
         })
         .await?;
     Ok(json!({

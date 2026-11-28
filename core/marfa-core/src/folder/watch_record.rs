@@ -22,6 +22,7 @@ use super::Folder;
 use super::health::{Problem, Snapshot};
 use super::landing::land_owned_at;
 use super::registry::{Registry, open_lock, resolved};
+use super::usage::{Schedule, Used};
 use super::watch::{Raise, WatchEnd, WatchError, WatchEvent};
 use crate::directory::Directory;
 use crate::priority::{inheriting, lowered};
@@ -80,7 +81,22 @@ struct Process {
     /// When the process stopped its watches on purpose; `None` while it runs
     /// or if it was killed.
     ended_at: Option<String>,
+    /// What the process has used since it started. `None` in an entry a build
+    /// wrote before the field, and in one that could not read it.
+    #[serde(default)]
+    usage: Option<Usage>,
     folders: Vec<Entry>,
+}
+
+/// What a watch process has used since it started, and the files its folders
+/// follow, as of its last write.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Usage {
+    #[serde(flatten)]
+    used: Used,
+    /// The files across the folders it holds, as last counted; `None` before
+    /// any folder has been.
+    files: Option<u64>,
 }
 
 /// The values from a folder's latest report to the server are `None` until a
@@ -110,6 +126,8 @@ struct Held {
     watching: bool,
     reason: Option<String>,
     health: Option<Snapshot>,
+    /// How many files the folder follows, as last counted.
+    files: Option<u64>,
 }
 
 impl Held {
@@ -119,6 +137,7 @@ impl Held {
             watching: false,
             reason: None,
             health: None,
+            files: None,
         }
     }
 
@@ -145,7 +164,6 @@ impl Held {
     }
 }
 
-#[derive(Default)]
 struct Inner {
     folders: BTreeMap<PathBuf, Held>,
     ended_at: Option<String>,
@@ -160,6 +178,32 @@ struct Inner {
     busy_since: Option<Instant>,
     /// Said that the lock has been held for long, until a write succeeds.
     busy_said: bool,
+    /// When the process reports its own cost.
+    schedule: Schedule,
+}
+
+impl Inner {
+    fn new(began: Instant) -> Inner {
+        Inner {
+            folders: BTreeMap::new(),
+            ended_at: None,
+            finished: false,
+            generation: 0,
+            written: 0,
+            last_write: None,
+            warned: false,
+            busy_since: None,
+            busy_said: false,
+            schedule: Schedule::new(began),
+        }
+    }
+
+    /// The folders held and the files they follow.
+    fn followed(&self) -> (u64, u64) {
+        let held = self.folders.values().filter(|held| held.watching).count();
+        let files = self.folders.values().filter_map(|held| held.files).sum();
+        (held as u64, files)
+    }
 }
 
 /// A watch process's entry in the machine's record of folder watches.
@@ -177,11 +221,20 @@ pub struct WatchRecord {
 /// A folder whose saved health can be looked at while it is watched.
 pub(super) trait Observed: Sync {
     fn observed(&self) -> Option<Snapshot>;
+
+    /// How many files the folder follows, where it can say.
+    fn files(&self) -> Option<u64> {
+        None
+    }
 }
 
 impl Observed for Folder {
     fn observed(&self) -> Option<Snapshot> {
         self.observed_health()
+    }
+
+    fn files(&self) -> Option<u64> {
+        self.files_followed()
     }
 }
 
@@ -215,7 +268,7 @@ impl WatchRecord {
             pid,
             started_at: store::now_iso(),
             heartbeat,
-            inner: Mutex::default(),
+            inner: Mutex::new(Inner::new(crate::clock::now())),
             writing: Arc::default(),
         }
     }
@@ -282,8 +335,11 @@ impl WatchRecord {
         }
     }
 
-    fn observed(&self, dir: &Path, health: Snapshot) {
-        self.change(dir, |held| held.health = Some(health));
+    fn observed(&self, dir: &Path, health: Snapshot, files: Option<u64>) {
+        self.change(dir, |held| {
+            held.health = Some(health);
+            held.files = files.or(held.files);
+        });
     }
 
     /// Runs `run`, the watch of the folder at `dir`, while the folder's saved
@@ -302,7 +358,7 @@ impl WatchRecord {
                     if let Some(health) = folder.observed()
                         && seen.as_ref() != Some(&health)
                     {
-                        self.observed(dir, health.clone());
+                        self.observed(dir, health.clone(), folder.files());
                         seen = Some(health);
                     }
                     let until = Instant::now() + LOOK;
@@ -316,7 +372,7 @@ impl WatchRecord {
             drop(raise);
             // What the last pass saved, before the look that is waiting.
             if let Some(health) = folder.observed() {
-                self.observed(dir, health);
+                self.observed(dir, health, folder.files());
             }
             ran
         })
@@ -417,7 +473,25 @@ impl WatchRecord {
                     warn(&reason);
                 }
             }
+            self.report_if_due();
             std::thread::sleep(POLL);
+        }
+    }
+
+    /// Reports the process's own cost when the day, or the start, says to. The
+    /// check is a clock reading, so it adds no wake to the loop that calls it.
+    fn report_if_due(&self) {
+        let report = {
+            let mut inner = self.inner();
+            if inner.finished {
+                return;
+            }
+            let watched = inner.folders.values().any(|held| held.watching);
+            let followed = inner.followed();
+            inner.schedule.take(crate::clock::now(), watched, followed)
+        };
+        if let Some(report) = report {
+            crate::telemetry::watch_report(&report);
         }
     }
 
@@ -475,6 +549,14 @@ impl WatchRecord {
             heartbeat_at: String::new(),
             heartbeat_interval_seconds: self.heartbeat.as_secs().max(1),
             ended_at: inner.ended_at.clone(),
+            usage: Some(Usage {
+                used: Used::now(),
+                files: inner
+                    .folders
+                    .values()
+                    .any(|held| held.files.is_some())
+                    .then(|| inner.followed().1),
+            }),
             folders: inner
                 .folders
                 .iter()
@@ -621,7 +703,7 @@ mod tests {
             code: super::super::health::Code::Conflict,
             count: 2,
         }];
-        record.observed(Path::new("/notes"), health);
+        record.observed(Path::new("/notes"), health, Some(12));
         record.write_now().unwrap();
         let raw = std::fs::read_to_string(temp.path().join(FILE_NAME)).unwrap();
         let file = read(&temp.path().join(FILE_NAME));
@@ -655,6 +737,50 @@ mod tests {
         assert_eq!(
             raw["processes"][0]["build_version"],
             serde_json::json!(env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
+    fn each_entry_carries_what_the_process_has_used_and_the_files_its_folders_follow() {
+        let temp = tempfile::tempdir().unwrap();
+        let record = record(temp.path(), 11);
+        record.write_now().unwrap();
+        let none = only(&read(&temp.path().join(FILE_NAME)), 11).usage.unwrap();
+        assert_eq!(none.files, None);
+        for (dir, files) in [("/a", 12), ("/b", 30)] {
+            record.listed(Path::new(dir), dir);
+            record.observed(Path::new(dir), Snapshot::default(), Some(files));
+        }
+        record.write_now().unwrap();
+        let raw: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(temp.path().join(FILE_NAME)).unwrap()).unwrap();
+        let usage = &raw["processes"][0]["usage"];
+        assert_eq!(usage["files"], 42);
+        for key in [
+            "full_passes",
+            "quick_passes",
+            "cpu_millis",
+            "resident_bytes",
+        ] {
+            assert!(usage[key].is_u64(), "{key} in {usage}");
+        }
+        assert!(
+            usage["peak_resident_bytes"].as_u64()
+                >= usage["resident_bytes"].as_u64().map(|n| n / 2)
+        );
+        // The figures are numbers alone: no path or name is among the keys.
+        let mut keys: Vec<_> = usage.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "cpu_millis",
+                "files",
+                "full_passes",
+                "peak_resident_bytes",
+                "quick_passes",
+                "resident_bytes"
+            ]
         );
     }
 
@@ -841,6 +967,7 @@ mod tests {
                     heartbeat_at: "2020-01-01T00:00:00.000Z".into(),
                     heartbeat_interval_seconds: 5,
                     ended_at: None,
+                    usage: None,
                     folders: Vec::new(),
                 },
                 Process {
@@ -850,6 +977,7 @@ mod tests {
                     heartbeat_at: store::now_iso(),
                     heartbeat_interval_seconds: 5,
                     ended_at: None,
+                    usage: None,
                     folders: Vec::new(),
                 },
                 // A heartbeat still to come is no heartbeat.
@@ -860,6 +988,7 @@ mod tests {
                     heartbeat_at: "2999-01-01T00:00:00.000Z".into(),
                     heartbeat_interval_seconds: 5,
                     ended_at: None,
+                    usage: None,
                     folders: Vec::new(),
                 },
                 // The same process id as the writer's, so a process that
@@ -871,6 +1000,7 @@ mod tests {
                     heartbeat_at: store::now_iso(),
                     heartbeat_interval_seconds: 5,
                     ended_at: None,
+                    usage: None,
                     folders: Vec::new(),
                 },
             ],
@@ -950,7 +1080,7 @@ mod tests {
         health.pending_uploads = 3;
         health.pending_downloads = 2;
         health.paused_removals = 1;
-        record.observed(dir, health);
+        record.observed(dir, health, None);
         record.write_now().unwrap();
         let after = only(&read(&temp.path().join(FILE_NAME)), 11).folders[0].clone();
         assert_eq!(after.first_sync_waiting, Some(false));

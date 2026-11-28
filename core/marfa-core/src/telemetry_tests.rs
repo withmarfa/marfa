@@ -808,3 +808,139 @@ fn no_content_key_or_credential_reaches_a_span_or_an_event() {
         );
     }
 }
+
+#[test]
+fn a_watch_report_carries_exactly_its_closed_list_of_numbers_and_the_release() {
+    let report = crate::telemetry::WatchReport {
+        cpu_millis: Some(1_500),
+        resident_bytes: Some(14_000_000),
+        peak_resident_bytes: Some(20_000_000),
+        uptime_seconds: 86_400,
+        folders: 2,
+        files: 1_000,
+        full_passes: 3,
+        quick_passes: 40,
+        release: "0.0.97",
+    };
+
+    let ((), log) = recorded(|| crate::telemetry::watch_report(&report));
+
+    let span = log.one("watch_report");
+    let names: Vec<_> = span.fields.keys().map(String::as_str).collect();
+    assert_eq!(
+        names,
+        [
+            "cpu_millis",
+            "files",
+            "folders",
+            "full_passes",
+            "peak_resident_bytes",
+            "quick_passes",
+            "release",
+            "resident_bytes",
+            "uptime_seconds",
+        ]
+    );
+    assert_eq!(span.fields["cpu_millis"], "1500");
+    assert_eq!(span.fields["quick_passes"], "40");
+    assert_eq!(span.fields["release"], "0.0.97");
+    assert!(log.events.is_empty(), "{log:?}");
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+
+    // A figure the system would not give is left out, not sent as zero.
+    let unread = crate::telemetry::WatchReport {
+        cpu_millis: None,
+        resident_bytes: None,
+        peak_resident_bytes: None,
+        ..report
+    };
+    let ((), log) = recorded(|| crate::telemetry::watch_report(&unread));
+    let span = log.one("watch_report");
+    assert!(!span.fields.contains_key("cpu_millis"));
+    assert!(!span.fields.contains_key("resident_bytes"));
+    assert!(!span.fields.contains_key("peak_resident_bytes"));
+    assert_eq!(span.fields["files"], "1000");
+}
+
+/// Runs the record's keeping on this thread, under a recorder, while `drive`
+/// runs beside it, and ends the keeping when `drive` does.
+#[cfg(debug_assertions)]
+fn kept_while(
+    record: &crate::folder::WatchRecord,
+    drive: impl FnOnce(&Recorder) + Send,
+) -> Recorder {
+    struct Finishing<'a>(&'a crate::folder::WatchRecord);
+    impl Drop for Finishing<'_> {
+        fn drop(&mut self) {
+            self.0.finish();
+        }
+    }
+    let recorder = Recorder::default();
+    std::thread::scope(|scope| {
+        let seen = recorder.clone();
+        scope.spawn(move || {
+            let _end = Finishing(record);
+            drive(&seen);
+        });
+        tracing::subscriber::with_default(recorder.clone(), || record.keep(|_| {}));
+    });
+    recorder
+}
+
+#[cfg(debug_assertions)]
+fn reports(recorder: &Recorder) -> usize {
+    recorder.log().spans("watch_report").len()
+}
+
+#[cfg(debug_assertions)]
+fn until(recorder: &Recorder, count: usize) {
+    let by = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while reports(recorder) < count {
+        assert!(
+            std::time::Instant::now() < by,
+            "no report number {count} in {:?}",
+            recorder.log()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_watch_reports_at_its_start_and_again_a_day_later_on_the_clock_it_waits_by() {
+    use std::time::Duration;
+
+    crate::clock::set_manual(true);
+    let temp = tempfile::tempdir().unwrap();
+    let record = crate::folder::WatchRecord::beside(&crate::folder::Registry::at(
+        temp.path().join("folders.json"),
+    ));
+    let quiet = Duration::from_millis(400);
+
+    let recorder = kept_while(&record, |recorder| {
+        // Nothing is watched and the wait for a folder has not passed.
+        std::thread::sleep(quiet);
+        assert_eq!(reports(recorder), 0);
+        crate::clock::advance(Duration::from_secs(6));
+        until(recorder, 1);
+        // The day has not passed, so no loop of the watch reports again.
+        crate::clock::advance(Duration::from_secs(23 * 3600));
+        std::thread::sleep(quiet);
+        assert_eq!(reports(recorder), 1);
+        crate::clock::advance(Duration::from_secs(2 * 3600));
+        until(recorder, 2);
+        std::thread::sleep(quiet);
+        assert_eq!(reports(recorder), 2);
+    });
+    crate::clock::set_manual(false);
+
+    let log = recorder.log();
+    let spans = log.spans("watch_report");
+    assert_eq!(spans.len(), 2, "{log:?}");
+    assert_eq!(spans[0].fields["uptime_seconds"], "6");
+    assert_eq!(spans[1].fields["uptime_seconds"], "90006");
+    assert_eq!(spans[1].fields["folders"], "0");
+    assert_eq!(spans[1].fields["release"], env!("CARGO_PKG_VERSION"));
+    assert!(spans[1].fields.contains_key("cpu_millis"));
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
