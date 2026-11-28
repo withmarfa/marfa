@@ -115,8 +115,8 @@ fn meters(
         .with_description("The memory the server process holds in physical memory.")
         .with_unit("By")
         .with_callback(|observer| {
-            if let Some(bytes) =
-                crate::app::metrics::resident_bytes().and_then(|bytes| i64::try_from(bytes).ok())
+            if let Some(bytes) = marfa_telemetry::process::resident_bytes()
+                .and_then(|bytes| i64::try_from(bytes).ok())
             {
                 observer.observe(bytes, &[]);
             }
