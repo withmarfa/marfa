@@ -698,10 +698,12 @@ mod tests {
             "item",
             "steps",
             id,
-            values.as_object().unwrap(),
-            &[],
-            &serde_json::Map::new(),
-            at,
+            crate::tables::HeldRow {
+                values: values.as_object().unwrap(),
+                withheld: &[],
+                refs: &serde_json::Map::new(),
+                updated_at: at,
+            },
         )
         .unwrap();
     }
@@ -803,10 +805,12 @@ mod tests {
             "item",
             "steps",
             id,
-            values.as_object().unwrap(),
-            &[],
-            &serde_json::Map::new(),
-            at,
+            crate::tables::HeldRow {
+                values: values.as_object().unwrap(),
+                withheld: &[],
+                refs: &serde_json::Map::new(),
+                updated_at: at,
+            },
         )
         .unwrap();
     }

@@ -689,10 +689,12 @@ fn hold(conn: &Connection, item: &str, table: &str, id: &str, row: Option<&Held>
                 item,
                 table,
                 id,
-                &row.values,
-                &row.withheld,
-                &row.refs,
-                &row.updated_at,
+                tables::HeldRow {
+                    values: &row.values,
+                    withheld: &row.withheld,
+                    refs: &row.refs,
+                    updated_at: &row.updated_at,
+                },
             )?;
         }
         None => {
@@ -1076,10 +1078,12 @@ pub(crate) fn take_server_row(
                 item,
                 table,
                 id,
-                row.values,
-                row.withheld,
-                &refs,
-                row.updated_at,
+                tables::HeldRow {
+                    values: row.values,
+                    withheld: row.withheld,
+                    refs: &refs,
+                    updated_at: row.updated_at,
+                },
             )
         }
         None => tables::delete_row(conn, item, table, id),

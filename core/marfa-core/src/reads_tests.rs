@@ -1003,10 +1003,12 @@ fn changes_since_names_each_table_a_fill_or_a_later_row_changed_and_no_other() {
             item,
             "steps",
             "r1",
-            values.as_object().unwrap(),
-            &[],
-            &serde_json::Map::new(),
-            "2026-01-01T00:00:00Z",
+            crate::tables::HeldRow {
+                values: values.as_object().unwrap(),
+                withheld: &[],
+                refs: &serde_json::Map::new(),
+                updated_at: "2026-01-01T00:00:00Z",
+            },
         )
         .unwrap()
     };

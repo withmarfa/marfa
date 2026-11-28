@@ -475,16 +475,28 @@ fn invalid() -> CoreError {
     crate::reach::invalid()
 }
 
+/// A row to hold: its `values` as the server answered them, the columns it
+/// `withheld`, and each column written as an item's id in `refs`, to that id.
+pub(crate) struct HeldRow<'a> {
+    pub(crate) values: &'a Map<String, Value>,
+    pub(crate) withheld: &'a [String],
+    pub(crate) refs: &'a Map<String, Value>,
+    pub(crate) updated_at: &'a str,
+}
+
 pub(crate) fn hold_row(
     conn: &Connection,
     item: &str,
     table: &str,
     id: &str,
-    values: &Map<String, Value>,
-    withheld: &[String],
-    refs: &Map<String, Value>,
-    updated_at: &str,
+    row: HeldRow<'_>,
 ) -> Result<bool> {
+    let HeldRow {
+        values,
+        withheld,
+        refs,
+        updated_at,
+    } = row;
     let mut values = values.clone();
     for column in withheld {
         values.remove(column);
