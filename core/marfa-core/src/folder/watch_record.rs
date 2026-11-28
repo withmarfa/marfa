@@ -181,6 +181,10 @@ struct Inner {
     busy_said: bool,
     /// When the process reports its own cost.
     schedule: Schedule,
+    /// How many times `keep` has gone round, so a test can tell that a turn
+    /// ran whole after it moved the clock.
+    #[cfg(test)]
+    turns: u64,
 }
 
 impl Inner {
@@ -196,6 +200,8 @@ impl Inner {
             busy_since: None,
             busy_said: false,
             schedule: Schedule::new(began),
+            #[cfg(test)]
+            turns: 0,
         }
     }
 
@@ -441,7 +447,9 @@ impl WatchRecord {
                 if inner.finished {
                     return;
                 }
-                let since = inner.last_write.map(|at| at.elapsed());
+                let since = inner
+                    .last_write
+                    .map(|at| crate::clock::now().saturating_duration_since(at));
                 let changed = inner.generation != inner.written;
                 beat_due(since, changed, self.heartbeat)
                     .then(|| (self.process(&inner), inner.generation))
@@ -469,19 +477,21 @@ impl WatchRecord {
                     }
                     // Tried again at the next poll.
                     Ok(Landed::Busy) => {
-                        let since = *inner.busy_since.get_or_insert_with(Instant::now);
-                        (since.elapsed() > self.heartbeat * 3
+                        let now = crate::clock::now();
+                        let since = *inner.busy_since.get_or_insert(now);
+                        let held_for = now.saturating_duration_since(since);
+                        (held_for > self.heartbeat * 3
                             && !std::mem::replace(&mut inner.busy_said, true))
                         .then(|| {
                             format!(
                                 "cannot write {}: another process has held its lock for {} seconds",
                                 self.path.display(),
-                                since.elapsed().as_secs()
+                                held_for.as_secs()
                             )
                         })
                     }
                     Err(reason) => {
-                        inner.last_write = Some(Instant::now());
+                        inner.last_write = Some(crate::clock::now());
                         inner.written = built;
                         (!std::mem::replace(&mut inner.warned, true)).then_some(reason)
                     }
@@ -492,6 +502,10 @@ impl WatchRecord {
                 }
             }
             self.report_if_due();
+            #[cfg(test)]
+            {
+                self.inner().turns += 1;
+            }
             std::thread::sleep(POLL);
         }
     }
@@ -636,7 +650,7 @@ fn publish(path: &Path, pid: u32, mut mine: Process, wait: Duration) -> Result<L
         .filter(|other| other.pid != pid && recent(other))
         .collect();
     mine.heartbeat_at = store::now_iso();
-    let stamped = Instant::now();
+    let stamped = crate::clock::now();
     processes.push(mine);
     let bytes = serde_json::to_vec_pretty(&File {
         version: FORMAT,
@@ -1213,38 +1227,48 @@ mod tests {
         });
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn a_lock_held_past_three_intervals_is_said_once_and_again_only_after_a_write() {
+        let _manual = crate::clock::ManualClock::set(crate::clock::alone());
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join(FILE_NAME);
         let record = WatchRecord::at(path.clone(), 11, Duration::from_secs(1));
         record.listed(Path::new("/a"), "folder-a");
         let said = Mutex::new(Vec::new());
+        let said_so_far = || said.lock().unwrap().clone();
+        // Moves the clock, then waits until `keep` has gone round once whole
+        // after the move, so what it says is what the new time makes it say.
+        let moved = |by: Duration| {
+            crate::clock::advance(by);
+            let target = record.inner().turns + 2;
+            while record.inner().turns < target {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        };
         let held = lock_held(temp.path());
         std::thread::scope(|scope| {
             scope.spawn(|| record.keep(|reason| said.lock().unwrap().push(reason.to_string())));
             let _end = Finishing(&record);
+            moved(Duration::ZERO);
             // Not yet three intervals: nothing said.
-            std::thread::sleep(Duration::from_millis(2500));
-            let now = said.lock().unwrap().clone();
-            assert!(now.is_empty(), "{now:?}");
-            std::thread::sleep(Duration::from_millis(2000));
-            let now = said.lock().unwrap().clone();
-            assert_eq!(now.len(), 1, "{now:?}");
-            assert!(said.lock().unwrap()[0].contains("lock"));
-            std::thread::sleep(Duration::from_millis(1200));
-            assert_eq!(said.lock().unwrap().len(), 1, "said again unchanged");
+            moved(Duration::from_millis(2500));
+            assert!(said_so_far().is_empty(), "{:?}", said_so_far());
+            moved(Duration::from_millis(2000));
+            assert_eq!(said_so_far().len(), 1, "{:?}", said_so_far());
+            assert!(said_so_far()[0].contains("lock"));
+            moved(Duration::from_millis(1200));
+            assert_eq!(said_so_far().len(), 1, "said again unchanged");
             drop(held);
-            let until = Instant::now() + Duration::from_secs(5);
-            while !path.exists() {
-                assert!(Instant::now() < until, "never written");
-                std::thread::sleep(Duration::from_millis(20));
-            }
+            moved(Duration::ZERO);
+            assert!(path.exists(), "never written once the lock was free");
             // Held again, past three intervals: said again.
             let held = lock_held(temp.path());
-            std::thread::sleep(Duration::from_millis(4500));
-            let now = said.lock().unwrap().clone();
-            assert_eq!(now.len(), 2, "{now:?}");
+            moved(Duration::from_secs(1));
+            moved(Duration::from_millis(2500));
+            assert_eq!(said_so_far().len(), 1, "{:?}", said_so_far());
+            moved(Duration::from_millis(1000));
+            assert_eq!(said_so_far().len(), 2, "{:?}", said_so_far());
             drop(held);
             record.finish();
         });
