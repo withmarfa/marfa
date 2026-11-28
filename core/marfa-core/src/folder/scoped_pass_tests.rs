@@ -597,6 +597,8 @@ fn a_quick_pass_while_a_directory_is_unwatched_reads_that_directory_only_when_th
 
 #[test]
 fn the_look_at_an_unwatched_directory_of_any_size_reads_it_and_no_more_of_the_folder() {
+    // A manual clock another test sets would make the look due.
+    let _alone = crate::clock::alone();
     // More than a pass names, and more than a quick pass looks at.
     for beneath in [300, 1100] {
         let mut all = names(40);

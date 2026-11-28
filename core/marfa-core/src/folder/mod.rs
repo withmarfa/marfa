@@ -41,6 +41,8 @@ pub use pull::{PullReport, copy_changed};
 pub use removal::{Confirmed, Restored};
 pub use retained::{KeptDiscarded, KeptFile};
 mod health;
+#[cfg(all(test, debug_assertions))]
+mod probe;
 pub mod registry;
 pub mod settings;
 pub(crate) mod settings_file;
