@@ -152,7 +152,7 @@ When a folder assesses a large removal whose file count exceeds `removal_thresho
 
 **Reason:** in a large directory a quarter is hundreds of files, too many to lose without being asked.
 
-**Tests:** `device/folders-contract-b.test.ts › pauses a pass that removes more than 100 files whatever their share, judging each pass alone`.
+**Tests:** `device/folders-contract-b.test.ts › pauses a pass that removes more than 100 files whatever their share, judging each pass alone`, `› pauses a pass past a lowered ceiling though it removes a small share of the folder`.
 
 ### `folder-guards/removal-judged-per-pass`
 

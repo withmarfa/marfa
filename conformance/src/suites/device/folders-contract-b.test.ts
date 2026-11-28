@@ -352,18 +352,21 @@ const deletesSent = (made: BindingFolderHarness) =>
       request.method === "DELETE" && /^\/items\/[^/]+$/.test(request.pathname),
   ).length;
 
-it("pauses a pass that removes more than 100 files whatever their share, judging each pass alone", async () => {
-  // A fraction of 1 leaves only the ceiling to pause a pass, whatever the
-  // share of the folder it removes.
-  const many = Array.from({ length: 230 }, (_, n) => ({
+/** 230 bound notes: the three passes of the ceiling fixtures need at least 221. */
+const manyNotes = () =>
+  Array.from({ length: 230 }, (_, n) => ({
     item: {
       id: `01a00000-0000-7000-8000-0000000${String(n).padStart(5, "0")}`,
       version: 1,
       properties: { title: `Many ${String(n)}`, body: "body\n" },
     },
   }));
+
+it("pauses a pass that removes more than 100 files whatever their share, judging each pass alone", async () => {
+  // A fraction of 1 leaves only the ceiling to pause a pass, whatever the
+  // share of the folder it removes.
   const made = await bindingFolderHarness("contract-b-ceiling", {
-    items: { "core.note": many },
+    items: { "core.note": manyNotes() },
     settings: {
       query: { types: ["core.note"] },
       removal_threshold: { fraction: 1 },
@@ -395,6 +398,29 @@ it("pauses a pass that removes more than 100 files whatever their share, judging
   const decided = await lookPastTheGrace(made);
   expect(decided.paused).toBe(101);
   expect(deletesSent(made), "a removal past the ceiling was sent").toBe(sent);
+});
+
+it("pauses a pass past a lowered ceiling though it removes a small share of the folder", async () => {
+  // 21 of 230 files is 9%, under both default thresholds, so only the
+  // ceiling of 20 can pause it.
+  const made = await bindingFolderHarness("contract-b-ceiling-small", {
+    items: { "core.note": manyNotes() },
+    settings: {
+      query: { types: ["core.note"] },
+      removal_threshold: { ceiling: 20 },
+    },
+  });
+  harness = made;
+  scriptFolderWrites(made, { edges: new EdgeDoor() });
+  expect((await made.bound.testOpen()).ok).toBe(true);
+  expect((await made.bound.testPull()).ok).toBe(true);
+  for (let n = 0; n < 21; n += 1)
+    rmSync(join(made.dir, `Many ${String(n)}.md`));
+  const scanned = await made.bound.testScan();
+  expect(scanned.ok && scanned.value.paused).toBe(21);
+  const decided = await lookPastTheGrace(made);
+  expect(decided.paused).toBe(21);
+  expect(deletesSent(made), "a removal past the ceiling was sent").toBe(0);
 });
 
 it("pauses nothing where two passes each remove files under the default thresholds, though together they pass them", async () => {
