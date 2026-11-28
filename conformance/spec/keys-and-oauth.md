@@ -2656,6 +2656,14 @@ When an app revokes an access token at `POST /oauth/revoke`, the server MUST ref
 
 **Tests:** `compliance/oauth-tokens.test.ts › of an access token ends it at once`.
 
+### `keys-and-oauth/revoke-access-token-keeps-grant`
+
+When an app revokes an access token at `POST /oauth/revoke`, the server MUST keep the grant, its other access tokens, its refresh chains and its webhook subscriptions.
+
+**Reason:** An app that cannot keep its tokens revokes only an access token, because another sign-in may share the client, and the revocation of a refresh token ends the grant for every sign-in (`keys-and-oauth/revoke-refresh-token`).
+
+**Tests:** `compliance/app-widening.test.ts › keeps the grant, its other access tokens, its refresh chains and its subscriptions`.
+
 ### `keys-and-oauth/revoke-refresh-token`
 
 When an app revokes at `POST /oauth/revoke` its newest refresh token, one no refresh has rotated, while that token's chain has not ended and the token has not expired, the server MUST end the app's grant: its tokens, its entry in `GET /grants` and the person's consent.
