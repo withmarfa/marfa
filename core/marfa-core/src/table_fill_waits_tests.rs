@@ -141,7 +141,7 @@ fn held() -> Then {
 }
 
 /// Answered only once `ready` is raised.
-fn until(ready: &Arc<AtomicBool>, answer: Answer) -> Answer {
+pub(crate) fn until(ready: &Arc<AtomicBool>, answer: Answer) -> Answer {
     Answer::WaitFor {
         ready: Arc::clone(ready),
         answer: Box::new(answer),

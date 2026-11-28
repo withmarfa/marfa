@@ -917,9 +917,11 @@ pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<
         .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
 }
 
-/// `fill` for the catch-up that has committed its events: a failure other than
-/// its stop or an expired copy is the fill's own, named in the report with
-/// the tables it left owed, and the catch-up still succeeded.
+/// `fill` for the catch-up that has committed its events: a failure that says
+/// only that the server is out of reach is the fill's own, named in the report
+/// with the tables it left owed, and the catch-up still succeeded. Any other
+/// failure, such as a refused credential, a changed contract, a server that is
+/// not this copy's or a store that fails, is the catch-up's own.
 pub(crate) fn fill_after_events(
     core: &Core,
     context: &Context,
@@ -930,17 +932,17 @@ pub(crate) fn fill_after_events(
         return Ok(pass.report);
     };
     let error = context.failed(core, error).unwrap_or_else(|error| error);
-    if matches!(error, CoreError::Canceled | CoreError::CopyExpired { .. }) {
+    if !error.is_unreachable() && !fails_one_table(&error) {
         return Err(error);
     }
     crate::telemetry::degraded!(&error);
     let mut report = pass.report;
-    report.unfilled = unfilled(core)?;
+    report.failed += 1;
+    // The tables that failed are owed, so they are the least the count can be
+    // when it cannot be read.
+    report.unfilled = unfilled(core).unwrap_or(report.failed);
     report.failure = Some(match pass.reading.take() {
-        Some((item, table)) => {
-            report.failed += 1;
-            format!("the table {table} of {item}: {error}")
-        }
+        Some((item, table)) => format!("the table {table} of {item}: {error}"),
         None => error.to_string(),
     });
     Ok(report)

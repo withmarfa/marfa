@@ -746,7 +746,7 @@ describe("how a device fills a table", () => {
     });
   });
 
-  it("answers a catch-up that took its events as succeeded, naming the failure in tables, when its fill fails", async () => {
+  it("answers a catch-up whose events committed as succeeded, naming the failure in tables, when its fill cannot reach the server", async () => {
     const type = await tableType();
     const device = await hydratedBinding([type], "fill-after-events");
     value(await device.call("holdTable", type, "steps"));

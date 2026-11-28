@@ -6700,19 +6700,19 @@ When a device has left a table unfilled under `device/table-fill-failed`, a devi
 
 ### `device/table-fill-failed-after-events`
 
-If the fill of the tables a device holds that follows the events a catch-up applied fails, for a reason other than a stop or an expired copy, then a device MUST answer the catch-up as having succeeded, with the cursor of the events it applied.
+If the fill of the tables a device holds that follows a catch-up whose events have committed fails because the server cannot be reached, then a device MUST answer the catch-up as having succeeded, with the cursor of those events.
 
-**Reason:** the events are committed, so an error would tell a caller that took them to skip the refresh for them, and the tables the fill left owed are filled by the next catch-up or follow.
+**Reason:** the events are committed, so an error would tell a caller that took them to skip the refresh for them, and the tables the fill left owed are filled by the next catch-up or follow. A failure that does not say the server is out of reach, such as a refused credential or an expired copy, is still the catch-up's error, because success would claim what the device does not know.
 
-**Tests:** `device/tables-live.test.ts › answers a catch-up that took its events as succeeded, naming the failure in tables, when its fill fails`.
+**Tests:** `device/tables-live.test.ts › answers a catch-up whose events committed as succeeded, naming the failure in tables, when its fill cannot reach the server`.
 
 ### `device/table-fill-failed-named`
 
-If the fill of the tables a device holds that follows the events a catch-up applied fails, for a reason other than a stop or an expired copy, then a device MUST name the failure in `tables.failure` of the catch-up's answer.
+If the fill of the tables a device holds that follows a catch-up whose events have committed fails because the server cannot be reached, then a device MUST name the failure in `tables.failure` of the catch-up's answer.
 
 **Reason:** `tables` is where a caller reads whether the tables are whole, and a catch-up that answered success without it would claim they are.
 
-**Tests:** `device/tables-live.test.ts › answers a catch-up that took its events as succeeded, naming the failure in tables, when its fill fails`.
+**Tests:** `device/tables-live.test.ts › answers a catch-up whose events committed as succeeded, naming the failure in tables, when its fill cannot reach the server`.
 
 ### `device/table-fill-failed-again`
 
@@ -6732,7 +6732,7 @@ When a device reads a table's size or its rows to hold them, a device MUST send 
 
 ### `device/table-fill-report`
 
-When a catch-up ends on its live marker, a device MUST report in `tables` how many tables its fill left `whole`, found past the cap as `online`, left `unfilled` and left because a read `failed`, the last such `failure`, and the `pages` and `rows` it read.
+When a catch-up ends on its live marker, a device MUST report in `tables` how many tables its fill left `whole`, found past the cap as `online`, left `unfilled` and left because its fill `failed`, the last such `failure`, and the `pages` and `rows` it read.
 
 **Tests:** `device/tables-live.test.ts › reads a table past the cap from the server, holding none of its rows, and holds it whole once a delete brings it within`, `› fills every other table, and ends no catch-up or follow, while one table's page read keeps failing`, `device/catch-up.test.ts › reports what a catch-up carried, and refuses one that stopped short`.
 
