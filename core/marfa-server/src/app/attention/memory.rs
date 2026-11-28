@@ -76,9 +76,12 @@ impl Memory {
         }
     }
 
-    /// Drops every mark `keep` refuses, deciding under the lock that `begin` takes.
-    pub fn retain(&self, keep: impl Fn(&Key) -> bool) {
-        self.marks().retain(|key, _| keep(key));
+    /// Drops every mark `keep` refuses. `read` runs once the lock that `begin` takes is held, so
+    /// a mark made after it ran waits for the lock and is not judged by what `read` saw.
+    pub fn retain<S>(&self, read: impl FnOnce() -> S, keep: impl Fn(&S, &Key) -> bool) {
+        let mut marks = self.marks();
+        let read = read();
+        marks.retain(|key, _| keep(&read, key));
     }
 
     pub fn forget(&self, kind: &str, reference: &str) {
@@ -119,6 +122,8 @@ impl Drop for Pending {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::attention::faults::{Faults, Place};
+    use crate::telemetry::Kind;
 
     #[test]
     fn an_entry_dropped_before_any_send_is_unmarked_and_one_handed_stays_sent() {
@@ -141,6 +146,47 @@ mod tests {
         assert!(memory.begin("health", "disk", || false).is_none());
         assert_eq!(memory.get("health", "disk"), None, "no mark is left behind");
         assert!(memory.begin("health", "disk", || true).is_some());
+    }
+
+    #[test]
+    fn a_mark_begun_after_a_check_read_what_stands_survives_its_forgetting() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let memory = Arc::new(Memory::default());
+        let faults = Arc::new(Faults::default());
+        let (read_tx, read_rx) = mpsc::channel();
+        let (begun_tx, begun_rx) = mpsc::channel();
+        let fault_thread = {
+            let (memory, faults) = (memory.clone(), faults.clone());
+            std::thread::spawn(move || {
+                read_rx.recv().unwrap();
+                let entry = faults
+                    .record(Kind::Database, &Place::Job("backup"), 0)
+                    .unwrap();
+                let pending = memory.begin("fault", &entry.reference, || true).unwrap();
+                begun_tx.send(()).unwrap();
+                pending
+            })
+        };
+        memory.retain(
+            || {
+                let standing = faults.references(0);
+                assert!(standing.is_empty());
+                read_tx.send(()).unwrap();
+                // A fixed check holds the lock here, so the fault cannot be marked yet; the wait
+                // only lets an unfixed check show that it can.
+                let _ = begun_rx.recv_timeout(Duration::from_millis(300));
+                standing
+            },
+            |standing, (kind, reference)| kind != "fault" || standing.contains(reference),
+        );
+        let pending = fault_thread.join().unwrap();
+        assert!(matches!(
+            memory.get("fault", "database:job backup"),
+            Some(Mark::Pending(_))
+        ));
+        drop(pending);
     }
 
     #[test]
