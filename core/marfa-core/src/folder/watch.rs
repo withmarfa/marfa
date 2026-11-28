@@ -3122,6 +3122,8 @@ mod backoff_tests {
                 ended.store(true, Ordering::SeqCst);
                 watched
             });
+            // Raised on a panic too, so the scope's wait for the watch ends.
+            let _stop = Raise(&stop);
             ten_minutes(&probe, &ended, |_| {});
             stop.store(true, Ordering::SeqCst);
             watching.join().unwrap()
@@ -3241,14 +3243,17 @@ mod backoff_tests {
                 let _ = folder.watch(&stop, |_| Ok::<(), ()>(()));
                 ended.store(true, Ordering::SeqCst);
             });
+            // Raised on a panic too, so the scope's wait for the watch ends.
+            let _stop = Raise(&stop);
             // The window starts once the watch has taken the change.
             let mut taken_at = None;
             ten_minutes(&probe, &ended, |second| {
                 if second == 590 {
                     before = probe.passes();
+                    let earlier = probe.changes_to(touched);
                     change.take().unwrap()();
                     until("the watch never took the change", &ended, || {
-                        probe.took_a_change_to(touched)
+                        probe.changes_to(touched) > earlier
                     });
                     taken_at = Some(second);
                 }

@@ -54,11 +54,12 @@ impl Probe {
         self.passes.load(Ordering::SeqCst)
     }
 
-    /// Whether the watch has taken a change to a file with this name.
-    pub(super) fn took_a_change_to(&self, name: &OsStr) -> bool {
+    /// How many changes to a file with this name the watch has taken.
+    pub(super) fn changes_to(&self, name: &OsStr) -> usize {
         held(&self.changed)
             .iter()
-            .any(|path| path.file_name() == Some(name))
+            .filter(|path| path.file_name() == Some(name))
+            .count()
     }
 }
 
