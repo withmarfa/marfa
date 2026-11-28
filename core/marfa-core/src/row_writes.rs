@@ -273,26 +273,33 @@ fn read_held(
 
 /// The columns of the table that hold an item's id, as the copy's catalog declares them; none where it declares no such table.
 fn item_columns(conn: &Connection, item: &str, table: &str) -> Result<Vec<String>> {
+    Ok(declared_item_columns(conn, item, table)?.unwrap_or_default())
+}
+
+/// `None` where the copy holds no declaration of the table.
+fn declared_item_columns(conn: &Connection, item: &str, table: &str) -> Result<Option<Vec<String>>> {
     let held: bool = conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM items WHERE id = ?1)",
         [item],
         |row| row.get(0),
     )?;
     if !held {
-        return Ok(Vec::new());
+        return Ok(None);
     }
     let columns = match columns_of(conn, item, table) {
         Ok(columns) => columns,
-        Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => return Ok(Vec::new()),
+        Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => return Ok(None),
         Err(error) => return Err(error),
     };
-    Ok(columns
-        .iter()
-        .filter(|(_, column)| {
-            column.get("type").and_then(Value::as_str) == Some(marfa_rules::schema::ITEM_KIND)
-        })
-        .map(|(name, _)| name.clone())
-        .collect())
+    Ok(Some(
+        columns
+            .iter()
+            .filter(|(_, column)| {
+                column.get("type").and_then(Value::as_str) == Some(marfa_rules::schema::ITEM_KIND)
+            })
+            .map(|(name, _)| name.clone())
+            .collect(),
+    ))
 }
 
 fn whole(conn: &Connection, item: &str, table: &str) -> Result<bool> {
@@ -766,6 +773,91 @@ pub(crate) fn laid_or_beneath(conn: &Connection, item: &str, table: &str) -> Res
     )?;
     let rows = query.query_map(params![item, table], |row| row.get(0))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// For a store whose held rows kept no marks: marks each held row's text of an
+/// item id's form in a column of type `item` as the server does, and owes again
+/// each table that holds such text in another column, which only the server can
+/// mark. A table of an item whose create waits is never owed: the server holds
+/// none of its rows.
+pub(crate) fn mark_held(conn: &Connection) -> Result<()> {
+    let held: Vec<(String, String, String)> = conn
+        .prepare(
+            "SELECT item_id, name, state FROM item_tables
+              WHERE state IN (?1, ?2) ORDER BY item_id, name",
+        )?
+        .query_map(params![tables::FILLING, tables::WHOLE], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    for (item, table, state) in held {
+        let declared = declared_item_columns(conn, &item, &table)?;
+        let local = !store::untaken_creates_for_item(conn, &item)?.is_empty();
+        let laid = state == tables::WHOLE;
+        let mut beneath_rows = Vec::new();
+        let mut held_rows = Vec::new();
+        let mut unsure = false;
+        let mut marked = |mut row: Held| {
+            row.refs = Map::new();
+            for (column, value) in &row.values {
+                let Some(text) = value.as_str() else { continue };
+                if !marfa_rules::validation::is_id(text) {
+                    continue;
+                }
+                match &declared {
+                    Some(columns) if columns.contains(column) => {
+                        row.refs.insert(column.clone(), value.clone());
+                    }
+                    _ => unsure = true,
+                }
+            }
+            row
+        };
+        {
+            let mut query = conn.prepare(
+                "SELECT id, body, withheld, updated_at FROM rows_beneath
+                  WHERE item_id = ?1 AND name = ?2 AND ?3 AND body IS NOT NULL",
+            )?;
+            let mut rows = query.query(params![item, table, laid])?;
+            while let Some(row) = rows.next()? {
+                let id: String = row.get(0)?;
+                let body: String = row.get(1)?;
+                let withheld: Option<String> = row.get(2)?;
+                let held = read_held(&body, withheld.as_deref(), None, row.get(3)?)?;
+                beneath_rows.push((id, marked(held)));
+            }
+            let mut query = conn.prepare(
+                "SELECT r.id, r.body, r.withheld, r.updated_at FROM table_rows r
+                  WHERE r.item_id = ?1 AND r.name = ?2
+                    AND NOT (?3 AND EXISTS (SELECT 1 FROM rows_beneath b
+                              WHERE b.item_id = r.item_id AND b.name = r.name AND b.id = r.id))",
+            )?;
+            let mut rows = query.query(params![item, table, laid])?;
+            while let Some(row) = rows.next()? {
+                let id: String = row.get(0)?;
+                let body: String = row.get(1)?;
+                let withheld: Option<String> = row.get(2)?;
+                let held = read_held(&body, withheld.as_deref(), None, row.get(3)?)?;
+                held_rows.push((id, marked(held)));
+            }
+        }
+        if unsure && !local {
+            tables::owe_table(conn, &item, &table)?;
+            continue;
+        }
+        for (id, row) in &beneath_rows {
+            set_beneath(conn, &item, &table, id, Some(row))?;
+        }
+        for (id, row) in &held_rows {
+            hold(conn, &item, &table, id, Some(row))?;
+        }
+        if laid {
+            for id in laid_or_beneath(conn, &item, &table)? {
+                lay(conn, &item, &table, &id)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The row as the server last answered it, as `(body, withheld, updated_at)`:

@@ -947,21 +947,42 @@ fn a_store_at_an_earlier_version_is_upgraded_in_place_with_its_queue_kept() {
         "ALTER TABLE meta_before RENAME TO meta",
         "SELECT * FROM absent",
     ];
-    assert!(upgrade(&conn, 7, &steps).is_err());
+    assert!(upgrade(&conn, 7, &steps, &[]).is_err());
+    assert_eq!(version(&conn).unwrap(), 7);
+    assert!(held_shape(&conn).unwrap().contains_key("meta_before"));
+    // So does a step only code takes, after the SQL steps.
+    fn fails(conn: &Connection) -> Result<(), CoreError> {
+        conn.execute_batch("SELECT * FROM absent")?;
+        Ok(())
+    }
+    fn takes(conn: &Connection) -> Result<(), CoreError> {
+        conn.execute_batch("ALTER TABLE meta RENAME TO meta_taken")?;
+        Ok(())
+    }
+    let steps = ["ALTER TABLE meta_before RENAME TO meta", "SELECT 1"];
+    assert!(upgrade(&conn, 7, &steps, &[(9, fails)]).is_err());
     assert_eq!(version(&conn).unwrap(), 7);
     assert!(held_shape(&conn).unwrap().contains_key("meta_before"));
 
-    let steps = ["ALTER TABLE meta_before RENAME TO meta", "SELECT 1"];
-    upgrade(&conn, 7, &steps).unwrap();
+    // A code step for a version the store is already at does not run.
+    upgrade(&conn, 7, &steps, &[(7, fails), (8, takes)]).unwrap();
     assert_eq!(version(&conn).unwrap(), 9);
-    assert!(held_shape(&conn).unwrap().contains_key("meta"));
+    assert!(held_shape(&conn).unwrap().contains_key("meta_taken"));
+    conn.execute_batch("ALTER TABLE meta_taken RENAME TO meta")
+        .unwrap();
     assert_eq!(queued(&path), before, "the upgrade changed the queue");
     // Upgraded already: nothing runs again.
-    upgrade(&conn, 7, &["SELECT * FROM absent", "SELECT * FROM absent"]).unwrap();
+    upgrade(
+        &conn,
+        7,
+        &["SELECT * FROM absent", "SELECT * FROM absent"],
+        &[(9, fails)],
+    )
+    .unwrap();
     // A version before the oldest is refused, unchanged.
     conn.pragma_update(None, "user_version", 3).unwrap();
     assert!(matches!(
-        upgrade(&conn, 7, &steps),
+        upgrade(&conn, 7, &steps, &[]),
         Err(CoreError::WrongSchema { .. })
     ));
     assert_eq!(version(&conn).unwrap(), 3);
@@ -1100,7 +1121,7 @@ fn a_hold_saved_at_schema_12_keeps_its_reason_waits_on_nothing_and_names_the_for
 }
 
 #[test]
-fn a_store_at_schema_13_owes_every_table_again_and_keeps_its_queue() {
+fn a_store_at_schema_13_owes_again_only_a_table_whose_marks_it_cannot_tell() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("core.sqlite");
     drop(open(&path).unwrap());
@@ -1111,12 +1132,13 @@ fn a_store_at_schema_13_owes_every_table_again_and_keeps_its_queue() {
             "ALTER TABLE table_rows DROP COLUMN refs;
              ALTER TABLE rows_beneath DROP COLUMN refs;
              INSERT INTO item_tables (item_id, name, state, cursor, rows, bytes)
-               VALUES ('i', 't', 'whole', NULL, 1, 20), ('i', 'u', 'online', NULL, 0, 0);
+               VALUES ('i', 't', 'whole', NULL, 1, 11), ('i', 'u', 'whole', NULL, 1, 46),
+                      ('i', 'v', 'online', NULL, 0, 0);
              INSERT INTO table_rows (item_id, name, id, body, updated_at)
-               VALUES ('i', 't', 'r', '{\"who\":\"x\"}', '2026-01-01T00:00:00Z');
-             INSERT INTO row_refs (item_id, name, row_id, target) VALUES ('i', 't', 'r', 'x');
-             INSERT INTO rows_beneath (item_id, name, id, body, updated_at)
-               VALUES ('i', 't', 'r', '{}', '2026-01-01T00:00:00Z');",
+               VALUES ('i', 't', 'r', '{\"who\":\"x\"}', '2026-01-01T00:00:00Z'),
+                      ('i', 'u', 's', '{\"who\":\"019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70\"}',
+                       '2026-01-01T00:00:00Z');
+             INSERT INTO row_refs (item_id, name, row_id, target) VALUES ('i', 't', 'r', 'x');",
         )
         .unwrap();
         queue_one(&conn);
@@ -1125,14 +1147,24 @@ fn a_store_at_schema_13_owes_every_table_again_and_keeps_its_queue() {
     let conn = open(&path).unwrap();
     assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
     assert_eq!(shape_of(&conn), made, "the upgrade made another shape");
-    let held = |sql: &str| -> i64 { conn.query_row(sql, [], |row| row.get(0)).unwrap() };
-    assert_eq!(held("SELECT COUNT(*) FROM table_rows"), 0);
-    assert_eq!(held("SELECT COUNT(*) FROM row_refs"), 0);
-    assert_eq!(held("SELECT COUNT(*) FROM rows_beneath"), 0);
+    let held = |sql: &str| -> Vec<String> {
+        conn.prepare(sql)
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    };
+    // No declaration says what `who` is, so only text of an id's form is unsure.
     assert_eq!(
-        held("SELECT COUNT(*) FROM item_tables WHERE state = 'owed' AND rows = 0 AND bytes = 0"),
-        2
+        held("SELECT name || ' ' || state || ' ' || rows FROM item_tables ORDER BY name"),
+        ["t whole 1", "u owed 0", "v online 0"]
     );
+    assert_eq!(
+        held("SELECT id || ' ' || body || ' ' || IFNULL(refs, '-') FROM table_rows"),
+        ["r {\"who\":\"x\"} -"]
+    );
+    assert!(held("SELECT target FROM row_refs").is_empty());
     assert_eq!(queued(&path), [("q1".to_string(), "k1".to_string())]);
 }
 

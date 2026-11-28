@@ -22,6 +22,12 @@ pub(super) const OLDEST_UPGRADED: i64 = 11;
 /// One SQL step per version, starting at `OLDEST_UPGRADED`.
 pub(super) const UPGRADES: &[&str] = &[JOURNAL_BY_ITEM, HOLDS_WAIT_ON, ROWS_KEEP_REFS];
 
+/// A step only code can take, run after every SQL step, in the same
+/// transaction, for a store found below its version.
+pub(super) type After = (i64, fn(&Connection) -> Result<(), CoreError>);
+
+pub(super) const AFTER_UPGRADES: &[After] = &[(14, crate::row_writes::mark_held)];
+
 /// Keys `folder_journal` by path and item, and keeps with each row the
 /// identity and bytes of the binding the item still has at its path.
 const JOURNAL_BY_ITEM: &str = "
@@ -72,18 +78,13 @@ UPDATE folder_journal
   WHERE kept = 'unsure' AND reason LIKE '% cannot be reached; if it is gone, `folders remove` it';
 ";
 
-/// Keeps with each held table row the columns written as item ids, which a row held before has no record of. Every table is owed again and filled from the server, which names them; the writes waiting on a table are laid over it once it is whole.
+/// Keeps with each held table row the columns written as item ids, which
+/// `row_writes::mark_held` then fills in; `row_refs` follows the marks.
 const ROWS_KEEP_REFS: &str = "
 ALTER TABLE table_rows ADD COLUMN refs TEXT;
 ALTER TABLE rows_beneath ADD COLUMN refs TEXT;
-DELETE FROM table_rows;
+DELETE FROM row_refs;
 DELETE FROM rows_reread;
-DELETE FROM rows_beneath;
-DELETE FROM rows_seen;
-DELETE FROM rows_seen_beneath;
-DELETE FROM rows_laid WHERE batch IS NOT NULL;
-UPDATE item_tables SET state = 'owed', cursor = NULL, rows = 0, bytes = 0
-  WHERE state <> 'owed' OR cursor IS NOT NULL OR rows <> 0 OR bytes <> 0;
 ";
 
 fn upgraded(found: i64) -> bool {
@@ -890,7 +891,7 @@ pub(super) fn prepare(conn: &Connection, place: Option<Place<'_>>) -> Result<(),
     match step {
         Step::None => {}
         Step::Make => make(conn)?,
-        Step::Upgrade => upgrade(conn, OLDEST_UPGRADED, UPGRADES)?,
+        Step::Upgrade => upgrade(conn, OLDEST_UPGRADED, UPGRADES, AFTER_UPGRADES)?,
     }
     if meta_get(conn, META_STORE_ID)?.is_none() {
         meta_set(
@@ -983,7 +984,12 @@ pub(crate) fn make_marked(path: &Path, marks: &[(&str, &str)]) -> Result<(), Cor
 }
 
 /// A crash must leave the store at its original version or the target version.
-pub(super) fn upgrade(conn: &Connection, oldest: i64, steps: &[&str]) -> Result<(), CoreError> {
+pub(super) fn upgrade(
+    conn: &Connection,
+    oldest: i64,
+    steps: &[&str],
+    after: &[After],
+) -> Result<(), CoreError> {
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     let target = oldest + steps.len() as i64;
     // Another program may have upgraded it between the read and the lock.
@@ -999,6 +1005,11 @@ pub(super) fn upgrade(conn: &Connection, oldest: i64, steps: &[&str]) -> Result<
     };
     for step in &steps[from..] {
         tx.execute_batch(step)?;
+    }
+    for (version, step) in after {
+        if found < *version {
+            step(&tx)?;
+        }
     }
     tx.pragma_update(None, "user_version", target)?;
     tx.commit()?;
