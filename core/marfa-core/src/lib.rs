@@ -5,6 +5,8 @@ mod body;
 mod busy;
 mod catalog;
 mod catch_up;
+#[cfg(all(test, debug_assertions))]
+mod catch_up_fill_tests;
 /// Public so a debug build's binding can move the clock it waits by.
 pub mod clock;
 mod counts;

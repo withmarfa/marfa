@@ -29,7 +29,7 @@ pub(crate) const CLAIMED: &str = "table-fill-claimed";
 const ENDED: &str = "table-fill-ended";
 pub(crate) const WAITING: &str = "stream-waiting-for-fill";
 const FOLLOW_CLAIMING: &str = "follow-claiming";
-const ROWS: &str = "/items/n1/tables/steps/rows";
+pub(crate) const ROWS: &str = "/items/n1/tables/steps/rows";
 
 /// Within one poll of a stop, with room for a slow machine.
 const SOON: Duration = Duration::from_millis(500);
@@ -125,7 +125,7 @@ fn created(id: &str, cursor: &str) -> String {
 
 /// A stream from `from` with `events` as `(id, cursor)`, going live at the
 /// last of them.
-fn events(from: &str, events: &[(&str, &str)], then: Then) -> Answer {
+pub(crate) fn events(from: &str, events: &[(&str, &str)], then: Then) -> Answer {
     let mut frames = vec![scripted::copy_marker("stream_cursor", from)];
     frames.extend(events.iter().map(|(id, cursor)| created(id, cursor)));
     let live = events.last().map_or(from, |(_, cursor)| cursor);
@@ -141,7 +141,7 @@ fn held() -> Then {
 }
 
 /// Answered only once `ready` is raised.
-fn until(ready: &Arc<AtomicBool>, answer: Answer) -> Answer {
+pub(crate) fn until(ready: &Arc<AtomicBool>, answer: Answer) -> Answer {
     Answer::WaitFor {
         ready: Arc::clone(ready),
         answer: Box::new(answer),
@@ -152,13 +152,13 @@ fn slice() -> Vec<String> {
     vec![NOTE.into(), LEDGER.into()]
 }
 
-struct Copy {
+pub(crate) struct Copy {
     _dir: tempfile::TempDir,
     path: PathBuf,
-    server: Scripted,
-    core: Arc<Core>,
+    pub(crate) server: Scripted,
+    pub(crate) core: Arc<Core>,
     /// Raised to let the follow's stream send its event.
-    go: Arc<AtomicBool>,
+    pub(crate) go: Arc<AtomicBool>,
 }
 
 fn open(path: &Path, server: &Scripted) -> Core {
@@ -174,7 +174,7 @@ fn open(path: &Path, server: &Scripted) -> Core {
 
 /// A whole copy at cursor 10 holding `n1`, whose stream sends one event
 /// once `go` is raised.
-fn copy() -> Copy {
+pub(crate) fn copy() -> Copy {
     fault::observe(true);
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();
@@ -291,11 +291,11 @@ fn filled(hold: &Receiver<Result<TableHold>>) -> FillReport {
         .expect("the hold left its table to another call")
 }
 
-fn state(core: &Core, table: &str) -> Option<String> {
+pub(crate) fn state(core: &Core, table: &str) -> Option<String> {
     crate::tables::state(&core.conn().unwrap(), "n1", table).unwrap()
 }
 
-fn cursor(core: &Core) -> Option<String> {
+pub(crate) fn cursor(core: &Core) -> Option<String> {
     store::meta_get(&core.conn().unwrap(), store::META_EVENT_CURSOR).unwrap()
 }
 
