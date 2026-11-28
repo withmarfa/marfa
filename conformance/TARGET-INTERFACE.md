@@ -381,7 +381,7 @@ stays because that thing is what it checks.
   refuse, otherwise a JSON answer) and `marfa server run --dir <dir> --check`.
   It also depends on the archive and checksum file the stand-in for GitHub
   serves (the two programs at the archive's top, one `<sha256>  <archive
-  name>` line) and on the names the server uses in the programs folder:
+name>` line) and on the names the server uses in the programs folder:
   `.marfa.next`, `.marfa-server.previous`, `.marfa-update-*` and
   `.marfa-update.lock`. It needs the `program` argument of `bootFreshServer`,
   which exists for it.
