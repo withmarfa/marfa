@@ -15,8 +15,8 @@ import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
  * The release check and the update operations. The check asks a stand-in for
  * GitHub that the fixture serves, which a `release-feed` fault names: a server
  * with test hooks asks nobody else, and takes the stand-in's origin for
- * GitHub's. No fixture can make a server that is a service with programs it
- * may replace, so the swap itself is not asserted here.
+ * GitHub's. The swap of a server installed as a service is
+ * asserted in `updates-swap.test.ts`.
  */
 
 let server: FreshServer;
