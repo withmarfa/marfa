@@ -102,7 +102,7 @@ pub const DECLARED: &[Declared] = &[
     ),
     hook(
         "MARFA_TEST_RELEASE",
-        "Sets the release the server reports and judges a plugin's `marfa` by, such as 1.4.0.",
+        "Sets the release the server names in place of the build's, such as 1.4.0, and judges a plugin's `marfa` and a newer update by.",
     ),
     hook(
         "MARFA_TEST_TUNING",

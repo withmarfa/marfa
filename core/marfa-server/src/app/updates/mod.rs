@@ -216,8 +216,14 @@ fn latest_newer(latest: Option<Latest>, running: Version) -> Option<Latest> {
 
 /// The release the server names as the one it runs: the build's, or the one a test-hooks server
 /// was started as.
-fn named(app: &App) -> Version {
-    Version::parse(app.release()).unwrap_or_else(Version::running)
+fn named(app: &App) -> Result<Version> {
+    Version::parse(app.release())
+        .ok_or_else(|| Refusal::internal("the release the server runs does not read"))
+}
+
+/// What a release must beat to be newer: the later of the named release and the build's.
+fn judged(app: &App) -> Result<Version> {
+    Ok(named(app)?.max(Version::running()))
 }
 
 pub async fn status(app: &App) -> Result<Value> {
@@ -227,7 +233,7 @@ pub async fn status(app: &App) -> Result<Value> {
     } else {
         check::Kept::default()
     };
-    let newer = latest_newer(kept.latest(), named(app));
+    let newer = latest_newer(kept.latest(), judged(app)?);
     let (method, step) = match &newer {
         Some(newer) => {
             let capable = matches!(app.updates.install, Install::Service { .. })
@@ -281,7 +287,7 @@ pub async fn status(app: &App) -> Result<Value> {
         _ => progress,
     };
     Ok(json!({
-        "release": named(app).to_string(),
+        "release": named(app)?.to_string(),
         "check_enabled": enabled,
         "checked_at": kept.checked_at,
         "check_error": kept.error.as_ref().map(|message| json!({
@@ -425,7 +431,7 @@ where
 }
 
 fn newest(app: &App, kept: check::Kept) -> Result<Latest> {
-    latest_newer(kept.latest(), named(app)).ok_or_else(|| {
+    latest_newer(kept.latest(), judged(app)?).ok_or_else(|| {
         Refusal::new(
             Code::UpdateNotReady,
             "No release newer than the running one has been found.",
@@ -434,8 +440,8 @@ fn newest(app: &App, kept: check::Kept) -> Result<Latest> {
 }
 
 /// The release the server runs.
-pub fn running(app: &App) -> String {
-    named(app).to_string()
+pub fn running(app: &App) -> Result<String> {
+    Ok(named(app)?.to_string())
 }
 
 /// The release an update would move to now, refused as `POST /update` refuses it.

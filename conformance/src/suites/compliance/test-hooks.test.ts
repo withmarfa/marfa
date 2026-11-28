@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { signInOwnerWithPassword } from "../../client/owner-session.js";
 import { afterAll, describe, expect, it } from "vitest";
 import { controlRequest } from "../../utils/control-request.js";
@@ -9,7 +11,8 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { listened, settingLines } from "../../utils/refused-boot.js";
-import { runJob } from "../../utils/moved-clock.js";
+import { operatorOf, QUIET_SCHEDULE, runJob } from "../../utils/moved-clock.js";
+import { connectMcp, type McpConnection } from "../../utils/mcp.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
 /**
@@ -293,62 +296,119 @@ describe("the test hooks", () => {
   );
 
   it(
-    "names MARFA_TEST_RELEASE as the version in the root",
+    "names MARFA_TEST_RELEASE as the version everywhere the server names its release, and judges updates against it",
     async () => {
+      let latest = "1.3.0";
+      const feed = createServer((_request, response) => {
+        const version = latest;
+        const base = `http://127.0.0.1:${(feed.address() as AddressInfo).port}`;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            tag_name: `v${version}`,
+            draft: false,
+            prerelease: false,
+            published_at: "2026-11-16T09:30:00Z",
+            assets: [
+              `marfa-${version}-linux-x86_64.tar.gz`,
+              `marfa-${version}-darwin-arm64.tar.gz`,
+              `marfa-${version}-linux-aarch64.tar.gz`,
+              `marfa-${version}-checksums.txt`,
+            ].map((name) => ({
+              name,
+              browser_download_url: `${base}/withmarfa/marfa/releases/download/v${version}/${name}`,
+              size: 10,
+            })),
+          }),
+        );
+      });
+      await new Promise<void>((resolve) =>
+        feed.listen(0, "127.0.0.1", resolve),
+      );
       const named = await bootFreshServer("test-hooks-release-named", {
+        ...QUIET_SCHEDULE,
         MARFA_TEST_RELEASE: "1.4.0",
       });
-      const own = await bootFreshServer("test-hooks-release-own");
-      try {
-        const version = async (server: FreshServer) => {
-          const root = await fetch(`${server.apiUrl}/`, {
-            headers: { Accept: "application/json" },
-          });
-          return ((await root.json()) as { version: string }).version;
-        };
-        // The witness: a server with no setting names its own build.
-        expect(await version(own)).not.toBe("1.4.0");
-        expect(await version(named)).toBe("1.4.0");
-      } finally {
-        await Promise.all([named.stop(), own.stop()]);
-      }
-    },
-    2 * FRESH_SERVER_TIMEOUT_MS,
-  );
-
-  it(
-    "names MARFA_TEST_RELEASE as the release in the update status",
-    async () => {
-      const named = await bootFreshServer("test-hooks-release-update", {
-        MARFA_TEST_RELEASE: "1.4.0",
-      });
-      const own = await bootFreshServer("test-hooks-release-update-own");
+      const own = await bootFreshServer(
+        "test-hooks-release-own",
+        QUIET_SCHEDULE,
+      );
+      const open: McpConnection[] = [];
       try {
         const read = async (server: FreshServer) => {
-          const headers = {
-            Accept: "application/json",
-            Authorization: `Bearer ${server.managementKey}`,
+          const get = async (path: string, key: string) => {
+            const response = await fetch(`${server.apiUrl}${path}`, {
+              headers: {
+                Accept: "application/json",
+                Authorization: `Bearer ${key}`,
+              },
+            });
+            expect(response.status, path).toBe(200);
+            return (await response.json()) as Record<string, any>;
           };
-          const root = await fetch(`${server.apiUrl}/`, { headers });
-          const update = await fetch(`${server.apiUrl}/update`, { headers });
-          expect(update.status).toBe(200);
+          const mcp = await connectMcp(server.apiUrl, server.workingKey);
+          open.push(mcp);
           return {
-            version: ((await root.json()) as { version: string }).version,
-            release: ((await update.json()) as { release: string }).release,
+            root: (await get("/", server.managementKey)).version,
+            overview: (await get("/overview", server.workingKey)).instance
+              .version,
+            metrics: (await get("/metrics", server.managementKey)).process
+              .version,
+            update: (await get("/update", server.managementKey)).release,
+            mcp: mcp.client.getServerVersion()?.version,
           };
         };
-        // The witness: a server with no setting names one release in both.
+        const everywhere = (version: string | undefined) => ({
+          root: version,
+          overview: version,
+          metrics: version,
+          update: version,
+          mcp: version,
+        });
+        // The witness: a server with no setting names its own build in each.
         const plain = await read(own);
-        expect(plain).toEqual({ version: "0.0.0", release: "0.0.0" });
-        expect(await read(named)).toEqual({
-          version: "1.4.0",
-          release: "1.4.0",
+        expect(plain.root).toBe("0.0.0");
+        expect(plain.mcp).not.toBe("1.4.0");
+        expect(plain).toEqual(everywhere(plain.root));
+        expect(await read(named)).toEqual(everywhere("1.4.0"));
+
+        // A release is newer only past the one named: 1.3.0 is older than 1.4.0
+        // and newer than the witness's build, and 1.5.0 is newer than both.
+        const available = async (server: FreshServer) => {
+          await server.setFault(
+            `release-feed=http://127.0.0.1:${(feed.address() as AddressInfo).port}/latest`,
+          );
+          const operator = operatorOf(server);
+          const run = await operator.runHousekeeping("release-check");
+          expect(run.data.outcome, JSON.stringify(run.data)).toBe("succeeded");
+          const { data } = await operator.getUpdate();
+          return { release: data.latest?.release, available: data.available };
+        };
+        latest = "1.3.0";
+        expect(await available(own)).toEqual({
+          release: "1.3.0",
+          available: true,
+        });
+        expect(await available(named)).toEqual({
+          release: "1.3.0",
+          available: false,
+        });
+        latest = "1.5.0";
+        expect(await available(own)).toEqual({
+          release: "1.5.0",
+          available: true,
+        });
+        expect(await available(named)).toEqual({
+          release: "1.5.0",
+          available: true,
         });
       } finally {
+        await Promise.all(open.map((mcp) => mcp.close()));
         await Promise.all([named.stop(), own.stop()]);
+        await new Promise((resolve) => feed.close(resolve));
       }
     },
-    2 * FRESH_SERVER_TIMEOUT_MS,
+    3 * FRESH_SERVER_TIMEOUT_MS,
   );
 
   it(
