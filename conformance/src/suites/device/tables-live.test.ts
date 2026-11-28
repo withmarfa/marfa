@@ -1,3 +1,4 @@
+import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -120,6 +121,7 @@ interface Page {
     values: Record<string, unknown>;
     updated_at: string;
     withheld?: string[];
+    refs?: string[];
   }[];
   next_cursor: string | null;
 }
@@ -1734,5 +1736,228 @@ describe("a gap in the stream", () => {
     const read = await deviceRows(device, item);
     expect(read.held).toEqual([true]);
     expect(read.rows).toEqual(await serverRows(item));
+  });
+});
+
+describe("sorting a value written as an item ID", () => {
+  /** Every row of `table` sorted by `values.<column>`, two to a page, from the server or the device. */
+  async function walked(
+    from: "server" | "device",
+    device: CliDevice,
+    item: string,
+    table: string,
+    column: string,
+    direction: "asc" | "desc",
+  ): Promise<Page["data"]> {
+    const rows: Page["data"] = [];
+    let cursor: string | null = null;
+    do {
+      const query = {
+        sort: `values.${column}`,
+        direction,
+        limit: "2",
+        ...(cursor === null ? {} : { cursor }),
+      };
+      let page: Page;
+      if (from === "server") {
+        const answer = await working.rawRequest<Page>(
+          `/items/${item}/tables/${table}/rows?${new URLSearchParams(query).toString()}`,
+        );
+        expect(answer.status, JSON.stringify(answer.error)).toBe(200);
+        page = answer.data;
+      } else {
+        const read: Page & { held: boolean } = value(
+          await device.tableRead<Page>([
+            "list",
+            item,
+            table,
+            ...Object.entries(query).flatMap(([name, given]) => [
+              `--${name}`,
+              given,
+            ]),
+          ]),
+        );
+        expect(read.held).toBe(true);
+        page = read;
+      }
+      rows.push(...page.data);
+      cursor = page.next_cursor;
+    } while (cursor !== null);
+    return rows;
+  }
+
+  /** The ids in each direction, once the device and the server agree on the rows and their order. */
+  async function agreed(
+    device: CliDevice,
+    item: string,
+    table: string,
+    column: string,
+  ): Promise<{ asc: string[]; desc: string[] }> {
+    const orders: Record<string, string[]> = {};
+    for (const direction of ["asc", "desc"] as const) {
+      const server = await walked(
+        "server",
+        device,
+        item,
+        table,
+        column,
+        direction,
+      );
+      const local = await walked(
+        "device",
+        device,
+        item,
+        table,
+        column,
+        direction,
+      );
+      expect(local, direction).toEqual(server);
+      orders[direction] = server.map((row) => row.id);
+    }
+    return { asc: orders.asc!, desc: orders.desc! };
+  }
+
+  it("sorts a value a forced change left in a column as an item ID as no value, as the server does", async () => {
+    const type = await tableType({
+      steps: {
+        columns: { count: { type: "integer" }, link: { type: "item" } },
+      },
+    });
+    const item = await itemOf(type);
+    const first = await note("first");
+    const second = await note("second");
+    const pointing = await write(item, [
+      { op: "put", values: { count: 1, link: first } },
+      { op: "put", values: { count: 2, link: second } },
+    ]);
+    const before = await hydrated([type], "refs-before");
+    value(await before.holdTable(type, "steps"));
+    const forced = await working.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: {
+          steps: {
+            columns: { count: { type: "integer" }, link: { type: "string" } },
+          },
+        },
+      },
+      true,
+    );
+    expect(forced.status, JSON.stringify(forced.error)).toBe(200);
+    const text = await write(item, [
+      { op: "put", values: { count: 3, link: "mango" } },
+      { op: "put", values: { count: 4, link: "apple" } },
+      { op: "put", values: { count: 5, link: first } },
+      { op: "put", values: { count: 6 } },
+    ]);
+    value(await before.catchUp());
+    const after = await hydrated([type], "refs-after");
+    value(await after.holdTable(type, "steps"));
+
+    for (const device of [before, after]) {
+      const order = await agreed(device, item, "steps", "link");
+      expect(order.asc.slice(0, 3)).toEqual([
+        text[2]!.id,
+        text[1]!.id,
+        text[0]!.id,
+      ]);
+      expect(order.desc.slice(0, 3)).toEqual([
+        text[0]!.id,
+        text[1]!.id,
+        text[2]!.id,
+      ]);
+      for (const rest of [order.asc.slice(3), order.desc.slice(3)]) {
+        expect([...rest].sort()).toEqual(
+          [pointing[0]!.id, pointing[1]!.id, text[3]!.id].sort(),
+        );
+      }
+    }
+  });
+
+  it("sorts a value an authorised edit of an item's own columns left as an item ID as no value, as the server does", async () => {
+    const made = await working.createItem({
+      type: "core.table",
+      properties: {
+        title: "Links",
+        columns: { name: { type: "string" }, link: { type: "item" } },
+      },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const item = made.data.item;
+    const target = await note("linked");
+    const put = async (values: Record<string, unknown>) => {
+      const answer = await working.writeRows(item.id, "table", {
+        operations: [{ op: "put", values }],
+      });
+      expect(answer.status, JSON.stringify(answer.error)).toBe(200);
+      return (answer.data as unknown as { results: { id: string }[] })
+        .results[0]!.id;
+    };
+    const linked = await put({ name: "linked", link: target });
+    const device = deviceFor("refs-own");
+    value(await device.hydrate(["core.table"], "library"));
+    value(await device.holdTable("core.table", "table"));
+    const changed = await working.updateItem(item.id, {
+      properties: {
+        columns: { name: { type: "string" }, link: { type: "string" } },
+      },
+      version: item.version,
+    } as never);
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    const mango = await put({ name: "mango", link: "mango" });
+    const pointing = await put({ name: "text", link: target });
+    value(await device.catchUp());
+
+    const order = await agreed(device, item.id, "table", "link");
+    expect(order.asc[0]).toBe(pointing);
+    expect(order.asc[1]).toBe(mango);
+    expect(order.asc[2]).toBe(linked);
+    expect(order.desc[0]).toBe(mango);
+    expect(order.desc[1]).toBe(pointing);
+    expect(order.desc[2]).toBe(linked);
+  });
+
+  it("sorts a value its own queued write set in an item column as no value before the server has taken it", async () => {
+    const type = await tableType({
+      steps: {
+        columns: { count: { type: "integer" }, link: { type: "item" } },
+      },
+    });
+    const item = await itemOf(type);
+    const target = await note("queued");
+    const [plain] = await write(item, [{ op: "put", values: { count: 1 } }]);
+    const device = await hydrated([type], "refs-queued");
+    value(await device.holdTable(type, "steps"));
+    const mine = uuidv7();
+    const queued = value(
+      await device.writeRows(item, "steps", [
+        { op: "put", id: mine, values: { count: 2, link: target } },
+      ]),
+    );
+    const laid = await walked("device", device, item, "steps", "link", "asc");
+    expect(laid.map((row) => row.id)).toEqual([plain!.id, mine]);
+    expect(laid[1]?.refs).toEqual(["link"]);
+    const report = value(await device.drain());
+    expect(report.verdicts.find((one) => one.id === queued.id)?.verdict).toBe(
+      "accepted",
+    );
+    for (const direction of ["asc", "desc"] as const) {
+      expect(
+        (await walked("server", device, item, "steps", "link", direction)).map(
+          (row) => row.id,
+        ),
+        direction,
+      ).toEqual(
+        (await walked("device", device, item, "steps", "link", direction)).map(
+          (row) => row.id,
+        ),
+      );
+    }
+    expect((await agreed(device, item, "steps", "link")).asc).toEqual([
+      plain!.id,
+      mine,
+    ]);
   });
 });

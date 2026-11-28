@@ -482,6 +482,7 @@ pub(crate) fn hold_row(
     id: &str,
     values: &Map<String, Value>,
     withheld: &[String],
+    refs: &Map<String, Value>,
     updated_at: &str,
 ) -> Result<bool> {
     let mut values = values.clone();
@@ -491,35 +492,37 @@ pub(crate) fn hold_row(
     let withheld = (!withheld.is_empty())
         .then(|| serde_json::to_string(withheld))
         .transpose()?;
-    let targets: Vec<String> = values
-        .values()
-        .filter_map(Value::as_str)
-        .filter(|text| marfa_rules::validation::id("value", text).is_ok())
-        .map(str::to_string)
-        .collect();
+    let targets: Vec<&str> = refs.values().filter_map(Value::as_str).collect();
+    let refs = (!refs.is_empty())
+        .then(|| printed(&Value::Object(refs.clone())))
+        .transpose()?;
     let body = printed(&Value::Object(values))?;
-    let held: Option<(String, Option<String>, String)> = conn
+    let held: Option<(String, Option<String>, Option<String>, String)> = conn
         .prepare_cached(
-            "SELECT body, withheld, updated_at FROM table_rows
+            "SELECT body, withheld, refs, updated_at FROM table_rows
               WHERE item_id = ?1 AND name = ?2 AND id = ?3",
         )?
         .query_row(params![item, table, id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })
         .optional()?;
-    if held.as_ref().is_some_and(|(was, was_withheld, was_at)| {
-        *was == body && *was_withheld == withheld && was_at == updated_at
-    }) {
+    if held
+        .as_ref()
+        .is_some_and(|(was, was_withheld, was_refs, was_at)| {
+            *was == body && *was_withheld == withheld && *was_refs == refs && was_at == updated_at
+        })
+    {
         return Ok(false);
     }
-    let before = held.map(|(was, _, _)| was.len() as i64);
+    let before = held.map(|(was, ..)| was.len() as i64);
     conn.prepare_cached(
-        "INSERT INTO table_rows (item_id, name, id, body, withheld, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO table_rows (item_id, name, id, body, withheld, refs, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT (item_id, name, id) DO UPDATE SET
-           body = excluded.body, withheld = excluded.withheld, updated_at = excluded.updated_at",
+           body = excluded.body, withheld = excluded.withheld, refs = excluded.refs,
+           updated_at = excluded.updated_at",
     )?
-    .execute(params![item, table, id, body, withheld, updated_at])?;
+    .execute(params![item, table, id, body, withheld, refs, updated_at])?;
     conn.prepare_cached(
         "UPDATE item_tables SET rows = rows + ?3, bytes = bytes + ?4, revision = revision + 1
           WHERE item_id = ?1 AND name = ?2",
@@ -539,10 +542,21 @@ pub(crate) fn hold_row(
     let mut named = conn.prepare_cached(
         "INSERT OR IGNORE INTO row_refs (item_id, name, row_id, target) VALUES (?1, ?2, ?3, ?4)",
     )?;
-    for target in &targets {
+    for target in targets {
         named.execute(params![item, table, id, target])?;
     }
     Ok(true)
+}
+
+/// The columns named in a row's `refs`, each with the id its value holds.
+pub(crate) fn refs_of(values: &Map<String, Value>, named: &[String]) -> Result<Map<String, Value>> {
+    named
+        .iter()
+        .map(|column| match values.get(column) {
+            Some(id @ Value::String(_)) => Ok((column.clone(), id.clone())),
+            _ => Err(invalid()),
+        })
+        .collect()
 }
 
 fn hold_answered(conn: &Connection, item: &str, table: &str, row: &Value) -> Result<bool> {
@@ -555,9 +569,21 @@ fn hold_answered(conn: &Connection, item: &str, table: &str, row: &Value) -> Res
         .get("updated_at")
         .and_then(Value::as_str)
         .ok_or_else(invalid)?;
-    let withheld = withheld_of(row)?;
+    let withheld = names_of(row, "withheld")?;
+    let refs = names_of(row, "refs")?;
     crate::row_writes::unjudge(conn, item, table, Some(id))?;
-    crate::row_writes::take_server_row(conn, item, table, id, Some((values, &withheld, updated_at)))
+    crate::row_writes::take_server_row(
+        conn,
+        item,
+        table,
+        id,
+        Some(crate::row_writes::ServerRow {
+            values,
+            withheld: &withheld,
+            refs: &refs,
+            updated_at,
+        }),
+    )
 }
 
 /// A row a read found gone.
@@ -566,8 +592,8 @@ fn read_gone(conn: &Connection, item: &str, table: &str, id: &str) -> Result<boo
     crate::row_writes::take_server_row(conn, item, table, id, None)
 }
 
-fn withheld_of(row: &Value) -> Result<Vec<String>> {
-    match row.get("withheld") {
+fn names_of(row: &Value, field: &str) -> Result<Vec<String>> {
+    match row.get(field) {
         None => Ok(Vec::new()),
         Some(Value::Array(columns)) => columns
             .iter()
@@ -1344,7 +1370,12 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
                 item,
                 table,
                 &row.id,
-                Some((values, &row.withheld, &event.last_activity_at)),
+                Some(crate::row_writes::ServerRow {
+                    values,
+                    withheld: &row.withheld,
+                    refs: &row.refs,
+                    updated_at: &event.last_activity_at,
+                }),
             )?;
             continue;
         }
@@ -1539,10 +1570,16 @@ impl Key {
         match self {
             Key::Id => "NULL".into(),
             Key::Updated => "r.updated_at".into(),
-            Key::Column { name, kind } => marfa_rules::schema::column_key_sql(kind, name, "r.body"),
-            Key::Order { column, kind } => {
-                marfa_rules::schema::order_value_key_sql(kind, column, "r.body")
-            }
+            Key::Column { name, kind } => marfa_rules::schema::item_origin_key_sql(
+                &marfa_rules::schema::column_key_sql(kind, name, "r.body"),
+                name,
+                "r.refs",
+            ),
+            Key::Order { column, kind } => marfa_rules::schema::item_origin_key_sql(
+                &marfa_rules::schema::order_value_key_sql(kind, column, "r.body"),
+                column,
+                "r.refs",
+            ),
         }
     }
 
@@ -1584,9 +1621,9 @@ fn scope(
         json!(descending),
         json!(key.kind()),
     ];
-    // A column sort's cursor from before an item's id sorted as no value lacks this, and is refused.
-    if matches!(key, Key::Column { .. }) {
-        named.push(json!("item-ids-unkeyed"));
+    // A cursor from before a value written as an item's id sorted as no value lacks this, and is refused.
+    if matches!(key, Key::Column { .. } | Key::Order { .. }) {
+        named.push(json!("item-origin-unkeyed"));
     }
     let named = Value::Array(named);
     let mut scope = [0; SCOPE_BYTES];
@@ -1650,11 +1687,24 @@ fn opened(scope: &[u8; SCOPE_BYTES], cursor: &str) -> Result<(Value, String)> {
     Ok((key, id))
 }
 
-fn shown(id: String, body: &str, withheld: Option<String>, updated_at: String) -> Result<Value> {
+/// A row as the server answers it: `withheld` and `refs` name columns, and are absent when none.
+fn shown(
+    id: String,
+    body: &str,
+    withheld: Option<String>,
+    refs: Option<String>,
+    updated_at: String,
+) -> Result<Value> {
     let values: Value = serde_json::from_str(body)?;
     let mut row = json!({ "id": id, "values": values, "updated_at": updated_at });
     if let Some(withheld) = withheld {
         row["withheld"] = serde_json::from_str(&withheld)?;
+    }
+    if let Some(refs) = refs {
+        let refs: Map<String, Value> = serde_json::from_str(&refs)?;
+        let mut named: Vec<&String> = refs.keys().collect();
+        named.sort();
+        row["refs"] = json!(named);
     }
     Ok(row)
 }
@@ -1697,7 +1747,7 @@ fn page_from_copy(
     let mut values: Vec<Value> = Vec::new();
     let key_sql = key.expression();
     let mut sql = format!(
-        "SELECT * FROM (SELECT r.id, r.body, r.withheld, r.updated_at, {key_sql} AS k
+        "SELECT * FROM (SELECT r.id, r.body, r.withheld, r.refs, r.updated_at, {key_sql} AS k
            FROM table_rows r WHERE r.item_id = ? AND r.name = ?"
     );
     values.push(Value::String(item.into()));
@@ -1748,13 +1798,14 @@ fn page_from_copy(
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Bound>(4)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Bound>(5)?,
             ))
         })?
         .map(|row| {
-            let (id, body, withheld, updated_at, key) = row?;
-            Ok((shown(id, &body, withheld, updated_at)?, key))
+            let (id, body, withheld, refs, updated_at, key) = row?;
+            Ok((shown(id, &body, withheld, refs, updated_at)?, key))
         })
         .collect::<Result<_>>()?;
     let more = found.len() as i64 > limit;
@@ -1901,17 +1952,17 @@ pub(crate) fn row(core: &Core, item: &str, table: &str, row: &str) -> Result<Val
     {
         let conn = core.conn()?;
         if local_table(&conn, item, table)?.is_some() {
-            let held: Option<(String, Option<String>, String)> = conn
+            let held: Option<(String, Option<String>, Option<String>, String)> = conn
                 .query_row(
-                    "SELECT body, withheld, updated_at FROM table_rows
+                    "SELECT body, withheld, refs, updated_at FROM table_rows
                       WHERE item_id = ?1 AND name = ?2 AND id = ?3",
                     params![item, table, row],
-                    |found| Ok((found.get(0)?, found.get(1)?, found.get(2)?)),
+                    |found| Ok((found.get(0)?, found.get(1)?, found.get(2)?, found.get(3)?)),
                 )
                 .optional()?;
             return match held {
-                Some((body, withheld, updated_at)) => Ok(marked(
-                    shown(row.into(), &body, withheld, updated_at)?,
+                Some((body, withheld, refs, updated_at)) => Ok(marked(
+                    shown(row.into(), &body, withheld, refs, updated_at)?,
                     true,
                 )),
                 None => Err(CoreError::NotFound {
@@ -2081,16 +2132,43 @@ mod tests {
 
     const CORPUS: &str = include_str!("../../marfa-rules/src/filter/parity.json");
 
-    #[test]
-    fn the_row_filters_and_totals_both_sides_share_answer_what_the_server_answers() {
-        let corpus: Value = serde_json::from_str(CORPUS).unwrap();
-        let rows: Vec<(&str, Value)> = corpus["table"]["rows"]
+    /// A copy holding the rows as the server answers them: `refs` names the columns written as item ids.
+    fn copy_answered(rows: &[Value]) -> (tempfile::TempDir, crate::Core) {
+        let dir = tempfile::tempdir().unwrap();
+        let core = crate::Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        {
+            let conn = core.conn().unwrap();
+            for row in rows {
+                super::hold_answered(&conn, "i", "t", row).unwrap();
+            }
+        }
+        (dir, core)
+    }
+
+    /// The corpus's rows as a read of the table answers them.
+    fn corpus_answers(corpus: &Value) -> Vec<Value> {
+        corpus["table"]["rows"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|row| (row["id"].as_str().unwrap(), row["body"].clone()))
-            .collect();
-        let (_dir, core) = copy_with(&rows);
+            .map(|row| {
+                let mut answer = json!({
+                    "id": row["id"],
+                    "values": row["body"],
+                    "updated_at": "2026-01-01T00:00:00Z",
+                });
+                if let Some(refs) = row.get("refs").and_then(Value::as_object) {
+                    answer["refs"] = json!(refs.keys().collect::<Vec<_>>());
+                }
+                answer
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_row_filters_and_totals_both_sides_share_answer_what_the_server_answers() {
+        let corpus: Value = serde_json::from_str(CORPUS).unwrap();
+        let (_dir, core) = copy_answered(&corpus_answers(&corpus));
         let conn = core.conn().unwrap();
         let definition = json!({ "columns": corpus["table"]["columns"] })
             .as_object()
@@ -2112,13 +2190,7 @@ mod tests {
     #[test]
     fn the_rows_are_sorted_by_each_column_as_the_server_sorts_them() {
         let corpus: Value = serde_json::from_str(CORPUS).unwrap();
-        let rows: Vec<(&str, Value)> = corpus["table"]["rows"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|row| (row["id"].as_str().unwrap(), row["body"].clone()))
-            .collect();
-        let (_dir, core) = copy_with(&rows);
+        let (_dir, core) = copy_answered(&corpus_answers(&corpus));
         let conn = core.conn().unwrap();
         let definition = json!({ "columns": corpus["table"]["columns"] })
             .as_object()

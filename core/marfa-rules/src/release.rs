@@ -2,9 +2,9 @@
 
 /// The oldest server release this core works with, as the root's `version`
 /// writes it. A change that makes the core depend on a server change raises it.
-/// 0.0.110 is the first release that takes `from` on a transition; an older one
-/// refuses every transition a device queues.
-pub const OLDEST_SERVER: &str = "0.0.110";
+/// 0.0.119 is the first release that names, in `refs`, the columns a row holds
+/// an item's ID in; a copy filled by an older one sorts those values as text.
+pub const OLDEST_SERVER: &str = "0.0.119";
 
 /// Whether the release a server names is older than [`OLDEST_SERVER`]. A name
 /// that is not three whole numbers, and `0.0.0`, which an unstamped build
@@ -43,9 +43,9 @@ mod tests {
         assert!(is_too_old("0.0.74"));
         assert!(is_too_old("0.0.70"));
         assert!(!is_too_old(OLDEST_SERVER));
-        assert!(is_too_old("0.0.109"));
+        assert!(is_too_old("0.0.118"));
         assert!(is_too_old("0.0.91"));
-        assert!(!is_too_old("0.0.111"));
+        assert!(!is_too_old("0.0.120"));
         assert!(!is_too_old("0.1.0"));
         assert!(!is_too_old("1.0.0"));
     }

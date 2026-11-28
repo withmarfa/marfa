@@ -700,6 +700,7 @@ mod tests {
             id,
             values.as_object().unwrap(),
             &[],
+            &serde_json::Map::new(),
             at,
         )
         .unwrap();
@@ -804,6 +805,7 @@ mod tests {
             id,
             values.as_object().unwrap(),
             &[],
+            &serde_json::Map::new(),
             at,
         )
         .unwrap();

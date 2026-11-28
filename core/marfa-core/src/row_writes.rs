@@ -218,24 +218,35 @@ fn judge_rows(
 struct Held {
     values: Map<String, Value>,
     withheld: Vec<String>,
+    /// Each column written as an item's id, to that id.
+    refs: Map<String, Value>,
     updated_at: String,
 }
 
 fn held_row(conn: &Connection, item: &str, table: &str, id: &str) -> Result<Option<Held>> {
-    let row: Option<(String, Option<String>, String)> = conn
+    let row: Option<Stored> = conn
         .prepare_cached(
-            "SELECT body, withheld, updated_at FROM table_rows
+            "SELECT body, withheld, refs, updated_at FROM table_rows
               WHERE item_id = ?1 AND name = ?2 AND id = ?3",
         )?
         .query_row(params![item, table, id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            Ok(Stored {
+                body: Some(row.get(0)?),
+                withheld: row.get(1)?,
+                refs: row.get(2)?,
+                updated_at: Some(row.get(3)?),
+            })
         })
         .optional()?;
-    row.map(|(body, withheld, updated_at)| read_held(&body, withheld.as_deref(), updated_at))
-        .transpose()
+    row.map(unstored).transpose().map(Option::flatten)
 }
 
-fn read_held(body: &str, withheld: Option<&str>, updated_at: String) -> Result<Held> {
+fn read_held(
+    body: &str,
+    withheld: Option<&str>,
+    refs: Option<&str>,
+    updated_at: String,
+) -> Result<Held> {
     let values = match serde_json::from_str(body)? {
         Value::Object(values) => values,
         _ => {
@@ -248,11 +259,40 @@ fn read_held(body: &str, withheld: Option<&str>, updated_at: String) -> Result<H
         Some(text) => serde_json::from_str(text)?,
         None => Vec::new(),
     };
+    let refs = match refs {
+        Some(text) => serde_json::from_str(text)?,
+        None => Map::new(),
+    };
     Ok(Held {
         values,
         withheld,
+        refs,
         updated_at,
     })
+}
+
+/// The columns of the table that hold an item's id, as the copy's catalog declares them; none where it declares no such table.
+fn item_columns(conn: &Connection, item: &str, table: &str) -> Result<Vec<String>> {
+    let held: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM items WHERE id = ?1)",
+        [item],
+        |row| row.get(0),
+    )?;
+    if !held {
+        return Ok(Vec::new());
+    }
+    let columns = match columns_of(conn, item, table) {
+        Ok(columns) => columns,
+        Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    Ok(columns
+        .iter()
+        .filter(|(_, column)| {
+            column.get("type").and_then(Value::as_str) == Some(marfa_rules::schema::ITEM_KIND)
+        })
+        .map(|(name, _)| name.clone())
+        .collect())
 }
 
 fn whole(conn: &Connection, item: &str, table: &str) -> Result<bool> {
@@ -502,21 +542,44 @@ fn laid_over(
     Ok(laid)
 }
 
-fn apply(row: Option<Held>, ops: &[Op], id: &str, at: &str) -> Option<Held> {
+/// `row` with `ops` laid over it. As the server marks them, a value written to
+/// one of `item_columns` that is text is an item's id, and any other write to
+/// a column clears the mark.
+fn apply(
+    row: Option<Held>,
+    ops: &[Op],
+    id: &str,
+    at: &str,
+    item_columns: &[String],
+) -> Option<Held> {
+    let mark = |refs: &mut Map<String, Value>, column: &String, value: &Value| {
+        refs.remove(column);
+        if value.is_string() && item_columns.contains(column) {
+            refs.insert(column.clone(), value.clone());
+        }
+    };
     let mut row = row;
     for op in ops.iter().filter(|op| op.id() == id) {
         row = match (op, row) {
-            (Op::Put { values, .. }, before) => Some(Held {
-                values: values
-                    .iter()
-                    .filter(|(_, value)| !value.is_null())
-                    .map(|(column, value)| (column.clone(), value.clone()))
-                    .collect(),
-                withheld: before.map(|before| before.withheld).unwrap_or_default(),
-                updated_at: at.to_string(),
-            }),
+            (Op::Put { values, .. }, before) => {
+                let mut refs = Map::new();
+                for (column, value) in values {
+                    mark(&mut refs, column, value);
+                }
+                Some(Held {
+                    values: values
+                        .iter()
+                        .filter(|(_, value)| !value.is_null())
+                        .map(|(column, value)| (column.clone(), value.clone()))
+                        .collect(),
+                    withheld: before.map(|before| before.withheld).unwrap_or_default(),
+                    refs,
+                    updated_at: at.to_string(),
+                })
+            }
             (Op::Patch { values, .. }, Some(mut before)) => {
                 for (column, value) in values {
+                    mark(&mut before.refs, column, value);
                     if value.is_null() {
                         before.values.remove(column);
                     } else {
@@ -536,39 +599,58 @@ fn apply(row: Option<Held>, ops: &[Op], id: &str, at: &str) -> Option<Held> {
 fn beneath(conn: &Connection, item: &str, table: &str, id: &str) -> Result<Option<Option<Held>>> {
     let row: Option<Stored> = conn
         .prepare_cached(
-            "SELECT body, withheld, updated_at FROM rows_beneath
+            "SELECT body, withheld, refs, updated_at FROM rows_beneath
               WHERE item_id = ?1 AND name = ?2 AND id = ?3",
         )?
         .query_row(params![item, table, id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            Ok(Stored {
+                body: row.get(0)?,
+                withheld: row.get(1)?,
+                refs: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
         })
         .optional()?;
-    row.map(|(body, withheld, updated_at)| unstored(body, withheld, updated_at))
-        .transpose()
+    row.map(unstored).transpose()
 }
 
-/// A body of `None` is a row that is not there.
-type Stored = (Option<String>, Option<String>, Option<String>);
+/// A row as its columns of text keep it. A body of `None` is a row that is not there.
+struct Stored {
+    body: Option<String>,
+    withheld: Option<String>,
+    refs: Option<String>,
+    updated_at: Option<String>,
+}
 
 fn stored(row: Option<&Held>) -> Result<Stored> {
     Ok(match row {
-        Some(row) => (
-            Some(Value::Object(row.values.clone()).to_string()),
-            (!row.withheld.is_empty())
+        Some(row) => Stored {
+            body: Some(Value::Object(row.values.clone()).to_string()),
+            withheld: (!row.withheld.is_empty())
                 .then(|| serde_json::to_string(&row.withheld))
                 .transpose()?,
-            Some(row.updated_at.clone()),
-        ),
-        None => (None, None, None),
+            refs: (!row.refs.is_empty()).then(|| Value::Object(row.refs.clone()).to_string()),
+            updated_at: Some(row.updated_at.clone()),
+        },
+        None => Stored {
+            body: None,
+            withheld: None,
+            refs: None,
+            updated_at: None,
+        },
     })
 }
 
-fn unstored(
-    body: Option<String>,
-    withheld: Option<String>,
-    updated_at: Option<String>,
-) -> Result<Option<Held>> {
-    body.map(|body| read_held(&body, withheld.as_deref(), updated_at.unwrap_or_default()))
+fn unstored(row: Stored) -> Result<Option<Held>> {
+    row.body
+        .map(|body| {
+            read_held(
+                &body,
+                row.withheld.as_deref(),
+                row.refs.as_deref(),
+                row.updated_at.unwrap_or_default(),
+            )
+        })
         .transpose()
 }
 
@@ -579,14 +661,23 @@ fn set_beneath(
     id: &str,
     row: Option<&Held>,
 ) -> Result<()> {
-    let (body, withheld, updated_at) = stored(row)?;
+    let row = stored(row)?;
     conn.prepare_cached(
-        "INSERT INTO rows_beneath (item_id, name, id, body, withheld, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO rows_beneath (item_id, name, id, body, withheld, refs, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT (item_id, name, id) DO UPDATE SET
-           body = excluded.body, withheld = excluded.withheld, updated_at = excluded.updated_at",
+           body = excluded.body, withheld = excluded.withheld, refs = excluded.refs,
+           updated_at = excluded.updated_at",
     )?
-    .execute(params![item, table, id, body, withheld, updated_at])?;
+    .execute(params![
+        item,
+        table,
+        id,
+        row.body,
+        row.withheld,
+        row.refs,
+        row.updated_at
+    ])?;
     Ok(())
 }
 
@@ -600,6 +691,7 @@ fn hold(conn: &Connection, item: &str, table: &str, id: &str, row: Option<&Held>
                 id,
                 &row.values,
                 &row.withheld,
+                &row.refs,
                 &row.updated_at,
             )?;
         }
@@ -631,9 +723,10 @@ fn lay(conn: &Connection, item: &str, table: &str, id: &str) -> Result<()> {
             server
         }
     };
-    let shown = laid
-        .iter()
-        .fold(under, |row, (_, ops, at)| apply(row, ops, id, at));
+    let item_columns = item_columns(conn, item, table)?;
+    let shown = laid.iter().fold(under, |row, (_, ops, at)| {
+        apply(row, ops, id, at, &item_columns)
+    });
     hold(conn, item, table, id, shown.as_ref())
 }
 
@@ -688,10 +781,12 @@ pub(crate) fn answered(
     let mut row = under;
     for (ops, at) in taken {
         let ops = queued_ops(&json!({ "operations": serde_json::from_str::<Value>(&ops)? }))?;
-        row = apply(row, &ops, id, &at);
+        row = apply(row, &ops, id, &at, &[]);
     }
-    let (body, withheld, updated_at) = stored(row.as_ref())?;
-    Ok(body.map(|body| (body, withheld, updated_at.unwrap_or_default())))
+    let row = stored(row.as_ref())?;
+    Ok(row
+        .body
+        .map(|body| (body, row.withheld, row.updated_at.unwrap_or_default())))
 }
 
 /// A row as `(body, withheld, updated_at)`.
@@ -706,15 +801,16 @@ pub(crate) fn laid_on(
     at: Option<&str>,
 ) -> Result<Option<RowText>> {
     let row = row
-        .map(|(body, withheld, updated_at)| read_held(&body, withheld.as_deref(), updated_at))
+        .map(|(body, withheld, updated_at)| read_held(&body, withheld.as_deref(), None, updated_at))
         .transpose()?;
     let at = at
         .map(str::to_string)
         .or_else(|| row.as_ref().map(|row| row.updated_at.clone()))
         .unwrap_or_default();
-    let row = apply(row, ops, id, &at);
-    let (body, withheld, updated_at) = stored(row.as_ref())?;
-    Ok(body.map(|body| (body, withheld, updated_at.unwrap_or_default())))
+    let row = stored(apply(row, ops, id, &at, &[]).as_ref())?;
+    Ok(row
+        .body
+        .map(|body| (body, row.withheld, row.updated_at.unwrap_or_default())))
 }
 
 /// The operations on the row of the row writes sent with no answer
@@ -929,13 +1025,22 @@ pub(crate) fn flush(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// A row as the server answers it.
+pub(crate) struct ServerRow<'a> {
+    pub values: &'a Map<String, Value>,
+    pub withheld: &'a [String],
+    /// The columns written as item ids, which the server did not withhold.
+    pub refs: &'a [String],
+    pub updated_at: &'a str,
+}
+
 /// Beneath the writes laid over the row, where any are (`device/table-write-over-server`).
 pub(crate) fn take_server_row(
     conn: &Connection,
     item: &str,
     table: &str,
     id: &str,
-    row: Option<(&Map<String, Value>, &[String], &str)>,
+    row: Option<ServerRow<'_>>,
 ) -> Result<bool> {
     let named = conn
         .prepare_cached(
@@ -945,24 +1050,37 @@ pub(crate) fn take_server_row(
         .optional()?
         .is_some();
     if named && whole(conn, item, table)? {
-        let row = row.map(|(values, withheld, updated_at)| {
-            let mut values = values.clone();
-            for column in withheld {
-                values.remove(column);
-            }
-            Held {
-                values,
-                withheld: withheld.to_vec(),
-                updated_at: updated_at.to_string(),
-            }
-        });
+        let row = row
+            .map(|row| {
+                let mut values = row.values.clone();
+                for column in row.withheld {
+                    values.remove(column);
+                }
+                Ok::<_, CoreError>(Held {
+                    refs: tables::refs_of(&values, row.refs)?,
+                    values,
+                    withheld: row.withheld.to_vec(),
+                    updated_at: row.updated_at.to_string(),
+                })
+            })
+            .transpose()?;
         set_beneath(conn, item, table, id, row.as_ref())?;
         lay(conn, item, table, id)?;
         return Ok(true);
     }
     match row {
-        Some((values, withheld, updated_at)) => {
-            tables::hold_row(conn, item, table, id, values, withheld, updated_at)
+        Some(row) => {
+            let refs = tables::refs_of(row.values, row.refs)?;
+            tables::hold_row(
+                conn,
+                item,
+                table,
+                id,
+                row.values,
+                row.withheld,
+                &refs,
+                row.updated_at,
+            )
         }
         None => tables::delete_row(conn, item, table, id),
     }
@@ -1051,7 +1169,7 @@ pub(crate) fn before_batch<'a>(
             Some(under) => under,
             None => held_row(conn, item, table, id)?,
         };
-        let (body, withheld, updated_at) = stored(under.as_ref())?;
+        let under = stored(under.as_ref())?;
         let kept = conn
             .prepare_cached(
                 "INSERT OR IGNORE INTO rows_seen_beneath
@@ -1060,7 +1178,15 @@ pub(crate) fn before_batch<'a>(
                    (SELECT COALESCE(MAX(seq), 0) + 1 FROM rows_seen_beneath
                      WHERE item_id = ?3 AND name = ?4 AND id = ?2))",
             )?
-            .execute(params![batch, id, item, table, body, withheld, updated_at])?;
+            .execute(params![
+                batch,
+                id,
+                item,
+                table,
+                under.body,
+                under.withheld,
+                under.updated_at
+            ])?;
         if kept > 0 {
             conn.prepare_cached(
                 "DELETE FROM rows_seen_beneath
@@ -1088,7 +1214,15 @@ fn take_seen_beneath(conn: &Connection, batch: &str) -> Result<BTreeMap<String, 
     let mut kept = BTreeMap::new();
     for row in rows {
         let (id, (body, withheld, updated_at)) = row?;
-        kept.insert(id, unstored(body, withheld, updated_at)?);
+        kept.insert(
+            id,
+            unstored(Stored {
+                body,
+                withheld,
+                refs: None,
+                updated_at,
+            })?,
+        );
     }
     Ok(kept)
 }
@@ -1264,6 +1398,11 @@ pub(crate) fn taken(
     let laid = whole(conn, item, table)?;
     // Kept until its event too, so rows set aside while the table fills hold it.
     let filling = tables::state(conn, item, table)?.as_deref() == Some(tables::FILLING);
+    let item_columns = if laid {
+        item_columns(conn, item, table)?
+    } else {
+        Vec::new()
+    };
     let mut written = Vec::with_capacity(writes.len());
     let mut conflicts = Vec::with_capacity(writes.len());
     for taken in writes {
@@ -1295,7 +1434,7 @@ pub(crate) fn taken(
             if laid && kept_whole && !changed.contains(id) {
                 let under = beneath(conn, item, table, id)?.flatten();
                 let at = under.as_ref().map(|row| row.updated_at.clone());
-                let left = apply(under, ops, id, &write.queued_at).map(|mut row| {
+                let left = apply(under, ops, id, &write.queued_at, &item_columns).map(|mut row| {
                     if let Some(at) = at {
                         row.updated_at = at;
                     }
@@ -1373,7 +1512,7 @@ fn clashes(
         let before = laid_over(conn, item, table, id)?
             .into_iter()
             .filter(|(at, _, _)| *at < seq)
-            .fold(under, |row, (_, ops, at)| apply(row, &ops, id, &at));
+            .fold(under, |row, (_, ops, at)| apply(row, &ops, id, &at, &[]));
         let server = before.as_ref().map(|row| &row.values);
         let mut columns: BTreeMap<&str, ()> = BTreeMap::new();
         for written in ops.iter().filter(|written| written.id() == id) {
@@ -1427,6 +1566,7 @@ mod tests {
         let held = Held {
             values: values(json!({ "count": 1 })),
             withheld: vec!["ref".into()],
+            refs: Map::new(),
             updated_at: "then".into(),
         };
         let patched = apply(
@@ -1437,6 +1577,7 @@ mod tests {
             }],
             id,
             "now",
+            &[],
         );
         assert_eq!(patched, None);
         let put = apply(
@@ -1453,11 +1594,53 @@ mod tests {
             ],
             id,
             "now",
+            &[],
         )
         .unwrap();
         assert_eq!(put.values, values(json!({ "count": 3, "note": "a" })));
         assert_eq!(put.withheld, vec!["ref".to_string()]);
         assert_eq!(put.updated_at, "now");
+    }
+
+    #[test]
+    fn a_write_marks_a_text_value_of_an_item_column_as_an_item_id_and_any_other_write_clears_it() {
+        let id = "01a1b75e-2d9d-775a-930a-6b3d1207edae";
+        let other = "019a0000-0000-7000-8000-000000000002";
+        let item_columns = vec!["who".to_string(), "link".to_string()];
+        let held = Held {
+            values: values(json!({ "who": other, "link": other, "note": other })),
+            withheld: Vec::new(),
+            refs: values(json!({ "who": other, "link": other })),
+            updated_at: "then".into(),
+        };
+        let patched = apply(
+            Some(held),
+            &[Op::Patch {
+                id: id.into(),
+                values: values(json!({ "who": "text", "link": 3, "note": other })),
+            }],
+            id,
+            "now",
+            &item_columns,
+        )
+        .unwrap();
+        assert_eq!(
+            patched.refs,
+            values(json!({ "who": "text" })),
+            "a text value of an item column is marked, a number clears the mark, a column that is not an item column is never marked"
+        );
+        let put = apply(
+            Some(patched),
+            &[Op::Put {
+                id: id.into(),
+                values: values(json!({ "link": other, "note": other })),
+            }],
+            id,
+            "later",
+            &item_columns,
+        )
+        .unwrap();
+        assert_eq!(put.refs, values(json!({ "link": other })));
     }
 
     #[test]
@@ -1743,6 +1926,7 @@ mod tests {
             let theirs = Held {
                 values: values(json!({ "count": 5 })),
                 withheld: Vec::new(),
+                refs: Map::new(),
                 updated_at: "2026-11-19T10:00:00.000Z".into(),
             };
             set_beneath(&conn, "item", "steps", A, Some(&theirs)).unwrap();

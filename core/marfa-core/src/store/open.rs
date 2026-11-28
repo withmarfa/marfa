@@ -14,13 +14,13 @@ pub const SCHEMA: &str = include_str!("../schema.sql");
 
 /// SQLite's `user_version`; a shape change increments it, appends to `SHAPES`
 /// and appends its step to `UPGRADES`.
-pub const SCHEMA_VERSION: i64 = 13;
+pub const SCHEMA_VERSION: i64 = 14;
 
 /// The oldest version a writer upgrades in place; it refuses an older store.
 pub(super) const OLDEST_UPGRADED: i64 = 11;
 
 /// One SQL step per version, starting at `OLDEST_UPGRADED`.
-pub(super) const UPGRADES: &[&str] = &[JOURNAL_BY_ITEM, HOLDS_WAIT_ON];
+pub(super) const UPGRADES: &[&str] = &[JOURNAL_BY_ITEM, HOLDS_WAIT_ON, ROWS_KEEP_REFS];
 
 /// Keys `folder_journal` by path and item, and keeps with each row the
 /// identity and bytes of the binding the item still has at its path.
@@ -70,6 +70,20 @@ UPDATE folder_journal
 UPDATE folder_journal
   SET reason = reason || ', then `folders forget` it and settle this file with `folders held`'
   WHERE kept = 'unsure' AND reason LIKE '% cannot be reached; if it is gone, `folders remove` it';
+";
+
+/// Keeps with each held table row the columns written as item ids, which a row held before has no record of. Every table is owed again and filled from the server, which names them; the writes waiting on a table are laid over it once it is whole.
+const ROWS_KEEP_REFS: &str = "
+ALTER TABLE table_rows ADD COLUMN refs TEXT;
+ALTER TABLE rows_beneath ADD COLUMN refs TEXT;
+DELETE FROM table_rows;
+DELETE FROM rows_reread;
+DELETE FROM rows_beneath;
+DELETE FROM rows_seen;
+DELETE FROM rows_seen_beneath;
+DELETE FROM rows_laid WHERE batch IS NOT NULL;
+UPDATE item_tables SET state = 'owed', cursor = NULL, rows = 0, bytes = 0
+  WHERE state <> 'owed' OR cursor IS NOT NULL OR rows <> 0 OR bytes <> 0;
 ";
 
 fn upgraded(found: i64) -> bool {

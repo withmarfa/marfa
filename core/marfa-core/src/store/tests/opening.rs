@@ -855,7 +855,7 @@ fn a_store_from_before_tags_were_replaced_by_their_own_kind_is_refused_with_its_
 }
 
 /// Append one hash per schema version; never change an existing entry.
-const SHAPES: [&str; 13] = [
+const SHAPES: [&str; 14] = [
     "9a505dc1b14cecc6",
     "115c1d4def4a3d91",
     "2d4e4e1e76ec61dc",
@@ -869,6 +869,7 @@ const SHAPES: [&str; 13] = [
     "19191f94ade9938b",
     "07e2ec7950f2fc14",
     "47ecdbba73bd9575",
+    "242385410322cd39",
 ];
 
 /// Every table, index and trigger `conn` holds, as SQLite records them.
@@ -983,6 +984,8 @@ fn a_store_at_the_oldest_upgraded_version_keeps_every_missing_file_it_journaled(
                kept TEXT CHECK (kept IN ('arriving', 'unsure', 'carried')),
                reason TEXT
              ) WITHOUT ROWID;
+             ALTER TABLE table_rows DROP COLUMN refs;
+             ALTER TABLE rows_beneath DROP COLUMN refs;
              INSERT INTO folder_files (path, item_id, identity, content_hash, links, edge_lines, seen_at)
                VALUES ('a.md', 'a', 'id-a', 'hash-a', '[]', '[]', '2026-01-01T00:00:00Z'),
                       ('b.bin', 'other', 'id-other', 'hash-other', '[]', '[]', '2026-01-01T00:00:00Z');
@@ -1041,7 +1044,9 @@ fn a_hold_saved_at_schema_12_keeps_its_reason_waits_on_nothing_and_names_the_for
                identity TEXT,
                content_hash TEXT,
                PRIMARY KEY (path, item_id)
-             ) WITHOUT ROWID;",
+             ) WITHOUT ROWID;
+             ALTER TABLE table_rows DROP COLUMN refs;
+             ALTER TABLE rows_beneath DROP COLUMN refs;",
         )
         .unwrap();
         for (path, reason) in [
@@ -1092,6 +1097,43 @@ fn a_hold_saved_at_schema_12_keeps_its_reason_waits_on_nothing_and_names_the_for
             ),
         ]
     );
+}
+
+#[test]
+fn a_store_at_schema_13_owes_every_table_again_and_keeps_its_queue() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    drop(open(&path).unwrap());
+    let made = shape_of(&Connection::open(&path).unwrap());
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE table_rows DROP COLUMN refs;
+             ALTER TABLE rows_beneath DROP COLUMN refs;
+             INSERT INTO item_tables (item_id, name, state, cursor, rows, bytes)
+               VALUES ('i', 't', 'whole', NULL, 1, 20), ('i', 'u', 'online', NULL, 0, 0);
+             INSERT INTO table_rows (item_id, name, id, body, updated_at)
+               VALUES ('i', 't', 'r', '{\"who\":\"x\"}', '2026-01-01T00:00:00Z');
+             INSERT INTO row_refs (item_id, name, row_id, target) VALUES ('i', 't', 'r', 'x');
+             INSERT INTO rows_beneath (item_id, name, id, body, updated_at)
+               VALUES ('i', 't', 'r', '{}', '2026-01-01T00:00:00Z');",
+        )
+        .unwrap();
+        queue_one(&conn);
+    }
+    at_version(&path, 13);
+    let conn = open(&path).unwrap();
+    assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
+    assert_eq!(shape_of(&conn), made, "the upgrade made another shape");
+    let held = |sql: &str| -> i64 { conn.query_row(sql, [], |row| row.get(0)).unwrap() };
+    assert_eq!(held("SELECT COUNT(*) FROM table_rows"), 0);
+    assert_eq!(held("SELECT COUNT(*) FROM row_refs"), 0);
+    assert_eq!(held("SELECT COUNT(*) FROM rows_beneath"), 0);
+    assert_eq!(
+        held("SELECT COUNT(*) FROM item_tables WHERE state = 'owed' AND rows = 0 AND bytes = 0"),
+        2
+    );
+    assert_eq!(queued(&path), [("q1".to_string(), "k1".to_string())]);
 }
 
 #[test]

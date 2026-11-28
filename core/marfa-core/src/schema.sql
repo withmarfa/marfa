@@ -254,7 +254,9 @@ CREATE TRIGGER IF NOT EXISTS item_tables_change_delete AFTER DELETE ON item_tabl
     ON CONFLICT (item_id, name) DO UPDATE SET seq = excluded.seq;
 END;
 
--- `withheld` names columns the server omitted for this key.
+-- `withheld` names columns the server omitted for this key. `refs` is a JSON
+-- object of each column whose value was written as an item's id, to that id,
+-- which the server names in the row's `refs`; the value sorts as no value.
 CREATE TABLE IF NOT EXISTS table_rows (
   item_id TEXT NOT NULL,
   name TEXT NOT NULL,
@@ -262,11 +264,12 @@ CREATE TABLE IF NOT EXISTS table_rows (
   body TEXT NOT NULL,
   withheld TEXT,
   updated_at TEXT NOT NULL,
+  refs TEXT,
   PRIMARY KEY (item_id, name, id)
 ) WITHOUT ROWID;
 
--- Each item id a held row's values name, so a purge of that item finds the
--- rows whose withholding it changes. Any value of an item id's form counts.
+-- Each item id a held row's `refs` name, so a purge of that item finds the
+-- rows whose withholding it changes.
 CREATE TABLE IF NOT EXISTS row_refs (
   item_id TEXT NOT NULL,
   name TEXT NOT NULL,
@@ -314,6 +317,7 @@ CREATE TABLE IF NOT EXISTS rows_beneath (
   body TEXT,
   withheld TEXT,
   updated_at TEXT,
+  refs TEXT,
   PRIMARY KEY (item_id, name, id)
 ) WITHOUT ROWID;
 

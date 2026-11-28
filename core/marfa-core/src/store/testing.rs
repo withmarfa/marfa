@@ -55,6 +55,8 @@ pub fn as_schema_11(path: &std::path::Path) {
              ) WITHOUT ROWID;
              INSERT INTO folder_journal SELECT * FROM journal_kept;
              DROP TABLE journal_kept;
+             ALTER TABLE table_rows DROP COLUMN refs;
+             ALTER TABLE rows_beneath DROP COLUMN refs;
              PRAGMA user_version = 11;",
         )
         .unwrap();

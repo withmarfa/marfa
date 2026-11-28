@@ -3810,7 +3810,7 @@ If a drain meets a refusal that names no contract, then a device MUST end the pa
 
 ## The oldest server a device works with
 
-A device works with servers from one release on. The oldest is a constant in the core, and a change that makes the core depend on a server change raises it. The oldest is release 0.0.110, the first that takes the state a transition expects (`items/transition-from`); a server older than that refuses every transition a device queues, which names that state (`queue-and-verdicts/transition-names-from`). The release a server runs is the `version` its root answers (`instance/root-version`).
+A device works with servers from one release on. The oldest is a constant in the core, and a change that makes the core depend on a server change raises it. The oldest is release 0.0.119, the first that names the columns a row holds an item ID in (`tables/rows-refs`); a copy filled by an older server cannot tell such a value from the same text written to a column of another type (`device/table-refs`). The release a server runs is the `version` its root answers (`instance/root-version`).
 
 ### `device/server-too-old`
 
@@ -6807,6 +6807,30 @@ When the server answers a row, or sends it in `rows.changed`, naming columns in 
 **Reason:** a device never holds a value its key may not read.
 
 **Tests:** `device/tables-live.test.ts › holds a row without the value withheld from its key, and answers it withheld`.
+
+### `device/table-refs`
+
+When the server answers a row, or sends it in `rows.changed`, naming columns in `refs`, a device MUST hold the value of each of those columns as the ID of an item and answer the row with the same `refs`.
+
+**Reason:** the server keeps where a value came from with the row, whatever its column declares since (`tables/rows-item-origin`), so a device that held only the value could not tell an ID written to an item column from the same text written to a string column.
+
+**Tests:** `device/tables-live.test.ts › sorts a value a forced change left in a column as an item ID as no value, as the server does`.
+
+### `device/table-sort-refs`
+
+When a device answers a read of a table sorted by `values.<column>` from the copy, a device MUST sort a value the row names in `refs` as `tables/rows-sort-item-id` says, and any other value as its type.
+
+**Reason:** a type changed with `force=true`, or an item's own `columns` edited, keeps the IDs a column held and the rows the server sorts them in order.
+
+**Tests:** `device/tables-live.test.ts › sorts a value a forced change left in a column as an item ID as no value, as the server does`, `› sorts a value an authorised edit of an item's own columns left as an item ID as no value, as the server does`.
+
+### `device/table-write-refs`
+
+When a device lays a queued row write over a row it holds, a device MUST name in the row's `refs` each column of type `item` the write sets to text and no column it sets to another value or leaves alone.
+
+**Reason:** the server marks a value so as it takes the write (`tables/rows-refs`), and the copy answers the row as it will be.
+
+**Tests:** `device/tables-live.test.ts › sorts a value its own queued write set in an item column as no value before the server has taken it`.
 
 ### `device/table-named-purged`
 

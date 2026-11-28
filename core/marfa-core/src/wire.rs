@@ -172,6 +172,8 @@ pub struct RowChange {
     pub deleted: bool,
     #[serde(default)]
     pub withheld: Vec<String>,
+    #[serde(default)]
+    pub refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
