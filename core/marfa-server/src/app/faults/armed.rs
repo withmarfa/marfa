@@ -729,11 +729,11 @@ impl Faults {
         }
     }
 
-    /// Holds a write that has an open transaction, beating so queued writes keep waiting.
+    /// Holds a write with an open transaction; queued writes wait while it is held.
     pub fn hold_beating(&self, point: &Point, pulse: &Pulse) {
         if let Some((gate, _waiting)) = self.selected(point.name, None) {
+            let _holding = pulse.hold();
             while !*gate.borrow() {
-                pulse.tick();
                 std::thread::sleep(BEAT);
             }
         }

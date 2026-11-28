@@ -61,6 +61,21 @@ enum Message {
 pub struct Pulse {
     origin: Instant,
     beat: Arc<AtomicU64>,
+    #[cfg(feature = "test-hooks")]
+    held: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// While it lives, the pulse reads as current whatever the holder's thread is doing.
+#[cfg(feature = "test-hooks")]
+#[must_use]
+pub struct Holding(Pulse);
+
+#[cfg(feature = "test-hooks")]
+impl Drop for Holding {
+    fn drop(&mut self) {
+        self.0.tick();
+        self.0.held.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl Pulse {
@@ -68,7 +83,16 @@ impl Pulse {
         Pulse {
             origin: Instant::now(),
             beat: Arc::default(),
+            #[cfg(feature = "test-hooks")]
+            held: Arc::default(),
         }
+    }
+
+    /// Marks the pulse current until the guard is dropped, which beats once more.
+    #[cfg(feature = "test-hooks")]
+    pub fn hold(&self) -> Holding {
+        self.held.fetch_add(1, Ordering::SeqCst);
+        Holding(self.clone())
     }
 
     pub fn tick(&self) {
@@ -78,6 +102,10 @@ impl Pulse {
     }
 
     fn last(&self) -> Instant {
+        #[cfg(feature = "test-hooks")]
+        if self.held.load(Ordering::SeqCst) > 0 {
+            return Instant::now();
+        }
         self.origin + Duration::from_millis(self.beat.load(Ordering::Relaxed))
     }
 }
