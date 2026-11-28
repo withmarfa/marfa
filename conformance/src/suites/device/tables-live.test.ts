@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { BindingDevice, type Call } from "../../device/binding-adapter.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
-import type { HeldTables, Outcome } from "../../device/protocol.js";
+import type { HeldTables, Outcome, TableFill } from "../../device/protocol.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -587,6 +587,72 @@ describe("how a device fills a table", () => {
         "the follow telling its caller it filled the table",
       );
       // Later events let the listener drain fill notices already queued.
+      for (const round of [1, 2]) {
+        const sentinel = await itemOf(type);
+        await until(
+          () =>
+            follow.changes.some(
+              (change) =>
+                change.kind === "applied" && change.itemId === sentinel,
+            ),
+          `the follow applying sentinel ${String(round)}`,
+        );
+      }
+      expect(
+        follow.changes.filter(
+          (change) => change.kind === "tableFilled" && change.itemId === item,
+        ),
+        "a table the follow filled once was told more than once",
+      ).toHaveLength(1);
+    } finally {
+      expect(await follow.stop()).toBeNull();
+    }
+  });
+
+  it("leaves its tables to the follow, answering null, when asked to fill them while a follow holds the stream", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    await filled(item, 1500);
+    const device = await hydratedBinding([type], "fill-asked-following");
+    // The witness: with no follow holding the stream, the call answers its report.
+    expect(
+      value(await device.call<TableFill | null>("fillTables")),
+      "no follow held the stream, so the call fills",
+    ).toMatchObject({ whole: 0, unfilled: 0 });
+    const follow = await device.follow();
+    try {
+      const seen = await itemOf(type);
+      await until(
+        () =>
+          follow.changes.some(
+            (change) => change.kind === "applied" && change.itemId === seen,
+          ),
+        "the follow applying an event",
+      );
+      expect(
+        value(await device.call<{ fill: unknown }>("holdTable", type, "steps"))
+          .fill,
+        "the follow holds the stream",
+      ).toBeNull();
+      expect(
+        value(await device.call<TableFill | null>("fillTables")),
+        "the call was answered with a report while the follow held the stream",
+      ).toBeNull();
+      await until(async () => {
+        const tables = value(await device.call<HeldTables>("heldTables"));
+        const state = stateOf(tables, item);
+        return state?.state === "whole" && state.rows === 1500;
+      }, "the follow filling the table");
+      await until(
+        () =>
+          follow.changes.some(
+            (change) =>
+              change.kind === "tableFilled" &&
+              change.itemId === item &&
+              change.table === "steps",
+          ),
+        "the follow telling its caller it filled the table",
+      );
       for (const round of [1, 2]) {
         const sentinel = await itemOf(type);
         await until(

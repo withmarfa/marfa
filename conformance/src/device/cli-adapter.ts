@@ -308,8 +308,8 @@ export class CliDevice implements DeviceUnderTest {
     );
   }
 
-  async fillTables(): Promise<Outcome<TableFill>> {
-    return this.json<TableFill>(["tables", "fill", ...this.server()]);
+  async fillTables(): Promise<Outcome<TableFill | null>> {
+    return this.json<TableFill | null>(["tables", "fill", ...this.server()]);
   }
 
   /** `marfa device rows write`: one batch, laid over the copy and queued. */

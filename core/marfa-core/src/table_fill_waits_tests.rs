@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use crate::catch_up::{Change, ChangeEvent, Pace};
 use crate::scripted::{self, Answer, Scripted, Then};
+use crate::streams::Mover;
 use crate::watch::WatchListener;
 use crate::{
     CatchUpFailed, CatchUpReport, Core, CoreError, FillReport, FollowReport, HydrateReport,
@@ -80,6 +81,17 @@ fn page(rows: std::ops::Range<usize>, next: Option<&str>) -> Answer {
     scripted::certified(scripted::json(200, &body.to_string()))
 }
 
+fn tables_summary() -> Answer {
+    let summary = json!({
+        "data": [
+            {"name": "steps", "row_count": 1500, "bytes": 30_000},
+            {"name": "notes", "row_count": 2, "bytes": 40},
+        ],
+        "next_cursor": null,
+    });
+    scripted::certified(scripted::json(200, &summary.to_string()))
+}
+
 /// Adds to `catalog` a type declaring `steps` and `notes`, holds `n1` of it,
 /// and answers its tables: `steps` in two pages, 1,000 rows and then 500.
 pub(crate) fn hold_n1(server: &Scripted, core: &Core, mut catalog: WireCatalog) {
@@ -95,20 +107,7 @@ pub(crate) fn hold_n1(server: &Scripted, core: &Core, mut catalog: WireCatalog) 
         crate::reach::set_listed(&conn, "n1", true).unwrap();
         store::put_server_item(&conn, &item, Some(&[]), &catalog).unwrap();
     }
-    let summary = json!({
-        "data": [
-            {"name": "steps", "row_count": 1500, "bytes": 30_000},
-            {"name": "notes", "row_count": 2, "bytes": 40},
-        ],
-        "next_cursor": null,
-    });
-    server.on(
-        "/items/n1/tables",
-        vec![scripted::certified(scripted::json(
-            200,
-            &summary.to_string(),
-        ))],
-    );
+    server.on("/items/n1/tables", vec![tables_summary()]);
     server.on(
         ROWS,
         vec![page(0..1000, Some("p2")), page(1000..1500, None)],
@@ -323,6 +322,10 @@ struct Following {
     stop: Arc<AtomicBool>,
     told: Told,
     ended: Receiver<Result<FollowReport>>,
+    /// Raised once a follow made through `follow_observed` has read its
+    /// stream's live marker, after which it reads the store for owed tables
+    /// only when its flag is raised.
+    live: Arc<AtomicBool>,
 }
 
 fn follow(core: &Arc<Core>) -> Following {
@@ -331,17 +334,28 @@ fn follow(core: &Arc<Core>) -> Following {
 
 fn following(core: &Arc<Core>, observed: bool) -> Following {
     let stop = Arc::new(AtomicBool::new(false));
+    let live = Arc::new(AtomicBool::new(false));
     let told = Told::default();
     let (core, flag, into) = (Arc::clone(core), Arc::clone(&stop), Arc::clone(&told));
+    let went_live = Arc::clone(&live);
     let ended = on_thread(move || {
         let tell = |change: &Change| into.lock().unwrap().push(change.clone());
         if observed {
-            core.follow_observed(&flag, false, tell, |_| {})
+            core.follow_observed(&flag, false, tell, |now| {
+                if now {
+                    went_live.store(true, Ordering::SeqCst);
+                }
+            })
         } else {
             core.follow(&flag, false, tell)
         }
     });
-    Following { stop, told, ended }
+    Following {
+        stop,
+        told,
+        ended,
+        live,
+    }
 }
 
 fn catch_up(
@@ -369,6 +383,7 @@ fn hydrate(core: &Arc<Core>, in_place: bool) -> (Arc<AtomicBool>, Receiver<Resul
 }
 
 type Holding = (Arc<Core>, Sender<Result<TableHold>>);
+type Filling = (Arc<Core>, Sender<Result<Option<FillReport>>>);
 
 /// What a watch's listener was told.
 #[derive(Default)]
@@ -378,6 +393,8 @@ struct Heard {
     /// Holds `steps` from inside `changed` at the first event, answering here.
     holds: Mutex<Option<Holding>>,
     holding: AtomicBool,
+    /// Asks `fill_tables` from inside `changed` at the first event.
+    fills: Mutex<Option<Filling>>,
 }
 
 impl WatchListener for Heard {
@@ -388,6 +405,11 @@ impl WatchListener for Heard {
         {
             self.holding.store(true, Ordering::SeqCst);
             let _ = answer.send(core.hold_table(LEDGER, STEPS));
+        }
+        if change.event.as_str() == "item.created"
+            && let Some((core, answer)) = self.fills.lock().unwrap().take()
+        {
+            let _ = answer.send(asked(&core));
         }
     }
 
@@ -494,7 +516,7 @@ fn a_fill_tables_run_while_the_watch_restarts_leaves_the_follow_following() {
     restarted_while_filling(|core| {
         crate::tables::choose(&mut core.conn().unwrap(), LEDGER, STEPS).unwrap();
         let core = Arc::clone(core);
-        on_thread(move || core.fill_tables(&AtomicBool::new(false)))
+        on_thread(move || asked(&core).map(|fill| fill.expect("the fill was left to another call")))
     });
 }
 
@@ -1089,18 +1111,237 @@ fn a_row_write_waiting_for_the_head_behind_a_fill_is_late_after_its_wait() {
     held.recv_timeout(LONG).unwrap().unwrap();
 }
 
-#[test]
-fn fill_tables_while_a_fill_holds_the_stream_is_refused_naming_a_table_fill() {
-    let copy = copy();
-    let held = held_hold(&copy.core);
-    match copy.core.fill_tables(&AtomicBool::new(false)) {
-        Err(CoreError::Invalid(said)) => assert!(said.contains("filling its tables"), "{said}"),
-        other => panic!("fill_tables was not refused: {other:?}"),
-    }
-    fault::release(CLAIMED);
-    held.recv_timeout(LONG).unwrap().unwrap();
+/// What `fill_tables` answers: on a free stream a report, and where another
+/// call holds the stream `None`.
+fn asked(core: &Core) -> Result<Option<FillReport>> {
+    core.fill_tables(&AtomicBool::new(false))
 }
 
+/// Marks `table` of `n1` owed in the store, raising no flag a follow reads.
+fn owe(core: &Core, table: &str) {
+    crate::tables::choose(&mut core.conn().unwrap(), LEDGER, table).unwrap();
+}
+
+fn reads(copy: &Copy, path: &str) -> usize {
+    copy.server.seen(path).len()
+}
+
+const NOTES_ROWS: &str = "/items/n1/tables/notes/rows";
+const SUMMARY: &str = "/items/n1/tables";
+
+/// Asks `core` to fill its tables from another thread, so a call that waits
+/// shows as one that did not answer.
+fn asked_on_thread(core: &Arc<Core>) -> Receiver<Result<Option<FillReport>>> {
+    let core = Arc::clone(core);
+    on_thread(move || asked(&core))
+}
+
+/// A follow whose stream is live and sends one sentinel once `copy.go` is
+/// raised, held until it reads the store only when its flag is raised.
+fn following_live(copy: &Copy) -> Following {
+    live_then_sentinel(copy);
+    let follow = following(&copy.core, true);
+    wait_until("the follow never went live", || {
+        follow.live.load(Ordering::SeqCst)
+    });
+    follow
+}
+
+#[test]
+fn fill_tables_while_a_follow_holds_the_stream_leaves_its_tables_to_the_follow() {
+    let copy = copy();
+    let follow = following_live(&copy);
+    owe(&copy.core, STEPS);
+    // The witness: with no `fill_tables` call, nothing wakes the follow to
+    // fill a table that went owed behind its back.
+    thread::sleep(QUIET);
+    assert_eq!(state(&copy.core, STEPS).as_deref(), Some("owed"));
+    assert!(filled_told(&follow.told).is_empty());
+    assert_eq!(reads(&copy, ROWS), 0);
+
+    let answered = asked_on_thread(&copy.core)
+        .recv_timeout(SOON)
+        .expect("fill_tables waited for the follow")
+        .expect("fill_tables was refused while a follow held the stream");
+    assert_eq!(answered, None);
+    wait_until("the follow never told the table filled", || {
+        !filled_told(&follow.told).is_empty()
+    });
+    through_sentinel(&copy, &follow);
+    assert_eq!(filled_told(&follow.told), vec![STEPS.to_string()]);
+    assert_eq!(state(&copy.core, STEPS).as_deref(), Some("whole"));
+    assert_eq!(reads(&copy, ROWS), 2, "the table was read more than once");
+    follow.stop.store(true, Ordering::SeqCst);
+    follow.ended.recv_timeout(LONG).unwrap().unwrap();
+}
+
+#[test]
+fn fill_tables_while_a_catch_up_or_hydration_holds_the_stream_answers_none_and_sends_nothing() {
+    for holder in [Mover::CatchUp, Mover::Hydration] {
+        let copy = copy();
+        owe(&copy.core, STEPS);
+        let claim = copy.core.claim_stream(holder).unwrap();
+        let answered = asked_on_thread(&copy.core)
+            .recv_timeout(SOON)
+            .expect("fill_tables waited for the holder")
+            .unwrap_or_else(|refused| panic!("{holder:?}: fill_tables was refused: {refused:?}"));
+        assert_eq!(answered, None, "{holder:?}");
+        assert_eq!(copy.server.asked(), 0, "{holder:?} sent a request");
+        assert_eq!(state(&copy.core, STEPS).as_deref(), Some("owed"));
+        drop(claim);
+        // The witness: with the stream free the same call reads the table.
+        let report = asked(&copy.core).unwrap().expect("a free stream filled");
+        assert_eq!((report.whole, report.rows), (1, 1500), "{holder:?}");
+    }
+}
+
+#[test]
+fn fill_tables_while_a_catch_up_runs_leaves_its_tables_to_that_catch_up() {
+    let copy = copy();
+    let release = Arc::new(AtomicBool::new(false));
+    copy.server.on(
+        "/events",
+        vec![until(&release, events("11", &[("e1", "11")], Then::End))],
+    );
+    let (_stop, caught_up) = catch_up(&copy.core);
+    copy.server.wait_for("/events", 1, LONG);
+    owe(&copy.core, STEPS);
+    let answered = asked_on_thread(&copy.core)
+        .recv_timeout(SOON)
+        .expect("fill_tables waited for the catch-up")
+        .expect("fill_tables was refused while a catch-up held the stream");
+    assert_eq!(answered, None);
+    assert_eq!(reads(&copy, SUMMARY), 0, "fill_tables read a table");
+    release.store(true, Ordering::SeqCst);
+    let report = caught_up
+        .recv_timeout(LONG)
+        .expect("the catch-up never ended")
+        .expect("the catch-up failed");
+    assert_eq!(report.tables.whole, 1);
+    assert_eq!(state(&copy.core, STEPS).as_deref(), Some("whole"));
+    assert_eq!(reads(&copy, ROWS), 2, "the table was read more than once");
+    assert_eq!(reads(&copy, SUMMARY), 1);
+}
+
+#[test]
+fn fill_tables_while_a_fill_holds_the_stream_leaves_its_tables_to_that_fill() {
+    let copy = copy();
+    let held = held_hold(&copy.core);
+    owe(&copy.core, NOTES);
+    let answered = asked_on_thread(&copy.core)
+        .recv_timeout(SOON)
+        .expect("fill_tables waited for the fill")
+        .expect("fill_tables was refused while a fill held the stream");
+    assert_eq!(answered, None);
+    assert_eq!(reads(&copy, SUMMARY), 0, "fill_tables read a table");
+    fault::release(CLAIMED);
+    assert_eq!(filled(&held).whole, 2);
+    assert_eq!(state(&copy.core, STEPS).as_deref(), Some("whole"));
+    assert_eq!(state(&copy.core, NOTES).as_deref(), Some("whole"));
+    assert_eq!(reads(&copy, ROWS), 2);
+    assert_eq!(reads(&copy, NOTES_ROWS), 1);
+}
+
+#[test]
+fn a_fill_tables_called_from_a_watch_listener_answers_at_once() {
+    let copy = copy();
+    let heard = Arc::new(Heard::default());
+    let (answer, answered) = mpsc::channel();
+    *heard.fills.lock().unwrap() = Some((Arc::clone(&copy.core), answer));
+    let _listening = watch(&copy.core, &heard);
+    copy.server.wait_for("/events", 1, LONG);
+    copy.go.store(true, Ordering::SeqCst);
+    let said = answered
+        .recv_timeout(LONG)
+        .expect("the listener's fill_tables never answered");
+    assert_eq!(said.unwrap(), None);
+    assert_eq!(failed(&heard), 0);
+    assert!(heard.ended.lock().unwrap().is_empty());
+}
+
+#[test]
+fn tables_left_owed_with_no_follow_are_filled_once_by_the_next_follow() {
+    let copy = copy();
+    owe(&copy.core, STEPS);
+    {
+        let _claim = copy.core.claim_stream(Mover::CatchUp).unwrap();
+        assert_eq!(asked(&copy.core).unwrap(), None);
+    }
+    assert_eq!(copy.server.asked(), 0, "a request was sent with no follow");
+    assert_eq!(state(&copy.core, STEPS).as_deref(), Some("owed"));
+    let follow = following_live(&copy);
+    wait_until("the follow never told the table filled", || {
+        !filled_told(&follow.told).is_empty()
+    });
+    through_sentinel(&copy, &follow);
+    assert_eq!(filled_told(&follow.told), vec![STEPS.to_string()]);
+    assert_eq!(state(&copy.core, STEPS).as_deref(), Some("whole"));
+    assert_eq!(reads(&copy, ROWS), 2, "the table was read more than once");
+    follow.stop.store(true, Ordering::SeqCst);
+    follow.ended.recv_timeout(LONG).unwrap().unwrap();
+}
+
+#[test]
+fn fill_tables_on_a_free_stream_answers_its_report() {
+    let copy = copy();
+    owe(&copy.core, STEPS);
+    let report = asked(&copy.core).unwrap().expect("a free stream filled");
+    assert_eq!(
+        (report.whole, report.pages, report.rows, report.failed),
+        (1, 2, 1500, 0)
+    );
+    assert_eq!(state(&copy.core, STEPS).as_deref(), Some("whole"));
+    let again = asked(&copy.core).unwrap().expect("a free stream filled");
+    assert_eq!((again.whole, again.pages), (0, 0));
+}
+
+#[test]
+fn a_fill_left_owed_for_a_follow_that_stops_before_it_fills_is_filled_once_on_reopening() {
+    let copy = copy();
+    let gate = Arc::new(AtomicBool::new(false));
+    copy.server
+        .on(SUMMARY, vec![until(&gate, tables_summary())]);
+    let follow = following_live(&copy);
+    owe(&copy.core, STEPS);
+    assert_eq!(asked(&copy.core).unwrap(), None);
+    // The follow took the flag and began its fill step, held at the summary.
+    copy.server.wait_for(SUMMARY, 1, LONG);
+    follow.stop.store(true, Ordering::SeqCst);
+    gate.store(true, Ordering::SeqCst);
+    let _ = follow
+        .ended
+        .recv_timeout(LONG)
+        .expect("the follow never ended");
+    let read = reads(&copy, ROWS);
+    let Copy {
+        _dir,
+        path,
+        server,
+        core,
+        ..
+    } = copy;
+    wait_until("the follow never let go of the copy", || {
+        Arc::strong_count(&core) == 1
+    });
+    assert_ne!(state(&core, STEPS).as_deref(), Some("whole"));
+    drop(core);
+
+    let reopened = open(&path, &server);
+    assert_ne!(state(&reopened, STEPS).as_deref(), Some("whole"));
+    let report = asked(&reopened)
+        .unwrap()
+        .expect("a fresh pass on a free stream filled");
+    assert_eq!((report.whole, report.rows, report.failed), (1, 1500, 0));
+    assert_eq!(state(&reopened, STEPS).as_deref(), Some("whole"));
+    assert_eq!(server.seen(ROWS).len(), read + 2);
+    let again = asked(&reopened).unwrap();
+    assert_eq!(again.map(|fill| fill.pages), Some(0));
+    assert_eq!(
+        server.seen(ROWS).len(),
+        read + 2,
+        "the table was read twice"
+    );
+}
 #[test]
 fn closing_a_copy_while_a_call_waits_for_a_fill_ends_the_call() {
     let copy = copy();

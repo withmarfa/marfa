@@ -6684,6 +6684,14 @@ If a caller stops a hydration, a catch-up or a follow while it waits under `devi
 
 **Tests:** `device/binding-follow.test.ts › ends a %s stopped while it waits for a hold's fill as its stop ends it, having asked the server nothing`.
 
+### `device/table-fill-asked-while-held`
+
+If an app asks a device to fill its tables while a hydration, a catch-up, a follow or another fill holds the working copy's stream, then a device MUST answer at once that it filled no table, leaving each table that is not whole owed, rather than refuse the call or wait for the stream.
+
+**Reason:** a follow holds the stream for as long as it follows, so a refusal would leave an app that keeps its copy live unable to ask for a fill, and a fill moves no cursor. A follow or a catch-up fills the owed tables (`device/table-fill-when`) and a hydration fills none. With no later follow, catch-up or fill the tables stay owed, so an app that needs the result reads the held tables, or asks again once the holder ends.
+
+**Tests:** `device/tables-live.test.ts › leaves its tables to the follow, answering null, when asked to fill them while a follow holds the stream`.
+
 ### `device/table-fill-failed`
 
 If the server answers a read a device makes to fill one table with an error about that read, such as a `5xx` answer or a refusal, then a device MUST go on to fill its other tables before it reads that table again.
