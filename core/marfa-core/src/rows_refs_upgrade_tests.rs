@@ -82,7 +82,9 @@ fn serve(server: &Scripted) {
     );
     server.on(
         "/keys/current",
-        vec![answer(&json!({"type_permissions": {NOTE: "write", LEDGER: "write"}}))],
+        vec![answer(
+            &json!({"type_permissions": {NOTE: "write", LEDGER: "write"}}),
+        )],
     );
 }
 
@@ -198,7 +200,9 @@ fn as_schema_13(path: &Path) {
     let held: Vec<(String, String, String, String)> = conn
         .prepare("SELECT item_id, name, id, body FROM table_rows")
         .unwrap()
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
         .unwrap()
         .collect::<rusqlite::Result<_>>()
         .unwrap();
@@ -268,7 +272,9 @@ fn kept(core: &Core) -> Vec<Value> {
         .unwrap()
         .query_map([], |row| row.get::<_, String>(0))
         .unwrap()
-        .map(|payload| serde_json::from_str::<Value>(&payload.unwrap()).unwrap()["operations"].clone())
+        .map(|payload| {
+            serde_json::from_str::<Value>(&payload.unwrap()).unwrap()["operations"].clone()
+        })
         .collect()
 }
 
@@ -279,9 +285,11 @@ fn a_store_from_before_rows_kept_marks_keeps_what_it_can_tell_and_refills_the_re
     filled(&path);
     let n3: String = Connection::open(&path)
         .unwrap()
-        .query_row("SELECT item_id FROM item_tables WHERE item_id NOT IN ('n1', 'n2')", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT item_id FROM item_tables WHERE item_id NOT IN ('n1', 'n2')",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     as_schema_13(&path);
 

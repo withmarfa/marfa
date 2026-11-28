@@ -277,7 +277,11 @@ fn item_columns(conn: &Connection, item: &str, table: &str) -> Result<Vec<String
 }
 
 /// `None` where the copy holds no declaration of the table.
-fn declared_item_columns(conn: &Connection, item: &str, table: &str) -> Result<Option<Vec<String>>> {
+fn declared_item_columns(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+) -> Result<Option<Vec<String>>> {
     let held: bool = conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM items WHERE id = ?1)",
         [item],
@@ -2086,7 +2090,10 @@ mod tests {
         const X: &str = "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f71";
         // The column is no longer of type `item`, as after a forced type change.
         for (seq, ops) in [
-            (1, json!([{ "op": "patch", "id": R, "values": { "link": X } }])),
+            (
+                1,
+                json!([{ "op": "patch", "id": R, "values": { "link": X } }]),
+            ),
             (
                 2,
                 json!([{ "op": "put", "id": R, "values": { "link": X, "count": 1 } }]),
