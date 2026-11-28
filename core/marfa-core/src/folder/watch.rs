@@ -3077,8 +3077,7 @@ mod backoff_tests {
     const OTHER_INSTANCE: &str = "11111111-1111-7111-8111-111111111111";
 
     /// Ten simulated minutes, a second at a time, each given only once the
-    /// watch itself waits on the clock, so the watch has handled the second
-    /// before and how many passes run does not depend on how fast it runs.
+    /// watch itself waits on the clock.
     fn ten_minutes(probe: &Probe, ended: &AtomicBool, mut each: impl FnMut(usize)) {
         for second in 0..600 {
             if !until("the watch never waited on the clock", ended, || {
@@ -3242,9 +3241,7 @@ mod backoff_tests {
                 let _ = folder.watch(&stop, |_| Ok::<(), ()>(()));
                 ended.store(true, Ordering::SeqCst);
             });
-            // The windows run on the clock, which moves only while the watch
-            // waits: the change is made then, and its second starts once the
-            // watch has taken the change from the system.
+            // The window starts once the watch has taken the change.
             let mut taken_at = None;
             ten_minutes(&probe, &ended, |second| {
                 if second == 590 {

@@ -70,8 +70,7 @@ pub use manual::{Waiting, advance, set_manual, waits};
 static GLOBAL_CLOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Held by a test that sets the process-wide manual clock, or that needs the
-/// system clock to stay the system clock, so no other such test sees it
-/// change.
+/// system clock left as it is.
 #[cfg(test)]
 pub(crate) fn alone() -> std::sync::MutexGuard<'static, ()> {
     GLOBAL_CLOCK
@@ -79,9 +78,8 @@ pub(crate) fn alone() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// The manual clock, set for the test that holds [`alone`]'s guard. It goes
-/// back to the system clock when dropped, however the test ends, and only
-/// then lets the next test in.
+/// The manual clock, set while [`alone`]'s guard is held. Dropped, it restores
+/// the system clock and then lets the next test in.
 #[cfg(all(test, debug_assertions))]
 pub(crate) struct ManualClock {
     _alone: std::sync::MutexGuard<'static, ()>,
@@ -102,8 +100,7 @@ impl Drop for ManualClock {
     }
 }
 
-/// Whether `thread` has asked the manual clock for a wait it has not yet
-/// reached.
+/// Whether `thread` has a wait on the manual clock that it has not reached.
 #[cfg(all(test, debug_assertions))]
 pub(crate) fn waiting_on(thread: std::thread::ThreadId) -> bool {
     manual::set().is_some_and(|manual| manual.waiting_on(thread))
@@ -279,9 +276,8 @@ mod manual {
                 .collect()
         }
 
-        /// Whether `thread` waits on this clock for a time it has not
-        /// reached. A wait the last `advance` reached is no longer pending,
-        /// though its thread has yet to notice.
+        /// A wait the last `advance` reached is no longer pending, though its
+        /// thread has yet to notice.
         #[cfg(test)]
         pub(super) fn waiting_on(&self, thread: std::thread::ThreadId) -> bool {
             let state = held(&self.state);
@@ -542,21 +538,12 @@ mod manual {
         }
 
         /// The free functions, which every wait of the engine goes through.
-        /// The only test that sets the clock for the whole process; the
-        /// others hold a clock of their own.
+        /// It sets the clock for the whole process, as the folder watch's
+        /// backoff tests do; the others here hold a clock of their own.
         #[test]
         fn the_engine_waits_by_the_manual_clock_while_one_is_set_and_by_the_system_clock_after() {
-            /// Puts the system clock back however the test ends.
-            struct Restore;
-            impl Drop for Restore {
-                fn drop(&mut self) {
-                    set_manual(false);
-                }
-            }
-            let _alone = crate::clock::alone();
-            let _restore = Restore;
+            let _clock = crate::clock::ManualClock::set(crate::clock::alone());
             let stop = Arc::new(AtomicBool::new(false));
-            set_manual(true);
             let waiting = {
                 let stop = Arc::clone(&stop);
                 thread::spawn(move || super::super::wait(&stop, MS(30_000), MS(5)))

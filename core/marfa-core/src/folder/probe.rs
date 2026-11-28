@@ -1,9 +1,7 @@
 //! What a test learns of one folder watch from outside it.
 //!
 //! The watch loop runs on the thread that calls `watch`, so a probe installed
-//! on that thread hears that watch alone, whatever else the process runs.
-//! The tests that move the manual clock use it to move the clock only once
-//! the watch is waiting for it, and to know when the watch has taken a change.
+//! on that thread hears that watch alone.
 
 use std::cell::RefCell;
 use std::ffi::OsStr;
