@@ -154,6 +154,9 @@ pub struct Fixed {
     pub clock_offset_ms: u64,
     #[cfg(feature = "test-hooks")]
     pub contract_version: Option<u32>,
+    /// The release a test-hooks server reports and judges plugins by, in place of the build's.
+    #[cfg(feature = "test-hooks")]
+    pub release: Option<String>,
     pub tuning: Tuning,
     pub max_connections: usize,
     pub max_connections_per_address: usize,
@@ -269,10 +272,11 @@ impl Reader<'_> {
 /// A server built without test hooks cannot run them, so it will not start asking for any.
 #[cfg(not(feature = "test-hooks"))]
 fn refuse_hooks(reader: &mut Reader) {
-    const NAMES: [&str; 4] = [
+    const NAMES: [&str; 5] = [
         "MARFA_TEST_HOOKS",
         "MARFA_TEST_CLOCK_OFFSET_MS",
         "MARFA_TEST_CONTRACT_VERSION",
+        "MARFA_TEST_RELEASE",
         "MARFA_TEST_TUNING",
     ];
     for name in NAMES {
@@ -326,6 +330,12 @@ impl Fixed {
         let contract_version = reader
             .whole("MARFA_TEST_CONTRACT_VERSION", 0, rule::MILLION)
             .map(|version| version as u32);
+        #[cfg(feature = "test-hooks")]
+        let release = reader.take("MARFA_TEST_RELEASE", |text| {
+            marfa_rules::plugin::Version::parse(text)
+                .map(|release| release.to_string())
+                .ok_or_else(|| "must be a release such as 1.4.0".to_string())
+        });
         #[cfg(not(feature = "test-hooks"))]
         refuse_hooks(&mut reader);
         #[cfg(feature = "test-hooks")]
@@ -365,6 +375,8 @@ impl Fixed {
             clock_offset_ms,
             #[cfg(feature = "test-hooks")]
             contract_version,
+            #[cfg(feature = "test-hooks")]
+            release,
             tuning,
             max_connections,
             max_connections_per_address,
@@ -387,8 +399,14 @@ impl Fixed {
             let hooked = |name: &'static str| environment.get(name).map(|value| (name, value));
             let offset = hooked("MARFA_TEST_CLOCK_OFFSET_MS").filter(|_| self.clock_offset_ms > 0);
             let contract = hooked("MARFA_TEST_CONTRACT_VERSION");
+            let release = hooked("MARFA_TEST_RELEASE");
             let tuning = hooked("MARFA_TEST_TUNING");
-            for (name, value) in offset.into_iter().chain(contract).chain(tuning) {
+            for (name, value) in offset
+                .into_iter()
+                .chain(contract)
+                .chain(release)
+                .chain(tuning)
+            {
                 problems.push(rule::line(name, "needs MARFA_TEST_HOOKS to be true", value));
             }
         }

@@ -485,6 +485,17 @@ the target's own. The setting is refused unless the hooks are on. A fixture
 uses it to show what a change of contract does to what the target kept, such as
 the answer stored for a repeated request.
 
+## The release
+
+The target reports the release it runs as the root's `version`. `up` and
+`restart` take `--env MARFA_TEST_RELEASE=<major.minor.patch>` to boot the
+target as that release for that boot alone, with the hooks on. The setting
+changes what the target reports and judges a plugin's `marfa` against; the
+build, its update record and what it sends are the target's own. It is refused
+unless the hooks are on. A fixture uses it to reach a refusal only a release
+gives, such as a plugin that needs a newer Marfa, since a development build
+takes any.
+
 ## Faults
 
 A fault is named for where it acts, lives in the target's memory, and is gone

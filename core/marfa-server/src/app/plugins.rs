@@ -11,7 +11,7 @@ use super::catalog::{self, Catalog, Origin, Snapshot};
 use super::clock::Stamp;
 use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
-use super::{connector_hosts, connector_settings, edge_types, instance, types};
+use super::{connector_hosts, connector_settings, edge_types, types};
 
 #[derive(Clone, Debug)]
 pub struct Installed {
@@ -325,9 +325,9 @@ fn version_of(bundle: &Obj, key: &str) -> Result<Version> {
         .ok_or_else(|| Refusal::internal("a checked bundle has no version"))
 }
 
-fn require_server(bundle: &Obj) -> Result<()> {
+fn require_server(app: &App, bundle: &Obj) -> Result<()> {
     let marfa = version_of(bundle, "marfa")?;
-    let server = Version::parse(instance::VERSION)
+    let server = Version::parse(app.release())
         .ok_or_else(|| Refusal::internal("this build's version does not read"))?;
     if plugin::server_takes(server, marfa) {
         return Ok(());
@@ -378,7 +378,7 @@ pub async fn install(
     fingerprint: String,
 ) -> Result<(Outcome, Value)> {
     require_shape(&bundle)?;
-    require_server(&bundle)?;
+    require_server(app, &bundle)?;
     let cache = app.catalog_handle();
     let answered = app
         .write(caller, "plugin.install", move |unit| {

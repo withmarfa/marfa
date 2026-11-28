@@ -621,6 +621,7 @@ async function startServer(args: BootOptions): Promise<Started> {
   const hooks = !hookFreeRun();
   env.MARFA_TEST_HOOKS = String(hooks);
   delete env.MARFA_TEST_CLOCK_OFFSET_MS;
+  delete env.MARFA_TEST_RELEASE;
   // A throwaway server reports nothing, whatever the shell sets; a setting the
   // caller names below still wins. The server reads no `OTEL_*` name, so the
   // switch meant for the command line is not passed to it.

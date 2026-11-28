@@ -101,6 +101,10 @@ pub const DECLARED: &[Declared] = &[
         "Sets the contract version the server reports.",
     ),
     hook(
+        "MARFA_TEST_RELEASE",
+        "Sets the release the server reports and judges a plugin's `marfa` by, such as 1.4.0.",
+    ),
+    hook(
         "MARFA_TEST_TUNING",
         "Shortens timings and batches the server otherwise fixes, as comma-separated name=value pairs.",
     ),

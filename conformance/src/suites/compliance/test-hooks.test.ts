@@ -249,6 +249,74 @@ describe("the test hooks", () => {
   );
 
   it(
+    "refuses a release without MARFA_TEST_HOOKS, naming the setting",
+    async () => {
+      const refused = await bootRefused("test-hooks-release", {
+        extraEnv: {
+          MARFA_TEST_HOOKS: "false",
+          MARFA_TEST_RELEASE: "1.4.0",
+        },
+      });
+      try {
+        expect(refused).toMatchObject({ code: 1, signal: null });
+        expect(listened(refused)).toBe(false);
+        expect(settingLines(refused)).toEqual([
+          'MARFA_TEST_RELEASE needs MARFA_TEST_HOOKS to be true (got "1.4.0")',
+        ]);
+      } finally {
+        await refused.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a release that does not read as one, naming the setting",
+    async () => {
+      const refused = await bootRefused("test-hooks-release-form", {
+        extraEnv: {
+          MARFA_TEST_HOOKS: "true",
+          MARFA_TEST_RELEASE: "1.4",
+        },
+      });
+      try {
+        expect(refused).toMatchObject({ code: 1, signal: null });
+        expect(listened(refused)).toBe(false);
+        expect(settingLines(refused)).toEqual([
+          'MARFA_TEST_RELEASE must be a release such as 1.4.0 (got "1.4")',
+        ]);
+      } finally {
+        await refused.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "names MARFA_TEST_RELEASE as the version in the root",
+    async () => {
+      const named = await bootFreshServer("test-hooks-release-named", {
+        MARFA_TEST_RELEASE: "1.4.0",
+      });
+      const own = await bootFreshServer("test-hooks-release-own");
+      try {
+        const version = async (server: FreshServer) => {
+          const root = await fetch(`${server.apiUrl}/`, {
+            headers: { Accept: "application/json" },
+          });
+          return ((await root.json()) as { version: string }).version;
+        };
+        // The witness: a server with no setting names its own build.
+        expect(await version(own)).not.toBe("1.4.0");
+        expect(await version(named)).toBe("1.4.0");
+      } finally {
+        await Promise.all([named.stop(), own.stop()]);
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "names MARFA_TEST_CONTRACT_VERSION as the contract in the root, the header and the document",
     async () => {
       const second = await bootFreshServer("test-hooks-contract-second", {

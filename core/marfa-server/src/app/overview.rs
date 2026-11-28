@@ -145,6 +145,7 @@ pub async fn read(app: &App, caller: &Caller) -> Result<Value> {
             limit: FOLDERS as i64,
         },
     ];
+    let release = app.release().to_string();
     reading(app, caller, move |read| {
         let name =
             instance::stored_name(read.tx)?.unwrap_or_else(|| instance::DEFAULT_NAME.to_string());
@@ -155,7 +156,7 @@ pub async fn read(app: &App, caller: &Caller) -> Result<Value> {
         let mut body = Map::new();
         body.insert(
             "instance".into(),
-            json!({ "name": name, "version": instance::VERSION }),
+            json!({ "name": name, "version": release }),
         );
         let credential = read
             .caller
