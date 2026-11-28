@@ -66,10 +66,45 @@ pub(crate) fn wait(stop: &AtomicBool, wait: Duration, poll: Duration) {
 #[cfg(debug_assertions)]
 pub use manual::{Waiting, advance, set_manual, waits};
 
-/// Held by a test that reads or sets the process-wide clock, so no other such
-/// test sees it change.
 #[cfg(test)]
 static GLOBAL_CLOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Held by a test that sets the process-wide manual clock, or that needs the
+/// system clock left as it is.
+#[cfg(test)]
+pub(crate) fn alone() -> std::sync::MutexGuard<'static, ()> {
+    GLOBAL_CLOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The manual clock, set while [`alone`]'s guard is held. Dropped, it restores
+/// the system clock and then lets the next test in.
+#[cfg(all(test, debug_assertions))]
+pub(crate) struct ManualClock {
+    _alone: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(all(test, debug_assertions))]
+impl ManualClock {
+    pub(crate) fn set(alone: std::sync::MutexGuard<'static, ()>) -> Self {
+        set_manual(true);
+        Self { _alone: alone }
+    }
+}
+
+#[cfg(all(test, debug_assertions))]
+impl Drop for ManualClock {
+    fn drop(&mut self) {
+        set_manual(false);
+    }
+}
+
+/// Whether `thread` has a wait on the manual clock that it has not reached.
+#[cfg(all(test, debug_assertions))]
+pub(crate) fn waiting_on(thread: std::thread::ThreadId) -> bool {
+    manual::set().is_some_and(|manual| manual.waiting_on(thread))
+}
 
 #[cfg(test)]
 mod tests {
@@ -83,9 +118,7 @@ mod tests {
 
     #[test]
     fn a_wait_ends_when_stopped_and_one_too_long_for_the_clock_does_not_panic() {
-        let _alone = GLOBAL_CLOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _alone = alone();
         let stop = Arc::new(AtomicBool::new(false));
         let (ended, done) = mpsc::channel();
         let flag = Arc::clone(&stop);
@@ -126,6 +159,8 @@ mod manual {
         id: u64,
         asked: Duration,
         until: Option<Duration>,
+        #[cfg(test)]
+        thread: std::thread::ThreadId,
     }
 
     #[derive(Default)]
@@ -241,6 +276,16 @@ mod manual {
                 .collect()
         }
 
+        /// A wait the last `advance` reached is no longer pending, though its
+        /// thread has yet to notice.
+        #[cfg(test)]
+        pub(super) fn waiting_on(&self, thread: std::thread::ThreadId) -> bool {
+            let state = held(&self.state);
+            state.waits.iter().any(|wait| {
+                wait.thread == thread && wait.until.is_none_or(|until| state.elapsed < until)
+            })
+        }
+
         fn close(&self) {
             held(&self.state).closed = true;
             self.moved.notify_all();
@@ -264,6 +309,8 @@ mod manual {
                 id,
                 asked: timeout,
                 until,
+                #[cfg(test)]
+                thread: std::thread::current().id(),
             });
             let result = loop {
                 match receiver.try_recv() {
@@ -306,6 +353,8 @@ mod manual {
                 id,
                 asked: wait,
                 until,
+                #[cfg(test)]
+                thread: std::thread::current().id(),
             });
             while !stop.load(Ordering::Relaxed)
                 && !state.closed
@@ -489,23 +538,12 @@ mod manual {
         }
 
         /// The free functions, which every wait of the engine goes through.
-        /// The only test that sets the clock for the whole process; the
-        /// others hold a clock of their own.
+        /// It sets the clock for the whole process, as the folder watch's
+        /// backoff tests do; the others here hold a clock of their own.
         #[test]
         fn the_engine_waits_by_the_manual_clock_while_one_is_set_and_by_the_system_clock_after() {
-            /// Puts the system clock back however the test ends.
-            struct Restore;
-            impl Drop for Restore {
-                fn drop(&mut self) {
-                    set_manual(false);
-                }
-            }
-            let _alone = crate::clock::GLOBAL_CLOCK
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let _restore = Restore;
+            let _clock = crate::clock::ManualClock::set(crate::clock::alone());
             let stop = Arc::new(AtomicBool::new(false));
-            set_manual(true);
             let waiting = {
                 let stop = Arc::clone(&stop);
                 thread::spawn(move || super::super::wait(&stop, MS(30_000), MS(5)))

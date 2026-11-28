@@ -469,6 +469,8 @@ impl Folder {
                         gate.changed(delivered);
                         #[cfg(debug_assertions)]
                         crate::fault::hold(|| "folder-file-changed");
+                        #[cfg(all(test, debug_assertions))]
+                        super::probe::change_taken(&event.paths);
                         telling.health_changed = true;
                     } else if event.paths.iter().any(|path| landing::is_reserved(path))
                         && wrote(&event.kind)
@@ -479,6 +481,8 @@ impl Folder {
                         changed = true;
                         backoff.reset();
                         gate.changed(delivered);
+                        #[cfg(all(test, debug_assertions))]
+                        super::probe::change_taken(&event.paths);
                     } else if !gate.passed_over_is_due(crate::clock::now()) {
                         continue;
                     }
@@ -564,6 +568,8 @@ impl Folder {
             }
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "folder-pass-start");
+            #[cfg(all(test, debug_assertions))]
+            super::probe::pass_started();
             if let Some(passes) = rate.started(crate::clock::now()) {
                 tell(WatchEvent::Busy { passes }).map_err(WatchError::Told)?;
             }
@@ -3063,49 +3069,66 @@ mod backoff_tests {
     use super::*;
     use crate::folder::WatchRecord;
     use crate::folder::held_links_tests::{nothing_found, online_folder};
+    use crate::folder::probe::Probe;
     use crate::scripted::root;
+    use std::ffi::OsStr;
+    use std::sync::Arc;
 
     const OTHER_INSTANCE: &str = "11111111-1111-7111-8111-111111111111";
 
-    /// Ten simulated minutes, a second at a time, giving the watch a moment
-    /// of real time at each step for what it sends.
-    fn ten_minutes(ended: &AtomicBool, mut each: impl FnMut(usize)) {
+    /// Ten simulated minutes, a second at a time, each given only once the
+    /// watch itself waits on the clock.
+    fn ten_minutes(probe: &Probe, ended: &AtomicBool, mut each: impl FnMut(usize)) {
         for second in 0..600 {
-            if ended.load(Ordering::SeqCst) {
+            if !until("the watch never waited on the clock", ended, || {
+                probe.waits_on_the_clock()
+            }) {
                 return;
             }
             each(second);
             crate::clock::advance(SECOND);
-            std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// Waits for `signal` from the watch, or for the watch to end, which it
+    /// reports as `false`. A watch that gives no signal fails the test.
+    fn until(what: &str, ended: &AtomicBool, signal: impl Fn() -> bool) -> bool {
+        let gave_up = Instant::now() + Duration::from_secs(60);
+        while !signal() {
+            if ended.load(Ordering::SeqCst) {
+                return false;
+            }
+            assert!(Instant::now() < gave_up, "{what}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        true
     }
 
     const SECOND: Duration = Duration::from_secs(1);
 
-    fn passes() -> usize {
-        crate::fault::reached("folder-pass-start")
-    }
-
     #[test]
     fn a_folder_whose_server_answers_as_another_instance_stops_and_sends_almost_nothing() {
+        let alone = crate::clock::alone();
         let (dir, folder, server) = online_folder(nothing_found());
         server.on("/", vec![root(OTHER_INSTANCE)]);
         let record = WatchRecord::at(dir.path().join("record.json"), 1, Duration::from_secs(5));
-        crate::clock::set_manual(true);
-        crate::fault::observe(true);
+        let _clock = crate::clock::ManualClock::set(alone);
+        let probe = Arc::new(Probe::default());
         let (stop, ended) = (AtomicBool::new(false), AtomicBool::new(false));
         let watched = std::thread::scope(|scope| {
             let watching = scope.spawn(|| {
+                let _heard = probe.install();
                 let watched = record.watch_folder(&folder, &stop, |_| Ok::<(), ()>(()));
                 ended.store(true, Ordering::SeqCst);
                 watched
             });
-            ten_minutes(&ended, |_| {});
+            // Raised on a panic too, so the scope's wait for the watch ends.
+            let _stop = Raise(&stop);
+            ten_minutes(&probe, &ended, |_| {});
             stop.store(true, Ordering::SeqCst);
             watching.join().unwrap()
         });
         let roots = server.seen("/").len();
-        crate::clock::set_manual(false);
         match watched {
             Err(WatchError::InstanceChanged { server: said, .. }) => {
                 assert_eq!(said, server.url());
@@ -3113,7 +3136,7 @@ mod backoff_tests {
             other => panic!("the watch did not stop for the other instance: {other:?}"),
         }
         assert!(roots <= 3, "{roots} reads of the root");
-        assert!(passes() <= 2, "{} passes", passes());
+        assert!(probe.passes() <= 2, "{} passes", probe.passes());
         assert_eq!(
             record.state_of(folder.root()),
             Some((false, Some(crate::http::INSTANCE_CHANGED.into())))
@@ -3125,6 +3148,7 @@ mod backoff_tests {
     #[test]
     fn a_folder_watch_shut_down_while_its_follow_waits_for_a_fill_ends_at_once() {
         use crate::table_fill_waits_tests::{CLAIMED, LEDGER, LONG, STEPS, WAITING, hold_n1};
+        let _alone = crate::clock::alone();
         let (_dir, folder, server) = online_folder(nothing_found());
         hold_n1(
             &server,
@@ -3203,34 +3227,43 @@ mod backoff_tests {
     }
 
     /// Watches `folder` through ten simulated minutes of passes that fail
-    /// against a closed port, makes `change` at the ninth minute and fifty
-    /// seconds, and answers the passes started before it and five seconds
-    /// after it.
-    fn failing_then(folder: &Folder, change: impl FnOnce()) -> (usize, usize) {
+    /// against a closed port, makes `change` to the file named `touched` at
+    /// the ninth minute and fifty seconds, and answers the passes started
+    /// before it and five seconds after the watch took it.
+    fn failing_then(folder: &Folder, touched: &OsStr, change: impl FnOnce()) -> (usize, usize) {
+        let probe = Arc::new(Probe::default());
         let (stop, ended) = (AtomicBool::new(false), AtomicBool::new(false));
         let mut change = Some(change);
         let (mut before, mut after, mut ended_early) = (0, 0, false);
         std::thread::scope(|scope| {
             scope.spawn(|| {
+                let _heard = probe.install();
                 // A pass keeps a kept file, as where it cannot tell who writes.
                 let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
                 let _ = folder.watch(&stop, |_| Ok::<(), ()>(()));
                 ended.store(true, Ordering::SeqCst);
             });
-            ten_minutes(&ended, |second| match second {
-                590 => {
-                    before = passes();
+            // Raised on a panic too, so the scope's wait for the watch ends.
+            let _stop = Raise(&stop);
+            // The window starts once the watch has taken the change.
+            let mut taken_at = None;
+            ten_minutes(&probe, &ended, |second| {
+                if second == 590 {
+                    before = probe.passes();
+                    let earlier = probe.changes_to(touched);
                     change.take().unwrap()();
-                    // The watcher's event arrives on the system's time.
-                    std::thread::sleep(Duration::from_millis(500));
+                    until("the watch never took the change", &ended, || {
+                        probe.changes_to(touched) > earlier
+                    });
+                    taken_at = Some(second);
                 }
-                595 => after = passes(),
-                _ => {}
+                if taken_at.is_some_and(|at| second == at + 5) {
+                    after = probe.passes();
+                }
             });
             ended_early = ended.load(Ordering::SeqCst);
             stop.store(true, Ordering::SeqCst);
         });
-        crate::clock::set_manual(false);
         assert!(!ended_early, "the watch ended before it was stopped");
         // The witness: the passes ran and failed.
         assert!(before >= 2, "{before} passes");
@@ -3242,8 +3275,13 @@ mod backoff_tests {
     }
 
     /// A folder whose writes the server never takes, as every request meets
-    /// a closed port, on the manual clock.
-    fn unreachable_folder() -> (crate::folder::tests::ScannedDir, Folder) {
+    /// a closed port, on the manual clock for as long as the guard lives.
+    fn unreachable_folder() -> (
+        crate::folder::tests::ScannedDir,
+        Folder,
+        crate::clock::ManualClock,
+    ) {
+        let alone = crate::clock::alone();
         let (dir, folder, server) = online_folder(nothing_found());
         std::fs::write(
             folder.root().join("Waiting.md"),
@@ -3251,15 +3289,13 @@ mod backoff_tests {
         )
         .unwrap();
         drop(server);
-        crate::clock::set_manual(true);
-        crate::fault::observe(true);
-        (dir, folder)
+        (dir, folder, crate::clock::ManualClock::set(alone))
     }
 
     #[test]
     fn passes_that_keep_failing_back_off_and_a_real_change_ends_the_wait() {
-        let (_dir, folder) = unreachable_folder();
-        let (before, after) = failing_then(&folder, || {
+        let (_dir, folder, _clock) = unreachable_folder();
+        let (before, after) = failing_then(&folder, OsStr::new("Changed.md"), || {
             std::fs::write(folder.root().join("Changed.md"), "a real change\n").unwrap();
         });
         assert!(
@@ -3270,7 +3306,7 @@ mod backoff_tests {
 
     #[test]
     fn a_write_to_a_kept_file_ends_the_wait_between_failing_passes() {
-        let (_dir, folder) = unreachable_folder();
+        let (_dir, folder, _clock) = unreachable_folder();
         let root = folder.root().to_path_buf();
         let kept = root.join(landing::reserved("00000000000000000000000000000004"));
         std::fs::write(&kept, "as set aside\n").unwrap();
@@ -3307,7 +3343,7 @@ mod backoff_tests {
         .unwrap();
 
         let mut kept_when_written = false;
-        let (before, after) = failing_then(&folder, || {
+        let (before, after) = failing_then(&folder, kept.file_name().unwrap(), || {
             kept_when_written = folder.retains().unwrap() && kept.exists();
             let mut file = std::fs::OpenOptions::new()
                 .append(true)
