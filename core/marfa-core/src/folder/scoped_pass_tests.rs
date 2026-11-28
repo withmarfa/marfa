@@ -941,17 +941,17 @@ fn a_quick_pass_sends_a_save_that_keeps_a_backup_by_renaming_as_the_items_edit()
     assert!(deletes_queued(&folder).is_empty());
 }
 
-/// With `MARFA_PASS_BENCH_NOTES` set, times a quick pass after one atomic save
+/// With `MARFA_TEST_PASS_BENCH_NOTES` set, times a quick pass after one atomic save
 /// in a watched folder of that many notes, as the median of nine. Run it in a
 /// release build, which builds the folder first (about two minutes at 10,000):
 ///
 /// ```sh
-/// MARFA_PASS_BENCH_NOTES=10000 cargo test --release -p marfa-core pass_bench -- --ignored --nocapture
+/// MARFA_TEST_PASS_BENCH_NOTES=10000 cargo test --release -p marfa-core pass_bench -- --ignored --nocapture
 /// ```
 #[test]
-#[ignore = "a benchmark: set MARFA_PASS_BENCH_NOTES"]
+#[ignore = "a benchmark: set MARFA_TEST_PASS_BENCH_NOTES"]
 fn pass_bench_times_a_quick_pass_after_one_save() {
-    let Some(count) = std::env::var("MARFA_PASS_BENCH_NOTES")
+    let Some(count) = std::env::var("MARFA_TEST_PASS_BENCH_NOTES")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|count| *count > 10)
