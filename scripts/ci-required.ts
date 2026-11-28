@@ -707,6 +707,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/marfa-rules\/src\//,
     [...RUST_LINUX, "core", "types-freshness", "clients-freshness"],
   ],
+  // How a process reads its own CPU and memory differs on macOS, and both the
+  // server and the command line read it.
+  [/^core\/marfa-telemetry\/src\/process\.rs$/, RUST],
   // Any other crate can be one the binary is built from, and Linux builds,
   // lints and tests the rest of the core's Rust, but not the live tests.
   [/^core\//, RUST_LINUX],
