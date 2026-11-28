@@ -47,6 +47,10 @@ import {
 } from "./harness.js";
 
 import {
+  bindingFolderHarness,
+  type BindingFolderHarness,
+} from "./binding-folders.shared.js";
+import {
   EdgeDoor,
   idIn,
   onCaseSensitiveVolume,
@@ -327,88 +331,132 @@ it.each([
   },
 );
 
-it("pauses a pass that removes more than 100 files whatever their share, judging each pass alone", async () => {
-  const many = Array.from({ length: 1000 }, (_, n) => ({
+/**
+ * A look at the folder once the rename grace (`folder-files/delete-grace`) of
+ * the files the last look found missing has passed on the engine's clock,
+ * which decides their deletions, and the send of what that queued. The
+ * grace is moved past, not waited out.
+ */
+async function lookPastTheGrace(made: BindingFolderHarness) {
+  await made.device.clock.advance(5_000);
+  const scan = await made.bound.testScan();
+  if (!scan.ok) throw new Error(JSON.stringify(scan));
+  const drain = await made.bound.testDrain();
+  if (!drain.ok) throw new Error(JSON.stringify(drain));
+  return scan.value;
+}
+
+const deletesSent = (made: BindingFolderHarness) =>
+  made.server.requests.filter(
+    (request) =>
+      request.method === "DELETE" && /^\/items\/[^/]+$/.test(request.pathname),
+  ).length;
+
+/** 230 bound notes: the three passes of the ceiling fixtures need at least 221. */
+const manyNotes = () =>
+  Array.from({ length: 230 }, (_, n) => ({
     item: {
       id: `01a00000-0000-7000-8000-0000000${String(n).padStart(5, "0")}`,
       version: 1,
       properties: { title: `Many ${String(n)}`, body: "body\n" },
     },
   }));
-  harness = await folderHarness("contract-b-ceiling", {
-    items: { "core.note": many },
+
+it("pauses a pass that removes more than 100 files whatever their share, judging each pass alone", async () => {
+  // A fraction of 1 leaves only the ceiling to pause a pass, whatever the
+  // share of the folder it removes.
+  const made = await bindingFolderHarness("contract-b-ceiling", {
+    items: { "core.note": manyNotes() },
+    settings: {
+      query: { types: ["core.note"] },
+      removal_threshold: { fraction: 1 },
+    },
   });
-  scriptFolderWrites(harness);
-  expect((await harness.folder.pull()).ok).toBe(true);
-  const deletes = () =>
-    harness!.server.requests.filter(
-      (request) =>
-        request.method === "DELETE" &&
-        /^\/items\/[^/]+$/.test(request.pathname),
-    ).length;
-  const grace = () => new Promise((resolve) => setTimeout(resolve, 6_000));
+  harness = made;
+  scriptFolderWrites(made, { edges: new EdgeDoor() });
+  expect((await made.bound.testOpen()).ok).toBe(true);
+  expect((await made.bound.testPull()).ok).toBe(true);
   const remove = (from: number, count: number) => {
     for (let n = from; n < from + count; n += 1)
-      rmSync(join(harness!.dir, `Many ${String(n)}.md`));
+      rmSync(join(made.dir, `Many ${String(n)}.md`));
   };
-  // Two passes of 100 each: neither is past the ceiling, and the second is
-  // not counted with the first, whose deletions were sent.
-  for (const from of [0, 100]) {
-    remove(from, 100);
-    const scanned = await harness.folder.scan();
+  // A pass of exactly 100 is not past the ceiling, and a second of 20 is not
+  // counted with it, whose deletions were sent: together they are 120.
+  let sent = 0;
+  for (const count of [100, 20]) {
+    remove(sent, count);
+    const scanned = await made.bound.testScan();
     expect(scanned.ok && scanned.value.paused).toBe(0);
-    await grace();
-    expect((await harness.folder.push()).ok).toBe(true);
-    expect(deletes()).toBe(from + 100);
+    const decided = await lookPastTheGrace(made);
+    expect(decided.paused).toBe(0);
+    sent += count;
+    expect(deletesSent(made)).toBe(sent);
   }
-  remove(200, 101);
-  const scanned = await harness.folder.scan();
+  remove(sent, 101);
+  const scanned = await made.bound.testScan();
   expect(scanned.ok && scanned.value.paused).toBe(101);
-  await grace();
-  const pushed = await harness.folder.push();
-  expect(pushed.ok && pushed.value.scan.paused).toBe(101);
-  expect(deletes(), "a removal past the ceiling was sent").toBe(200);
+  const decided = await lookPastTheGrace(made);
+  expect(decided.paused).toBe(101);
+  expect(deletesSent(made), "a removal past the ceiling was sent").toBe(sent);
+});
+
+it("pauses a pass past a lowered ceiling though it removes a small share of the folder", async () => {
+  // 21 of 230 files is 9%, under both default thresholds, so only the
+  // ceiling of 20 can pause it.
+  const made = await bindingFolderHarness("contract-b-ceiling-small", {
+    items: { "core.note": manyNotes() },
+    settings: {
+      query: { types: ["core.note"] },
+      removal_threshold: { ceiling: 20 },
+    },
+  });
+  harness = made;
+  scriptFolderWrites(made, { edges: new EdgeDoor() });
+  expect((await made.bound.testOpen()).ok).toBe(true);
+  expect((await made.bound.testPull()).ok).toBe(true);
+  for (let n = 0; n < 21; n += 1)
+    rmSync(join(made.dir, `Many ${String(n)}.md`));
+  const scanned = await made.bound.testScan();
+  expect(scanned.ok && scanned.value.paused).toBe(21);
+  const decided = await lookPastTheGrace(made);
+  expect(decided.paused).toBe(21);
+  expect(deletesSent(made), "a removal past the ceiling was sent").toBe(0);
 });
 
 it("pauses nothing where two passes each remove files under the default thresholds, though together they pass them", async () => {
-  harness = await folderHarness("contract-b-passes-alone", {
+  const made = await bindingFolderHarness("contract-b-passes-alone", {
     items: { "core.note": Array.from({ length: 40 }, (_, n) => row(n)) },
   });
-  scriptFolderWrites(harness);
-  expect((await harness.folder.pull()).ok).toBe(true);
-  const deletes = () =>
-    harness!.server.requests.filter(
-      (request) =>
-        request.method === "DELETE" &&
-        /^\/items\/[^/]+$/.test(request.pathname),
-    ).length;
-  const grace = () => new Promise((resolve) => setTimeout(resolve, 6_000));
+  harness = made;
+  scriptFolderWrites(made, { edges: new EdgeDoor() });
+  expect((await made.bound.testOpen()).ok).toBe(true);
+  expect((await made.bound.testPull()).ok).toBe(true);
   const remove = (from: number, count: number) => {
     for (let n = from; n < from + count; n += 1)
-      rmSync(join(harness!.dir, `Note ${String(n)}.md`));
+      rmSync(join(made.dir, `Note ${String(n)}.md`));
   };
   // Ten files are not more than 10, so neither pass is held, and the second
   // is not added to the first, whose deletions were sent: together they are
   // 20 files and half the folder.
   for (const from of [0, 10]) {
     remove(from, 10);
-    const scanned = await harness.folder.scan();
+    const scanned = await made.bound.testScan();
     expect(
       scanned.ok && scanned.value.paused,
       "a pass was held for the files an earlier pass removed",
     ).toBe(0);
-    await grace();
-    expect((await harness.folder.push()).ok).toBe(true);
-    expect(deletes()).toBe(from + 10);
+    const decided = await lookPastTheGrace(made);
+    expect(decided.paused).toBe(0);
+    expect(deletesSent(made)).toBe(from + 10);
   }
   // The witness: a pass of 11 of the 20 files left is held, so the two
   // passes above went unheld for being judged alone and not for want of a guard.
   remove(20, 11);
-  const scanned = await harness.folder.scan();
+  const scanned = await made.bound.testScan();
   expect(scanned.ok && scanned.value.paused).toBe(11);
-  await grace();
-  expect((await harness.folder.push()).ok).toBe(true);
-  expect(deletes(), "a removal past both thresholds was sent").toBe(20);
+  const decided = await lookPastTheGrace(made);
+  expect(decided.paused).toBe(11);
+  expect(deletesSent(made), "a removal past both thresholds was sent").toBe(20);
 });
 
 it("reads status from disk and the held copy without contacting the server", async () => {
