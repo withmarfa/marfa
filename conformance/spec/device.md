@@ -5112,6 +5112,14 @@ While its copy has never reached a server, a device MUST answer a read of either
 
 **Tests:** `device/catalog.test.ts › answers every catalog read on a copy that has never reached a server with the types Marfa ships`, `device/save-before-sync.test.ts › knows the types and edge types Marfa ships, and says so of one it has never been told of`, `› checks a write against the types the app declares, and holds an unknown one back`.
 
+### `device/catalog-shipped-declaration-refused`
+
+While its copy has never reached a server, a device MUST answer a read of a type, and refuse a write of one, as for a type the copy was never told of, where the copy's store holds a declaration that `device/hydrate-declared-outside-app` or `device/hydrate-declared-provenance` refuses.
+
+**Reason:** a copy an earlier build made may hold such a declaration. A hydration registers none of them, so a copy that took a write of the type would queue it for a refusal the server is certain to give. The declaration stays as the app made it, and the type is held again once the app declares it as `device/declaration-refused` and `device/declaration-provenance-refused` allow.
+
+**Tests:** `device/save-before-sync.test.ts › holds no type from a stored declaration a hydration would refuse, and refuses a write of it as of a type never declared`.
+
 ### `device/catalog-unknown`
 
 If a device is asked for a type or an edge type its catalog does not hold, then a device MUST refuse `not_found`, naming it.

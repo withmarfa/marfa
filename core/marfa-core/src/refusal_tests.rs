@@ -774,3 +774,57 @@ fn a_float_a_binding_hands_over_is_held_in_the_digits_the_server_serves() {
         assert_eq!(payload["properties"]["n"].as_f64(), Some(number));
     }
 }
+
+#[test]
+fn a_copy_that_never_synced_holds_no_stored_declaration_that_hydration_refuses() {
+    let core = Core::open_in_memory(None).unwrap();
+    let kept = |id: &str, extra: serde_json::Value| {
+        let mut row = serde_json::json!({ "id": id, "fields": {} });
+        row.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        row
+    };
+    let rows = [
+        kept("app.recipe.control", serde_json::json!({})),
+        kept("user.note_shared", serde_json::json!({})),
+        kept(
+            "app.recipe.stored",
+            serde_json::json!({ "provenance": { "origin": "plugin", "plugin": { "name": "tickets", "version": "1" } } }),
+        ),
+    ];
+    {
+        // What an earlier build left in a store that holds no catalog of its own.
+        let conn = core.conn().unwrap();
+        for row in &rows {
+            store::declare_type(&conn, row["id"].as_str().unwrap(), &row.to_string()).unwrap();
+        }
+        store::meta_delete(&conn, store::META_LOCAL_CATALOG).unwrap();
+        store::hold_local_catalog_alone(&conn).unwrap();
+    }
+
+    let held: Vec<String> = core
+        .item_types()
+        .unwrap()
+        .into_iter()
+        .map(|held| held.id)
+        .collect();
+    assert!(held.iter().any(|id| id == "app.recipe.control"), "{held:?}");
+    for refused in ["user.note_shared", "app.recipe.stored"] {
+        assert!(!held.iter().any(|id| id == refused), "{refused} is held");
+        let draft = crate::Draft {
+            r#type: refused.into(),
+            ..Default::default()
+        };
+        assert!(
+            matches!(core.create_item(&draft), Err(CoreError::UnknownType { .. })),
+            "a write of {refused} was taken, to wait for a refusal"
+        );
+    }
+    let accepted = crate::Draft {
+        r#type: "app.recipe.control".into(),
+        ..Default::default()
+    };
+    core.create_item(&accepted).unwrap();
+    assert_eq!(core.declared_types().unwrap().len(), 3);
+}

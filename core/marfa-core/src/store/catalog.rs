@@ -82,10 +82,10 @@ pub fn catalog_held(conn: &Connection) -> Result<bool, CoreError> {
 }
 
 /// The catalog of a copy that has never held a server's: the types and edge
-/// types Marfa ships, and the types the app declared. The same tables a
-/// server's catalog goes in, so every read of a type reads this the same way
-/// until a hydration replaces it. Left alone where a server's is held, and
-/// written only where it changes.
+/// types Marfa ships, and the types the app declared that a hydration would
+/// register. The same tables a server's catalog goes in, so every read of a
+/// type reads this the same way until a hydration replaces it. Left alone
+/// where a server's is held, and written only where it changes.
 pub fn hold_local_catalog(conn: &Connection) -> Result<(), CoreError> {
     if catalog_version(conn)?.is_some() {
         return Ok(());
@@ -120,6 +120,11 @@ fn local_catalog(conn: &Connection) -> Result<(Vec<WireType>, Vec<Value>), CoreE
     let shipped = marfa_rules::builtin::catalog()?;
     let mut types = shipped.types;
     for (id, json) in declared_type_rows(conn)? {
+        // A declaration a hydration refuses is no type the copy holds, so a
+        // write of it is refused like one never declared.
+        if marfa_rules::catalog::stored_declaration(&id, &json).is_err() {
+            continue;
+        }
         let unreadable = |error: serde_json::Error| {
             CoreError::Store(format!("the declared type {id} cannot be read: {error}"))
         };

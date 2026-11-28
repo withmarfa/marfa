@@ -332,6 +332,13 @@ stays because that thing is what it checks.
   registers one without the key" writes a declaration that names `provenance`
   into the store the same way, for the same reason: declaring one is refused
   now.
+- `device/save-before-sync.test.ts`, "holds no type from a stored declaration a
+  hydration would refuse, and refuses a write of it as of a type never
+  declared", writes a declaration under `user.*` and one that names
+  `provenance` into a never-synced device's store, and removes the store's own
+  catalog marker so the next open builds the catalog again. Declaring either is
+  refused now, and no door makes a store whose catalog is built from rows an
+  earlier build left.
 - `device/folders-one-mac.test.ts`, "holds a file an earlier release took into
   another folder that then takes it away when its item is archived, until the
   person keeps its item", records in a folder's store that the folder wrote the

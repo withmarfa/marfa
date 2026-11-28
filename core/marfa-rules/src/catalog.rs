@@ -280,6 +280,18 @@ pub fn refuse_declared_provenance(id: &str, row: &Map<String, Value>) -> Result<
     }
 }
 
+/// What a copy's store may still hold that a declaration is refused today: a
+/// type outside `app.`, or a key only the server writes. A copy registers and
+/// holds none of them. A row that cannot be read is left to its reader, which
+/// says so.
+pub fn stored_declaration(id: &str, json: &str) -> Result<(), RuleError> {
+    app_declaration(id)?;
+    match serde_json::from_str::<Value>(json) {
+        Ok(Value::Object(row)) => refuse_declared_provenance(id, &row),
+        _ => Ok(()),
+    }
+}
+
 /// An object naming an identifier outside Marfa's, whose fields each have a type and whose parent this copy knows. Answers its id and the JSON it is kept as, with what a registration requires filled in.
 pub fn declaration(
     definition: &Value,

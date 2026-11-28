@@ -1348,7 +1348,7 @@ fn declare_on_instance(
     let mut done = Declared::default();
     let mut owned = Vec::new();
     for (id, json) in declared {
-        match stored_declaration(&id, &json) {
+        match marfa_rules::catalog::stored_declaration(&id, &json) {
             Ok(()) => owned.push((id, json)),
             Err(refusal) => done.unregistered.push(UnregisteredType {
                 id,
@@ -1407,19 +1407,6 @@ fn declare_on_instance(
         }
     }
     Ok(done)
-}
-
-/// What a copy's store may still hold that a declaration is refused today:
-/// a type outside `app.`, or a key only the server writes. A row that cannot
-/// be read is left to the registration, which the server judges.
-fn stored_declaration(id: &str, json: &str) -> std::result::Result<(), marfa_rules::RuleError> {
-    marfa_rules::catalog::app_declaration(id)?;
-    match serde_json::from_str::<serde_json::Value>(json) {
-        Ok(serde_json::Value::Object(row)) => {
-            marfa_rules::catalog::refuse_declared_provenance(id, &row)
-        }
-        _ => Ok(()),
-    }
 }
 
 /// The server's count of the rows the slice takes, by type, read once as a

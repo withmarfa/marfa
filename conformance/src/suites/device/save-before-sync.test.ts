@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { Outcome } from "../../device/protocol.js";
@@ -201,6 +202,60 @@ describe("a copy no server has been named for", () => {
     expect(value(await device.declaredTypes()).map((held) => held.id)).toEqual([
       "app.recipe.entry",
     ]);
+  });
+
+  it("holds no type from a stored declaration a hydration would refuse, and refuses a write of it as of a type never declared", async () => {
+    const device = await offline("save-stored-refused");
+    const control = { id: "app.recipe.control", fields: {} };
+    const outside = { id: "user.note_shared", fields: {} };
+    const named = {
+      id: "app.recipe.named",
+      fields: {},
+      provenance: {
+        origin: "plugin",
+        plugin: { name: "tickets", version: "1" },
+      },
+    };
+    // What an earlier build left in a copy that had never reached a server:
+    // declaring these is refused now, so no door makes the state. Without its
+    // own catalog the next open holds the one the declarations make.
+    const store = new DatabaseSync(device.store);
+    try {
+      for (const stored of [control, outside, named]) {
+        store
+          .prepare("INSERT INTO declared_types (id, json) VALUES (?, ?)")
+          .run(stored.id, JSON.stringify(stored));
+      }
+      store.prepare("DELETE FROM meta WHERE key = 'local_catalog'").run();
+    } finally {
+      store.close();
+    }
+
+    expect(
+      value(await device.itemType(control.id)).id,
+      "the control's type is not held, so the absences below prove nothing",
+    ).toBe(control.id);
+    for (const refused of [outside.id, named.id]) {
+      const read = await device.itemType(refused);
+      expect(
+        read.ok ? "held" : read.refusal.code,
+        `${refused} is read as a type the copy holds`,
+      ).toBe("not_found");
+      const write = await device.create({
+        type: refused,
+        properties: { title: "Soup" },
+      });
+      expect(
+        write.ok ? "queued" : write.refusal.code,
+        `a write of ${refused} was queued, to wait for a refusal`,
+      ).toBe("unknown_type");
+    }
+    expect(
+      value(await device.create({ type: control.id, properties: {} })).kind,
+    ).toBe("create_item");
+    expect(value(await device.declaredTypes()).map((held) => held.id)).toEqual(
+      [control.id, named.id, outside.id].sort(),
+    );
   });
 
   it("refuses a declaration that names provenance as the server refuses a registration, and reads a declared type as registered", async () => {
