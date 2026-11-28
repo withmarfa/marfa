@@ -975,6 +975,8 @@ function asSchema11(folder: CliFolder): void {
       ) WITHOUT ROWID;
       INSERT INTO folder_journal SELECT * FROM journal_kept;
       DROP TABLE journal_kept;
+      ALTER TABLE table_rows DROP COLUMN refs;
+      ALTER TABLE rows_beneath DROP COLUMN refs;
       PRAGMA user_version = 11;
     `);
   } finally {
