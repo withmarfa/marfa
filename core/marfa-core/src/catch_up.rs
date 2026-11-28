@@ -1974,6 +1974,8 @@ fn read_stream(
         if stop.load(Ordering::Relaxed) {
             return Ok(Ended::Stopped);
         }
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| format!("follow-looked:{core:p}"));
         if core.tables_owed.swap(false, Ordering::SeqCst) || (!filling && pass.retry_due(now())) {
             filling = pass.owes(&*core.conn()?, now())?;
         }

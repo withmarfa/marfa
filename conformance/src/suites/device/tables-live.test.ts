@@ -629,6 +629,9 @@ describe("how a device fills a table", () => {
           ),
         "the follow applying an event",
       );
+      // A hold is the only way to owe a table to a running follow, and it
+      // wakes the follow itself, so this shows the answer and the table the
+      // follow fills, not what the call alone wakes.
       expect(
         value(await device.call<{ fill: unknown }>("holdTable", type, "steps"))
           .fill,

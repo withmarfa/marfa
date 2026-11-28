@@ -1153,8 +1153,12 @@ fn fill_tables_while_a_follow_holds_the_stream_leaves_its_tables_to_the_follow()
     let follow = following_live(&copy);
     owe(&copy.core, STEPS);
     // The witness: with no `fill_tables` call, nothing wakes the follow to
-    // fill a table that went owed behind its back.
-    thread::sleep(QUIET);
+    // fill a table that went owed behind its back. The follow looks for a
+    // raised flag at the top of each round of its loop, so two rounds begun
+    // after the table went owed mean it looked and left the table.
+    let looks = || fault::reached(&format!("follow-looked:{:p}", Arc::as_ptr(&copy.core)));
+    let before = looks();
+    wait_until("the follow never looked twice", || looks() >= before + 2);
     assert_eq!(state(&copy.core, STEPS).as_deref(), Some("owed"));
     assert!(filled_told(&follow.told).is_empty());
     assert_eq!(reads(&copy, ROWS), 0);
