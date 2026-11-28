@@ -5930,6 +5930,14 @@ If a copy's store holds a declaration outside `app.*`, then a device MUST report
 
 **Tests:** `device/declare-replaces.test.ts › registers and replaces no type outside app.* that an earlier build stored as declared, says it refused it, and keeps what the copy queued`.
 
+### `device/hydrate-declared-provenance`
+
+If a copy's store holds a declaration that names `provenance`, then a device MUST report the type in `unregistered_types` as `invalid`, naming the key, each time it hydrates, and send the server no request that registers or replaces it.
+
+**Reason:** a copy an earlier build made may hold a declaration that `device/declaration-provenance-refused` no longer lets an app make. The server refuses `provenance` as an unread key (`types/unknown-key`), so sending the stored declaration would cost a request and a refusal on every hydration and never register the type. The declaration stays as the app made it, and it registers once the app declares the type again without the key. The hydration completes, and the writes the copy queued stay queued.
+
+**Tests:** `device/declare-replaces.test.ts › registers and replaces no declaration naming provenance that an earlier build stored, says it refused it each time, and still registers one without the key`.
+
 ### `device/hydrate-replace-refused`
 
 If the server refuses to replace a declared type, then a device MUST leave the type as the server holds it, report it in `unreplaced_types` with the server's code and message, and complete the hydration.
@@ -6706,6 +6714,22 @@ When a device has left a table unfilled under `device/table-fill-failed`, a devi
 
 **Tests:** `device/tables-live.test.ts › fills every other table, and ends no catch-up or follow, while one table's page read keeps failing`.
 
+### `device/table-fill-failed-after-events`
+
+If the fill of the tables a device holds that follows a catch-up whose events have committed fails because the server cannot be reached, then a device MUST answer the catch-up as having succeeded, with the cursor of those events.
+
+**Reason:** the events are committed, so an error would tell a caller that took them to skip the refresh for them, and the tables the fill left owed are filled by the next catch-up or follow. A failure that does not say the server is out of reach, such as a refused credential or an expired copy, is still the catch-up's error, because success would claim what the device does not know.
+
+**Tests:** `device/tables-live.test.ts › answers a catch-up whose events committed as succeeded, naming the failure in tables, when its fill cannot reach the server`.
+
+### `device/table-fill-failed-named`
+
+If the fill of the tables a device holds that follows a catch-up whose events have committed fails because the server cannot be reached, then a device MUST name the failure in `tables.failure` of the catch-up's answer.
+
+**Reason:** `tables` is where a caller reads whether the tables are whole, and a catch-up that answered success without it would claim they are.
+
+**Tests:** `device/tables-live.test.ts › answers a catch-up whose events committed as succeeded, naming the failure in tables, when its fill cannot reach the server`.
+
 ### `device/table-fill-failed-again`
 
 While a device holds a stream open, when it has left a table unfilled under `device/table-fill-failed`, a device MUST read the table again on that stream once a wait has passed that starts at 30 seconds and doubles after each failure in a row, up to 10 minutes.
@@ -6724,7 +6748,7 @@ When a device reads a table's size or its rows to hold them, a device MUST send 
 
 ### `device/table-fill-report`
 
-When a catch-up ends on its live marker, a device MUST report in `tables` how many tables its fill left `whole`, found past the cap as `online`, left `unfilled` and left because a read `failed`, the last such `failure`, and the `pages` and `rows` it read.
+When a catch-up ends on its live marker, a device MUST report in `tables` how many tables its fill left `whole`, found past the cap as `online`, left `unfilled` and left because its fill `failed`, the last such `failure`, and the `pages` and `rows` it read.
 
 **Tests:** `device/tables-live.test.ts › reads a table past the cap from the server, holding none of its rows, and holds it whole once a delete brings it within`, `› fills every other table, and ends no catch-up or follow, while one table's page read keeps failing`, `device/catch-up.test.ts › reports what a catch-up carried, and refuses one that stopped short`.
 

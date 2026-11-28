@@ -714,7 +714,7 @@ pub(crate) fn catch_up(
     )
     .or_else(read_only::contained)
     .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?;
-    report.tables = crate::tables::fill(core, &context, stop)?;
+    report.tables = crate::tables::fill_after_events(core, &context, stop)?;
     report.changed_tables = crate::tables::ChangedTable::of(
         store::tables_changed_since(&*core.conn()?, tables_before, usize::MAX)?.unwrap_or_default(),
     );

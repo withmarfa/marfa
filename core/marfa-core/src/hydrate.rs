@@ -1333,7 +1333,8 @@ fn waiting_on_each_other(rows: &[(String, String)], waits: &[Vec<String>]) -> Co
 /// order, a default written out or left out, and a label the server derives
 /// never make a declaration differ. A declaration an earlier build stored
 /// outside `app.`, the namespace an app owns, is neither registered nor
-/// replaced: it is reported as `invalid` like a declaration refused today.
+/// replaced, and neither is one that names `provenance`: each is reported as
+/// `invalid` like a declaration refused today, and none is sent.
 fn declare_on_instance(
     core: &Core,
     http: &Http,
@@ -1347,7 +1348,7 @@ fn declare_on_instance(
     let mut done = Declared::default();
     let mut owned = Vec::new();
     for (id, json) in declared {
-        match marfa_rules::catalog::app_declaration(&id) {
+        match stored_declaration(&id, &json) {
             Ok(()) => owned.push((id, json)),
             Err(refusal) => done.unregistered.push(UnregisteredType {
                 id,
@@ -1406,6 +1407,19 @@ fn declare_on_instance(
         }
     }
     Ok(done)
+}
+
+/// What a copy's store may still hold that a declaration is refused today:
+/// a type outside `app.`, or a key only the server writes. A row that cannot
+/// be read is left to the registration, which the server judges.
+fn stored_declaration(id: &str, json: &str) -> std::result::Result<(), marfa_rules::RuleError> {
+    marfa_rules::catalog::app_declaration(id)?;
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(serde_json::Value::Object(row)) => {
+            marfa_rules::catalog::refuse_declared_provenance(id, &row)
+        }
+        _ => Ok(()),
+    }
 }
 
 /// The server's count of the rows the slice takes, by type, read once as a
@@ -3941,5 +3955,100 @@ mod tests {
                 .iter()
                 .all(|id| !store::item_held(&conn, id).unwrap())
         );
+    }
+
+    #[test]
+    fn a_stored_declaration_naming_provenance_is_reported_refused_and_never_sent() {
+        let server = Scripted::start();
+        let core = copy(&server);
+        let kept = json!({
+            "id": "app.recipe.stored", "fields": {},
+            "provenance": { "origin": "plugin", "plugin": { "name": "tickets", "version": "1" } }
+        });
+        let control = json!({ "id": "app.recipe.control", "fields": {} });
+        {
+            let conn = core.conn().unwrap();
+            for definition in [&kept, &control] {
+                store::declare_type(
+                    &conn,
+                    definition["id"].as_str().unwrap(),
+                    &definition.to_string(),
+                )
+                .unwrap();
+            }
+        }
+        // One hydration, with a registration answered for each type it sends.
+        let hydrated = |registrations: usize| {
+            let mut answers = vec![scripted::certified(scripted::types(&[("core.note", None)]))];
+            answers.extend(
+                (0..registrations)
+                    .map(|_| scripted::certified(scripted::json(201, r#"{"type":{}}"#))),
+            );
+            answers.push(scripted::certified(scripted::types(&[("core.note", None)])));
+            server.on("/types", answers);
+            server.on("/items", vec![page_of(&[])]);
+            at_head(&server);
+            hydrate(&core).unwrap()
+        };
+        let sent = |naming: &str| {
+            server
+                .seen("/types")
+                .into_iter()
+                .filter(|seen| seen.method != "GET")
+                .filter(|seen| String::from_utf8_lossy(&seen.body).contains(naming))
+                .count()
+        };
+
+        let first = hydrated(1);
+
+        // The control shows a registration was possible and was made.
+        assert_eq!(first.registered_types, ["app.recipe.control"]);
+        let refused: Vec<_> = first
+            .unregistered_types
+            .iter()
+            .map(|refused| (refused.id.as_str(), refused.code.as_str()))
+            .collect();
+        assert_eq!(refused, [("app.recipe.stored", "invalid")]);
+        assert!(
+            first.unregistered_types[0].message.contains("provenance"),
+            "the refusal did not name the key: {}",
+            first.unregistered_types[0].message
+        );
+        assert_eq!(sent("app.recipe.control"), 1);
+        assert_eq!(sent("app.recipe.stored"), 0);
+        assert!(
+            server
+                .paths()
+                .iter()
+                .all(|path| !path.contains("app.recipe.stored")),
+            "the stored type was asked about"
+        );
+        assert_eq!(
+            core.declared_types().unwrap().len(),
+            2,
+            "the refused declaration was left in the store as the app made it"
+        );
+
+        let second = hydrated(1);
+
+        assert_eq!(second.unregistered_types.len(), 1);
+        assert_eq!(second.unregistered_types[0].id, "app.recipe.stored");
+        assert_eq!(sent("app.recipe.stored"), 0);
+
+        // The app declares the type again without the key.
+        core.declare_types(&[
+            json!({ "id": "app.recipe.stored", "fields": {} }),
+            control.clone(),
+        ])
+        .unwrap();
+
+        let third = hydrated(2);
+
+        assert_eq!(
+            third.registered_types,
+            ["app.recipe.control", "app.recipe.stored"]
+        );
+        assert!(third.unregistered_types.is_empty());
+        assert_eq!(sent("app.recipe.stored"), 1);
     }
 }

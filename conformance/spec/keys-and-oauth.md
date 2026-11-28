@@ -1736,6 +1736,38 @@ When an authorization request names a scope the person's standing consent to the
 
 **Tests:** `compliance/oauth-authorize.test.ts › asks again for a request reaching past the standing consent`.
 
+### `keys-and-oauth/consent-wider-keeps-grant`
+
+When a person approves, on the consent screen or the device approval page, a request from a client whose consent they gave before, the server MUST keep the grant's `id` in `GET /grants`.
+
+**Reason:** An app asks for more access by authorizing again with the client it holds, because `PATCH /grants/{id}` never widens a grant (`keys-and-oauth/grant-narrow-ceiling`). The grant, and everything it made, stays the same grant.
+
+**Tests:** `compliance/app-widening.test.ts › keeps the grant's id and holds the scopes it held with those approved`, `› keeps the grant's id and holds the scopes it held with those approved on the device approval page`, `compliance/oauth-tokens.test.ts › of a refresh token from before the person revoked the grant and approved the app again leaves the new approval`.
+
+### `keys-and-oauth/consent-wider-keeps-scopes`
+
+When a person approves, on the consent screen or the device approval page, a request from a client whose standing consent holds scopes, the server MUST list in `GET /grants` the scopes that consent held together with those the person approved.
+
+**Reason:** An approval never takes access from an app. Narrowing is the owner's act at `PATCH /grants/{id}`, so a request that names only the new access still leaves the grant holding what it held.
+
+**Tests:** `compliance/app-widening.test.ts › keeps the grant's id and holds the scopes it held with those approved`, `› keeps the grant's id and holds the scopes it held with those approved on the device approval page`.
+
+### `keys-and-oauth/consent-wider-keeps-chains`
+
+When a person approves more access for a client, the server MUST keep each refresh chain of that client's grant that has not ended.
+
+**Reason:** Another process of the app may still hold an earlier chain. A chain ends only as the statements that end it say, such as `keys-and-oauth/grant-narrow-tokens`, and a widening is none of them.
+
+**Tests:** `compliance/app-widening.test.ts › keeps each refresh chain of the grant that has not ended`.
+
+### `keys-and-oauth/consent-wider-keeps-jobs`
+
+When a person approves more access for a client whose grant holds a bulk job, the server MUST keep running the job.
+
+**Reason:** A job belongs to the grant that queued it, and it fails once that grant ends. A widening keeps the grant, so the job goes on.
+
+**Tests:** `compliance/app-widening.test.ts › keeps running a job the grant holds`, `› fails a job the grant holds once the grant ends, which the widening above did not do`.
+
 ### `keys-and-oauth/consent-prompt`
 
 When an authorization request names `prompt=consent`, the server MUST show the consent screen whatever the standing consent covers.
@@ -2660,6 +2692,20 @@ When an app revokes at `POST /oauth/revoke` a refresh token the server issued to
 
 **Tests:** `compliance/oauth-tokens.test.ts › of another app's refresh token, an unknown one or a malformed one answers 200 and changes nothing`.
 
+### `keys-and-oauth/revoke-unknown-client`
+
+If `POST /oauth/revoke` names a token and a `client_id` the server does not hold, then the server MUST answer `401 invalid_client`.
+
+**Reason:** A public client learns that a server it signed in to no longer knows it, as after a reset, restore or replacement, before it sends a person to an authorization page that cannot return to it. A client the server holds, naming a value that is no token, is answered `200` (`keys-and-oauth/revoke-unknown-token`), so the two answers tell the cases apart without ending anything.
+
+**Tests:** `compliance/app-widening.test.ts › is answered 401 invalid_client at a revocation, which ends and changes nothing`.
+
+### `keys-and-oauth/revoke-unknown-client-keeps`
+
+If `POST /oauth/revoke` names a token and a `client_id` the server does not hold, then the server MUST leave every token, grant and consent as they stand.
+
+**Tests:** `compliance/app-widening.test.ts › is answered 401 invalid_client at a revocation, which ends and changes nothing`.
+
 ### `keys-and-oauth/revoke-no-token`
 
 If a revocation names no token, then the server MUST answer `400 invalid_request`.
@@ -3259,6 +3305,14 @@ When a client asks `POST /oauth/device-authorization` for a scope it may be gran
 If `POST /oauth/device-authorization` comes from a client whose registration does not name the device grant, then the server MUST answer `400 unauthorized_client`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › answers a device code request from an app not registered for the device grant 400 unauthorized_client`.
+
+### `keys-and-oauth/device-unknown-client`
+
+If `POST /oauth/device-authorization` names a `client_id` that is not a URL and that the server does not hold, then the server MUST answer `400 invalid_client`.
+
+**Reason:** A public client learns that a server it signed in to no longer knows it before it asks a person to approve a code the server cannot match to a client.
+
+**Tests:** `compliance/app-widening.test.ts › is answered 400 invalid_client at a device code request, where a registered client is issued a code`.
 
 ### `keys-and-oauth/device-scope-required`
 

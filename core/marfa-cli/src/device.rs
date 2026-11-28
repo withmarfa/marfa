@@ -1525,7 +1525,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
             let report = core.catch_up_until(stop_after(None))?;
             output::report(&report, json, || {
                 format!(
-                    "applied {} event(s), skipped {}{}; cursor {}{}",
+                    "applied {} event(s), skipped {}{}; cursor {}{}{}",
                     report.applied,
                     report.skipped,
                     read_only_said(report.read_only_held),
@@ -1534,6 +1534,10 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                         "; the catalog changed"
                     } else {
                         ""
+                    },
+                    match &report.tables.failure {
+                        Some(_) => format!("; tables: {}", fill_line(&report.tables)),
+                        None => String::new(),
                     },
                 )
             })
@@ -3001,7 +3005,7 @@ impl Store {
 fn fill_line(fill: &marfa_core::FillReport) -> String {
     let failed = match &fill.failure {
         Some(reason) => format!(
-            "; {} table read(s) failed, last: {}",
+            "; {} table fill(s) failed, last: {}",
             fill.failed,
             printable(reason)
         ),

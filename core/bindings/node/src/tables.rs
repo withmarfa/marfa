@@ -15,7 +15,7 @@ pub struct TableFill {
     pub unfilled: i64,
     pub pages: i64,
     pub rows: i64,
-    /// Tables whose read failed, each left to the next pass.
+    /// Tables whose fill failed, each left to the next pass.
     pub failed: i64,
     /// The last of them, and why.
     pub failure: Option<String>,

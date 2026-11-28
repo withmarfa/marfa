@@ -327,7 +327,11 @@ stays because that thing is what it checks.
   app.* that an earlier build stored as declared, says it refused it, and keeps
   what the copy queued", writes a declaration under `user.*` into a device's
   store. Declaring one is refused now, so no door makes the state an earlier
-  build left behind.
+  build left behind. "registers and replaces no declaration naming provenance
+  that an earlier build stored, says it refused it each time, and still
+  registers one without the key" writes a declaration that names `provenance`
+  into the store the same way, for the same reason: declaring one is refused
+  now.
 - `device/folders-one-mac.test.ts`, "holds a file an earlier release took into
   another folder that then takes it away when its item is archived, until the
   person keeps its item", records in a folder's store that the folder wrote the
@@ -812,8 +816,10 @@ device is judged by the binding fixtures when it supplies what follows.
     the registry supervisor's turn.
 - **Failures.** `testHooks.fail(point, on)` makes the engine fail where it
   reaches `point`, and `testHooks.fail(point, false)` stops. The engine counts
-  each reach as `testHooks.reached` does. Three points fail: `data-version`,
-  the read a reading handle's watch makes to learn that another process saved;
+  each reach as `testHooks.reached` does. Four points fail: `table-fill-read`,
+  which fails a device's read of a table to fill it as an unreachable server
+  fails it, before the request is sent; `data-version`, the read a reading
+  handle's watch makes to learn that another process saved;
   `replace-refused-make`, which fails the replacement of a refused store after
   its empty store has been made, so the old store is put back; and
   `folder-selection-narrow`, which makes a watch's pull choose no file a
