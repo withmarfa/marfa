@@ -47,21 +47,25 @@ A failure is recorded once: a write error that ends the drain is only the drain'
 
 ### A running folder watch
 
-A running `folders watch` records one `watch_report` span when it starts, once a folder is watched or after 5 seconds, and another once a day. It carries numbers and the release, and nothing else:
+A running `folders watch` records one `watch_report` span when it starts, and another each day. The first is sent once every folder the registry lists is watched, or after 5 seconds if some are not. It carries numbers and the release, and nothing else:
 
-| Field                 | Value                                                          |
-| --------------------- | -------------------------------------------------------------- |
-| `cpu_millis`          | CPU time the watch used since the last report, in milliseconds |
-| `resident_bytes`      | Resident memory when it reported                               |
-| `peak_resident_bytes` | The most resident memory the process has held                  |
-| `uptime_seconds`      | Time since the watch started                                   |
-| `folders`             | Folders the watch holds                                        |
-| `files`               | Files across those folders                                     |
-| `full_passes`         | Full passes since the last report                              |
-| `quick_passes`        | Quick passes since the last report                             |
-| `release`             | The version of the build                                       |
+| Field                 | Value                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------ |
+| `cpu_millis`          | CPU time the watch process used since the last report, in milliseconds               |
+| `resident_bytes`      | Resident memory of the process when it reported                                      |
+| `peak_resident_bytes` | The most resident memory the process has held since it started                       |
+| `uptime_seconds`      | Wall-clock seconds since the watch started, including time the computer was asleep   |
+| `folders`             | Folders the watch was watching when it reported                                      |
+| `files`               | Files followed by the folders counted so far, left out until a folder has been counted |
+| `full_passes`         | Full passes the watch's folders started since the last report                        |
+| `quick_passes`        | Quick passes the watch's folders started since the last report                       |
+| `release`             | The version of the build                                                             |
 
-A figure the system does not give, such as memory on a platform with no reading for it, is left out, never replaced by a stand-in. The day timer is checked inside the watch's existing 100 ms poll, so it adds no wake. The same figures, totalled since the watch started, are in the `usage` object of the watch's entry in `folder-watch.json`, and `marfa folders status DIR` and `marfa folders autostart status` show them.
+A figure the system does not give, such as memory on a platform with no reading for it, is left out, never replaced by a stand-in. The same goes for `files` while no folder has been counted, such as a folder still waiting for its first sync. A folder not yet counted adds nothing to `files`, so a report made while some folders are uncounted shows the files of the others.
+
+The timer reads the wall clock, not a clock that stops while a laptop sleeps. A report is due when a day has passed on it, so a computer that was asleep reports once when it wakes, not once for each day it slept. A clock set back counts as no time passed: neither the timer nor `uptime_seconds` goes backwards. The timer is checked inside the watch's existing 100 ms poll, so it adds no wake.
+
+The same figures, totalled since the watch started, are in the `usage` object of the watch's entry in `folder-watch.json`. `marfa folders status DIR` shows them as the figures of the whole watch that holds the folder, with the number of folders it holds, and `marfa folders autostart status` shows them for the watch it runs.
 
 ### What is never recorded
 

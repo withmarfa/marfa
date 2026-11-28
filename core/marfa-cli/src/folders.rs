@@ -557,7 +557,7 @@ pub fn run(
                         .map(new_build::OtherBuild::describe)
                         .into_iter()
                         .chain(stopped.clone())
-                        .chain(usage.as_ref().map(crate::autostart::RecordUsage::describe))
+                        .chain(usage.as_ref().map(new_build::WatchUsage::describe))
                     {
                         text.push('\n');
                         text.push_str(&line);
@@ -2094,8 +2094,9 @@ struct FolderStatus<'a> {
     /// Why the watch stopped the folder, where another instance answers at
     /// its server.
     watch_stopped: Option<&'a str>,
-    /// What the folder's current watch has used since it started.
-    watch_usage: Option<&'a crate::autostart::RecordUsage>,
+    /// What the watch that holds the folder has used since it started, across
+    /// the `folders` it holds.
+    watch_usage: Option<&'a new_build::WatchUsage>,
 }
 
 /// What `folders remove` says of a folder whose state went, and where

@@ -1334,6 +1334,20 @@ pub(crate) struct RecordUsage {
 impl RecordUsage {
     /// One line for a person: what the watch has used since it started.
     pub(crate) fn describe(&self) -> String {
+        format!("since it started, the watch has used {}", self.figures())
+    }
+
+    /// One line for a person asking about one folder, whose figures are the
+    /// watch's across the `folders` it was asked to hold.
+    pub(crate) fn describe_for_folder(&self, folders: usize) -> String {
+        format!(
+            "since it started, the watch that holds this folder has used {}, across {folders} folder{}",
+            self.figures(),
+            if folders == 1 { "" } else { "s" }
+        )
+    }
+
+    fn figures(&self) -> String {
         let mut parts = Vec::new();
         if let Some(millis) = self.cpu_millis {
             parts.push(format!("{:.1} s of CPU", millis as f64 / 1000.0));
@@ -1355,7 +1369,7 @@ impl RecordUsage {
         if let Some(files) = self.files {
             parts.push(format!("{files} file(s) followed"));
         }
-        format!("since it started, the watch has used {}", parts.join(", "))
+        parts.join(", ")
     }
 }
 

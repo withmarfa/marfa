@@ -2,7 +2,7 @@
 //! and reported once a day, and at the start, through the core's telemetry.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use marfa_telemetry::process;
 use serde::{Deserialize, Serialize};
@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use super::Folder;
 use crate::telemetry::WatchReport;
 
-/// How long after the watch starts its first report waits for a folder to be
-/// watched, so that it can count folders and files.
+/// How long after the watch starts its first report waits for every folder to
+/// be watched, so that it can count folders and files.
 pub(super) const START_WAIT: Duration = Duration::from_secs(5);
 
 /// The time from one report to the next.
@@ -50,20 +50,24 @@ impl Used {
     }
 }
 
-/// When the watch reports, and what it had used at its last report.
+/// When the watch reports, and what it had used at its last report. Time is
+/// the wall clock's, so the days a laptop sleeps count; a reading earlier than
+/// the one before it, which a clock set back makes, counts as no time passed.
 pub(super) struct Schedule {
-    began: Instant,
-    next: Option<Instant>,
+    seen: SystemTime,
+    running: Duration,
+    since_report: Option<Duration>,
     cpu_millis: u64,
     full_passes: u64,
     quick_passes: u64,
 }
 
 impl Schedule {
-    pub(super) fn new(began: Instant) -> Schedule {
+    pub(super) fn new(began: SystemTime) -> Schedule {
         Schedule {
-            began,
-            next: None,
+            seen: began,
+            running: Duration::ZERO,
+            since_report: None,
             cpu_millis: 0,
             full_passes: 0,
             quick_passes: 0,
@@ -71,21 +75,29 @@ impl Schedule {
     }
 
     /// Takes the report that is due at `now`, if one is. The first is due once
-    /// a folder is watched, or after `START_WAIT`; the rest, a day apart.
+    /// every folder the registry lists is watched, or after `START_WAIT`; the
+    /// rest, a day apart. `followed` is the folders held and the files they
+    /// follow, `None` while no folder has been counted.
     pub(super) fn take(
         &mut self,
-        now: Instant,
-        watched: bool,
-        followed: (u64, u64),
+        now: SystemTime,
+        all_watched: bool,
+        followed: (u64, Option<u64>),
     ) -> Option<WatchReport> {
-        let due = match self.next {
-            None => watched || now.saturating_duration_since(self.began) >= START_WAIT,
-            Some(at) => now >= at,
+        let passed = now.duration_since(self.seen).unwrap_or(Duration::ZERO);
+        self.seen = now;
+        self.running = self.running.saturating_add(passed);
+        if let Some(since) = &mut self.since_report {
+            *since = since.saturating_add(passed);
+        }
+        let due = match self.since_report {
+            None => all_watched || self.running >= START_WAIT,
+            Some(since) => since >= EVERY,
         };
         if !due {
             return None;
         }
-        self.next = Some(now + EVERY);
+        self.since_report = Some(Duration::ZERO);
         let used = Used::now();
         let report = WatchReport {
             cpu_millis: used
@@ -93,7 +105,7 @@ impl Schedule {
                 .map(|total| total.saturating_sub(self.cpu_millis)),
             resident_bytes: used.resident_bytes,
             peak_resident_bytes: used.peak_resident_bytes,
-            uptime_seconds: now.saturating_duration_since(self.began).as_secs(),
+            uptime_seconds: self.running.as_secs(),
             folders: followed.0,
             files: followed.1,
             full_passes: used.full_passes.saturating_sub(self.full_passes),
@@ -122,46 +134,78 @@ impl Folder {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_first_report_waits_for_a_folder_or_the_wait_and_the_rest_a_day() {
-        let began = Instant::now();
-        let mut schedule = Schedule::new(began);
-        assert!(schedule.take(began, false, (0, 0)).is_none());
-        assert!(
-            schedule
-                .take(began + START_WAIT - Duration::from_secs(1), false, (0, 0))
-                .is_none()
-        );
-        let first = schedule.take(began + START_WAIT, false, (0, 0)).unwrap();
-        assert_eq!(first.uptime_seconds, START_WAIT.as_secs());
-        assert!(schedule.take(began + START_WAIT, true, (1, 5)).is_none());
-        let at = began + START_WAIT + EVERY;
-        assert!(
-            schedule
-                .take(at - Duration::from_secs(1), true, (1, 5))
-                .is_none()
-        );
-        let next = schedule.take(at, true, (2, 7)).unwrap();
-        assert_eq!((next.folders, next.files), (2, 7));
-        assert_eq!(next.uptime_seconds, (START_WAIT + EVERY).as_secs());
+    fn at(seconds: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000 + seconds)
+    }
 
-        // A folder watched sends the first at once.
-        let mut watched = Schedule::new(began);
-        assert!(watched.take(began, true, (1, 3)).is_some());
+    #[test]
+    fn the_first_report_waits_for_every_folder_or_the_wait_and_the_rest_a_day() {
+        let wait = START_WAIT.as_secs();
+        let day = EVERY.as_secs();
+        let mut schedule = Schedule::new(at(0));
+        assert!(schedule.take(at(0), false, (0, None)).is_none());
+        assert!(schedule.take(at(wait - 1), false, (1, None)).is_none());
+        let first = schedule.take(at(wait), false, (1, None)).unwrap();
+        assert_eq!(first.uptime_seconds, wait);
+        assert!(schedule.take(at(wait), true, (1, Some(5))).is_none());
+        assert!(
+            schedule
+                .take(at(wait + day - 1), true, (1, Some(5)))
+                .is_none()
+        );
+        let next = schedule.take(at(wait + day), true, (2, Some(7))).unwrap();
+        assert_eq!((next.folders, next.files), (2, Some(7)));
+        assert_eq!(next.uptime_seconds, wait + day);
+
+        // Every folder watched sends the first at once.
+        let mut watched = Schedule::new(at(0));
+        assert!(watched.take(at(0), true, (3, Some(3))).is_some());
+    }
+
+    #[test]
+    fn a_report_leaves_out_the_files_until_a_folder_has_been_counted() {
+        let mut schedule = Schedule::new(at(0));
+        let report = schedule.take(at(0), true, (2, None)).unwrap();
+        assert_eq!((report.folders, report.files), (2, None));
+    }
+
+    #[test]
+    fn a_clock_set_back_counts_as_no_time_passed() {
+        let day = EVERY.as_secs();
+        let mut schedule = Schedule::new(at(1_000));
+        assert!(schedule.take(at(1_000), true, (1, Some(1))).is_some());
+        // Half a day passes, the clock goes back a week, and a quarter of a
+        // day passes on the earlier time.
+        assert!(
+            schedule
+                .take(at(1_000 + day / 2), true, (1, Some(1)))
+                .is_none()
+        );
+        let earlier = at(1_000 + day / 2)
+            .checked_sub(Duration::from_secs(7 * day))
+            .unwrap();
+        assert!(schedule.take(earlier, true, (1, Some(1))).is_none());
+        let later = earlier + Duration::from_secs(day / 4);
+        assert!(schedule.take(later, true, (1, Some(1))).is_none());
+        // Three quarters of a day have passed in all, not a week and a half.
+        let due = later + Duration::from_secs(day / 4);
+        let report = schedule.take(due, true, (1, Some(1))).unwrap();
+        assert_eq!(report.uptime_seconds, day);
     }
 
     #[test]
     fn a_report_counts_the_passes_since_the_last() {
-        let began = Instant::now();
-        let mut schedule = Schedule::new(began);
+        let mut schedule = Schedule::new(at(0));
         passed(true);
-        let first = schedule.take(began, true, (1, 3)).unwrap();
+        let first = schedule.take(at(0), true, (1, Some(3))).unwrap();
         assert!(first.full_passes >= 1, "{first:?}");
         // Other tests in a process that is not nextest's count passes too.
         passed(true);
         passed(false);
         passed(false);
-        let second = schedule.take(began + EVERY, true, (1, 3)).unwrap();
+        let second = schedule
+            .take(at(EVERY.as_secs()), true, (1, Some(3)))
+            .unwrap();
         assert!(
             second.full_passes >= 1 && second.quick_passes >= 2,
             "{second:?}"

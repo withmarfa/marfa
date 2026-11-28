@@ -477,4 +477,72 @@ describe("a watch and a new build at the path it was started by", () => {
     expect(await status()).toBeNull();
     expect(await text()).not.toContain("the watch of this folder");
   });
+
+  it("says in the folder's status what the watch that holds it has used, across the folders it holds", async () => {
+    const harness = await folderHarness("new-build-usage");
+    made.push(harness);
+    const entry = (usage: Record<string, number | null> | undefined) => ({
+      version: 1,
+      processes: [
+        {
+          pid: process.pid,
+          build_version: running(),
+          started_at: new Date().toISOString(),
+          heartbeat_at: new Date().toISOString(),
+          heartbeat_interval_seconds: 5,
+          ended_at: null,
+          ...(usage === undefined ? {} : { usage }),
+          folders: [harness.dir, join(harness.dir, "..", "other")].map(
+            (dir, index) => ({
+              dir,
+              folder: index === 0 ? harness.settings.id : "other",
+              watching: true,
+              reason: null,
+              last_success_at: null,
+              first_sync_waiting: null,
+              problems: null,
+              pending_uploads: null,
+              pending_downloads: null,
+              paused_removals: null,
+            }),
+          ),
+        },
+      ],
+    });
+    const status = async () => {
+      const report = await harness.folder.device().root<{
+        watch_usage: Record<string, number | null> | null;
+      }>(["folders", "status", harness.dir]);
+      expect(report.ok, JSON.stringify(report)).toBe(true);
+      if (!report.ok) throw new Error("no status");
+      return report.value.watch_usage;
+    };
+    const text = async () => {
+      const said = await harness.folder
+        .device()
+        .rootText(["folders", "status", harness.dir]);
+      expect(said.ok, JSON.stringify(said)).toBe(true);
+      return said.ok ? said.value : "";
+    };
+    mkdirSync(dirname(recordPath(harness)), { recursive: true });
+
+    const used = {
+      cpu_millis: 12_500,
+      resident_bytes: 52_428_800,
+      peak_resident_bytes: 78_643_200,
+      full_passes: 3,
+      quick_passes: 120,
+      files: 1_234,
+    };
+    writeFileSync(recordPath(harness), JSON.stringify(entry(used)));
+    expect(await status()).toEqual({ ...used, folders: 2 });
+    expect(await text()).toContain(
+      "since it started, the watch that holds this folder has used 12.5 s of CPU, 50.0 MB of memory, at most 75.0 MB, 3 full and 120 quick pass(es), 1234 file(s) followed, across 2 folders",
+    );
+
+    // An entry from a build before the figures: nothing is shown as zero.
+    writeFileSync(recordPath(harness), JSON.stringify(entry(undefined)));
+    expect(await status()).toBeNull();
+    expect(await text()).not.toContain("since it started");
+  });
 });

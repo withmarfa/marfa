@@ -183,7 +183,7 @@ struct Inner {
 }
 
 impl Inner {
-    fn new(began: Instant) -> Inner {
+    fn new(began: SystemTime) -> Inner {
         Inner {
             folders: BTreeMap::new(),
             ended_at: None,
@@ -198,11 +198,19 @@ impl Inner {
         }
     }
 
-    /// The folders held and the files they follow.
-    fn followed(&self) -> (u64, u64) {
+    /// The folders held and the files they follow, `None` while no folder
+    /// has been counted.
+    fn followed(&self) -> (u64, Option<u64>) {
         let held = self.folders.values().filter(|held| held.watching).count();
-        let files = self.folders.values().filter_map(|held| held.files).sum();
-        (held as u64, files)
+        let counted: Vec<u64> = self
+            .folders
+            .values()
+            .filter_map(|held| held.files)
+            .collect();
+        (
+            held as u64,
+            (!counted.is_empty()).then(|| counted.iter().sum()),
+        )
     }
 }
 
@@ -268,7 +276,7 @@ impl WatchRecord {
             pid,
             started_at: store::now_iso(),
             heartbeat,
-            inner: Mutex::new(Inner::new(crate::clock::now())),
+            inner: Mutex::new(Inner::new(crate::clock::system_time())),
             writing: Arc::default(),
         }
     }
@@ -303,7 +311,7 @@ impl WatchRecord {
     }
 
     /// The folder is watched.
-    pub(super) fn watching(&self, dir: &Path) {
+    pub(crate) fn watching(&self, dir: &Path) {
         self.change(dir, |held| {
             held.watching = true;
             held.reason = None;
@@ -486,9 +494,12 @@ impl WatchRecord {
             if inner.finished {
                 return;
             }
-            let watched = inner.folders.values().any(|held| held.watching);
+            let all_watched =
+                !inner.folders.is_empty() && inner.folders.values().all(|held| held.watching);
             let followed = inner.followed();
-            inner.schedule.take(crate::clock::now(), watched, followed)
+            inner
+                .schedule
+                .take(crate::clock::system_time(), all_watched, followed)
         };
         if let Some(report) = report {
             crate::telemetry::watch_report(&report);
@@ -551,11 +562,7 @@ impl WatchRecord {
             ended_at: inner.ended_at.clone(),
             usage: Some(Usage {
                 used: Used::now(),
-                files: inner
-                    .folders
-                    .values()
-                    .any(|held| held.files.is_some())
-                    .then(|| inner.followed().1),
+                files: inner.followed().1,
             }),
             folders: inner
                 .folders

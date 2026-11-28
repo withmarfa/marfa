@@ -236,9 +236,10 @@ pub(crate) struct WatchReport {
     pub(crate) resident_bytes: Option<u64>,
     pub(crate) peak_resident_bytes: Option<u64>,
     pub(crate) uptime_seconds: u64,
-    /// The folders the watch holds, and the files they follow.
+    /// The folders the watch holds, and the files they follow: `None` until a
+    /// folder has been counted.
     pub(crate) folders: u64,
-    pub(crate) files: u64,
+    pub(crate) files: Option<u64>,
     /// Passes since the last report.
     pub(crate) full_passes: u64,
     pub(crate) quick_passes: u64,
@@ -263,11 +264,13 @@ pub(crate) fn watch_report(report: &WatchReport) {
         span,
         uptime_seconds = report.uptime_seconds,
         folders = report.folders,
-        files = report.files,
         full_passes = report.full_passes,
         quick_passes = report.quick_passes,
         release = report.release,
     );
+    if let Some(files) = report.files {
+        record!(span, files = files);
+    }
     if let Some(cpu) = report.cpu_millis {
         record!(span, cpu_millis = cpu);
     }

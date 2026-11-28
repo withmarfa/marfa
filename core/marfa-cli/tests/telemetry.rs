@@ -1120,15 +1120,11 @@ fn a_running_watch_reports_its_use_as_numbers_and_the_release_to_a_traces_endpoi
         "uptime_seconds",
     ];
     assert!(keys.iter().all(|key| allowed.contains(key)), "{keys:?}");
-    for key in [
-        "files",
-        "folders",
-        "full_passes",
-        "quick_passes",
-        "uptime_seconds",
-    ] {
+    for key in ["folders", "full_passes", "quick_passes", "uptime_seconds"] {
         assert!(keys.contains(&key), "{key} missing from {keys:?}");
     }
+    // No folder was counted, so there are no files to report, not none followed.
+    assert!(!keys.contains(&"files"), "{keys:?}");
     assert_eq!(number(report, "folders"), 0);
     assert_eq!(word(report, "release"), env!("CARGO_PKG_VERSION"));
     // No path, name or secret anywhere in what was sent.

@@ -137,12 +137,34 @@ impl OtherBuild {
     }
 }
 
-/// What the current watch of `dir` has used since it started, where the record
-/// beside the folder registry lists one that records it.
-pub fn usage_watching(dir: &Path) -> Option<RecordUsage> {
+/// What the current watch that holds `dir` has used since it started, where
+/// the record beside the folder registry lists one that records it. The
+/// figures are the whole watch's, across the `folders` it was asked to hold.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct WatchUsage {
+    #[serde(flatten)]
+    pub(crate) usage: RecordUsage,
+    pub(crate) folders: usize,
+}
+
+impl WatchUsage {
+    pub(crate) fn describe(&self) -> String {
+        self.usage.describe_for_folder(self.folders)
+    }
+}
+
+pub fn usage_watching(dir: &Path) -> Option<WatchUsage> {
     let record = WatchRecord::located()?;
     let file = RecordFile::read(record.path())?;
-    file.watching(dir, SystemTime::now())?.usage.clone()
+    watch_usage_in(&file, dir, SystemTime::now())
+}
+
+fn watch_usage_in(file: &RecordFile, dir: &Path, now: SystemTime) -> Option<WatchUsage> {
+    let process = file.watching(dir, now)?;
+    Some(WatchUsage {
+        usage: process.usage.clone()?,
+        folders: process.folders.len(),
+    })
 }
 
 /// The watch of `dir` that the record beside the folder registry lists as
@@ -676,18 +698,34 @@ mod tests {
         };
         let used = json!({ "cpu_millis": 900, "full_passes": 2, "quick_passes": 5 });
         let with = entry(used);
+        let shown = watch_usage_in(&with, dir.path(), now).unwrap();
         assert_eq!(
-            with.watching(dir.path(), now).unwrap().usage,
-            Some(RecordUsage {
-                cpu_millis: Some(900),
-                full_passes: 2,
-                quick_passes: 5,
-                ..RecordUsage::default()
-            })
+            shown,
+            WatchUsage {
+                usage: RecordUsage {
+                    cpu_millis: Some(900),
+                    full_passes: 2,
+                    quick_passes: 5,
+                    ..RecordUsage::default()
+                },
+                folders: 1,
+            }
+        );
+        // The figures are the watch's, and the line says across how many
+        // folders.
+        assert_eq!(
+            shown.describe(),
+            "since it started, the watch that holds this folder has used 0.9 s of CPU, 2 full and 5 quick pass(es), across 1 folder"
+        );
+        assert!(
+            shown
+                .usage
+                .describe_for_folder(3)
+                .ends_with(", across 3 folders")
         );
         // The witness: an entry from a build before the figures shows none.
         let without = entry(serde_json::Value::Null);
-        assert_eq!(without.watching(dir.path(), now).unwrap().usage, None);
+        assert_eq!(watch_usage_in(&without, dir.path(), now), None);
     }
 
     #[test]

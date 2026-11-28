@@ -817,7 +817,7 @@ fn a_watch_report_carries_exactly_its_closed_list_of_numbers_and_the_release() {
         peak_resident_bytes: Some(20_000_000),
         uptime_seconds: 86_400,
         folders: 2,
-        files: 1_000,
+        files: Some(1_000),
         full_passes: 3,
         quick_passes: 40,
         release: "0.0.97",
@@ -860,6 +860,16 @@ fn a_watch_report_carries_exactly_its_closed_list_of_numbers_and_the_release() {
     assert!(!span.fields.contains_key("resident_bytes"));
     assert!(!span.fields.contains_key("peak_resident_bytes"));
     assert_eq!(span.fields["files"], "1000");
+
+    // Files no folder has been counted for are left out, not sent as zero.
+    let uncounted = crate::telemetry::WatchReport {
+        files: None,
+        ..unread
+    };
+    let ((), log) = recorded(|| crate::telemetry::watch_report(&uncounted));
+    let span = log.one("watch_report");
+    assert!(!span.fields.contains_key("files"));
+    assert_eq!(span.fields["folders"], "2");
 }
 
 /// Runs the record's keeping on this thread, under a recorder, while `drive`
@@ -943,4 +953,56 @@ fn a_watch_reports_at_its_start_and_again_a_day_later_on_the_clock_it_waits_by()
     assert_eq!(spans[1].fields["release"], env!("CARGO_PKG_VERSION"));
     assert!(spans[1].fields.contains_key("cpu_millis"));
     assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_watch_of_several_folders_reports_its_start_once_all_are_watched_or_the_wait_ends() {
+    use std::path::Path;
+    use std::time::Duration;
+
+    let quiet = Duration::from_millis(400);
+    let registry = |temp: &tempfile::TempDir| {
+        crate::folder::WatchRecord::beside(&crate::folder::Registry::at(
+            temp.path().join("folders.json"),
+        ))
+    };
+
+    // The first folder watched does not start the report; the last does.
+    crate::clock::set_manual(true);
+    let temp = tempfile::tempdir().unwrap();
+    let record = registry(&temp);
+    record.listed(Path::new("/a"), "folder-a");
+    record.listed(Path::new("/b"), "folder-b");
+    record.watching(Path::new("/a"));
+    let recorder = kept_while(&record, |recorder| {
+        crate::clock::advance(Duration::from_secs(1));
+        std::thread::sleep(quiet);
+        assert_eq!(reports(recorder), 0);
+        record.watching(Path::new("/b"));
+        until(recorder, 1);
+    });
+    crate::clock::set_manual(false);
+    let log = recorder.log();
+    assert_eq!(log.one("watch_report").fields["folders"], "2");
+
+    // A folder that is never watched holds the report only for the wait.
+    crate::clock::set_manual(true);
+    let temp = tempfile::tempdir().unwrap();
+    let record = registry(&temp);
+    record.listed(Path::new("/a"), "folder-a");
+    record.listed(Path::new("/b"), "folder-b");
+    record.watching(Path::new("/a"));
+    let recorder = kept_while(&record, |recorder| {
+        crate::clock::advance(Duration::from_secs(4));
+        std::thread::sleep(quiet);
+        assert_eq!(reports(recorder), 0);
+        crate::clock::advance(Duration::from_secs(2));
+        until(recorder, 1);
+    });
+    crate::clock::set_manual(false);
+    let log = recorder.log();
+    let span = log.one("watch_report");
+    assert_eq!(span.fields["folders"], "1");
+    assert!(!span.fields.contains_key("files"), "{span:?}");
 }
