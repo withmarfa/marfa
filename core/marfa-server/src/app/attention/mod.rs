@@ -851,21 +851,23 @@ fn record_new(
 
 /// Unmarks entries the newest check no longer finds, and faults that no longer stand.
 fn forget_gone(app: &App, gathered: &Gathered) {
-    let standing = app.attention.reported.references(app.clock.now_ms());
     let looked = &app.attention.looked;
-    app.attention.told.retain(|(kind, reference)| {
-        if looked.load(Ordering::Acquire) != gathered.order {
-            return true;
-        }
-        if kind == FAULT {
-            return standing.contains(reference);
-        }
-        gathered.unknown.contains(&kind.as_str())
-            || gathered
-                .concerns
-                .iter()
-                .any(|concern| concern.kind == kind && concern.reference == *reference)
-    });
+    let standing = || app.attention.reported.references(app.clock.now_ms());
+    app.attention
+        .told
+        .retain(standing, |standing, (kind, reference)| {
+            if looked.load(Ordering::Acquire) != gathered.order {
+                return true;
+            }
+            if kind == FAULT {
+                return standing.contains(reference);
+            }
+            gathered.unknown.contains(&kind.as_str())
+                || gathered
+                    .concerns
+                    .iter()
+                    .any(|concern| concern.kind == kind && concern.reference == *reference)
+        });
 }
 
 /// The new entries, read before the write; `None` when no entry is gone and every new one is
