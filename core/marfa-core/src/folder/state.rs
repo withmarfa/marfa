@@ -156,8 +156,10 @@ pub(crate) fn settle_landings(
     root: &crate::directory::Directory,
     waiting: &std::collections::HashSet<String>,
 ) -> Result<(), CoreError> {
-    let rows = every_bound(conn)?;
-    for row in &rows {
+    let landing = bound_landing(conn)?;
+    let landing_paths: std::collections::HashSet<&str> =
+        landing.iter().map(|row| row.path.as_str()).collect();
+    for row in &landing {
         if waiting.contains(&row.path) {
             continue;
         }
@@ -170,11 +172,12 @@ pub(crate) fn settle_landings(
                 if settled != landed {
                     continue;
                 }
-                for left in rows.iter().filter(|left| {
-                    left.item_id == row.item_id
-                        && left.path != row.path
-                        && left.writes.landing.is_none()
-                }) {
+                for left in every_bound_to_item(conn, &row.item_id)?
+                    .iter()
+                    .filter(|left| {
+                        left.path != row.path && !landing_paths.contains(left.path.as_str())
+                    })
+                {
                     if root
                         .read(std::path::Path::new(&left.path))
                         .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
@@ -861,6 +864,28 @@ pub fn bound_paths(conn: &Connection) -> Result<Vec<(String, String)>, CoreError
 
 pub fn every_bound(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
     bound_where(conn, "", [])
+}
+
+/// Every bound file whose binding waits on a write's bytes to land, and any
+/// whose record cannot be read, which reading it says.
+pub fn bound_landing(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
+    bound_where(
+        conn,
+        "WHERE NOT json_valid(writes) OR json_type(writes) <> 'object'
+           OR json_type(writes, '$.landing') <> 'null'",
+        [],
+    )
+}
+
+/// Every bound file that is held or has a refused change in its record, and
+/// any whose record cannot be read, which reading it says.
+pub fn bound_held_or_refused(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
+    bound_where(
+        conn,
+        "WHERE held IS NOT NULL OR NOT json_valid(writes) OR json_type(writes) <> 'object'
+           OR json_array_length(writes, '$.refused') > 0",
+        [],
+    )
 }
 
 /// Every bound file with a refused change in its record.
@@ -1696,6 +1721,40 @@ mod tests {
 
         prune_unheld(&conn, &HashSet::from(["c.md".to_string()])).unwrap();
         assert!(unheld(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_settle_and_a_flag_read_only_the_rows_that_wait_or_say_something() {
+        let conn = crate::store::open_in_memory().unwrap();
+        let insert = |path: &str, held: Option<&str>, writes: &str| {
+            conn.execute(
+                "INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, held, writes, seen_at)
+                 VALUES (?1, ?1, 'h', '[]', '[]', ?2, ?3, 'then')",
+                rusqlite::params![path, held, writes],
+            )
+            .unwrap();
+        };
+        let landing = r#"{"landing":{"before":null}}"#;
+        let refused = r#"{"refused":[{"change":"initial_placement","save":1,"reason":"r"}]}"#;
+        insert("a.md", None, "{}");
+        insert("b.md", None, landing);
+        insert("c.md", Some("too big"), "{}");
+        insert("d.md", None, refused);
+        insert("e.md", None, r#"{"queued":[]}"#);
+        insert("f.md", None, "not json");
+
+        let paths =
+            |rows: Vec<super::Bound>| rows.into_iter().map(|row| row.path).collect::<Vec<_>>();
+        // A row that cannot be read is read, so that the refusal is not lost.
+        let error = super::bound_landing(&conn).map(paths).unwrap_err();
+        assert!(error.to_string().contains("f.md"), "{error}");
+        conn.execute("DELETE FROM folder_files WHERE path = 'f.md'", [])
+            .unwrap();
+        assert_eq!(paths(super::bound_landing(&conn).unwrap()), ["b.md"]);
+        assert_eq!(
+            paths(super::bound_held_or_refused(&conn).unwrap()),
+            ["c.md", "d.md"]
+        );
     }
 
     #[test]

@@ -1,16 +1,19 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::rc::Rc;
 
 use serde::Serialize;
 
 use super::edge_types::EdgeTypes;
 use super::health::Found;
 use super::{
-    Flagged, Folder, ScanReport, captured_identities, carries_frontmatter, document, id_named,
-    identity, is_document, named_by_its_file, near, near_limit, one_per_name, state, text_of,
+    Flagged, Folder, ScanReport, bytes_of, captured_identities, carries_frontmatter, document,
+    id_named, identity, is_document, named_by_its_file, near, near_limit, one_per_name, state,
+    text_of,
 };
 use crate::Result;
-use crate::model::{ItemState, QueuedWrite, Verdict, WriteKind};
+use crate::model::{Item, ItemState, QueuedWrite, Verdict, WriteKind};
 use marfa_rules::catalog::Catalog;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -231,6 +234,7 @@ impl Folder {
                         .filter_map(|unchanged| unchanged.identity.clone()),
                 )
                 .collect(),
+            items: Items::default(),
         };
         let journaled = state::journaled(&*self.core.conn()?)?;
         let unsure: HashMap<&str, &str> = journaled
@@ -320,6 +324,7 @@ impl Folder {
                     &pull,
                     &unmatched,
                     &waiting,
+                    &rows.items,
                 )?,
                 None if added.contains(key) => FileStatus::new(key, None, "held").because(
                     "addition",
@@ -477,6 +482,7 @@ impl Folder {
         pull: &HashSet<String>,
         unmatched: &HashSet<String>,
         waiting: &[QueuedWrite],
+        items: &Items,
     ) -> Result<FileStatus> {
         let mut entry = FileStatus::new(&bound.path, Some(&bound.item_id), "held");
         let changed = hash.as_deref() != Some(bound.content_hash.as_str());
@@ -493,7 +499,7 @@ impl Folder {
             ));
         }
         // A refused create forgets its row, and the file keeps the reason.
-        if self.core.get(&bound.item_id)?.is_none() {
+        if items.of(self, &bound.item_id)?.is_none() {
             if changed {
                 return Ok(waits(entry, vec!["scan"]));
             }
@@ -638,7 +644,13 @@ impl Folder {
         let Some(bound) = bound else {
             return Ok(false);
         };
-        if !self.file_item(&bound.item_id, catalog)? {
+        if !rows
+            .items
+            .of(self, &bound.item_id)?
+            .as_ref()
+            .as_ref()
+            .is_some_and(|item| bytes_of(item, catalog).is_some())
+        {
             return Ok(false);
         }
         let Some(bytes) = found.bytes() else {
@@ -651,10 +663,12 @@ impl Folder {
         let Some(id) = id_named(path, bytes, read.as_ref()) else {
             return Ok(true);
         };
-        Ok(!self
-            .core
-            .get(&id)?
-            .is_some_and(|item| named_by_its_file(&item, catalog)))
+        Ok(!rows
+            .items
+            .of(self, &id)?
+            .as_ref()
+            .as_ref()
+            .is_some_and(|item| named_by_its_file(item, catalog)))
     }
 
     /// Why the scan holds a document it has not bound, where it does: its
@@ -723,12 +737,29 @@ impl StatusReport {
     }
 }
 
+/// The items a status read, so one item is read once however many questions
+/// about its file it answers.
+#[derive(Default)]
+struct Items(RefCell<HashMap<String, Rc<Option<Item>>>>);
+
+impl Items {
+    fn of(&self, folder: &Folder, id: &str) -> Result<Rc<Option<Item>>> {
+        if let Some(read) = self.0.borrow().get(id) {
+            return Ok(Rc::clone(read));
+        }
+        let read = Rc::new(folder.core.get(id)?);
+        self.0.borrow_mut().insert(id.to_string(), Rc::clone(&read));
+        Ok(read)
+    }
+}
+
 /// The bindings a status reads a file's item from.
 struct Rows<'a> {
     by_path: &'a HashMap<&'a str, &'a state::Bound>,
     by_mark: HashMap<&'a str, &'a state::Bound>,
     /// Every walked file's identity.
     marked: HashSet<String>,
+    items: Items,
 }
 
 fn refused_flag(change: &state::Change) -> &'static str {

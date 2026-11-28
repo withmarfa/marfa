@@ -940,3 +940,56 @@ fn a_quick_pass_sends_a_save_that_keeps_a_backup_by_renaming_as_the_items_edit()
     assert_eq!(bound.item_id, item);
     assert!(deletes_queued(&folder).is_empty());
 }
+
+/// With `MARFA_PASS_BENCH_NOTES` set, times a quick pass after one atomic save
+/// in a watched folder of that many notes, as the median of nine. Run it in a
+/// release build, which builds the folder first (about two minutes at 10,000):
+///
+/// ```sh
+/// MARFA_PASS_BENCH_NOTES=10000 cargo test --release -p marfa-core pass_bench -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "a benchmark: set MARFA_PASS_BENCH_NOTES"]
+fn pass_bench_times_a_quick_pass_after_one_save() {
+    let Some(count) = std::env::var("MARFA_PASS_BENCH_NOTES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|count| *count > 10)
+    else {
+        return;
+    };
+    let names: Vec<String> = (0..count).map(|at| format!("n{at:05}.md")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let (dir, folder, server, mut passes) = watched_notes(&refs);
+    // The server turns each save away for now, so a pass queues the edit and
+    // sends nothing else.
+    for name in &names[..9] {
+        let item = state::bound_at(&folder.core.conn().unwrap(), name)
+            .unwrap()
+            .unwrap()
+            .item_id;
+        server.on(
+            &format!("/items/{item}"),
+            (0..8).map(|_| refusal(429, "rate_limited")).collect(),
+        );
+    }
+    for name in &names {
+        aged(&dir.path().join(name));
+    }
+    passes.run(&folder, true).unwrap();
+    settle(&folder, &mut passes);
+    let mut times = Vec::new();
+    for name in &names[..9] {
+        let path = dir.path().join(name);
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("one more line\n");
+        let sibling = dir.path().join(".save.tmp");
+        std::fs::write(&sibling, text).unwrap();
+        std::fs::rename(&sibling, &path).unwrap();
+        let started = std::time::Instant::now();
+        passes.touching(&folder, &[&path]).unwrap();
+        times.push(started.elapsed());
+    }
+    times.sort();
+    eprintln!("{count} notes: median quick pass {:?}", times[4]);
+}
