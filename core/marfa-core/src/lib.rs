@@ -89,6 +89,8 @@ mod resend_tests;
 mod restored;
 mod restored_rows;
 mod row_writes;
+#[cfg(test)]
+mod rows_refs_upgrade_tests;
 mod scaffold;
 #[cfg(test)]
 mod scripted;
