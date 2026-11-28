@@ -3977,40 +3977,45 @@ mod tests {
                 .unwrap();
             }
         }
-        server.on(
-            "/types",
-            vec![
-                scripted::certified(scripted::types(&[("core.note", None)])),
-                scripted::certified(scripted::json(201, r#"{"type":{}}"#)),
-                scripted::certified(scripted::types(&[("core.note", None)])),
-            ],
-        );
-        server.on("/items", vec![page_of(&[])]);
-        at_head(&server);
+        // One hydration, with a registration answered for each type it sends.
+        let hydrated = |registrations: usize| {
+            let mut answers = vec![scripted::certified(scripted::types(&[("core.note", None)]))];
+            answers.extend(
+                (0..registrations)
+                    .map(|_| scripted::certified(scripted::json(201, r#"{"type":{}}"#))),
+            );
+            answers.push(scripted::certified(scripted::types(&[("core.note", None)])));
+            server.on("/types", answers);
+            server.on("/items", vec![page_of(&[])]);
+            at_head(&server);
+            hydrate(&core).unwrap()
+        };
+        let sent = |naming: &str| {
+            server
+                .seen("/types")
+                .into_iter()
+                .filter(|seen| seen.method != "GET")
+                .filter(|seen| String::from_utf8_lossy(&seen.body).contains(naming))
+                .count()
+        };
 
-        let report = hydrate(&core).unwrap();
+        let first = hydrated(1);
 
         // The control shows a registration was possible and was made.
-        assert_eq!(report.registered_types, ["app.recipe.control"]);
-        let refused: Vec<_> = report
+        assert_eq!(first.registered_types, ["app.recipe.control"]);
+        let refused: Vec<_> = first
             .unregistered_types
             .iter()
             .map(|refused| (refused.id.as_str(), refused.code.as_str()))
             .collect();
         assert_eq!(refused, [("app.recipe.stored", "invalid")]);
         assert!(
-            report.unregistered_types[0].message.contains("provenance"),
+            first.unregistered_types[0].message.contains("provenance"),
             "the refusal did not name the key: {}",
-            report.unregistered_types[0].message
+            first.unregistered_types[0].message
         );
-        let sent: Vec<_> = server
-            .seen("/types")
-            .into_iter()
-            .filter(|seen| seen.method != "GET")
-            .map(|seen| String::from_utf8(seen.body).unwrap())
-            .collect();
-        assert_eq!(sent.len(), 1, "{sent:?}");
-        assert!(!sent[0].contains("app.recipe.stored"), "{sent:?}");
+        assert_eq!(sent("app.recipe.control"), 1);
+        assert_eq!(sent("app.recipe.stored"), 0);
         assert!(
             server
                 .paths()
@@ -4021,7 +4026,29 @@ mod tests {
         assert_eq!(
             core.declared_types().unwrap().len(),
             2,
-            "the refused declaration was dropped from the store"
+            "the refused declaration was left in the store as the app made it"
         );
+
+        let second = hydrated(1);
+
+        assert_eq!(second.unregistered_types.len(), 1);
+        assert_eq!(second.unregistered_types[0].id, "app.recipe.stored");
+        assert_eq!(sent("app.recipe.stored"), 0);
+
+        // The app declares the type again without the key.
+        core.declare_types(&[
+            json!({ "id": "app.recipe.stored", "fields": {} }),
+            control.clone(),
+        ])
+        .unwrap();
+
+        let third = hydrated(2);
+
+        assert_eq!(
+            third.registered_types,
+            ["app.recipe.control", "app.recipe.stored"]
+        );
+        assert!(third.unregistered_types.is_empty());
+        assert_eq!(sent("app.recipe.stored"), 1);
     }
 }

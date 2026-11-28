@@ -286,12 +286,15 @@ describe("a hydration of a copy that declared types", () => {
     const named = {
       id: "app.note.named",
       fields: {},
-      provenance: { origin: "plugin", plugin: { name: "tickets", version: "1" } },
+      provenance: {
+        origin: "plugin",
+        plugin: { name: "tickets", version: "1" },
+      },
     };
     server.answer("POST", "/types", (request) => {
       const sent = JSON.parse(request.body) as Record<string, unknown>;
       return "provenance" in sent
-        ? refusal(400, "invalid_request", "an unread key \"provenance\"")
+        ? refusal(400, "invalid_request", 'an unread key "provenance"')
         : { kind: "json", status: 201, body: { type: sent } };
     });
     value(await device.declareTypes([control]));
@@ -321,12 +324,28 @@ describe("a hydration of a copy that declared types", () => {
     expect(
       second.unregistered_types.map((refused) => [refused.id, refused.code]),
     ).toEqual([[named.id, "invalid"]]);
+    const sentNaming = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === "/types" &&
+          request.body.includes(named.id),
+      );
     expect(
-      server.requests.filter((request) =>
-        request.body.includes(named.id),
-      ),
+      sentNaming(),
       "a declaration naming provenance was sent to the server",
     ).toEqual([]);
+    // The app declares the type again without the key: it replaces the stored
+    // declaration and registers.
+    value(await device.declareTypes([control, { id: named.id, fields: {} }]));
+    const third = value(await device.hydrate(["core.note"], "library"));
+    expect([...third.registered_types].sort()).toEqual([control.id, named.id]);
+    expect(third.unregistered_types).toEqual([]);
+    const registered = sentNaming();
+    expect(registered).toHaveLength(1);
+    expect(JSON.parse(registered[0]?.body ?? "{}")).not.toHaveProperty(
+      "provenance",
+    );
   });
 
   it("fails the hydration when the server fails mid-way, and replaces on the next one", async () => {
