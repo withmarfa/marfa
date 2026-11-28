@@ -280,6 +280,55 @@ describe("a hydration of a copy that declared types", () => {
     ]);
   });
 
+  it("registers and replaces no declaration naming provenance that an earlier build stored, says it refused it each time, and still registers one without the key", async () => {
+    const { server, device } = await started("declare-stored-provenance", []);
+    const control = { id: "app.note.control", fields: {} };
+    const named = {
+      id: "app.note.named",
+      fields: {},
+      provenance: { origin: "plugin", plugin: { name: "tickets", version: "1" } },
+    };
+    server.answer("POST", "/types", (request) => {
+      const sent = JSON.parse(request.body) as Record<string, unknown>;
+      return "provenance" in sent
+        ? refusal(400, "invalid_request", "an unread key \"provenance\"")
+        : { kind: "json", status: 201, body: { type: sent } };
+    });
+    value(await device.declareTypes([control]));
+    // What a build that took the declaration as it was written left in the store.
+    const store = new DatabaseSync(device.store);
+    try {
+      store
+        .prepare("INSERT INTO declared_types (id, json) VALUES (?, ?)")
+        .run(named.id, JSON.stringify(named));
+    } finally {
+      store.close();
+    }
+    const first = value(await device.hydrate(["core.note"], "library"));
+    expect(first.registered_types).toEqual([control.id]);
+    expect(
+      first.unregistered_types.map((refused) => [refused.id, refused.code]),
+    ).toEqual([[named.id, "invalid"]]);
+    expect(first.unregistered_types[0]?.message).toContain("provenance");
+    // The witness: the same declaration without the key is sent and refused
+    // by nothing, so the absence below is of a request that was possible.
+    expect(
+      server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/types",
+      ),
+    ).toHaveLength(1);
+    const second = value(await device.hydrate(["core.note"], "library"));
+    expect(
+      second.unregistered_types.map((refused) => [refused.id, refused.code]),
+    ).toEqual([[named.id, "invalid"]]);
+    expect(
+      server.requests.filter((request) =>
+        request.body.includes(named.id),
+      ),
+      "a declaration naming provenance was sent to the server",
+    ).toEqual([]);
+  });
+
   it("fails the hydration when the server fails mid-way, and replaces on the next one", async () => {
     const { server, device } = await started("declare-replace-unreachable", [
       OLDER(ENTRY.id),

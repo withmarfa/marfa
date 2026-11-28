@@ -5930,6 +5930,14 @@ If a copy's store holds a declaration outside `app.*`, then a device MUST report
 
 **Tests:** `device/declare-replaces.test.ts › registers and replaces no type outside app.* that an earlier build stored as declared, says it refused it, and keeps what the copy queued`.
 
+### `device/hydrate-declared-provenance`
+
+If a copy's store holds a declaration that names `provenance`, then a device MUST report the type in `unregistered_types` as `invalid`, naming the key, each time it hydrates, and send the server no request that registers or replaces it.
+
+**Reason:** a copy an earlier build made may hold a declaration that `device/declaration-provenance-refused` no longer lets an app make. The server refuses `provenance` as an unread key (`types/unknown-key`), so sending the stored declaration would cost a request and a refusal on every hydration and never register the type. The declaration stays as the app made it, and it registers once the app declares the type again without the key. The hydration completes, and the writes the copy queued stay queued.
+
+**Tests:** `device/declare-replaces.test.ts › registers and replaces no declaration naming provenance that an earlier build stored, says it refused it each time, and still registers one without the key`.
+
 ### `device/hydrate-replace-refused`
 
 If the server refuses to replace a declared type, then a device MUST leave the type as the server holds it, report it in `unreplaced_types` with the server's code and message, and complete the hydration.
