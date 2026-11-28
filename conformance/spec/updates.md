@@ -146,7 +146,7 @@ When the server starts an update, the server MUST record an `instance.update.sta
 
 **Reason:** an update replaces the programs the server runs, so the log says who started it, and a start whose entry cannot be recorded does not start.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › swaps in a release that passes every check, keeping the old server and staging the new marfa, and ends to start it`.
 
 ### `updates/start-once`
 
@@ -154,7 +154,7 @@ While an update runs, the server MUST answer another `POST /update` with the upd
 
 **Reason:** two swaps of the same programs would leave neither whole.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › answers a second start while an update runs with the update that runs, and starts no second one`.
 
 ## The swap
 
@@ -164,13 +164,13 @@ When the server is to replace its programs with a release's, the server MUST fir
 
 **Reason:** a release that cannot start on the instance's settings or open its database would leave the instance down, and a new `marfa` that cannot run the install would leave the service unable to start once it takes the old one's place.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › swaps in a release that passes every check, keeping the old server and staging the new marfa, and ends to start it`, `› leaves the programs as they were when the download does not match the release's checksum`, `› leaves the programs as they were when a new program reports another release`, `› leaves the programs as they were when a new program will not run`, `› leaves the programs as they were when the new server refuses the database`, `› leaves the programs as they were when the new marfa will not run the install`.
 
 ### `updates/swap-refused-unchanged`
 
 If a download fails, its checksum does not match, a new program will not run or reports another release, the new `marfa` will not run the install, the new server will not accept the settings or open the database, or the disk has too little room, then the server MUST leave the running programs as they were and report why in the last update.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › leaves the programs as they were when the download does not match the release's checksum`, `› leaves the programs as they were when a new program reports another release`, `› leaves the programs as they were when a new program will not run`, `› leaves the programs as they were when the new server refuses the database`, `› leaves the programs as they were when the new marfa will not run the install`, `› leaves the programs as they were when the download fails or the disk has too little room`.
 
 ### `updates/swap-hosts`
 
@@ -178,7 +178,7 @@ When the server downloads a release's archive or checksum file, the server MUST 
 
 **Reason:** a release that points elsewhere, even at another repository or another release on GitHub, must not make the server fetch and run a program from there.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › swaps in a release that passes every check, keeping the old server and staging the new marfa, and ends to start it`.
 
 ### `updates/swap-redirect-host`
 
@@ -186,7 +186,7 @@ When a download of a release's file is redirected, the server MUST follow the re
 
 **Reason:** GitHub serves release files from that host, and from no other.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › follows a redirect of a release's file only on the address it asks, and asks no other host`.
 
 ### `updates/swap-staging-cleared`
 
@@ -194,13 +194,13 @@ When the server starts an update, the server MUST first remove each folder besid
 
 **Reason:** an update that stopped part way leaves its unpacked release behind, and nothing else would remove it.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › removes the folders an earlier update left beside the programs when an update starts, and leaves a link or a file under such a name`.
 
 ### `updates/swap-keeps-old`
 
 When the server replaces its programs with a release's, the server MUST keep the old `marfa-server` beside the new one, as `.marfa-server.previous`, to put back.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › swaps in a release that passes every check, keeping the old server and staging the new marfa, and ends to start it`.
 
 ### `updates/swap-server-first`
 
@@ -208,7 +208,7 @@ When the server replaces its programs with a release's, the server MUST leave th
 
 **Reason:** the service runs `marfa server run`, so the running release's `marfa` watches the new server's first starts and can put the old server back.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › swaps in a release that passes every check, keeping the old server and staging the new marfa, and ends to start it`.
 
 ### `updates/swap-waits-for-settle`
 
@@ -216,7 +216,7 @@ If an update starts while an earlier update of the same programs has not settled
 
 **Reason:** two installs can share one folder of programs, and a second swap would leave neither able to put its old release back.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › leaves the programs alone while an earlier update of them has not settled, and says why`.
 
 ## Trying the new release
 
@@ -228,7 +228,7 @@ When `marfa server run` starts the new release of an update that has not settled
 
 **Reason:** a release that hangs or ends before it says which release it is is still counted, so it cannot keep the old release from coming back.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/start-uncounted-not-run`
 
@@ -236,7 +236,7 @@ If the CLI cannot count a start of the new release in the update's record, then 
 
 **Reason:** a start that is not counted could fail again and again without the old release ever coming back.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/record-folder-private`
 
@@ -244,7 +244,7 @@ When `marfa server run` makes the install's data folder, the `update` folder in 
 
 **Reason:** a service manager may start `marfa server run` under a umask that opens new folders to the account's group, and the server refuses to start on a folder on the way to its database that another account can write to (`instance/files-way-guarded`).
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/run-files-private`
 
@@ -252,7 +252,7 @@ When `marfa server run` creates a file or a folder without a mode of its own, th
 
 **Reason:** a service manager may start `marfa server run` under a umask that opens new files and folders to the account's group, and what the CLI makes in the install's folders is the owner's.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/install-parents-guarded`
 
@@ -260,7 +260,7 @@ When `marfa server install` makes a folder above the install folder, the CLI MUS
 
 **Reason:** the server refuses to start on a folder on the way to its database that another account can write to (`instance/files-way-guarded`), and a folder made under a umask that opens new folders to the account's group is one.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/start-waits-for-last-server`
 
@@ -268,7 +268,7 @@ If a server of the install still holds the lock on its database, its blob folder
 
 **Reason:** on macOS a server can outlive a `marfa server run` that was killed, and a start that fails on that server's locks is not the new release failing. The CLI waits for the lock first, because that server usually ends within seconds.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/start-unsettled-limit`
 
@@ -276,7 +276,7 @@ If a start of the new release is not upgrading the database and its update has n
 
 **Reason:** a release that hangs, or whose health never rises above `down`, does not end by itself, so the old release would never come back.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/start-upgrade-limit`
 
@@ -284,7 +284,7 @@ If a start of the new release has spent 2 hours upgrading the database and the u
 
 **Reason:** an upgrade rewrites the database in one transaction that a stop undoes, so a large database on a slow disk must not be stopped while its upgrade makes progress, and an upgrade that hangs must still let the old release come back.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/upgrade-began-marked`
 
@@ -292,13 +292,13 @@ When a start of the new release of an update that has not settled begins to upgr
 
 **Reason:** `marfa server run` reads the mark to time the upgrade apart from the start.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/upgrade-ended-marked`
 
 When a start of the new release of an update that has not settled has committed its upgrade of the database, the server MUST write `ended` to the update's `upgrade.json`.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/rollback-names-limit`
 
@@ -306,7 +306,7 @@ If a time limit ended a start of the new release and the old release is then put
 
 **Reason:** an owner whose release was put back for its time sees why, and is not left to guess at a crash.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/failed-start-restarts`
 
@@ -314,7 +314,7 @@ If a start of the new release ends before its update settles and no stop was ask
 
 **Reason:** launchd and systemd start a service again only after a failed exit, so a new release that exits with status 0 would otherwise leave the server down.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/clean-stop-not-counted`
 
@@ -322,7 +322,7 @@ If a stop asked of the service ends a start of the new release before its update
 
 **Reason:** a stop, or the machine shutting down, is not the new release failing.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/rollback`
 
@@ -330,7 +330,7 @@ If two starts of the new release have ended before its update settled and the ol
 
 **Reason:** a new release that cannot come up should not leave the owner with a server that is down.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/rollback-refused-at-once`
 
@@ -338,13 +338,13 @@ If the new release ends with status 78 before its update settles and the old ser
 
 **Reason:** status 78 says the release refused the database or the settings, which another start does not change.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/rollback-impossible`
 
 If the new release is to be put back and the old server will not open the database or the database's schema has changed since the swap, then the CLI MUST report the update as `failed`, saying why the old release cannot be put back.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/rollback-put-back-fails`
 
@@ -352,7 +352,7 @@ If the old `marfa-server` is to be put back and cannot be moved into place, then
 
 **Reason:** an install left with nothing it can start would leave the owner's server down.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/rollback-impossible-whole`
 
@@ -360,7 +360,7 @@ If the new release is to be put back and the old server will not open the databa
 
 **Reason:** `marfa server run` refuses to start a `marfa-server` of another release, so a half-swapped install would not start again.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/forward-marfa-fails`
 
@@ -368,7 +368,7 @@ If the new release is to stay because the old one cannot be put back, and the ne
 
 **Reason:** the update has ended, and the server must still start until the owner installs the release whole.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/outcome-per-attempt`
 
@@ -376,7 +376,7 @@ If an update to a release ends after an earlier update to the same release has e
 
 **Reason:** a release put back once can be tried again, and the second try's outcome must not be taken for the first's.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › reports the outcome of the later update to a release, not the earlier one's`.
 
 ## Settling
 
@@ -386,13 +386,13 @@ When the new release has stayed up for 20 seconds, the server MUST put the new `
 
 **Reason:** the server's own release proves only that the server program was swapped.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/settle-half-put-back`
 
 If the new release has stayed up for 20 seconds, a program in its folder does not report the new release, and the old server opens the database with the schema it had before the swap, then the server MUST put the old programs back and report the update as `rolled_back`, naming what each program reports.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/settle-half-failed`
 
@@ -400,7 +400,7 @@ If the new release has stayed up for 20 seconds, a program in its folder does no
 
 **Reason:** the old release cannot run on a database it does not open, so the new release keeps running.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/settle-half-failed-marfa`
 
@@ -408,7 +408,7 @@ If the new release has stayed up for 20 seconds, the old release cannot be put b
 
 **Reason:** the service's `marfa server run` starts the new server again after a restart, which a `marfa` that does not run cannot do.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.
 
 ### `updates/settle-after-ended`
 
@@ -416,4 +416,4 @@ If an update has already ended as `failed` with its record kept, then the server
 
 **Reason:** the update ended because the old release could not come back, and a put-back would leave a server that refuses the database.
 
-**Tests:** waiting on #3177.
+**Tests:** waiting on #3666.

@@ -1078,7 +1078,7 @@ When a credential holding `instance.maintain` calls `marfa_update_server` withou
 
 **Reason:** the update restarts the server and drops every connection, so the person agrees to it first.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › previews the release an update would move to with a confirmation, starts nothing, and starts the update on the confirmation`.
 
 ### `mcp/update-refused`
 
@@ -1092,7 +1092,7 @@ If a `marfa_update_server` call carries a `confirm` token whose preview named a 
 
 **Reason:** the person agreed to the release the preview named, not to a newer one found since.
 
-**Tests:** waiting on #3177.
+**Tests:** `compliance/updates-swap.test.ts › refuses a confirmation whose preview named a release that a newer one has since replaced, answers a new preview, and starts nothing`.
 
 ### `mcp/update-token-unread`
 

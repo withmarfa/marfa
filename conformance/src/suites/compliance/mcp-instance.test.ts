@@ -19,8 +19,9 @@ import { DAY_MS, QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 /**
  * Updating the server and confirming its clock through `/mcp/admin`. The
  * release check asks a stand-in for GitHub that a `release-feed` fault names.
- * No fixture can make a server that is a service with programs it may
- * replace, so an update that starts is not asserted here.
+ * An update that starts needs a server installed as a service with programs
+ * it may replace, which `updates-swap.test.ts` makes, so the two statements
+ * about a started update are asserted there.
  */
 
 let server: FreshServer;

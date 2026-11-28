@@ -297,7 +297,7 @@ async function mintWorkingKey(
  * The settings a fixture names reach the target as `--env` arguments, which
  * win over these pins.
  */
-function serverEnv(): NodeJS.ProcessEnv {
+function serverEnv(program?: string): NodeJS.ProcessEnv {
   return {
     // The script pins the port to `MARFA_PORT` when one is set, and the run's
     // own server may already hold it. The limiter is pinned off for the
@@ -308,6 +308,7 @@ function serverEnv(): NodeJS.ProcessEnv {
     MARFA_RATE_LIMIT_ENABLED: "false",
     MARFA_ENRICHMENT_ENABLED: "false",
     MARFA_ENRICHMENT_OCR_ENABLED: "false",
+    ...(program === undefined ? {} : { MARFA_SERVER_BIN: program }),
   };
 }
 
@@ -367,6 +368,11 @@ export async function bootFreshServer(
    * default or changes it for every other file on the same instance.
    */
   extraEnv: Record<string, string> = {},
+  /**
+   * The server program to start in place of the run's own, a copy of it
+   * that a fixture has put where it needs it.
+   */
+  program?: string,
 ): Promise<FreshServer> {
   const tsx = tsxBinary();
   const state = tempFolder(`marfa-${label}-`);
@@ -385,7 +391,7 @@ export async function bootFreshServer(
         ...envArgs({ ...extraEnv, ...more }),
         ...options,
       ],
-      serverEnv(),
+      serverEnv(program),
     );
   /** One of the adapter's commands that takes no setting. */
   const adapter = (...words: string[]) =>

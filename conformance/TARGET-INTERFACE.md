@@ -369,6 +369,22 @@ stays because that thing is what it checks.
   redirect URI to an app's stored registration while the server runs. Only a
   client's metadata document offers a new one, and the server fetches that
   only from a public address over `https`, which no fixture can serve.
+- `compliance/updates-swap.test.ts` boots a copy of the run's server from a
+  folder of its own, beside a stand-in `marfa`, as a service install, and
+  reads and changes that folder. No door makes a server that is a service
+  install with programs it may replace, so no other fixture starts an update
+  that swaps. It depends on `MARFA_SERVICE` and `MARFA_INSTALL_DIR` (the
+  settings `marfa server run` gives a service), on the programs folder being
+  the one that holds the running server, and on how the update's stand-in
+  `marfa` and `marfa-server` are asked and answer: `--version` (prints the
+  program's name and the release), `--can-open <db>` (exit status 78 to
+  refuse, otherwise a JSON answer) and `marfa server run --dir <dir> --check`.
+  It also depends on the archive and checksum file the stand-in for GitHub
+  serves (the two programs at the archive's top, one `<sha256>  <archive
+name>` line) and on the names the server uses in the programs folder:
+  `.marfa.next`, `.marfa-server.previous`, `.marfa-update-*` and
+  `.marfa-update.lock`. It needs the `program` argument of `bootFreshServer`,
+  which exists for it.
 - `inbound-faults`, `inbound-logs` and the other fixtures that read the log
   through `serverOutput` check what the server logged. The log is the subject.
 
