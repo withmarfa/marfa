@@ -37,10 +37,9 @@ import { createServer } from "node:net";
  *
  * `scratch` prints `{"files":[..]}`, the sorted names of the files in the
  * server's own working folder (the tmp folder of the disk store) now: what an
- * upload, an export or a backup to object storage spools there while it is in
- * flight, which the server removes once the work ends. A backup to a files
- * folder stages elsewhere and is not named. A server with no such folder, or
- * none in it, prints an empty list.
+ * upload, an export or a backup spools there while it is in flight, which the
+ * server removes once the work ends. A server with no such folder, or none in
+ * it, prints an empty list.
  *
  * `restart` stops the server with the signal (`TERM` by default), prints how
  * it ended as `[marfa-server] previous exit {"code":..,"signal":..,"ms":..}`,

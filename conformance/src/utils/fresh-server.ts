@@ -151,9 +151,8 @@ export interface FreshServer {
   output(): Promise<string>;
   /**
    * The files in the server's own working folder now, through `scratch`:
-   * what an upload, an export or a backup to object storage spools there
-   * while it is in flight, removed once the work ends. A backup to a files
-   * folder stages elsewhere and is not named. Names are sorted.
+   * what an upload, an export or a backup spools there while it is in
+   * flight, removed once the work ends. Names are sorted.
    */
   scratch(): Promise<string[]>;
   /** Stops the server and removes its state. Safe to call twice. */

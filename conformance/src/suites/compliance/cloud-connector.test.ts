@@ -229,10 +229,6 @@ function installed(connector: string | undefined): string {
   return join(root, "bin", "marfa");
 }
 
-async function logOf(server: FreshServer): Promise<string> {
-  return await serverOutput(server.stateDir);
-}
-
 const tokenOf = (linked: Linked) => linked.cloud.latest().tunnelToken;
 
 function gone(pid: number): Promise<true> {
@@ -421,7 +417,7 @@ describe("supervising the connector", () => {
       const logged = await waitFor(
         "the connector's output in the log",
         async () => {
-          const text = await logOf(linked.server);
+          const text = await serverOutput(linked.server.stateDir);
           return text.includes("marker-from-connector") &&
             text.includes("INF token")
             ? text

@@ -29,7 +29,7 @@ data, log and env file. The default is `.marfa-state` in the working directory.
 | `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}],"queued_writes":[..]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted, a `resolve` fault has answered or a `release` fault has released its hold. A `release` fault that has acted adds `held_when_answered`. `queued_writes` names the audit action of each write the writer has admitted and not yet started, in the order it will run, with `null` for a write that has none. |
 | `image [--state <dir>] --to <dir>`                               | Copies the instance's data as it stands at one instant to `<dir>`, pausing the target while it copies and then letting it go on, as a snapshot a second target can boot from with `up --state <dir>`. The copy leaves out the target's process, log and exit records, its control directory and the harness's session file.                                                                                                                                                                                                                       |
 | `log`                                                            | Prints everything the target has written: its log, then what it printed to stderr.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `scratch`                                                        | Prints `{"files":[..]}`, the sorted names of the files in the target's own working folder (the tmp folder of the disk store, files only) now: what an upload, an export or a backup to object storage spools there while it is in flight, which the target removes once the work ends. A backup to a files folder stages elsewhere and is not named. A target with no such folder, or none in it, prints an empty list. Works while the target is stopped, to show what a stop left behind.                                                       |
+| `scratch`                                                        | Prints `{"files":[..]}`, the sorted names of the files in the target's own working folder (the tmp folder of the disk store, files only) now: what an upload, an export or a backup spools there while it is in flight, which the target removes once the work ends. A target with no such folder, or none in it, prints an empty list. Works while the target is stopped, to show what a stop left behind, which is why it is an adapter command and not only the test-hooks listing of the same folder over the control socket.                 |
 
 ## Configuration
 
@@ -148,11 +148,12 @@ stays because that thing is what it checks.
 - `compliance/cloud-link.test.ts`, "reports a link whose secrets no longer
   open as failed and unreadable", removes `marfa.settings.key` while the server
   is stopped, because only a lost or broken disk loses the key the link's
-  secrets are sealed with. Its `bootBare` starts the program itself, with
-  `MARFA_DATABASE_PATH` and `MARFA_BLOB_PATH` in a folder it made and the cloud
-  set to a fake in the fixture's own process, because the claim is where the
-  server keeps the key and the link in its own data, and no adapter command
-  names those paths. "ends a link Marfa Cloud ended though the sign-in address
+  secrets are sealed with. Its `bootBare` starts the program itself, for
+  "refuses a start where the server has no public listener" and "starts a link
+  where the public listener is not reached at 127.0.0.1", because the adapter
+  fixes the listen host at `127.0.0.1` and waits for `/health` on the public
+  listener, so no adapter command boots a server with none or one at `::1`.
+  "ends a link Marfa Cloud ended though the sign-in address
   cannot be put back" writes an `addresses` setting that does not read, and
   "says how to move a sign-in address an end by Marfa Cloud did not put back"
   writes a `previous_sign_in_address` that is not an address, each before the
@@ -162,10 +163,8 @@ stays because that thing is what it checks.
   because the contract is about what the connector's output, arguments,
   environment and files hold, reads the log through the adapter, and copies the server's program
   into a folder of its own to show where the server looks for the connector.
-  It starts the program itself, with `MARFA_DATABASE_PATH` and
-  `MARFA_BLOB_PATH` in a folder it made, because the connector's output, the
-  folder it runs in and the files it holds are checked beside the server's own
-  data and no adapter command starts a server that way.
+  It starts that copy itself, because the adapter runs only the program
+  `MARFA_SERVER_BIN` names.
   "reports the connector as failed with reason origin_unknown for a link stored
   without the tunnel listener's port" clears the stored link's port while the
   server is stopped, because every start of a link stores one.

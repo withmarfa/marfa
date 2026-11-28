@@ -38,7 +38,7 @@ afterAll(async () => {
   await server.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-const readLog = async () => await serverOutput(server.stateDir);
+const readLog = () => serverOutput(server.stateDir);
 
 /** A value no other text in the log could be: unlike a fixed word, it cannot
  *  be there for another reason. */
