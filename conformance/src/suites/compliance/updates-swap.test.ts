@@ -6,7 +6,10 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  closeSync,
+  openSync,
   readFileSync,
+  readSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -14,7 +17,7 @@ import {
 } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { join, resolve } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { controlRequest } from "../../utils/control-request.js";
@@ -249,7 +252,7 @@ function runsServer(): string {
   if (program === undefined || program === "") {
     throw new Error("MARFA_SERVER_BIN names no server");
   }
-  const path = resolve(program);
+  const path = resolvePath(program);
   expect(statSync(path).isFile(), `${path} is not a file`).toBe(true);
   return path;
 }
@@ -274,8 +277,19 @@ afterAll(async () => {
   await Promise.all(stopped.map((server) => server.stop()));
 }, FRESH_SERVER_TIMEOUT_MS);
 
+/** Hashes a file a chunk at a time, so a server program is never held whole. */
 function digest(path: string): string {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
+  const hash = createHash("sha256");
+  const chunk = Buffer.allocUnsafe(1 << 20);
+  const fd = openSync(path, "r");
+  try {
+    for (let n; (n = readSync(fd, chunk, 0, chunk.length, null)) > 0;) {
+      hash.update(chunk.subarray(0, n));
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return hash.digest("hex");
 }
 
 /** A server run from a copy of this run's own, as a service `marfa server run` supervises. */
@@ -446,20 +460,26 @@ let shared: Promise<Installed> | undefined;
  */
 async function failing(): Promise<Installed> {
   if (shared !== undefined) {
-    const install = await shared;
-    const up = await fetch(`${install.server.apiUrl}/health`).then(
-      (answer) => answer.ok,
-      () => false,
-    );
-    if (up) return install;
+    const install = await shared.catch(() => undefined);
+    const up =
+      install !== undefined &&
+      (await fetch(`${install.server.apiUrl}/health`).then(
+        (answer) => answer.ok,
+        () => false,
+      ));
+    if (up) {
+      // A failed case before a retry may leave its update still running.
+      await expect
+        .poll(
+          async () => (await install.operator.getUpdate()).data.progress.state,
+          { timeout: 60_000, interval: 100 },
+        )
+        .toBe("idle");
+      return install;
+    }
   }
   shared = installed("updates-swap-failing");
   return shared;
-}
-
-/** How the programs were run since `mark`, a count `install.runs()` once had. */
-function runsSince(install: Installed, mark: number): string[] {
-  return install.runs().slice(mark);
 }
 
 it(
@@ -542,7 +562,9 @@ it(
     const last = await endsFailed(install);
     expect(last.reason).toMatch(/does not match the release's checksum/);
     expectUnchanged(install, "a wrong checksum");
-    expect(runsSince(install, mark), "nothing downloaded was run").toEqual([]);
+    expect(install.runs().slice(mark), "nothing downloaded was run").toEqual(
+      [],
+    );
   },
   FRESH_SERVER_TIMEOUT_MS,
 );
@@ -594,7 +616,7 @@ it(
     expect(last.reason).toMatch(/will not run on this server's settings/);
     expect(last.reason).toMatch(/will not open the database/);
     expectUnchanged(install, "a refused database");
-    expect(runsSince(install, mark)).toContain(
+    expect(install.runs().slice(mark)).toContain(
       `marfa-server --can-open ${install.server.sqlitePath}`,
     );
   },
@@ -610,7 +632,7 @@ it(
     const last = await endsFailed(install);
     expect(last.reason).toMatch(/will not run this install/);
     expectUnchanged(install, "a marfa that refuses the install");
-    expect(runsSince(install, mark)).toContain(
+    expect(install.runs().slice(mark)).toContain(
       `marfa server run --dir ${install.installDir} --check`,
     );
   },
@@ -911,6 +933,8 @@ it(
       expect(confirmed.started).toBe(true);
       const last = await endedAfter(install, previous);
       expect(last.release).toBe("9.9.10");
+      // The stand-in answers 404 for 9.9.10's files, so this update fails and the shared server stays up.
+      expect(last.outcome).toBe("failed");
       expect(await started(install.operator)).toBe(before + 1);
     } finally {
       await connection.close();
