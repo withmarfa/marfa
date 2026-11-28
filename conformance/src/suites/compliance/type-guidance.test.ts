@@ -666,6 +666,7 @@ describe("a type's description and guidance", () => {
     // The witness: a member the schema does not define is refused.
     const stray = await client.replaceType(child, {
       ...read,
+      revision: written.data.revision,
       ancestor_rules: [],
     });
     expect(stray.status).toBe(400);

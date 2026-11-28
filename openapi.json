@@ -4792,6 +4792,10 @@
                   "$ref": "#/components/schemas/TypeRole"
                 },
                 "description": "The structural roles the type declares itself, without those it only inherits. Empty if it declares none."
+              },
+              "revision": {
+                "type": "string",
+                "description": "The type's `revision`, as `GET /types/{id}` answers it. Left out when the type's parent chain does not resolve."
               }
             },
             "required": [
@@ -5178,11 +5182,16 @@
                   "$ref": "#/components/schemas/TypeGuidance"
                 },
                 "description": "The guidance of the types above this one, nearest first. Present only where one of them carries some. The type's own guidance is `guidance`."
+              },
+              "revision": {
+                "type": "string",
+                "description": "An opaque string for what is stored for the type: its definition, owner's icon, provenance, and its ancestors' definitions and icons. Send it as `revision` on `PUT` or `DELETE /types/{id}` to refuse a stale write."
               }
             },
             "required": [
               "plural",
-              "provenance"
+              "provenance",
+              "revision"
             ]
           }
         ],
@@ -5701,6 +5710,10 @@
               "$ref": "#/components/schemas/TypeGuidance"
             },
             "description": "The guidance of the types above, accepted when replacing a read response. This field changes nothing."
+          },
+          "revision": {
+            "type": "string",
+            "description": "The `revision` you read. If the type changed since, Marfa returns `409 version_conflict` and writes nothing, even with `force=true`. Marfa never stores it. Leave it out to replace whatever the type holds."
           }
         },
         "required": [
@@ -44639,7 +44652,8 @@
                           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                           "name": "CRM sync"
                         }
-                      }
+                      },
+                      "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e20"
                     },
                     {
                       "id": "acme.deal",
@@ -44679,7 +44693,8 @@
                           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                           "name": "CRM sync"
                         }
-                      }
+                      },
+                      "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e21"
                     }
                   ],
                   "next_cursor": null
@@ -44942,7 +44957,8 @@
                       "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                       "name": "CRM sync"
                     }
-                  }
+                  },
+                  "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e25"
                 }
               }
             },
@@ -45288,7 +45304,8 @@
                       "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                       "name": "CRM sync"
                     }
-                  }
+                  },
+                  "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e25"
                 }
               }
             },
@@ -45599,7 +45616,8 @@
                       "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                       "name": "CRM sync"
                     }
-                  }
+                  },
+                  "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e25"
                 }
               }
             },
@@ -45721,11 +45739,14 @@
             }
           },
           "409": {
-            "description": "- `link_taken`: the replacement names a `link_field` in which two items of the type, in any state, hold the same value.\n- `type_in_use`: rows hold a table or column the replacement removes, or a column whose `type` it changes, and `force` isn't `true`. `details.tables` names each.",
+            "description": "- `version_conflict`: `revision` is stale. `details.revision` names the current one, where the type reads.\n- `link_taken`: the replacement names a `link_field` in which two items of the type, in any state, hold the same value.\n- `type_in_use`: rows hold a table or column the replacement removes or retypes, and `force` isn't `true`. `details.tables` names each.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/VersionConflictRefusal"
+                    },
                     {
                       "$ref": "#/components/schemas/LinkTakenRefusal"
                     },
@@ -45920,6 +45941,16 @@
             "in": "query"
           },
           {
+            "schema": {
+              "type": "string",
+              "description": "The `revision` you read. If the type changed since, Marfa returns `409 version_conflict` and deletes nothing, even with `force=true`. Leave it out to delete whatever the type holds."
+            },
+            "required": false,
+            "description": "The `revision` you read. If the type changed since, Marfa returns `409 version_conflict` and deletes nothing, even with `force=true`. Leave it out to delete whatever the type holds.",
+            "name": "revision",
+            "in": "query"
+          },
+          {
             "name": "X-Marfa-Instance-Id",
             "in": "header",
             "required": false,
@@ -46037,11 +46068,14 @@
             }
           },
           "409": {
-            "description": "- `type_has_subtypes`: other types name this one as their `parent` (`details.subtype_ids` lists them). Delete them, or give them another parent with `PUT /types/{id}`.\n- `type_in_use`: an item of the type exists, in any state, or a folder, view, webhook or column names it, and `force` isn't `true`. `details` lists them. Move them with `POST /types/{id}/move`.",
+            "description": "- `version_conflict`: `revision` is stale. `details.revision` names the current one, where the type reads.\n- `type_has_subtypes`: other types name this one as `parent` (`details.subtype_ids`). Delete them or reparent them first.\n- `type_in_use`: an item of the type, or a folder, view, webhook or column naming it, exists and `force` isn't `true`. Move them with `POST /types/{id}/move`.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/VersionConflictRefusal"
+                    },
                     {
                       "$ref": "#/components/schemas/TypeHasSubtypesOrTypeInUseRefusal"
                     },
@@ -47057,7 +47091,8 @@
                       "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                       "name": "CRM sync"
                     }
-                  }
+                  },
+                  "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e25"
                 }
               }
             },
@@ -47410,7 +47445,8 @@
                       "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                       "name": "CRM sync"
                     }
-                  }
+                  },
+                  "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e25"
                 }
               }
             },

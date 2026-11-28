@@ -660,6 +660,44 @@ async fn a_definition_an_unreadable_fault_names_is_refused_to_a_read_and_replace
 }
 
 #[tokio::test]
+async fn repairing_an_unreadable_type_that_has_an_icon_answers_the_revision_a_read_gives() {
+    let instance = Instance::start().await;
+    instance.register(simple("acme.broken")).await;
+    let instance = instance
+        .restart(|database| {
+            database
+                .execute(
+                    "UPDATE types SET definition = '{\"id\":\"acme.broken\",\"fields\":7}', owner_icon = 'lucide:star' WHERE id = 'acme.broken'",
+                    [],
+                )
+                .unwrap();
+        })
+        .await;
+
+    let repaired = instance
+        .local(
+            Method::PUT,
+            "/types/acme.broken",
+            Some(simple("acme.broken")),
+        )
+        .await;
+    assert_eq!(repaired.status, StatusCode::OK, "{}", repaired.body);
+
+    let read = instance
+        .local(Method::GET, "/types/acme.broken", None)
+        .await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+    assert_eq!(read.body["revision"], repaired.body["revision"]);
+
+    let mut again = simple("acme.broken");
+    again["revision"] = repaired.body["revision"].clone();
+    let sent_back = instance
+        .local(Method::PUT, "/types/acme.broken", Some(again))
+        .await;
+    assert_eq!(sent_back.status, StatusCode::OK, "{}", sent_back.body);
+}
+
+#[tokio::test]
 async fn a_stored_definition_the_program_cannot_read_is_kept_and_does_not_stop_the_start() {
     let instance = Instance::start().await;
     instance.register(simple("acme.fine")).await;

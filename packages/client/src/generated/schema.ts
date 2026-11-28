@@ -5201,6 +5201,8 @@ export interface components {
             conflicts?: components["schemas"]["TypeConflict"][];
             /** @description The structural roles the type declares itself, without those it only inherits. Empty if it declares none. */
             own_roles: components["schemas"]["TypeRole"][];
+            /** @description The type's `revision`, as `GET /types/{id}` answers it. Left out when the type's parent chain does not resolve. */
+            revision?: string;
         };
         /**
          * @description A structural role a type plays. `container`: the type can be the item an `in-collection` edge points to.
@@ -5345,6 +5347,8 @@ export interface components {
             provenance: components["schemas"]["TypeProvenance"] & unknown;
             /** @description The guidance of the types above this one, nearest first. Present only where one of them carries some. The type's own guidance is `guidance`. */
             ancestor_guidance?: components["schemas"]["TypeGuidance"][];
+            /** @description An opaque string for what is stored for the type: its definition, owner's icon, provenance, and its ancestors' definitions and icons. Send it as `revision` on `PUT` or `DELETE /types/{id}` to refuse a stale write. */
+            revision: string;
         };
         /** @description One type's guidance, as read for a type below it. */
         TypeGuidance: {
@@ -5544,6 +5548,8 @@ export interface components {
             id?: string;
             /** @description The guidance of the types above, accepted when replacing a read response. This field changes nothing. */
             ancestor_guidance?: components["schemas"]["TypeGuidance"][];
+            /** @description The `revision` you read. If the type changed since, Marfa returns `409 version_conflict` and writes nothing, even with `force=true`. Marfa never stores it. Leave it out to replace whatever the type holds. */
+            revision?: string;
         };
         /** @description An error response. */
         InvalidSchemaOrValidationErrorRefusal: {
@@ -26537,7 +26543,8 @@ export interface operations {
                      *               "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                      *               "name": "CRM sync"
                      *             }
-                     *           }
+                     *           },
+                     *           "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e20"
                      *         },
                      *         {
                      *           "id": "acme.deal",
@@ -26577,7 +26584,8 @@ export interface operations {
                      *               "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                      *               "name": "CRM sync"
                      *             }
-                     *           }
+                     *           },
+                     *           "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e21"
                      *         }
                      *       ],
                      *       "next_cursor": null
@@ -26734,7 +26742,8 @@ export interface operations {
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                      *           "name": "CRM sync"
                      *         }
-                     *       }
+                     *       },
+                     *       "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e25"
                      *     }
                      */
                     "application/json": components["schemas"]["RegisteredType"];
@@ -26950,7 +26959,8 @@ export interface operations {
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                      *           "name": "CRM sync"
                      *         }
-                     *       }
+                     *       },
+                     *       "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e25"
                      *     }
                      */
                     "application/json": components["schemas"]["RegisteredType"];
@@ -27136,7 +27146,8 @@ export interface operations {
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                      *           "name": "CRM sync"
                      *         }
-                     *       }
+                     *       },
+                     *       "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e25"
                      *     }
                      */
                     "application/json": components["schemas"]["RegisteredType"];
@@ -27217,8 +27228,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `link_taken`: the replacement names a `link_field` in which two items of the type, in any state, hold the same value.
-             *     - `type_in_use`: rows hold a table or column the replacement removes, or a column whose `type` it changes, and `force` isn't `true`. `details.tables` names each.
+             * @description - `version_conflict`: `revision` is stale. `details.revision` names the current one, where the type reads.
+             *     - `link_taken`: the replacement names a `link_field` in which two items of the type, in any state, hold the same value.
+             *     - `type_in_use`: rows hold a table or column the replacement removes or retypes, and `force` isn't `true`. `details.tables` names each.
              */
             409: {
                 headers: {
@@ -27228,7 +27240,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LinkTakenRefusal"] | components["schemas"]["TypeInUseRefusal"] | components["schemas"]["InstanceChangedRefusal"];
+                    "application/json": components["schemas"]["VersionConflictRefusal"] | components["schemas"]["LinkTakenRefusal"] | components["schemas"]["TypeInUseRefusal"] | components["schemas"]["InstanceChangedRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -27312,6 +27324,8 @@ export interface operations {
             query?: {
                 /** @description Delete the type even if items of it exist, in any state, or a folder, view or webhook names it. It doesn't cover subtypes. */
                 force?: boolean;
+                /** @description The `revision` you read. If the type changed since, Marfa returns `409 version_conflict` and deletes nothing, even with `force=true`. Leave it out to delete whatever the type holds. */
+                revision?: string;
             };
             header?: {
                 /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
@@ -27394,8 +27408,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `type_has_subtypes`: other types name this one as their `parent` (`details.subtype_ids` lists them). Delete them, or give them another parent with `PUT /types/{id}`.
-             *     - `type_in_use`: an item of the type exists, in any state, or a folder, view, webhook or column names it, and `force` isn't `true`. `details` lists them. Move them with `POST /types/{id}/move`.
+             * @description - `version_conflict`: `revision` is stale. `details.revision` names the current one, where the type reads.
+             *     - `type_has_subtypes`: other types name this one as `parent` (`details.subtype_ids`). Delete them or reparent them first.
+             *     - `type_in_use`: an item of the type, or a folder, view, webhook or column naming it, exists and `force` isn't `true`. Move them with `POST /types/{id}/move`.
              */
             409: {
                 headers: {
@@ -27405,7 +27420,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeHasSubtypesOrTypeInUseRefusal"] | components["schemas"]["InstanceChangedRefusal"];
+                    "application/json": components["schemas"]["VersionConflictRefusal"] | components["schemas"]["TypeHasSubtypesOrTypeInUseRefusal"] | components["schemas"]["InstanceChangedRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -28037,7 +28052,8 @@ export interface operations {
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                      *           "name": "CRM sync"
                      *         }
-                     *       }
+                     *       },
+                     *       "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e25"
                      *     }
                      */
                     "application/json": components["schemas"]["RegisteredType"];
@@ -28259,7 +28275,8 @@ export interface operations {
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
                      *           "name": "CRM sync"
                      *         }
-                     *       }
+                     *       },
+                     *       "revision": "9b4c0f6e2a7d51c83e0a64b1f5d29c7803ae6b4d1f92c5e07a38d6b0c14f7e25"
                      *     }
                      */
                     "application/json": components["schemas"]["RegisteredType"];

@@ -34,6 +34,20 @@ pub fn only_where(uri: &Uri, allowed: impl Fn(&str) -> bool) -> Result<()> {
     .with_detail("unknown_parameters", unknown))
 }
 
+/// The value of `name`, which a request names at most once.
+pub fn text(uri: &Uri, name: &str) -> Result<Option<String>> {
+    let mut named = pairs(uri)?.into_iter().filter(|(key, _)| key == name);
+    let Some((_, value)) = named.next() else {
+        return Ok(None);
+    };
+    if named.next().is_some() {
+        return Err(
+            Refusal::validation(format!("{name} is named once.")).with_detail("field", name)
+        );
+    }
+    Ok(Some(value))
+}
+
 pub fn flag(uri: &Uri, name: &str) -> Result<Option<bool>> {
     let mut named = pairs(uri)?.into_iter().filter(|(key, _)| key == name);
     let Some((_, value)) = named.next() else {

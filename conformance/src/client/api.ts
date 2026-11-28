@@ -879,8 +879,12 @@ export class MarfaClient {
   async deleteType(
     typeId: string,
     force?: boolean,
+    revision?: string,
   ): Promise<ApiResponse<{ ok: boolean }>> {
-    const query = force ? "?force=true" : "";
+    const params = new URLSearchParams();
+    if (force) params.set("force", "true");
+    if (revision !== undefined) params.set("revision", revision);
+    const query = params.size > 0 ? `?${params.toString()}` : "";
     return this.request<{ ok: boolean }>(`/types/${typeId}${query}`, {
       method: "DELETE",
     });

@@ -76,9 +76,10 @@ pub async fn delete(
     uri: Uri,
 ) -> Answer {
     caller.require_door(SchemaKind::Types, Door::Change)?;
-    query::only(&uri, &["force"])?;
+    query::only(&uri, &["force", "revision"])?;
     let force = query::flag(&uri, "force")?.unwrap_or(false);
-    types::delete(&app, &caller, id, force).await?;
+    let revision = query::text(&uri, "revision")?;
+    types::delete(&app, &caller, id, force, revision).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }
 

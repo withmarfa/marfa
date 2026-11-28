@@ -3,7 +3,9 @@ use marfa_rules::schema::{
 };
 use serde_json::{Value, json};
 
-use super::{chain_refusal, check_id, presented, schema_refusal, unreadable_refusal};
+use super::{
+    chain_refusal, check_id, presented, revised, revision_of, schema_refusal, unreadable_refusal,
+};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::catalog::{self, Catalog, Snapshot, provenance_json};
@@ -64,6 +66,9 @@ fn listed(catalog: &Catalog, id: &str) -> Option<Value> {
         "provenance".into(),
         provenance_json(catalog.provenance.get(id)),
     );
+    if let Some(revision) = revision_of(&catalog.types, id, catalog.provenance.get(id)) {
+        schema.insert("revision".into(), Value::String(revision));
+    }
     Some(Value::Object(schema))
 }
 
@@ -77,11 +82,10 @@ pub async fn get(app: &App, id: String) -> Result<Value> {
                 return Err(unreadable_refusal(&id));
             }
             match resolve(&catalog.types, &id, false) {
-                Ok(Some(schema)) => Ok(presented(
-                    schema,
-                    catalog.provenance.get(&id),
-                    &catalog.types,
-                )),
+                Ok(Some(schema)) => {
+                    let shown = presented(schema, catalog.provenance.get(&id), &catalog.types);
+                    Ok(revised(shown, &catalog, &id))
+                }
                 Ok(None) => Err(Refusal::new(
                     Code::TypeNotFound,
                     format!("Type \"{id}\" not found"),
